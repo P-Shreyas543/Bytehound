@@ -1,0 +1,7 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import sys; sys.path.insert\\(0,'.'\\); from app.protocol.crc import compute; print\\(hex\\(compute\\('crc16_modbus', bytes.fromhex\\('AA550042 06 F6090000 0500'.replace\\(' ',''\\)\\)\\)\\)\\)\")"
+    ]
+  }
+}

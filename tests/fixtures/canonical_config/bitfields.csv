@@ -1,0 +1,4 @@
+id_or_address,signal_name,bit_index,label
+0x0030,FET Status,0,Main FET Status
+0x0030,FET Status,1,Pre Charge FET Status
+0x0030,Fault Status,9,Cell UV

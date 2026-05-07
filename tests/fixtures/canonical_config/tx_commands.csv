@@ -1,0 +1,3 @@
+command_name,id_or_address,payload_hex,description,enabled
+Request Fault Codes,0x8001,01,Request fault codes,TRUE
+Set Charge Current,0x8002,,Set the charge current limit,TRUE

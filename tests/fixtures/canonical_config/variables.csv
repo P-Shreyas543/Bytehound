@@ -1,0 +1,6 @@
+id_or_address,frame_name,signal_name,start_byte,length_bytes,byte_order,data_type,scale,offset,unit,group,register_type,read_write,min_value,max_value
+0x0010,Sensor Status,Cell Voltage 1,0,2,big,uint16,0.001,0.0,V,Cells,holding,R,0,5
+0x0010,Sensor Status,Cell Voltage 2,2,2,big,uint16,0.001,0.0,V,Cells,holding,R,0,5
+0x0030,BMS State,BMS State,0,1,big,uint8,1.0,0.0,,none,holding,R,0,255
+0x0030,BMS State,FET Status,1,1,big,uint8,1.0,0.0,,none,holding,R,0,255
+0x0030,BMS State,Fault Status,2,2,big,uint16,1.0,0.0,,none,holding,R,0,65535

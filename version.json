@@ -1,0 +1,8 @@
+{
+    "version": "0.1.0",
+    "publisher": "Decibels",
+    "manifest_url": "https://raw.githubusercontent.com/username/Serial-MonitorApp/main/version.json",
+    "installer_url": "https://your-server.com/releases/Serial-MonitorApp_Setup_0.1.0.exe",
+    "release_notes": "Initial release.",
+    "sha256": ""
+}

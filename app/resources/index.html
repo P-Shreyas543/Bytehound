@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Serial Monitor Handbook</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        h1, h2, h3 {
+            color: #0056b3;
+        }
+        h1 {
+            border-bottom: 2px solid #0056b3;
+            padding-bottom: 10px;
+        }
+        h2 {
+            margin-top: 30px;
+            border-bottom: 1px solid #ccc;
+            padding-bottom: 5px;
+        }
+        pre {
+            background-color: #f4f4f4;
+            padding: 15px;
+            border: 1px solid #ddd;
+            overflow-x: auto;
+            font-family: Consolas, monospace;
+        }
+        code {
+            background-color: #f4f4f4;
+            padding: 2px 4px;
+            font-family: Consolas, monospace;
+            border: 1px solid #ddd;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ccc;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #f0f0f0;
+        }
+        .note {
+            background-color: #e7f3fe;
+            border-left: 6px solid #2196F3;
+            padding: 10px 15px;
+            margin: 15px 0;
+        }
+        .warning {
+            background-color: #fff3cd;
+            border-left: 6px solid #ffc107;
+            padding: 10px 15px;
+            margin: 15px 0;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>Serial Monitor App: User Manual and Firmware Guide</h1>
+    <p>Welcome to the Serial Monitor App. This documentation serves as a comprehensive handbook for firmware engineers, system integrators, and UI users. It explains the core architecture, the configuration-driven protocol definitions, and the exact data flows required to send frames to the application and visualize data in real time.</p>
+
+    <h2>1. Configuration Architecture</h2>
+    <p>The entire application is driven by a directory of CSV configuration files. The desktop interface dynamically builds its views, polling sequences, and protocol parsers based on the definitions in these files. You do not need to recompile the application to add new variables or change the protocol.</p>
+    
+    <table>
+        <thead>
+            <tr>
+                <th>Configuration File</th>
+                <th>Purpose</th>
+            </tr>
+        </thead>
+        <tbody>
+            <tr>
+                <td><code>protocol.csv</code></td>
+                <td>Defines the core communication standard. It specifies whether to use <code>modbus_rtu</code> or a custom <code>framed</code> parser. For framed parsers, it dictates the header bytes, length logic, and CRC algorithms.</td>
+            </tr>
+            <tr>
+                <td><code>variables.csv</code></td>
+                <td>The dictionary of signals. Maps incoming raw bytes to physical values. Defines the data type (e.g., uint16, float32), byte order, scale/offset math, and specific register addresses or payload start bytes.</td>
+            </tr>
+            <tr>
+                <td><code>polling_schedule.csv</code></td>
+                <td>Instructs the serial worker thread which Target IDs (or Slave Addresses) to poll, and at what millisecond interval.</td>
+            </tr>
+            <tr>
+                <td><code>tx_commands.csv</code> &amp; <code>tx_command_fields.csv</code></td>
+                <td>Defines static or dynamic transmission packets, such as "Reset" commands or structured parameter updates, enabling the Parameter Editor UI to push data to the hardware.</td>
+            </tr>
+        </tbody>
+    </table>
+
+    <h2>2. Modbus RTU Implementation</h2>
+    <p>The Serial Monitor natively supports Modbus RTU standards. To enable this, ensure <code>parser_type</code> is set to <code>modbus_rtu</code> in your <code>protocol.csv</code>.</p>
+    
+    <h3>Function Codes and Memory Mapping</h3>
+    <ul>
+        <li><strong>Read Holding Registers (FC 03):</strong> Used automatically when variables are defined with <code>register_type = holding</code>.</li>
+        <li><strong>Read Input Registers (FC 04):</strong> Used automatically when variables are defined with <code>register_type = input</code>.</li>
+        <li><strong>Write Single Register (FC 06):</strong> Triggered by the Parameter Editor for 16-bit variables marked with <code>read_write = RW</code>.</li>
+        <li><strong>Write Multiple Registers (FC 16):</strong> Triggered by the Parameter Editor when writing multi-register data types, such as 32-bit floats or 32-bit integers.</li>
+    </ul>
+
+    <h3>Data Types &amp; Byte Order</h3>
+    <p>Modbus naturally transmits 16-bit registers in Big-Endian format (high byte first). When extracting larger multi-register types like <code>float32</code>, the arrangement of those registers can vary by microcontroller architecture. The <code>byte_order</code> column in <code>variables.csv</code> handles this:</p>
+    <ul>
+        <li><code>big</code> (ABCD): High word first, low word second. Standard for big-endian systems.</li>
+        <li><code>little</code> (DCBA): Low word first, high word second. Common on little-endian x86/ARM targets.</li>
+        <li><code>big_word_swap</code> (CDAB) or <code>little_word_swap</code> (BADC): Specialized middle-endian arrangements.</li>
+    </ul>
+
+    <div class="note">
+        <strong>Optimization:</strong> The polling engine automatically groups contiguous Modbus register addresses into a single bulk read request to minimize serial overhead. For example, variables at address 40001, 40002, and 40003 will trigger a single FC03 request for length 3.
+    </div>
+
+    <h2>3. Custom Framed Protocol Implementation</h2>
+    <p>If your embedded device does not use Modbus and instead broadcasts proprietary binary packets, set <code>parser_type = framed</code> in <code>protocol.csv</code>.</p>
+
+    <h3>Wire Format Structure</h3>
+    <p>The parser expects a generic envelope that must contain the following segments in exact order:</p>
+    <pre>[ Header ] + [ Frame ID ] + [ Length Byte(s) ] + [ Payload ] + [ CRC ]</pre>
+    
+    <ul>
+        <li><strong>Header:</strong> Defined by <code>header</code> (e.g., <code>AA 55</code>). The app scans the serial buffer to synchronize on these magic bytes.</li>
+        <li><strong>Frame ID:</strong> Size defined by <code>frame_id_size</code>. This ID corresponds to the <code>id_or_address</code> column in <code>variables.csv</code> to determine how to decode the payload.</li>
+        <li><strong>Length:</strong> Size defined by <code>length_size</code>. The <code>length_meaning</code> column defines whether this byte represents the <code>payload_only</code> size, or the total frame size.</li>
+        <li><strong>Payload:</strong> The raw binary data. Variables extract data from this array using their <code>start_byte</code> index.</li>
+        <li><strong>CRC:</strong> The checksum to validate integrity. Options include <code>crc16_modbus</code>, <code>crc16_ccitt</code>, and <code>crc32</code>. The <code>crc_coverage</code> column dictates which bytes are included in the math (e.g., <code>header_to_payload</code>, <code>id_to_payload</code>, <code>payload_only</code>).</li>
+    </ul>
+
+    <h3>Extracting Variables from Payload</h3>
+    <p>When a valid frame with ID <code>0x1000</code> is verified, the app checks <code>variables.csv</code>. If a variable is configured with <code>start_byte = 0</code>, <code>data_type = uint16</code>, and <code>byte_order = little</code>, the engine will extract the first two bytes of the payload, treat them as a little-endian unsigned integer, and then apply scaling math.</p>
+
+    <h3>Scaling Mathematics</h3>
+    <p>All extracted raw binary values undergo physical scaling before visualization:</p>
+    <pre>Physical_Value = (Raw_Integer_Value * scale) + offset</pre>
+    <p>For example, if the microcontroller transmits a voltage of 12.3V as the integer <code>123</code>, you would set <code>scale = 0.1</code> and <code>offset = 0.0</code>.</p>
+
+    <h2>4. Firmware C Code Examples</h2>
+    <p>Below are concrete examples of how to format and transmit packets from an embedded microcontroller using standard C code.</p>
+
+    <h3>Example: Sending a Custom Framed Packet</h3>
+    <p>Assuming <code>protocol.csv</code> is configured for <code>framed</code>, Header <code>AA 55</code>, 2-byte Frame ID (Big-Endian), 1-byte Length (Payload Only), and CRC16-Modbus (Coverage: Header to Payload).</p>
+
+<pre><code>#include &lt;stdint.h&gt;
+#include &lt;stddef.h&gt;
+
+// Mock UART TX function
+extern void uart_transmit(uint8_t* data, size_t len);
+
+// Standard CRC16-Modbus Implementation
+uint16_t crc16_modbus(const uint8_t *buffer, size_t length) {
+    uint16_t crc = 0xFFFF;
+    for (size_t i = 0; i &lt; length; i++) {
+        crc ^= buffer[i];
+        for (int j = 0; j &lt; 8; j++) {
+            if (crc &amp; 1) crc = (crc &gt;&gt; 1) ^ 0xA001;
+            else         crc = (crc &gt;&gt; 1);
+        }
+    }
+    return crc;
+}
+
+void send_telemetry(uint16_t voltage_raw, uint16_t current_raw) {
+    uint8_t buf[64];
+    size_t i = 0;
+
+    // 1. Header (AA 55)
+    buf[i++] = 0xAA;
+    buf[i++] = 0x55;
+
+    // 2. Frame ID (0x1000, Big-Endian)
+    buf[i++] = 0x10;
+    buf[i++] = 0x00;
+
+    // 3. Payload Length (4 bytes for two uint16 variables)
+    buf[i++] = 4;
+
+    // --- PAYLOAD START ---
+    // Variable 1: Voltage (uint16, Little-Endian)
+    buf[i++] = (uint8_t)( voltage_raw &amp; 0xFF );
+    buf[i++] = (uint8_t)( voltage_raw &gt;&gt; 8 );
+
+    // Variable 2: Current (uint16, Little-Endian)
+    buf[i++] = (uint8_t)( current_raw &amp; 0xFF );
+    buf[i++] = (uint8_t)( current_raw &gt;&gt; 8 );
+    // --- PAYLOAD END ---
+
+    // 4. CRC Calculation (Header to Payload)
+    uint16_t crc = crc16_modbus(buf, i);
+
+    // 5. Append CRC (Little-Endian Wire Order)
+    buf[i++] = (uint8_t)( crc &amp; 0xFF );
+    buf[i++] = (uint8_t)( crc &gt;&gt; 8 );
+
+    // 6. Transmit via UART
+    uart_transmit(buf, i);
+}
+</code></pre>
+
+    <h2>5. Testing, Debugging &amp; Fake Serial</h2>
+    <p>The Serial Monitor App includes an internal <strong>Fake Serial Engine</strong>. This is highly useful for validating your CSV configuration files before any microcontroller code is written.</p>
+    <p>To use this feature, select the <code>Fake</code> COM port in the application settings. The engine will automatically generate mock data matching your variables, construct valid packets (calculating the correct CRCs automatically), and stream them to the decoder. If the UI populates with data, your configuration matches the expected protocol layout perfectly.</p>
+
+    <div class="warning">
+        <strong>Hardware Validation:</strong> Once the Fake engine proves your CSV maps are syntactically sound, you can connect the real hardware. Use the internal Raw Hex Logger to compare the actual bytes received from your MCU against the bytes generated by the Fake engine.
+    </div>
+
+</body>
+</html>

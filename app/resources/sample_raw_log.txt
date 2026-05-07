@@ -1,0 +1,3 @@
+# Format: YYYY-MM-DD HH:MM:SS.mmm, RX|TX, hex bytes
+# CRC for the row below is verified by tests/test_crc.py.
+2026-05-04 12:37:37.125, RX, AA 55 00 10 04 0F A0 0B B8 BE 70
