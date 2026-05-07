@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import os
+import sys
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
 from typing import Deque, Dict, Optional, Tuple
 
-from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
+from PySide6.QtCore import QSettings, Qt, QTimer, QUrl, QObject, Signal
 from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QIcon, QPixmap, QFont, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -65,6 +66,16 @@ from ..protocol.packet_parser import create_parser, ParserProtocol, ParsedPacket
 from ..serial_io.replay_source import parse_log_file, replay_bytes
 from ..serial_io.serial_worker import SerialSettings, PollingWorker, available_ports
 
+class OutputLogger(QObject):
+    emit_text = Signal(str)
+
+    def write(self, text):
+        if text.strip():
+            self.emit_text.emit(text.strip())
+
+    def flush(self):
+        pass
+
 
 _COLUMNS = (
     ("Frame", 130),
@@ -109,6 +120,14 @@ class MainWindow(QMainWindow):
         self._session_started = datetime.now()
 
         self._build_ui()
+        
+        self._stdout_logger = OutputLogger()
+        self._stdout_logger.emit_text.connect(self._append_to_console)
+        sys.stdout = self._stdout_logger
+        self._stderr_logger = OutputLogger()
+        self._stderr_logger.emit_text.connect(self._append_to_console)
+        sys.stderr = self._stderr_logger
+        
         self._load_default_config()
         self._refresh_ports()
         self._refresh_action_state()
@@ -982,6 +1001,13 @@ class MainWindow(QMainWindow):
             f"timeouts: {timeouts}   "
             f"RX: {self._rx_bytes}B   TX: {self._tx_bytes}B   lat: {self._delta_t_ms:.1f}ms"
         )
+
+    def _update_counts(self) -> None:
+        if hasattr(self, "_counts_label"):
+            self._counts_label.setText(
+                f"frames: {self._packet_count}   errors/crc: {self._error_count}   "
+                f"RX: {self._rx_bytes}B   TX: {self._tx_bytes}B   lat: {self._delta_t_ms:.1f}ms"
+            )
         
     def _on_tx_recorded(self, packet: bytes) -> None:
         self._tx_bytes += len(packet)
@@ -1167,12 +1193,15 @@ class MainWindow(QMainWindow):
         if self._raw_logger:
             self._raw_logger.log("RX", packet.raw, delta_t_ms=self._delta_t_ms)
         if not packet.ok:
+            print(f"[DEBUG] Packet NOT ok: {packet.error}")
             self._error_count += 1
             self._update_counts()
             return
 
+        print(f"[DEBUG] Packet OK: {packet.frame_id} payload: {packet.payload.hex()}")
         assert self._config is not None
         decoded = decode_frame(self._config, packet.frame_id, packet.payload)
+        print(f"[DEBUG] Decoded frame signals count: {len(decoded.signals)}")
         self._apply_decoded(decoded)
         if self._decoded_logger:
             self._decoded_logger.log_frame(self._packet_count, decoded)
@@ -1377,6 +1406,7 @@ class MainWindow(QMainWindow):
         elapsed = (datetime.now() - self._session_started).total_seconds()
         for signal in [*decoded.signals, *decoded.calculations]:
             row = self._row_index.get((signal.frame_id, signal.signal_name))
+            print(f"[DEBUG] applying signal {signal.signal_name}: row={row}, raw={signal.raw_value}, scaled={signal.scaled_value}")
             if row is None:
                 row = self._table.rowCount()
                 self._add_signal_row(
@@ -1391,6 +1421,7 @@ class MainWindow(QMainWindow):
                 )
             raw_text = "-" if signal.raw_value is None else _format_number(signal.raw_value)
             value_text = "-" if signal.scaled_value is None else _format_number(signal.scaled_value)
+            print(f"[DEBUG] updating row {row}: raw_text={raw_text}, value_text={value_text}")
             self._set_cell(row, 4, raw_text)
             self._set_cell(row, 5, signal.display_value or value_text)
             self._set_cell(row, 7, self._status_text(signal))
@@ -1631,6 +1662,20 @@ class MainWindow(QMainWindow):
         self._clear_action.setEnabled(ready)
         self._logging_action.setEnabled(ready)
 
+    def _set_connection_ui(self, connected: bool) -> None:
+        text = "Disconnect" if connected else "Connect"
+        self._connect_action.setText(text)
+        if hasattr(self, "_connect_button"):
+            self._connect_button.setText(text)
+        self._port_combo.setEnabled(not connected)
+        self._baud_combo.setEnabled(not connected)
+        self._data_bits_combo.setEnabled(not connected)
+        self._stop_bits_combo.setEnabled(not connected)
+        self._parity_combo.setEnabled(not connected)
+        self._timeout_combo.setEnabled(not connected)
+        if hasattr(self, "_connection_label"):
+            self._connection_label.setText(f"Serial: {'connected' if connected else 'disconnected'}")
+
     def _set_status(self, text: str) -> None:
         self._status_label.setText(text)
 
@@ -1641,6 +1686,10 @@ class MainWindow(QMainWindow):
         self._activity_log.appendPlainText(f"{timestamp}  {text}")
 
 
+
+    def _append_to_console(self, text: str) -> None:
+        if hasattr(self, "_console"):
+            self._console.appendPlainText(text)
 
     def _format_console_row(self, packet: ParsedPacket) -> str:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]

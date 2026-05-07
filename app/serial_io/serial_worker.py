@@ -134,6 +134,7 @@ class PollingWorker(QThread):
                     w = self._serial.in_waiting
                     if w > 0:
                         data = self._serial.read(w)
+                        print(f"[DEBUG] serial read {len(data)} bytes: {data.hex()}")
                         self._rx_bytes += len(data)
                         self._parser.feed(data)
                         for p in self._parser.extract_all():
