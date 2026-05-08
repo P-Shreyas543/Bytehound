@@ -13,7 +13,9 @@
       "Bash(python -c \"import qtawesome; print\\(qtawesome.__version__\\)\")",
       "Bash(python -c \"import ast; ast.parse\\(open\\(r'c:\\\\Users\\\\Shreyas\\\\Documents\\\\Python\\\\BMS-MonitorApp\\\\app\\\\ui\\\\main_window.py', encoding='utf-8'\\).read\\(\\)\\); print\\('parse ok'\\)\")",
       "Bash(python -c \"from app.ui.main_window import MainWindow, _icon, _StatusBadgeDelegate; print\\('imports ok'\\)\")",
-      "Bash(python -c \"from app.ui.main_window import MainWindow, _icon, _StatusBadgeDelegate, TitleBarThemeFilter, _PLOT_PALETTE; print\\('imports ok'\\); print\\('badge colors:', _StatusBadgeDelegate._GREEN.name\\(\\), _StatusBadgeDelegate._RED.name\\(\\), _StatusBadgeDelegate._ORANGE.name\\(\\)\\)\")"
+      "Bash(python -c \"from app.ui.main_window import MainWindow, _icon, _StatusBadgeDelegate, TitleBarThemeFilter, _PLOT_PALETTE; print\\('imports ok'\\); print\\('badge colors:', _StatusBadgeDelegate._GREEN.name\\(\\), _StatusBadgeDelegate._RED.name\\(\\), _StatusBadgeDelegate._ORANGE.name\\(\\)\\)\")",
+      "PowerShell(python -m pytest -q --tb=short 2>&1)",
+      "PowerShell(python scratch\\\\smoke_gui.py 2>&1)"
     ]
   }
 }
