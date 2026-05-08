@@ -41,6 +41,22 @@ class RawLogger:
     def open(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         new_file = not self.path.exists() or self.path.stat().st_size == 0
+
+        # Refuse to append to an existing file whose header does not match
+        # the current schema. Silently writing rows with a different column
+        # count corrupts the CSV (header says 3 cols, data has 4) and breaks
+        # pandas, Excel, and the app's own replay parser.
+        if not new_file:
+            with self.path.open("r", encoding="utf-8") as fp:
+                first_line = fp.readline().strip()
+            existing = [c.strip() for c in first_line.split(",")] if first_line else []
+            if existing != self.COLUMNS:
+                raise ValueError(
+                    f"Cannot append to {self.path.name}: existing header "
+                    f"{existing} does not match expected {self.COLUMNS}. "
+                    f"Choose a new filename or delete the old log."
+                )
+
         self._fp = self.path.open("a", encoding="utf-8", newline="")
         self._writer = csv.writer(self._fp)
         self._last_flush = time.monotonic()

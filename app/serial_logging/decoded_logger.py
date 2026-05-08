@@ -54,6 +54,20 @@ class DecodedLogger:
     def open(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         new_file = not self.path.exists() or self.path.stat().st_size == 0
+
+        # Same header-match check as RawLogger — refuse to append rows to a
+        # file whose header was written by a different schema version.
+        if not new_file:
+            with self.path.open("r", encoding="utf-8") as fp:
+                first_line = fp.readline().strip()
+            existing = [c.strip() for c in first_line.split(",")] if first_line else []
+            if existing != self.COLUMNS:
+                raise ValueError(
+                    f"Cannot append to {self.path.name}: existing header "
+                    f"{existing} does not match expected {self.COLUMNS}. "
+                    f"Choose a new filename or delete the old log."
+                )
+
         self._fp = self.path.open("a", encoding="utf-8", newline="")
         self._writer = csv.DictWriter(self._fp, fieldnames=self.COLUMNS)
         self._last_flush = time.monotonic()

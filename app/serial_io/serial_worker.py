@@ -186,6 +186,11 @@ class PollingWorker(QThread):
             for s in self._schedules:
                 if s["spec"].target_id == target_id:
                     s["enabled"] = enabled
+                    # Re-enabling a previously-failed schedule clears the
+                    # "already reported" flag so a subsequent build error is
+                    # surfaced again instead of staying silent.
+                    if enabled:
+                        s.pop("_failed_reported", None)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -335,10 +340,13 @@ class PollingWorker(QThread):
 
         if self.protocol.parser_type == "modbus_rtu":
             from ..protocol.packet_builder import build_modbus_packet
-            req = build_modbus_packet(self.protocol, target_id, b"")
-            self._serial.write(req)
-            self.tx_recorded.emit(req)
-            self._await_modbus_response(req, target_id, timeout_ms)
+            try:
+                req = build_modbus_packet(self.protocol, target_id, b"")
+                self._serial.write(req)
+                self.tx_recorded.emit(req)
+                self._await_modbus_response(req, target_id, timeout_ms)
+            except ValueError as exc:
+                self._disable_failed_schedule(sched, exc)
         else:
             from ..protocol.packet_builder import build_packet
             try:
@@ -346,8 +354,23 @@ class PollingWorker(QThread):
                 self._serial.write(req)
                 self.tx_recorded.emit(req)
                 self._await_response(timeout_ms, target_id)
-            except ValueError:
-                pass
+            except ValueError as exc:
+                # Most common cause: target_id does not fit in the configured
+                # frame_id_size, or the protocol config is otherwise malformed.
+                # Without this guard, polling kept retrying every interval and
+                # silently failed forever.
+                self._disable_failed_schedule(sched, exc)
+
+    def _disable_failed_schedule(self, sched: dict, exc: BaseException) -> None:
+        """Disable a schedule that cannot build its request, reporting once."""
+        target_id = sched["spec"].target_id
+        if not sched.get("_failed_reported"):
+            self.error_occurred.emit(
+                f"Polling for 0x{target_id:X} disabled — could not build "
+                f"request: {exc}"
+            )
+            sched["_failed_reported"] = True
+        sched["enabled"] = False
 
     def _await_modbus_response(self, req: bytes, target_id: Optional[int], timeout_ms: int = 100) -> None:
         self._await_response(timeout_ms, target_id)

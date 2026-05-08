@@ -2247,6 +2247,24 @@ class MainWindow(QMainWindow):
         self._raw_logger = RawLogger(raw_path) if raw_path else None
         self._decoded_logger = DecodedLogger(decoded_path) if decoded_path else None
 
+        # Open eagerly so header-mismatch / permission errors surface here as
+        # a popup, instead of being raised inside the 60 Hz UI flush callback
+        # (which would crash the event loop) when the first packet arrives.
+        try:
+            if self._raw_logger:
+                self._raw_logger.open()
+            if self._decoded_logger:
+                self._decoded_logger.open()
+        except (ValueError, OSError) as exc:
+            if self._raw_logger:
+                self._raw_logger.close()
+                self._raw_logger = None
+            if self._decoded_logger:
+                self._decoded_logger.close()
+                self._decoded_logger = None
+            self._popup_critical("Start Logging", f"Could not open log file:\n\n{exc}")
+            return
+
         if self._config_path is not None:
             snapshot_config(self._config_path, base.with_name(f"{base_stem}_session"))
 
