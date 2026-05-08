@@ -87,7 +87,10 @@ class PollingWorker(QThread):
         self._stop_event = threading.Event()          # thread-safe shutdown flag
         self._polling_global_enabled = False
 
-        self._priority_tx_queue: queue.Queue[bytes] = queue.Queue()
+        # Bounded queue so a buggy UI loop pushing TX commands faster than
+        # the worker can drain them cannot grow without limit and OOM.
+        # 256 is a generous cap — far above any human-driven rate.
+        self._priority_tx_queue: queue.Queue[bytes] = queue.Queue(maxsize=256)
         self._mutex = QMutex()
 
         self._timeouts = 0
@@ -148,11 +151,35 @@ class PollingWorker(QThread):
             self._serial = None
 
     def enqueue_priority_tx(self, data: bytes) -> None:
-        self._priority_tx_queue.put(data)
+        try:
+            self._priority_tx_queue.put_nowait(data)
+        except queue.Full:
+            # Drop and surface — a full queue means the UI is generating TX
+            # commands faster than the wire can carry them. Better to lose one
+            # command than silently grow memory unbounded.
+            self.error_occurred.emit(
+                "TX queue full — command dropped (UI is sending faster than the link can sustain)."
+            )
 
     def set_polling_global(self, enabled: bool) -> None:
         with QMutexLocker(self._mutex):
             self._polling_global_enabled = enabled
+
+    def reset_metrics(self) -> None:
+        """Zero the worker-owned counters (timeouts / crc_errors / rx_bytes).
+
+        The worker is the single source of truth for these counters and
+        broadcasts them via metrics_updated. Without this method, a UI-side
+        "clear" only zeros the displayed values for one frame — the next
+        emission snaps them back to the worker's running totals.
+        """
+        with QMutexLocker(self._mutex):
+            self._timeouts = 0
+            self._crc_errors = 0
+            self._rx_bytes = 0
+        # Push the cleared values out immediately so the UI doesn't have to
+        # wait for the next packet before reflecting the reset.
+        self.metrics_updated.emit(0, 0, 0)
 
     def toggle_schedule(self, target_id: int, enabled: bool) -> None:
         with QMutexLocker(self._mutex):

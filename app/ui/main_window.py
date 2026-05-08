@@ -1901,6 +1901,20 @@ class MainWindow(QMainWindow):
             self._load_config_from_path(path)
         except ConfigError as exc:
             self._popup_critical("Config error", str(exc))
+            return
+
+        # The running PollingWorker captured its protocol/parser/schedules at
+        # construction time. Loading a new config replaces self._config and
+        # self._parser (used by replay), but the worker keeps decoding live
+        # bytes with the OLD rules until it is restarted. Tell the user.
+        if self._serial is not None and self._serial.is_open:
+            self._popup_information(
+                "Reconnect required",
+                "The new configuration is loaded for the UI, but the live "
+                "serial connection is still using the previous protocol and "
+                "polling schedule. Disconnect and reconnect to apply the new "
+                "settings on the wire.",
+            )
 
     def _load_config_from_path(self, path: Path) -> None:
         # Keep a snapshot so we can revert on failure
@@ -1921,10 +1935,13 @@ class MainWindow(QMainWindow):
         self._plot_history.clear()
         self._packet_count = 0
         self._error_count = 0
+        self._timeouts = 0
         self._rx_bytes = 0
         self._tx_bytes = 0
         self._delta_t_ms = 0.0
         self._last_packet_perf = None
+        if self._serial is not None:
+            self._serial.reset_metrics()
         self._console.clear()
         self._populate_table_from_config()
         self._populate_group_selector()
@@ -2271,10 +2288,15 @@ class MainWindow(QMainWindow):
         self._console.clear()
         self._packet_count = 0
         self._error_count = 0
+        self._timeouts = 0
         self._rx_bytes = 0
         self._tx_bytes = 0
         self._delta_t_ms = 0.0
         self._last_packet_perf = None
+        # Also clear the worker-owned counters so they don't snap back on the
+        # next metrics_updated emission. No-op when not connected.
+        if self._serial is not None:
+            self._serial.reset_metrics()
         self._plot_history.clear()
         self._bitfield_table.setRowCount(0)
         self._enum_table.setRowCount(0)
