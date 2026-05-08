@@ -326,7 +326,7 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <ol>
         <li>Ensure you are connected and receiving data.</li>
         <li>Click <strong>Device → Start Logging</strong> (or use the toolbar). The button turns <span style="color:#e91e8c"><strong>pink</strong></span> while logging is active.</li>
-        <li>The app records all incoming traffic to two files under <code>~/Documents/Serial-MonitorApp/Logs/</code>:
+        <li>The app records all incoming traffic to two files under <code>~/Documents/Decibels/Serial-MonitorApp/</code>:
             <ul>
                 <li><code>*_raw.csv</code> — timestamped hex frames (byte-perfect replay source)</li>
                 <li><code>*_decoded.csv</code> — one row per signal per frame (for Excel/Python analysis)</li>
@@ -366,7 +366,7 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
 
     <hr>
 
-    <h3 id="sheet-protocol">Sheet 1 — Protocol</h3>
+    <h3 id="config-protocol">Sheet 1 — Protocol</h3>
     <p>Defines the wire-level packet structure. <strong>Exactly one row must have <code>enabled = TRUE</code>.</strong> Do not edit this sheet unless you designed the packet format.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
