@@ -923,7 +923,7 @@ class MainWindow(QMainWindow):
         self._analysis_window.raise_()
         self._analysis_window.activateWindow()
 
-    def _on_update_available(self, version: str, url: str, release_notes: str) -> None:
+    def _on_update_available(self, version: str, url: str, release_notes: str, sha256: str) -> None:
         reply = self._popup_question(
             "Update Available",
             (
@@ -934,16 +934,16 @@ class MainWindow(QMainWindow):
             buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            self._download_update(url)
+            self._download_update(url, sha256)
 
-    def _download_update(self, url: str) -> None:
+    def _download_update(self, url: str, sha256: str) -> None:
         self._progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
         self._progress.setWindowTitle("Updater")
         self._progress.setWindowModality(Qt.WindowModality.WindowModal)
         self._progress.show()
 
         dest_path = str(Path(os.environ.get("TEMP", ".")) / f"{APP_NAME}_Update.exe")
-        self._downloader = UpdateDownloader(url, dest_path)
+        self._downloader = UpdateDownloader(url, dest_path, expected_sha256=sha256)
         self._downloader.progress.connect(self._on_download_progress)
         self._downloader.finished.connect(self._on_download_finished)
         self._downloader.error.connect(

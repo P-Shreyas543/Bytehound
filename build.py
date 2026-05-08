@@ -116,12 +116,12 @@ def make_zip() -> Path:
     return zip_path
 
 
-def run_inno_setup() -> int:
-    """Compile installer.iss with Inno Setup (ISCC.exe) if available."""
+def run_inno_setup() -> tuple[int, Path | None]:
+    """Compile installer.iss with Inno Setup. Returns (rc, installer_path)."""
     iss = ROOT / "installer.iss"
     if not iss.exists():
         print("[build] installer.iss not found; skipping installer step")
-        return 0
+        return 0, None
 
     # Common Inno Setup install locations
     iscc_candidates = [
@@ -133,24 +133,25 @@ def run_inno_setup() -> int:
     if iscc is None:
         print("[build] WARNING: Inno Setup not found. Skipping .exe installer creation.")
         print("[build]   Install from https://jrsoftware.org/isinfo.php then re-run.")
-        return 0
+        return 0, None
 
     out_dir = ROOT / "installer_output"
     out_dir.mkdir(exist_ok=True)
     cmd = [str(iscc), str(iss)]
     print(f"[build] running Inno Setup: {' '.join(cmd)}")
     rc = subprocess.call(cmd, cwd=ROOT)
-    if rc == 0:
-        version = read_version()
-        installer = out_dir / f"SerialMonitor_Setup_{version}.exe"
-        if installer.exists():
-            size_mb = installer.stat().st_size / (1024 * 1024)
-            print(f"[build] installer ready: {installer}  ({size_mb:.1f} MB)")
-        else:
-            print(f"[build] installer built in {out_dir}/")
-    else:
+    if rc != 0:
         print(f"[build] Inno Setup FAILED with exit code {rc}", file=sys.stderr)
-    return rc
+        return rc, None
+
+    version = read_version()
+    installer = out_dir / f"SerialMonitor_Setup_{version}.exe"
+    if installer.exists():
+        size_mb = installer.stat().st_size / (1024 * 1024)
+        print(f"[build] installer ready: {installer}  ({size_mb:.1f} MB)")
+        return rc, installer
+    print(f"[build] installer built in {out_dir}/ but expected file not found")
+    return rc, None
 
 
 def main() -> int:
@@ -180,10 +181,22 @@ def main() -> int:
     print(f"\n[build] done. exe at: {exe}")
 
     copy_branding()
-    write_sha256(exe)   # auto-updates version.json sha256
 
+    # Build the installer FIRST, then hash whichever artifact end-users will
+    # actually download. version.json's installer_url points at the Inno Setup
+    # output, so the sha256 must match that file (not the inner bundled exe)
+    # for the auto-updater integrity check to be meaningful.
+    installer_path: Path | None = None
     if not args.no_installer:
-        run_inno_setup()
+        _rc, installer_path = run_inno_setup()
+
+    if installer_path is not None:
+        write_sha256(installer_path)
+    else:
+        print("[build] WARNING: no installer produced; hashing inner exe as fallback.")
+        print("[build]   Auto-updater integrity verification will be inaccurate until")
+        print("[build]   you install Inno Setup and rebuild.")
+        write_sha256(exe)
 
     if not args.no_zip:
         try:

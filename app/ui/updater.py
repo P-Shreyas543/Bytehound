@@ -1,5 +1,6 @@
 """Auto-updater logic for Serial-MonitorApp."""
 
+import hashlib
 import json
 import os
 import subprocess
@@ -23,7 +24,7 @@ def get_current_version() -> str:
 
 class UpdateChecker(QThread):
     """Checks a remote version.json for updates."""
-    update_available = Signal(str, str, str)  # version, installer_url, release_notes
+    update_available = Signal(str, str, str, str)  # version, installer_url, release_notes, sha256
     error = Signal(str)
     up_to_date = Signal()
 
@@ -31,7 +32,7 @@ class UpdateChecker(QThread):
         try:
             with open(VERSION_FILE, "r", encoding="utf-8") as f:
                 local_data = json.load(f)
-            
+
             manifest_url = local_data.get("manifest_url", "")
             if not manifest_url:
                 self.error.emit("No manifest URL configured in version.json.")
@@ -40,38 +41,42 @@ class UpdateChecker(QThread):
             req = urllib.request.Request(manifest_url, headers={'User-Agent': 'Serial-MonitorApp-Updater'})
             with urllib.request.urlopen(req, timeout=5) as response:
                 remote_data = json.loads(response.read().decode("utf-8"))
-                
+
             remote_version = remote_data.get("version", "0.0.0")
             local_version = local_data.get("version", "0.0.0")
-            
+
             # Simple string comparison works for X.Y.Z if zero-padded or uniform
             # Consider using 'packaging.version' in a real environment
             if [int(x) for x in remote_version.split('.')] > [int(x) for x in local_version.split('.')]:
                 self.update_available.emit(
-                    remote_version, 
-                    remote_data.get("installer_url", ""), 
-                    remote_data.get("release_notes", "")
+                    remote_version,
+                    remote_data.get("installer_url", ""),
+                    remote_data.get("release_notes", ""),
+                    remote_data.get("sha256", ""),
                 )
             else:
                 self.up_to_date.emit()
-                
+
         except Exception as e:
             self.error.emit(str(e))
 
 
 class UpdateDownloader(QThread):
-    """Downloads the new installer."""
+    """Downloads the new installer and verifies its sha256 before signaling done."""
     progress = Signal(int, int)
     finished = Signal(str)
     error = Signal(str)
 
-    def __init__(self, url: str, dest_path: str):
+    def __init__(self, url: str, dest_path: str, expected_sha256: str = ""):
         super().__init__()
         self.url = url
         self.dest_path = dest_path
+        # Stored lower-case so the comparison is case-insensitive.
+        self.expected_sha256 = (expected_sha256 or "").strip().lower()
 
     def run(self) -> None:
         try:
+            hasher = hashlib.sha256()
             req = urllib.request.Request(self.url, headers={'User-Agent': 'Serial-MonitorApp-Updater'})
             with urllib.request.urlopen(req, timeout=10) as response:
                 total_size = int(response.getheader('Content-Length', 0))
@@ -84,11 +89,37 @@ class UpdateDownloader(QThread):
                         if not chunk:
                             break
                         f.write(chunk)
+                        hasher.update(chunk)
                         downloaded += len(chunk)
                         if total_size > 0:
                             self.progress.emit(downloaded, total_size)
-            if not self.isInterruptionRequested():
-                self.finished.emit(self.dest_path)
+            if self.isInterruptionRequested():
+                return
+
+            if self.expected_sha256:
+                actual = hasher.hexdigest().lower()
+                if actual != self.expected_sha256:
+                    # Refuse to launch a tampered binary — delete it so a stale
+                    # file in TEMP can't be opened manually by the user later.
+                    try:
+                        os.remove(self.dest_path)
+                    except OSError:
+                        pass
+                    self.error.emit(
+                        "Downloaded installer failed integrity check.\n"
+                        f"Expected sha256: {self.expected_sha256}\n"
+                        f"Actual sha256:   {actual}"
+                    )
+                    return
+            else:
+                # No checksum in remote manifest — refuse silently-launched install.
+                self.error.emit(
+                    "Remote manifest is missing a sha256 entry; refusing to install "
+                    "an unverified binary."
+                )
+                return
+
+            self.finished.emit(self.dest_path)
         except Exception as e:
             self.error.emit(str(e))
 
