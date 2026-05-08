@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -710,7 +711,11 @@ class MainWindow(QMainWindow):
         self._config_path: Optional[Path] = None
         self._parser: Optional[ParserProtocol] = None
         self._serial: Optional[PollingWorker] = None
+        # Inter-packet latency in milliseconds — time between consecutive RX
+        # frames reaching _handle_packet. _last_packet_perf is the perf_counter
+        # timestamp of the previous packet, or None before the first packet.
         self._delta_t_ms = 0.0
+        self._last_packet_perf: Optional[float] = None
         self._row_index: Dict[Tuple[int, str], int] = {}
         self._packet_count = 0
         self._error_count = 0
@@ -1918,6 +1923,8 @@ class MainWindow(QMainWindow):
         self._error_count = 0
         self._rx_bytes = 0
         self._tx_bytes = 0
+        self._delta_t_ms = 0.0
+        self._last_packet_perf = None
         self._console.clear()
         self._populate_table_from_config()
         self._populate_group_selector()
@@ -2266,6 +2273,8 @@ class MainWindow(QMainWindow):
         self._error_count = 0
         self._rx_bytes = 0
         self._tx_bytes = 0
+        self._delta_t_ms = 0.0
+        self._last_packet_perf = None
         self._plot_history.clear()
         self._bitfield_table.setRowCount(0)
         self._enum_table.setRowCount(0)
@@ -2346,11 +2355,21 @@ class MainWindow(QMainWindow):
 
     def _handle_packet(self, packet: ParsedPacket) -> None:
         self._packet_count += 1
+        now = time.perf_counter()
+        if self._last_packet_perf is not None:
+            self._delta_t_ms = (now - self._last_packet_perf) * 1000.0
+        self._last_packet_perf = now
         self._console.appendPlainText(self._format_console_row(packet))
         if self._raw_logger:
             self._raw_logger.log("RX", packet.raw, delta_t_ms=self._delta_t_ms)
         if not packet.ok:
-            self._error_count += 1
+            # During live, the worker is the single source of truth for the CRC
+            # error count and pushes it via metrics_updated → _on_metrics_updated.
+            # Counting again here would double-count and produce a 0↔1 flicker
+            # as the two writes race. In replay mode there is no worker, so we
+            # do the bookkeeping ourselves.
+            if self._serial is None:
+                self._error_count += 1
             self._update_counts()
             return
 
@@ -2610,8 +2629,11 @@ class MainWindow(QMainWindow):
 
     def _apply_decoded(self, decoded: DecodedFrame) -> None:
         if decoded.error is not None:
+            # Decode-time issues (e.g. "no signals configured for frame_id …")
+            # are surfaced in the console for the user to investigate. They are
+            # NOT counted in the status-bar "Errors" tally — that field tracks
+            # wire-level CRC failures only.
             self._console.appendPlainText(f"[decode] {decoded.error}")
-            self._error_count += 1
             return
         for warning in decoded.warnings:
             self._console.appendPlainText(f"[decode warning] {warning}")
@@ -2658,8 +2680,10 @@ class MainWindow(QMainWindow):
 
             if signal.scaled_value is not None and signal.status == "ok":
                 self._plot_history[key].append((elapsed, signal.scaled_value))
-            if signal.status != "ok":
-                self._error_count += 1
+            # Per-signal decode failures (e.g. "Payload too short") are visible
+            # via the row's status pill; we deliberately do NOT increment the
+            # status-bar Errors counter for them — that field is reserved for
+            # wire-level CRC failures, sourced from the worker.
         # NOTE: _redraw_plot() is intentionally NOT called here.
         # It is called once per batch in _flush_ui() to avoid per-packet redraws.
 
