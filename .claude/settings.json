@@ -15,7 +15,13 @@
       "Bash(python -c \"from app.ui.main_window import MainWindow, _icon, _StatusBadgeDelegate; print\\('imports ok'\\)\")",
       "Bash(python -c \"from app.ui.main_window import MainWindow, _icon, _StatusBadgeDelegate, TitleBarThemeFilter, _PLOT_PALETTE; print\\('imports ok'\\); print\\('badge colors:', _StatusBadgeDelegate._GREEN.name\\(\\), _StatusBadgeDelegate._RED.name\\(\\), _StatusBadgeDelegate._ORANGE.name\\(\\)\\)\")",
       "PowerShell(python -m pytest -q --tb=short 2>&1)",
-      "PowerShell(python scratch\\\\smoke_gui.py 2>&1)"
+      "PowerShell(python scratch\\\\smoke_gui.py 2>&1)",
+      "Bash(git -C \"c:\\\\Users\\\\Shreyas\\\\Documents\\\\Python\\\\BMS-MonitorApp\" diff --stat HEAD)",
+      "Read(//c/Program Files \\(x86\\)/Inno Setup 6/**)",
+      "PowerShell($paths = @\\('C:\\\\Program Files \\(x86\\)\\\\Inno Setup 6\\\\ISCC.exe','C:\\\\Program Files\\\\Inno Setup 6\\\\ISCC.exe','C:\\\\Program Files \\(x86\\)\\\\Inno Setup 5\\\\ISCC.exe'\\); foreach \\($p in $paths\\) { if \\(Test-Path $p\\) { Write-Output \"FOUND: $p\" } else { Write-Output \"miss : $p\" } }; Write-Output \"---\"; Get-Command iscc -ErrorAction SilentlyContinue | Format-List Source)",
+      "PowerShell(python -c \"import build; print\\('zip ok:', build.make_zip\\(\\)\\)\")",
+      "PowerShell($exe = \"dist\\\\Serial-MonitorApp\\\\Serial-MonitorApp.exe\"; $expected = \\(Get-Content version.json | ConvertFrom-Json\\).sha256; $actual = \\(Get-FileHash $exe -Algorithm SHA256\\).Hash.ToLower\\(\\); if \\($actual -eq $expected\\) { Write-Output \"sha256 MATCH: $actual\" } else { Write-Output \"sha256 MISMATCH\"; Write-Output \"  expected: $expected\"; Write-Output \"  actual:   $actual\" }; Write-Output \"exe size MB: $\\([math]::Round\\(\\(Get-Item $exe\\).Length/1MB,2\\)\\)\")",
+      "PowerShell($proc = Start-Process -FilePath \"dist\\\\Serial-MonitorApp\\\\Serial-MonitorApp.exe\" -PassThru; Start-Sleep -Seconds 6; if \\($proc.HasExited\\) { Write-Output \"EXE EXITED EARLY \\(rc=$\\($proc.ExitCode\\)\\)\" } else { Write-Output \"EXE RUNNING \\(pid=$\\($proc.Id\\)\\)\"; $proc | Stop-Process -Force; Start-Sleep -Seconds 1; Write-Output \"EXE killed cleanly\" })"
     ]
   }
 }

@@ -98,7 +98,9 @@ def make_zip() -> Path:
 
     version = read_version()
     zip_base = ROOT / "dist" / f"{APP_NAME}_{version}"
-    zip_path = zip_base.with_suffix(".zip")
+    # NOTE: don't use Path.with_suffix here — versions like "0.1.0" make Path
+    # treat the trailing ".0" as the suffix, yielding the wrong filename.
+    zip_path = zip_base.parent / f"{zip_base.name}.zip"
     if zip_path.exists():
         zip_path.unlink()
 
