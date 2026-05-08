@@ -1095,13 +1095,51 @@ Two ad-hoc scripts at the repo root are useful for manual verification on a mach
 with a real device attached. They are **not** part of the pytest suite:
 
 - [test_com7.py](test_com7.py) — quick serial decode smoke test (defaults to `COM7` @ `115200`).
-- [test_headless.py](test_headless.py) — headless (no GUI) run that exercises `PollingWorker`, TX enqueue, loggers, and the replay engine.
+- [test_headless.py](test_headless.py) — headless (no GUI) end-to-end run that exercises every protocol-layer feature against a real serial device.
 
 Run:
 
 ```powershell
-python test_headless.py
+python test_headless.py --port COM7 --seconds 6 --target-voltage 58.5
 ```
+
+The script exits with a non-zero code equal to the number of failed checks, and prints a `PASSED / FAILED` summary. It groups checks into eight sections:
+
+| § | Section | What it verifies |
+|---|---------|------------------|
+| 0 | Config sanity | `0x3000` frame, `Status_Bits` bitfield (8 named bits), `Mode` enum (5 labels), `Set_Voltage_Limit` field schema |
+| 1 | Parameter editor (offline) | `build_tx_command("Set_Voltage_Limit", {"voltage_v": 58.5})` produces byte-exact packet `AA5501200249023C9EEE`; out-of-range values (e.g. 99 V) are rejected by `min_value`/`max_value` |
+| 2 | Live serial | `PollingWorker` opens the port and runs for the configured duration |
+| 3 | Polling | Frames `0x1000`, `0x2000`, `0x3000` all received with zero CRC errors |
+| 4 | Bitfields | `Status_Bits` `bit_values` dict contains all 8 named bits from `bitfields.csv` |
+| 5 | Enums | `Mode` `enum_label` resolves to one of `{Idle, Charging, Discharging, Fault, Service}` |
+| 6 | TX commands | Both `Reset` (static payload) and `Set_Voltage_Limit` (parameterized) appear in `tx_recorded` |
+| 7 | Round-trip | After `Set_Voltage_Limit(58.5 V)` the simulator's next `0x2000` frame reflects the new value (closes the parameter-editor loop end-to-end) |
+| 8 | Logger / replay | `*_raw.csv` re-parses with zero errors and `replay_bytes()` yields the captured RX bytes |
+
+### Arduino BMS Simulator
+
+[Arduino_BMS_Simulator/Arduino_BMS_Simulator.ino](Arduino_BMS_Simulator/Arduino_BMS_Simulator.ino) is a single-file sketch for any Arduino with hardware Serial (e.g. Mega 2560). It is the reference fixture for `test_headless.py`. It implements:
+
+**TX (board → PC), continuous streams:**
+
+| Frame | Cadence | Payload |
+|------|--------|---------|
+| `0x1000 BMS_Status`   | 100 ms | `uint16 Voltage` LE (scale 0.1) + `int16 Current` LE (scale 0.1) |
+| `0x2000 BMS_Settings` | 500 ms | `uint16 Voltage_Limit` LE (scale 0.1) |
+| `0x3000 Status_Flags` | 200 ms | `uint8 Status_Bits` (bitfield, 8 named bits) + `uint8 Mode` (enum 0..4) |
+
+**RX (PC → board), command handlers:**
+
+| Frame | Payload | Behavior |
+|------|---------|----------|
+| `0x1000 / 0x2000 / 0x3000` (length 0) | — | Empty-payload poll; replies with the corresponding telemetry frame immediately |
+| `0x1001 Reset`              | `FF FF`           | Resets `Voltage`, `Current`, `Status_Bits`, `Mode` to defaults |
+| `0x2001 Set_Voltage_Limit`  | `uint16 LE` (scale 0.1, range 40.0–60.0 V) | Updates the streamed `Voltage_Limit` and re-emits `0x2000` immediately so the round-trip is observable in one tick |
+
+The sketch contains a byte-by-byte RX state machine that validates the full frame (header `AA 55`, frame ID LE, length, payload, CRC16 Modbus LE, footer `EE`) before dispatching to a command handler. Bytes that fail any check are silently discarded and the parser resyncs on the next `AA 55`.
+
+Flash via Arduino IDE 1.8 / 2.x at 115200 baud; no external libraries.
 
 ---
 
