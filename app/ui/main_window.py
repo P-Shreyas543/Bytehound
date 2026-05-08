@@ -452,7 +452,210 @@ QHeaderView::section:hover {
 """
 
 
+# ---------------------------------------------------------------------------
+# Configuration dialogs
+# ---------------------------------------------------------------------------
+
+class ConnectionDialog(QDialog):
+    """Modal dialog for configuring and opening a serial connection.
+
+    Pre-populates all fields from ``QSettings`` so the user's last-used
+    port/baud/etc. are remembered between sessions.  On Accept the chosen
+    values are persisted back to ``QSettings`` and exposed via
+    ``get_settings()``.
+    """
+
+    def __init__(self, settings: QSettings, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Serial Connection Settings")
+        self.setMinimumWidth(360)
+        self._settings = settings
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        # Port row with inline Refresh button
+        port_row = QWidget(self)
+        port_hl = QHBoxLayout(port_row)
+        port_hl.setContentsMargins(0, 0, 0, 0)
+        self._port_combo = QComboBox(port_row)
+        self._port_combo.setMinimumWidth(180)
+        refresh_btn = QPushButton("⟳", port_row)
+        refresh_btn.setFixedWidth(28)
+        refresh_btn.setToolTip("Refresh port list")
+        refresh_btn.clicked.connect(self._refresh_ports)
+        port_hl.addWidget(self._port_combo, 1)
+        port_hl.addWidget(refresh_btn)
+
+        self._baud_combo = QComboBox(self)
+        self._baud_combo.addItems(["9600", "19200", "38400", "57600", "115200",
+                                    "230400", "460800", "921600"])
+
+        self._data_bits_combo = QComboBox(self)
+        self._data_bits_combo.addItems(["8", "7"])
+
+        self._stop_bits_combo = QComboBox(self)
+        self._stop_bits_combo.addItems(["1", "1.5", "2"])
+
+        self._parity_combo = QComboBox(self)
+        self._parity_combo.addItems(["N", "E", "O"])
+
+        self._timeout_combo = QComboBox(self)
+        self._timeout_combo.addItems(["20", "50", "100", "250", "500", "1000"])
+
+        form.addRow("Port", port_row)
+        form.addRow("Baud rate", self._baud_combo)
+        form.addRow("Data bits", self._data_bits_combo)
+        form.addRow("Stop bits", self._stop_bits_combo)
+        form.addRow("Parity", self._parity_combo)
+        form.addRow("Timeout (ms)", self._timeout_combo)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Connect")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._refresh_ports()
+        self._restore_from_settings()
+
+    # ------------------------------------------------------------------
+    def _refresh_ports(self) -> None:
+        current = self._port_combo.currentData(Qt.ItemDataRole.UserRole) or ""
+        ports = list(available_ports())
+        self._port_combo.clear()
+        if ports:
+            for device, description in ports:
+                label = description if device in description else f"{device} \u2013 {description}"
+                self._port_combo.addItem(label, userData=device)
+            for i in range(self._port_combo.count()):
+                if self._port_combo.itemData(i, Qt.ItemDataRole.UserRole) == current:
+                    self._port_combo.setCurrentIndex(i)
+                    break
+        else:
+            self._port_combo.addItem("No ports found", userData="")
+
+    def _restore_from_settings(self) -> None:
+        s = self._settings
+        saved_port = s.value("conn/port", "")
+        for i in range(self._port_combo.count()):
+            if self._port_combo.itemData(i, Qt.ItemDataRole.UserRole) == saved_port:
+                self._port_combo.setCurrentIndex(i)
+                break
+        self._baud_combo.setCurrentText(str(s.value("conn/baud", "115200")))
+        self._data_bits_combo.setCurrentText(str(s.value("conn/data_bits", "8")))
+        self._stop_bits_combo.setCurrentText(str(s.value("conn/stop_bits", "1")))
+        self._parity_combo.setCurrentText(str(s.value("conn/parity", "N")))
+        self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", "50")))
+
+    def _on_accept(self) -> None:
+        s = self._settings
+        s.setValue("conn/port",       self._port_combo.currentData(Qt.ItemDataRole.UserRole) or "")
+        s.setValue("conn/baud",       self._baud_combo.currentText())
+        s.setValue("conn/data_bits",  self._data_bits_combo.currentText())
+        s.setValue("conn/stop_bits",  self._stop_bits_combo.currentText())
+        s.setValue("conn/parity",     self._parity_combo.currentText())
+        s.setValue("conn/timeout_ms", self._timeout_combo.currentText())
+        self.accept()
+
+    def get_settings(self) -> "SerialSettings":
+        return SerialSettings(
+            port=self._port_combo.currentData(Qt.ItemDataRole.UserRole) or self._port_combo.currentText(),
+            baud_rate=int(self._baud_combo.currentText()),
+            data_bits=int(self._data_bits_combo.currentText()),
+            stop_bits=float(self._stop_bits_combo.currentText()),
+            parity=self._parity_combo.currentText(),
+            timeout_ms=int(self._timeout_combo.currentText()),
+        )
+
+
+class PollingConfigDialog(QDialog):
+    """Modal dialog for selecting which polling targets are active.
+
+    Each target from the loaded ``FrameConfig.polling_schedules`` is shown
+    as a labelled checkbox.  Selections are persisted per ``target_id`` in
+    ``QSettings`` so they survive between sessions.
+    """
+
+    def __init__(self, schedules, settings: QSettings, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Configure Poll Schedule")
+        self.setMinimumWidth(320)
+        self._settings = settings
+        self._schedules = schedules
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        header = QLabel("Select which targets to poll automatically:", self)
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        self._list = QListWidget(self)
+        for sched in schedules:
+            key = f"poll/enabled/0x{sched.target_id:04X}"
+            # Default to whatever the config says, but QSettings overrides it.
+            default_checked = sched.enabled
+            checked = settings.value(key, default_checked, type=bool)
+            label = f"0x{sched.target_id:04X}  —  every {sched.interval_ms} ms"
+            item = QListWidgetItem(label)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
+            item.setData(Qt.ItemDataRole.UserRole, sched.target_id)
+            self._list.addItem(item)
+        layout.addWidget(self._list)
+
+        # Select-all / none shortcuts
+        btn_row = QHBoxLayout()
+        all_btn = QPushButton("Select All", self)
+        all_btn.clicked.connect(lambda: self._set_all(True))
+        none_btn = QPushButton("Select None", self)
+        none_btn.clicked.connect(lambda: self._set_all(False))
+        btn_row.addWidget(all_btn)
+        btn_row.addWidget(none_btn)
+        layout.addLayout(btn_row)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Start Polling")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _set_all(self, checked: bool) -> None:
+        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
+        for i in range(self._list.count()):
+            self._list.item(i).setCheckState(state)
+
+    def _on_accept(self) -> None:
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            target_id = item.data(Qt.ItemDataRole.UserRole)
+            key = f"poll/enabled/0x{target_id:04X}"
+            self._settings.setValue(key, item.checkState() == Qt.CheckState.Checked)
+        self.accept()
+
+    def get_enabled_ids(self) -> set:
+        """Return the set of target_ids whose checkbox is checked."""
+        result = set()
+        for i in range(self._list.count()):
+            item = self._list.item(i)
+            if item.checkState() == Qt.CheckState.Checked:
+                result.add(item.data(Qt.ItemDataRole.UserRole))
+        return result
+
+
 class MainWindow(QMainWindow):
+
     def __init__(self) -> None:
         super().__init__()
         self._version = _read_version()
@@ -505,7 +708,6 @@ class MainWindow(QMainWindow):
 
         self._build_ui()
         self._load_default_config()
-        self._refresh_ports()
         self._refresh_action_state()
 
         self._default_state = self.saveState()
@@ -558,11 +760,6 @@ class MainWindow(QMainWindow):
 
 
     def _build_actions(self) -> None:
-        self._port_combo = QComboBox(self)
-        self._port_combo.setMinimumWidth(130)
-        self._baud_combo = QComboBox(self)
-        self._baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"])
-        self._baud_combo.setCurrentText("115200")
 
         # Pick icon tint color based on the saved theme so icons are readable
         # on first launch without needing a theme switch to trigger a rebuild.
@@ -1092,93 +1289,70 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(10, 10, 10, 10)
         layout.setSpacing(10)
 
-        # --- Connection card -------------------------------------------------
-        connection_card, connection_layout = self._card("Connection", panel)
-
-        form_widget = QWidget(connection_card)
-        form = QFormLayout(form_widget)
-        form.setContentsMargins(0, 0, 0, 0)
-
-        port_row = QWidget(form_widget)
-        port_row_layout = QHBoxLayout(port_row)
-        port_row_layout.setContentsMargins(0, 0, 0, 0)
-        refresh_button = QPushButton("Refresh", port_row)
-        refresh_button.clicked.connect(self._refresh_ports)
-        port_row_layout.addWidget(self._port_combo, 1)
-        port_row_layout.addWidget(refresh_button)
-
-        self._data_bits_combo = QComboBox(form_widget)
-        self._data_bits_combo.addItems(["8", "7"])
-        self._stop_bits_combo = QComboBox(form_widget)
-        self._stop_bits_combo.addItems(["1", "1.5", "2"])
-        self._parity_combo = QComboBox(form_widget)
-        self._parity_combo.addItems(["N", "E", "O"])
-        self._timeout_combo = QComboBox(form_widget)
-        self._timeout_combo.addItems(["20", "50", "100", "250", "500", "1000"])
-        self._timeout_combo.setCurrentText("50")
-
-        form.addRow("Port", port_row)
-        form.addRow("Baud", self._baud_combo)
-        form.addRow("Data bits", self._data_bits_combo)
-        form.addRow("Stop bits", self._stop_bits_combo)
-        form.addRow("Parity", self._parity_combo)
-        form.addRow("Timeout ms", self._timeout_combo)
-        connection_layout.addWidget(form_widget)
-
-        self._connect_button = QPushButton(self._connect_action.text(), connection_card)
-        self._connect_button.clicked.connect(self._on_toggle_connect)
-        connection_layout.addWidget(self._connect_button)
-
-        self._connection_label = QLabel("Serial: disconnected", connection_card)
+        # --- Serial Connection status card ----------------------------------
+        conn_card, conn_layout = self._card("Serial Connection", panel)
+        self._connection_label = QLabel("\u25cf  Disconnected", conn_card)
         self._connection_label.setWordWrap(True)
-        connection_layout.addWidget(self._connection_label)
+        conn_layout.addWidget(self._connection_label)
 
-        # --- Config/status card ---------------------------------------------
-        status_card, status_layout = self._card("Config", panel)
+        conn_btn = QPushButton("Configure & Connect\u2026", conn_card)
+        conn_btn.clicked.connect(self._on_toggle_connect)
+        self._connect_button = conn_btn          # keep ref for text updates
+        conn_layout.addWidget(conn_btn)
+        layout.addWidget(conn_card)
+
+        # --- Protocol Config status card ------------------------------------
+        proto_card, proto_layout = self._card("Protocol Config", panel)
+
         recent_row = QHBoxLayout()
-        self._recent_config_combo = QComboBox(status_card)
+        self._recent_config_combo = QComboBox(proto_card)
         self._recent_config_combo.setMinimumWidth(120)
-        recent_load = QPushButton("Load", status_card)
+        recent_load = QPushButton("Load", proto_card)
         recent_load.clicked.connect(self._on_load_recent_config)
         recent_row.addWidget(self._recent_config_combo, 1)
         recent_row.addWidget(recent_load)
-        status_layout.addLayout(recent_row)
+        proto_layout.addLayout(recent_row)
 
-        self._config_label = QLabel("No config loaded", status_card)
-        self._protocol_label = QLabel("-", status_card)
-        self._frames_label = QLabel("-", status_card)
-        self._logging_label = QLabel("Logging: stopped", status_card)
-        for label in (
-            self._config_label,
-            self._protocol_label,
-            self._frames_label,
-            self._logging_label,
-        ):
-            label.setWordWrap(True)
-            status_layout.addWidget(label)
+        self._config_label = QLabel("No config loaded", proto_card)
+        self._protocol_label = QLabel("-", proto_card)
+        self._frames_label = QLabel("-", proto_card)
+        for lbl in (self._config_label, self._protocol_label, self._frames_label):
+            lbl.setWordWrap(True)
+            proto_layout.addWidget(lbl)
 
         logging_row = QHBoxLayout()
+        self._logging_label = QLabel("Logging: stopped", proto_card)
+        self._logging_label.setWordWrap(True)
         logging_row.addWidget(self._logging_label, 1)
-        self._open_log_btn = QPushButton("📂")
+        self._open_log_btn = QPushButton("\U0001f4c2")
         self._open_log_btn.setToolTip("Open Log Folder")
         self._open_log_btn.setFixedWidth(28)
         self._open_log_btn.clicked.connect(self._on_open_log_folder)
         logging_row.addWidget(self._open_log_btn)
-        status_layout.addLayout(logging_row)
+        proto_layout.addLayout(logging_row)
+        layout.addWidget(proto_card)
 
-        layout.addWidget(connection_card)
-        layout.addWidget(status_card)
+        # --- Poll Schedule status card --------------------------------------
+        poll_card, poll_layout = self._card("Poll Schedule", panel)
+        self._poll_status_label = QLabel("No targets loaded", poll_card)
+        self._poll_status_label.setWordWrap(True)
+        poll_layout.addWidget(self._poll_status_label)
 
-        # --- Polling card ---
-        polling_card, polling_layout = self._card("Active Polling", panel)
-        self._polling_list = QListWidget(polling_card)
-        self._polling_list.setMaximumHeight(150)
-        self._polling_list.itemChanged.connect(self._on_polling_item_changed)
-        polling_layout.addWidget(self._polling_list)
-        layout.addWidget(polling_card)
+        # Read-only list shows which targets are active (updated on config load
+        # and after each PollingConfigDialog accept).
+        self._polling_list = QListWidget(poll_card)
+        self._polling_list.setMaximumHeight(130)
+        self._polling_list.setEnabled(False)   # display only in sidebar
+        poll_layout.addWidget(self._polling_list)
+
+        poll_configure_btn = QPushButton("Configure\u2026", poll_card)
+        poll_configure_btn.setToolTip("Open polling target selector")
+        poll_configure_btn.clicked.connect(self._open_poll_config_dialog)
+        poll_layout.addWidget(poll_configure_btn)
+        layout.addWidget(poll_card)
 
         layout.addStretch(1)
-        panel.setMinimumWidth(280)
+        panel.setMinimumWidth(240)
         return panel
 
     def _build_plot_tab(self) -> QWidget:
@@ -1370,9 +1544,8 @@ class MainWindow(QMainWindow):
         self._populate_group_selector()
         self._plot_keys.clear()
         self._populate_tx_commands()
-        self._populate_polling_list()
+        self._update_poll_status_sidebar()   # refresh sidebar read-only list
         self._populate_editor_table()
-        self._apply_serial_defaults()
         self._refresh_config_status()
         self._remember_config(path)
         self._refresh_action_state()
@@ -1455,8 +1628,13 @@ class MainWindow(QMainWindow):
 
 
     def _on_toggle_connect(self) -> None:
+        # --- Already connected: disconnect immediately -----------------------
         if self._serial is not None and self._serial.is_open:
             self._ui_timer.stop()
+            # Auto-stop logging before releasing the port
+            if self._logging:
+                self._stop_logging()
+                self._log_activity("[INFO] Logging auto-stopped on disconnect")
             self._serial.close()
             self._serial = None
             self._set_connection_ui(False)
@@ -1464,18 +1642,19 @@ class MainWindow(QMainWindow):
             self._log_activity("Disconnected")
             return
 
+        # --- Not connected: open ConnectionDialog ---------------------------
         if self._config is None:
             self._popup_warning("Connect", "Please load a configuration first.")
             return
 
-        settings = SerialSettings(
-            port=self._port_combo.currentData(Qt.ItemDataRole.UserRole) or self._port_combo.currentText(),
-            baud_rate=int(self._baud_combo.currentText()),
-            data_bits=int(self._data_bits_combo.currentText()),
-            stop_bits=float(self._stop_bits_combo.currentText()),
-            parity=self._parity_combo.currentText(),
-            timeout_ms=int(self._timeout_combo.currentText()),
-        )
+        dlg = ConnectionDialog(self._settings, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        settings = dlg.get_settings()
+        if not settings.port:
+            self._popup_warning("Connect", "No port selected. Please plug in a device and refresh.")
+            return
 
         try:
             self._serial = PollingWorker(settings, self._config.protocol, self._config.polling_schedules)
@@ -1503,6 +1682,9 @@ class MainWindow(QMainWindow):
         self._log_activity(f"Serial Error: {err}")
         self._set_status(f"Error: {err}")
         self._ui_timer.stop()
+        if self._logging:
+            self._stop_logging()
+            self._log_activity("[INFO] Logging auto-stopped on serial error")
         if self._serial:
             self._serial.close()
             self._serial = None
@@ -1533,6 +1715,10 @@ class MainWindow(QMainWindow):
     def _on_connection_lost(self) -> None:
         """Called when the worker detects a physical USB unplug."""
         self._ui_timer.stop()
+        # Auto-stop logging so files are flushed and the button resets.
+        if self._logging:
+            self._stop_logging()
+            self._log_activity("[INFO] Logging auto-stopped on USB disconnect")
         self._serial = None  # worker already cleaned up the port
         self._set_connection_ui(False)
         self._set_status("USB device disconnected")
@@ -1571,6 +1757,14 @@ class MainWindow(QMainWindow):
     def _on_toggle_logging(self) -> None:
         if self._logging:
             self._stop_logging()
+            return
+        # Guard: logging only makes sense when connected
+        if self._serial is None:
+            self._popup_warning(
+                "Start Logging",
+                "Please connect to a device before starting logging.\n"
+                "(Offline log replay does not support active logging.)"
+            )
             return
 
         choice, ok = QInputDialog.getItem(
@@ -1768,26 +1962,75 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     
     def _populate_polling_list(self) -> None:
-        self._polling_list.clear()
-        if not self._config: return
-        for sched in self._config.polling_schedules:
-            item = QListWidgetItem(f"Target 0x{sched.target_id:04X} ({sched.interval_ms}ms)")
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked if sched.enabled else Qt.CheckState.Unchecked)
-            item.setData(Qt.ItemDataRole.UserRole, sched.target_id)
-            self._polling_list.addItem(item)
-
-    def _on_polling_item_changed(self, item: QListWidgetItem) -> None:
-        target_id = item.data(Qt.ItemDataRole.UserRole)
-        enabled = item.checkState() == Qt.CheckState.Checked
-        if self._serial:
-            self._serial.toggle_schedule(target_id, enabled)
+        """Deprecated shim — delegates to the new status-sidebar updater."""
+        self._update_poll_status_sidebar()
 
     def _on_toggle_polling(self) -> None:
         enabled = self._polling_action.isChecked()
+        if enabled:
+            # Turning ON: open the config dialog to let the user pick targets
+            if self._config is None:
+                self._popup_warning("Auto-Fetch", "Please load a configuration first.")
+                self._polling_action.setChecked(False)
+                return
+            if self._serial is None:
+                self._popup_warning("Auto-Fetch", "Please connect to a device first.")
+                self._polling_action.setChecked(False)
+                return
+            dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self)
+            if dlg.exec() != QDialog.DialogCode.Accepted:
+                self._polling_action.setChecked(False)
+                return
+            # Apply the chosen enabled/disabled state per target in the worker
+            enabled_ids = dlg.get_enabled_ids()
+            for sched in self._config.polling_schedules:
+                self._serial.toggle_schedule(sched.target_id, sched.target_id in enabled_ids)
+            # Refresh the sidebar read-only list
+            self._update_poll_status_sidebar(enabled_ids)
+        else:
+            if self._serial:
+                self._serial.set_polling_global(False)
         self._polling_action.setText("Stop Auto-Fetch" if enabled else "Start Auto-Fetch")
         if self._serial:
             self._serial.set_polling_global(enabled)
+
+    def _open_poll_config_dialog(self) -> None:
+        """Sidebar Configure… button — opens dialog without toggling the action."""
+        if self._config is None:
+            self._popup_warning("Poll Schedule", "Load a configuration first.")
+            return
+        dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        enabled_ids = dlg.get_enabled_ids()
+        if self._serial:
+            for sched in self._config.polling_schedules:
+                self._serial.toggle_schedule(sched.target_id, sched.target_id in enabled_ids)
+        self._update_poll_status_sidebar(enabled_ids)
+
+    def _update_poll_status_sidebar(self, enabled_ids: set | None = None) -> None:
+        """Refresh the read-only Poll Schedule sidebar list."""
+        if not hasattr(self, "_polling_list"):
+            return
+        self._polling_list.clear()
+        if self._config is None:
+            if hasattr(self, "_poll_status_label"):
+                self._poll_status_label.setText("No targets loaded")
+            return
+        active = 0
+        for sched in self._config.polling_schedules:
+            is_on = (enabled_ids is None and sched.enabled) or (
+                enabled_ids is not None and sched.target_id in enabled_ids
+            )
+            label = f"0x{sched.target_id:04X}  ({sched.interval_ms} ms)"
+            item = QListWidgetItem(("\u25cf " if is_on else "\u25cb ") + label)
+            item.setForeground(QColor("#66BB6A") if is_on else QColor("#9CA3AF"))
+            self._polling_list.addItem(item)
+            if is_on:
+                active += 1
+        if hasattr(self, "_poll_status_label"):
+            total = len(self._config.polling_schedules)
+            self._poll_status_label.setText(f"{active} of {total} targets active")
 
     def _populate_editor_table(self) -> None:
         self._editor_table.setRowCount(0)
@@ -2221,43 +2464,6 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Misc helpers
     # ------------------------------------------------------------------
-    def _refresh_ports(self) -> None:
-        """Repopulate the port combo with full device descriptions.
-
-        Each item displays  "COM3 \u2013 USB Serial Device"  but stores the raw
-        device name ("COM3") as Qt.ItemDataRole.UserRole so that the connect
-        logic always passes the correct identifier to serial.Serial().
-        """
-        # Remember the previously selected device name (UserRole data).
-        current_device = self._port_combo.currentData(Qt.ItemDataRole.UserRole) or ""
-        ports = list(available_ports())   # list of (device, description) tuples
-        self._port_combo.clear()
-        if ports:
-            for device, description in ports:
-                # Build a compact label: "COM3 – USB Serial Device"
-                # Avoid repeating the device name if it already appears in description.
-                if device in description:
-                    label = description          # e.g. "USB Serial Device (COM3)"
-                else:
-                    label = f"{device} \u2013 {description}"
-                self._port_combo.addItem(label, userData=device)
-            # Restore previous selection if it is still present.
-            for i in range(self._port_combo.count()):
-                if self._port_combo.itemData(i, Qt.ItemDataRole.UserRole) == current_device:
-                    self._port_combo.setCurrentIndex(i)
-                    break
-        else:
-            self._port_combo.addItem("No ports found", userData="")
-
-    def _apply_serial_defaults(self) -> None:
-        if self._config is None:
-            return
-        defaults = self._config.serial_defaults
-        self._baud_combo.setCurrentText(str(defaults.baud_rate))
-        self._data_bits_combo.setCurrentText(str(defaults.data_bits))
-        self._stop_bits_combo.setCurrentText(f"{defaults.stop_bits:g}")
-        self._parity_combo.setCurrentText(defaults.parity)
-        self._timeout_combo.setCurrentText(str(defaults.timeout_ms))
 
     def _refresh_config_status(self) -> None:
         if self._config is None:
@@ -2276,21 +2482,21 @@ class MainWindow(QMainWindow):
         ready = self._config is not None
         self._load_log_action.setEnabled(ready)
         self._clear_action.setEnabled(ready)
-        self._logging_action.setEnabled(ready)
+        # Logging requires an active connection; _set_connection_ui controls this.
+        # Only set enabled=True here if we're currently connected.
+        self._logging_action.setEnabled(ready and self._serial is not None)
 
     def _set_connection_ui(self, connected: bool) -> None:
-        text = "Disconnect" if connected else "Connect"
-        self._connect_action.setText(text)
+        text = "Disconnect" if connected else "Configure & Connect\u2026"
+        self._connect_action.setText("Disconnect" if connected else "Connect")
         if hasattr(self, "_connect_button"):
             self._connect_button.setText(text)
-        self._port_combo.setEnabled(not connected)
-        self._baud_combo.setEnabled(not connected)
-        self._data_bits_combo.setEnabled(not connected)
-        self._stop_bits_combo.setEnabled(not connected)
-        self._parity_combo.setEnabled(not connected)
-        self._timeout_combo.setEnabled(not connected)
         if hasattr(self, "_connection_label"):
-            self._connection_label.setText(f"Serial: {'connected' if connected else 'disconnected'}")
+            status = f"\u25cf  {self._serial.settings.port} @ {self._serial.settings.baud_rate}" \
+                if connected and self._serial else "\u25cf  Disconnected"
+            self._connection_label.setText(status)
+        # Logging action only enabled while connected
+        self._logging_action.setEnabled(connected)
         if connected:
             self._led_label.setStyleSheet("color: #66BB6A;")
             self._led_label.setToolTip("Connected")
