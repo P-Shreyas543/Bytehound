@@ -142,6 +142,7 @@
                     <li><a href="#enums">Enums Panel</a></li>
                     <li><a href="#raw-console">Raw Console</a></li>
                     <li><a href="#activity-log">Activity Log</a></li>
+                    <li><a href="#status-bar">Status Bar (bottom-right counters)</a></li>
                 </ul>
             </li>
             <li><a href="#section-3">3. Controlling Your Hardware</a>
@@ -276,6 +277,46 @@
 
     <h3 id="activity-log">Activity Log</h3>
     <p>The <strong>Activity Log</strong> tracks major application events: configurations loaded, connections established or lost, logging start/stop, and any error popups. Useful for post-mortem analysis of a test session.</p>
+
+    <h3 id="status-bar">Status Bar (bottom-right counters)</h3>
+    <p>A single-line live readout sits in the bottom-right of the window with six fixed-width counters. They are updated continuously while connected and reset whenever a new config is loaded or you click <strong>Edit → Clear Console / Log</strong>. Reading them at a glance tells you whether the link is healthy and how the device is responding.</p>
+    <pre>Frames:   1234  |  Errors:  0  |  Timeouts:  0  |  RX:   12.3 KB  |  TX:    1.2 KB  |  Lat:    9.8 ms</pre>
+    <table>
+        <tr><th>Counter</th><th>What it means</th><th>What to watch for</th></tr>
+        <tr>
+            <td><strong>Frames</strong></td>
+            <td>Total RX frames received and parsed since the session started — both valid and CRC-failed frames are counted here.</td>
+            <td>Should climb steadily while the device is talking. A flat counter means the device has gone silent.</td>
+        </tr>
+        <tr>
+            <td><strong>Errors</strong></td>
+            <td>Wire-level CRC failures. The frame had the right header, length, and footer, but the checksum did not match the bytes received — meaning the bytes were corrupted in transit.</td>
+            <td>Should stay at 0 on a healthy link. A slowly climbing number suggests electrical noise, a bad cable, or a baud-rate mismatch. A fast climb almost always means the protocol settings (CRC type, byte order, header) in your config don't match the device.</td>
+        </tr>
+        <tr>
+            <td><strong>Timeouts</strong></td>
+            <td>Poll requests that did not get a response within the configured <code>timeout_ms</code>. Only relevant when <strong>Auto-Fetch</strong> is on.</td>
+            <td>0 on a request/response device that is keeping up. A few timeouts on first connect are normal (the device may still be booting). A continuously rising count means the device is missing requests — try a longer <code>timeout_ms</code> or a slower <code>interval_ms</code>.</td>
+        </tr>
+        <tr>
+            <td><strong>RX</strong></td>
+            <td>Total bytes received over the serial port since the session started, in B / KB / MB.</td>
+            <td>Roughly equal to <em>Frames × frame size</em>. A sudden plateau means the device stopped streaming.</td>
+        </tr>
+        <tr>
+            <td><strong>TX</strong></td>
+            <td>Total bytes transmitted by the app over the serial port — includes Auto-Fetch poll requests, TX-Command panel sends, and Parameter Editor writes.</td>
+            <td>0 if you are only listening. Climbs each time you send a command or while polling is active.</td>
+        </tr>
+        <tr>
+            <td><strong>Lat</strong></td>
+            <td>Time between the two most recently received frames, in milliseconds. Lower = faster device. This is wall-clock latency between consecutive RX frames, not request-response latency.</td>
+            <td>For a 10 ms streamer expect ~10 ms here. A spike to hundreds of ms means the device hiccuped; if it stays high the link is choked.</td>
+        </tr>
+    </table>
+    <div class="note">
+        <strong>Errors vs decode errors.</strong> The <strong>Errors</strong> counter only tracks wire-level CRC failures. Configuration-level problems — for example a frame ID with no matching <code>variables</code> row, a payload shorter than the configured signal layout, or an unsupported data type — are reported in the <strong>Raw Console</strong> as <code>[decode] …</code> lines and are not counted here.
+    </div>
 
     <!-- Section 3 -->
     <h2 id="section-3">3. Controlling Your Hardware</h2>
