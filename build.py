@@ -206,15 +206,18 @@ def main() -> int:
             return 1
 
     version = read_version()
+    # ASCII-only banner so Python's default Windows console encoding (cp1252)
+    # doesn't choke on box-drawing characters during printing.
     print(f"""
-[build] ── Release checklist ───────────────────────────────────────
+[build] --- Release checklist ---------------------------------------
   1. Commit & push version.json  (sha256 auto-updated above)
   2. git tag v{version} && git push origin v{version}
   3. Create GitHub Release v{version} and upload:
+       installer_output/SerialMonitor_Setup_{version}.exe
        dist/{APP_NAME}_{version}.zip
   4. Update installer_url in version.json to the release asset URL
   5. Commit & push version.json again
-─────────────────────────────────────────────────────────────────────
+---------------------------------------------------------------------
 """)
     return 0
 

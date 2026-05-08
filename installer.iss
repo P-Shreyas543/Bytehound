@@ -58,7 +58,6 @@ PrivilegesRequiredOverridesAllowed    = dialog
 
 ; ── Visuals ─────────────────────────────────────────────────────────────────
 WizardStyle               = modern
-WizardResizable           = yes
 ShowLanguageDialog        = auto
 
 ; ── Version info stamped into the installer PE ──────────────────────────────
@@ -78,8 +77,10 @@ ChangesAssociations       = no
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
 [Tasks]
-Name: "desktopicon";   Description: "Create a &desktop shortcut";  GroupDescription: "Shortcuts:"; Flags: checked
-Name: "startmenu";     Description: "Create a &Start Menu entry";   GroupDescription: "Shortcuts:"; Flags: checked
+; Note: Inno Setup tasks are checked by default; there is no `checked` flag.
+; Use `unchecked` to flip the default off.
+Name: "desktopicon";   Description: "Create a &desktop shortcut";  GroupDescription: "Shortcuts:"
+Name: "startmenu";     Description: "Create a &Start Menu entry";   GroupDescription: "Shortcuts:"
 
 [Dirs]
 ; Pre-create the default logs directory so the app finds it on first launch
@@ -131,7 +132,6 @@ Type: filesandordirs; Name: "{app}"
 function IsAppRunning(const ExeName: String): Boolean;
 var
   WbemLocator, WbemService, WbemObjectSet: Variant;
-  i: Integer;
 begin
   Result := False;
   try
