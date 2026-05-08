@@ -735,8 +735,9 @@ class MainWindow(QMainWindow):
         self._plot_keys: List[Tuple[int, str]] = []  # union of all panel keys
         self._curve_icon_cache: Dict[Tuple[int, str, str], QIcon] = {}
         self._session_started = datetime.now()
-        self._plot_rolling: bool = True
-        self._plot_range_changing: bool = False
+        # Plot view mode: True = Live (auto-expand 0→now), False = Explore (user panned)
+        self._plot_live: bool = True
+        self._plot_range_changing: bool = False   # re-entrancy guard for setXRange calls
 
 
         # Packet queue + 60 Hz throttle timer
@@ -1321,15 +1322,12 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda: _apply_windows_dark_titlebar(self, dark=(theme == "dark")))
 
     def _reset_plot_view(self) -> None:
-        """Ctrl+R / Reset View: auto-range all panels so all data is visible
-        (including t=0), then switch to Explore mode so it stays put.
-        """
+        """Reset View / Ctrl+R: snap back to Live mode (0 → current time)."""
         if pg is None or not self._plot_panels:
             return
-        for panel in self._plot_panels:
-            panel.plot_item.getViewBox().autoRange()
-        self._plot_rolling = False
-        self._plot_mode_label.setText("🔍 Explore  (Ctrl+R = Rolling)")
+        self._plot_live = True
+        self._plot_mode_label.setText("📊 Live")
+        self._redraw_plot()   # will call setXRange(0, current_t) immediately
 
     def _reset_window_layout(self) -> None:
         self.restoreGeometry(self._default_geometry)
@@ -1461,13 +1459,6 @@ class MainWindow(QMainWindow):
         controls.addWidget(hint)
         controls.addStretch(1)
 
-        controls.addWidget(QLabel("Window (s):"))
-        self._plot_window_combo = QComboBox(outer)
-        self._plot_window_combo.addItems(["30", "60", "120", "300", "600"])
-        saved_w = str(self._settings.value("plot/window", "60"))
-        self._plot_window_combo.setCurrentText(saved_w)
-        self._plot_window_combo.currentIndexChanged.connect(self._on_plot_window_changed)
-        controls.addWidget(self._plot_window_combo)
 
         controls.addWidget(QLabel("Layout:"))
         self._layout_combo = QComboBox(outer)
@@ -1482,18 +1473,12 @@ class MainWindow(QMainWindow):
         reset_btn.clicked.connect(self._reset_plot_view)
         controls.addWidget(reset_btn)
 
-        clear_btn = QPushButton("Clear", outer)
-        clear_btn.clicked.connect(self._clear_plot)
-        controls.addWidget(clear_btn)
 
-        export_btn = QPushButton("Export", outer)
-        export_btn.clicked.connect(self._export_plot_data)
-        controls.addWidget(export_btn)
-
-        self._plot_mode_label = QLabel("🔄 Rolling", outer)
+        self._plot_mode_label = QLabel("📊 Live", outer)
         self._plot_mode_label.setToolTip(
-            "Rolling: X-axis auto-scrolls.\n"
-            "Explore: You panned/zoomed. Click Reset View or Ctrl+R to return."
+            "Live: X-axis always shows the full session from t=0 to now.\n"
+            "Explore: You panned or zoomed — view is frozen.\n"
+            "Click  ⟳ Reset View  (or Ctrl+R) to return to Live."
         )
         controls.addWidget(self._plot_mode_label)
 
@@ -1563,7 +1548,12 @@ class MainWindow(QMainWindow):
             for i in range(n):
                 raw = self._settings.value(f"plot/panel/{i}/keys", [])
                 if isinstance(raw, list):
-                    decoded = [tuple(k) for k in raw if isinstance(k, (list, tuple)) and len(k) == 2]
+                    # QSettings serialises all values as strings; cast frame_id back to int.
+                    decoded = [
+                        (int(k[0]), str(k[1]))
+                        for k in raw
+                        if isinstance(k, (list, tuple)) and len(k) == 2
+                    ]
                 else:
                     decoded = []
                 panel_keys.append(decoded)
@@ -1579,6 +1569,7 @@ class MainWindow(QMainWindow):
             pi.showGrid(x=True, y=True, alpha=0.25)
             pi.addLegend(offset=(10, 10))
             pi.getViewBox().setMouseEnabled(x=True, y=True)
+            pi.getViewBox().setDefaultPadding(0.0)   # no auto-padding; x=0 is flush left
 
             # Share X-axis with the first subplot (oscilloscope-style)
             if first_vb is None:
@@ -1745,19 +1736,36 @@ class MainWindow(QMainWindow):
 
     
     def _build_editor_tab(self) -> QWidget:
-        self._editor_table = QTableWidget(0, 4, self)
-        self._editor_table.setHorizontalHeaderLabels(["Target ID", "Variable", "Current", "Action"])
-        self._editor_table.verticalHeader().setVisible(False)
-        self._editor_table.horizontalHeader().setStretchLastSection(True)
-        return self._editor_table
+        outer = QWidget(self)
+        vlay = QVBoxLayout(outer)
+        vlay.setContentsMargins(4, 4, 4, 4)
 
-    
-    def _build_editor_tab(self) -> QWidget:
-        self._editor_table = QTableWidget(0, 4, self)
-        self._editor_table.setHorizontalHeaderLabels(["Target ID", "Variable", "Current", "Action"])
+        info = QLabel(
+            "🔒 Only signals marked  read–write (RW) or write-only (W)  in the config "
+            "appear here. Connect to write a new value."
+        )
+        info.setWordWrap(True)
+        info.setStyleSheet("font-size:11px; color: #94A3B8; padding-bottom:4px;")
+        vlay.addWidget(info)
+
+        self._editor_table = QTableWidget(0, 4, outer)
+        self._editor_table.setHorizontalHeaderLabels(
+            ["Frame ID", "Signal", "Live Value", "Write"]
+        )
         self._editor_table.verticalHeader().setVisible(False)
-        self._editor_table.horizontalHeader().setStretchLastSection(True)
-        return self._editor_table
+        hdr = self._editor_table.horizontalHeader()
+        hdr.setSectionResizeMode(0, hdr.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(1, hdr.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(2, hdr.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(3, hdr.ResizeMode.Stretch)
+        self._editor_table.setEditTriggers(
+            QTableWidget.EditTrigger.NoEditTriggers
+        )
+        self._editor_table.setSelectionBehavior(
+            QTableWidget.SelectionBehavior.SelectRows
+        )
+        vlay.addWidget(self._editor_table)
+        return outer
 
     def _build_tx_tab(self) -> QWidget:
         widget = QWidget(self)
@@ -2346,7 +2354,14 @@ class MainWindow(QMainWindow):
         if not self._config:
             return
         rw_signals = [s for s in self._config.all_signals if s.read_write in ("W", "RW")]
-        # Integer data types — use QIntValidator
+        if not rw_signals:
+            # Nothing writable — insert a single informational row
+            self._editor_table.insertRow(0)
+            lbl = QTableWidgetItem("No writable signals defined in this config (all are read-only).")
+            lbl.setFlags(Qt.ItemFlag.NoItemFlags)
+            self._editor_table.setItem(0, 0, lbl)
+            self._editor_table.setSpan(0, 0, 1, 4)
+            return
         _INT_TYPES = {"uint8", "int8", "uint16", "int16", "uint32", "int32"}
         for s in rw_signals:
             row = self._editor_table.rowCount()
@@ -2355,34 +2370,35 @@ class MainWindow(QMainWindow):
             self._editor_table.setItem(row, 1, QTableWidgetItem(s.signal_name))
 
             curr_val = QTableWidgetItem("-")
+            curr_val.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._editor_table.setItem(row, 2, curr_val)
 
-            # Action layout: LineEdit (with validator) + Write Button
             widget = QWidget()
             layout = QHBoxLayout(widget)
-            layout.setContentsMargins(0, 0, 0, 0)
+            layout.setContentsMargins(2, 1, 2, 1)
             inp = QLineEdit()
+            inp.setPlaceholderText("enter value…")
 
-            # --- Input Validation (Step 8) ---
             lo = s.min_value
             hi = s.max_value
             if s.data_type in _INT_TYPES:
                 ilo = int(lo) if lo is not None else -2_147_483_648
                 ihi = int(hi) if hi is not None else  2_147_483_647
                 inp.setValidator(QIntValidator(ilo, ihi))
-                inp.setPlaceholderText(f"{ilo}\u2026{ihi}")
+                inp.setToolTip(f"Integer  [{ilo} … {ihi}]")
             else:
                 flo = lo if lo is not None else -1e18
                 fhi = hi if hi is not None else  1e18
-                # Fix: force "C" locale so the validator always uses a dot as
-                # the decimal separator regardless of the OS regional format.
                 _dv = QDoubleValidator(flo, fhi, 6)
                 _dv.setLocale(QLocale(QLocale.Language.C))
                 inp.setValidator(_dv)
-                inp.setPlaceholderText(f"{flo:g}\u2026{fhi:g}")
+                inp.setToolTip(f"Float  [{flo:g} … {fhi:g}]")
 
             btn = QPushButton("Write")
+            btn.setFixedWidth(56)
             btn.clicked.connect(lambda _, inp=inp, s=s: self._on_editor_write(s, inp.text()))
+            # Allow pressing Enter in the input to trigger write
+            inp.returnPressed.connect(lambda inp=inp, s=s: self._on_editor_write(s, inp.text()))
             layout.addWidget(inp)
             layout.addWidget(btn)
             self._editor_table.setCellWidget(row, 3, widget)
@@ -2593,52 +2609,19 @@ class MainWindow(QMainWindow):
 
             self._table.setRowHidden(row, not visible)
 
-    def _clear_plot(self) -> None:
-        self._plot_history.clear()
-        for panel in self._plot_panels:
-            for curve in panel.curves.values():
-                panel.plot_item.removeItem(curve)
-            panel.curves.clear()
-        self._plot_rolling = True
-        self._plot_mode_label.setText("🔄 Rolling")
-        self._redraw_plot()
 
-    def _on_plot_window_changed(self) -> None:
-        """Re-enter Rolling mode and persist the chosen window duration."""
-        self._settings.setValue("plot/window", self._plot_window_combo.currentText())
-        self._plot_rolling = True
-        self._plot_mode_label.setText("🔄 Rolling")
-        self._redraw_plot()
 
     def _on_plot_range_changed(self, vb, x_range) -> None:
-        """Called when any ViewBox X-range changes.  Guard suppresses our own calls."""
+        """Called when any ViewBox X-range changes.
+
+        Guard suppresses changes triggered by our own setXRange calls;
+        any other change means the user panned/zoomed → switch to Explore.
+        """
         if self._plot_range_changing:
             return
-        if self._plot_rolling:
-            self._plot_rolling = False
-            self._plot_mode_label.setText("🔍 Explore  (Ctrl+R = Rolling)")
-
-    def _export_plot_data(self) -> None:
-        selected_keys = list(self._plot_keys)
-        if not selected_keys:
-            self._popup_information("Export plot", "No variables selected for plotting.")
-            return
-        target, _ = QFileDialog.getSaveFileName(
-            self, "Export plot data", "plot_data.csv", "CSV files (*.csv)"
-        )
-        if not target:
-            return
-        with Path(target).open("w", encoding="utf-8", newline="") as fp:
-            for key in selected_keys:
-                values = list(self._plot_history.get(key, []))
-                if not values:
-                    continue
-                fp.write(f"--- {key[1]} (0x{key[0]:04X}) ---\n")
-                fp.write("seconds,value\n")
-                for seconds, value in values:
-                    fp.write(f"{seconds:.3f},{value:.12g}\n")
-                fp.write("\n")
-        self._set_status(f"Exported plot data to {target}")
+        if self._plot_live:
+            self._plot_live = False
+            self._plot_mode_label.setText("🔍 Explore  (⟳ Reset View = Live)")
 
     def _on_table_context_menu(self, pos) -> None:
         index = self._table.indexAt(pos)
@@ -2732,10 +2715,6 @@ class MainWindow(QMainWindow):
             return
 
         current_t = (datetime.now() - self._session_started).total_seconds()
-        try:
-            window = float(self._plot_window_combo.currentText())
-        except ValueError:
-            window = 60.0
 
         has_any_data = False
         color_offset = 0
@@ -2771,13 +2750,14 @@ class MainWindow(QMainWindow):
 
             color_offset += len(panel.assigned_keys)
 
-        # Rolling: clamp x_min to 0 so the origin is always visible.
-        if self._plot_rolling and has_any_data and self._plot_panels:
+        # Live mode: always show the full session from t=0 to current_t.
+        # The re-entrancy guard stops sigXRangeChanged from flipping us to Explore.
+        if self._plot_live and has_any_data and self._plot_panels:
             self._plot_range_changing = True
             try:
-                x_min = max(0.0, current_t - window)
                 first_pi = self._plot_panels[0].plot_item
-                first_pi.setXRange(x_min, current_t, padding=0)
+                # Small right padding (5%) so the newest point isn't flush against the edge.
+                first_pi.setXRange(0.0, current_t * 1.05 if current_t > 0 else 10.0, padding=0)
             finally:
                 self._plot_range_changing = False
 
