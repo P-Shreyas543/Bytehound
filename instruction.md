@@ -774,9 +774,86 @@ per signal.
 - **Raw Console**: scrollable hex dump of every RX/TX line, color-coded.
 - **Activity Log**: app events (config load, connect, log start/stop, serial errors) **and any user-facing popups**. Message boxes are logged via `_log_popup(...)` before showing (`INFO`/`WARN`/`ERROR`/`QUESTION`/`ABOUT`).
 - **TX Commands**: one button per enabled `tx_commands` row.
-- **Parameter Editor**: editable fields for writable signals.
-- **Live Plot**: pyqtgraph `PlotWidget`; auto-scale; plot pen color cycles per
-  signal; legend uses signal name.
+- **Parameter Editor**: flat table of writable signals (`read_write ∈ {W, RW}`).
+  Columns: Frame ID | Signal | Live Value | Write (QLineEdit + Write button).
+  Validators: `QIntValidator` for integer types, `QDoubleValidator` (C locale)
+  for float types. Pressing Enter submits the write. Writable range shown in
+  tooltip. If no writable signals are defined, a spanning informational row
+  is shown instead of a blank table.
+  Write is currently implemented for **Modbus RTU** only; framed-protocol write
+  shows a not-yet-implemented popup.
+- **Live Plot** (multi-grid `pg.GraphicsLayoutWidget`):
+
+  #### Architecture
+  `pg.PlotWidget` replaced by `pg.GraphicsLayoutWidget` (`self._gl_widget`).
+  Each subplot is a `pg.PlotItem` wrapped in a `PlotPanel` dataclass:
+
+  ```python
+  @dataclass
+  class PlotPanel:
+      plot_item:     pg.PlotItem
+      assigned_keys: List[Tuple[int, str]]  # (frame_id, signal_name)
+      curves:        Dict[Tuple[int, str], pg.PlotDataItem]
+  ```
+
+  All panels' X-axes are linked via `setXLink` — panning one panel pans all.
+
+  #### Grid layouts
+
+  ```python
+  GRID_LAYOUTS = {
+      "1×1": (1, 1), "1×2": (1, 2), "2×1": (2, 1),
+      "1×3": (1, 3), "3×1": (3, 1), "2×2": (2, 2),
+      "2×4": (2, 4), "4×2": (4, 2),
+  }
+  ```
+
+  Layout selection persists to `QSettings("plot/layout")`. On layout change,
+  `_rebuild_plot_grid(rows, cols, restore=True)` is called; it saves the old
+  panel key lists, clears the canvas, and redistributes old keys across the
+  new panels round-robin.
+
+  #### Per-panel variable strip
+
+  A `QWidget` strip sits above each subplot. It contains:
+  - A label (e.g. `P1:`)
+  - One coloured chip `QPushButton` per assigned signal (click to remove)
+  - A `+ Add` button → `QInputDialog` picker of all config signals
+
+  Strip widgets live in a `QVBoxLayout` (`self._panel_strip_layout`) in a
+  `QScrollArea` above the `GraphicsLayoutWidget`.
+
+  #### View modes
+
+  | Mode | `_plot_live` | Behaviour |
+  |---|---|---|
+  | 📊 Live | `True` | `setXRange(0, current_t × 1.05)` every redraw tick |
+  | 🔍 Explore | `False` | No auto X-update; user-initiated pan/zoom |
+
+  Switching between modes:
+  - Any user pan/zoom fires `_on_plot_range_changed` → sets `_plot_live = False`.
+  - **⟳ Reset View** button (and `Ctrl+R` shortcut) sets `_plot_live = True`
+    and calls `_redraw_plot()` immediately.
+
+  Re-entrancy guard: `self._plot_range_changing` is set `True` around any
+  internal `setXRange` call so `_on_plot_range_changed` ignores it.
+
+  #### Data pipeline
+
+  `_plot_history: defaultdict(deque(maxlen=1500))` keyed by `(frame_id, signal_name)`.
+  All signals with `status == "ok"` and a non-None `scaled_value` are appended.
+  `_redraw_plot()` runs at 60 Hz (driven by `_ui_timer`) and iterates over all
+  `PlotPanel` objects, refreshing curves with `autoDownsample=True, clipToView=True`.
+
+  #### Persistence keys (QSettings)
+
+  | Key | Value |
+  |---|---|
+  | `plot/layout` | Layout name string, e.g. `"2×1"` |
+  | `plot/panel/{i}/keys` | List of `[frame_id, signal_name]` lists |
+
+  QSettings serialises `int` frame IDs as strings; the restore path always
+  casts via `(int(k[0]), str(k[1]))` before use.
 
 All panels persist their dock area and visibility via `QMainWindow.saveState`.
 
@@ -866,14 +943,20 @@ update check.
 `QSettings("Decibels", "Serial-MonitorApp")` keys (Windows registry
 `HKCU\Software\Decibels\Serial-MonitorApp`):
 
-| Key                  | Type   | Meaning                            |
-|----------------------|--------|------------------------------------|
-| `ui/theme`           | str    | `"dark"` \| `"light"`              |
-| `window/geometry`    | bytes  | `saveGeometry()`                   |
-| `window/state`       | bytes  | `saveState()`                      |
-| `serial/last_port`   | str    | Pre-select on next launch          |
-| `serial/last_baud`   | int    |                                    |
-| `config/last_path`   | str    | Auto-load on next launch           |
+| Key                    | Type    | Meaning                                       |
+|------------------------|---------|-----------------------------------------------|
+| `ui/theme`             | str     | `"dark"` \| `"light"`                         |
+| `window/geometry`      | bytes   | `saveGeometry()`                              |
+| `window/state`         | bytes   | `saveState()`                                 |
+| `serial/last_port`     | str     | Pre-select on next launch                     |
+| `serial/last_baud`     | int     |                                               |
+| `config/last_path`     | str     | Auto-load on next launch                      |
+| `plot/layout`          | str     | Grid layout name, e.g. `"2×1"`                |
+| `plot/panel/{i}/keys`  | list    | `[[frame_id, signal_name], …]` per panel      |
+
+Note: QSettings serialises all values (including int frame IDs) as strings.
+The restore path in `_rebuild_plot_grid` always casts via `(int(k[0]), str(k[1]))`
+to ensure the keys match `_plot_history`'s `(int, str)` tuples.
 
 Reset is via *Edit → Clear* (clears live state, not settings) plus a manual
 "reset layout" action under *View*.
@@ -1036,9 +1119,18 @@ The build is "done" when:
    table/plot/log output as the original live session.
 4. **Crash-free I/O:** Disconnecting mid-stream, hot-plugging the device, and
    sending malformed bytes do not crash the app — only counters tick up.
-5. **Persistent UX:** Window layout, theme, last port/baud, and last config
-   path survive a restart.
-6. **Frozen build:** `python build.py` produces
+   Logging stops automatically on disconnect.
+5. **Persistent UX:** Window layout, theme, last port/baud, last config path,
+   live plot layout, and per-panel signal assignments survive a restart.
+6. **Multi-grid plot:** The Live Plot correctly renders 1–8 subplots, all
+   X-linked. Per-panel variable assignment works from the strip and from the
+   right-click table context menu. Live mode (0→now) and Explore mode (frozen
+   on pan/zoom) switch correctly. Reset View (Ctrl+R) snaps back to Live.
+7. **Theme-aware icons:** All menu and toolbar icons (File, Edit, View,
+   Device, Tools, Help) update their tint when the user switches Dark ↔ Light.
+8. **Parameter Editor:** Only RW/W signals appear. Live Value column updates
+   in real time. Enter key submits write same as the Write button.
+9. **Frozen build:** `python build.py` produces
    `dist/Serial-MonitorApp/Serial-MonitorApp.exe` that launches and works
    identically to the dev run, with no PyQt5/6/PySide2 in the bundle.
-7. **Tests:** `pytest -q` is green on Windows + Python 3.10.
+10. **Tests:** `pytest -q` is green on Windows + Python 3.10.

@@ -290,16 +290,16 @@ from ..serial_io.replay_source import parse_log_file, replay_bytes
 from ..serial_io.serial_worker import SerialSettings, PollingWorker, available_ports
 
 _COLUMNS = (
-    ("Frame", 100),
-    ("Group", 90),
-    ("Variable", 190),
-    ("Start B.", 60),
-    ("Data Type", 75),
-    ("Raw", 95),
-    ("Value", 95),
-    ("Unit", 70),
-    ("Status", 190),
-    ("Updated", 110),
+    ("Frame",     100),
+    ("Group",      90),
+    ("Variable",  190),
+    ("Start B.",   60),
+    ("Data Type",  75),
+    ("Raw",        95),
+    ("Value",      95),
+    ("Unit",       55),
+    ("Status",     70),
+    ("Updated",   110),
 )
 
 # ---------------------------------------------------------------------------
@@ -714,6 +714,7 @@ class MainWindow(QMainWindow):
         self._row_index: Dict[Tuple[int, str], int] = {}
         self._packet_count = 0
         self._error_count = 0
+        self._timeouts = 0
         self._rx_bytes = 0
         self._tx_bytes = 0
         self._logging = False
@@ -725,7 +726,7 @@ class MainWindow(QMainWindow):
         # Timer removed; using PollingWorker QThread
 
         self._plot_history: Dict[Tuple[int, str], Deque[Tuple[float, float]]] = defaultdict(
-            lambda: deque(maxlen=250_000)
+            lambda: deque(maxlen=6_000)  # ~100 min at 1 Hz per signal
         )
         # Multi-grid plot state
         self._plot_panels: List[PlotPanel] = []   # one entry per subplot cell
@@ -775,6 +776,8 @@ class MainWindow(QMainWindow):
         self._led_label.setToolTip("Disconnected")
         self._status_label = QLabel("")
         self._counts_label = QLabel("")
+        self._counts_label.setFont(QFont("Consolas", 9))
+        self._counts_label.setStyleSheet("padding: 0 8px; letter-spacing: 0.5px;")
         bar = QStatusBar(self)
         bar.addWidget(self._led_label)
         bar.addWidget(self._status_label, 1)
@@ -824,6 +827,7 @@ class MainWindow(QMainWindow):
         self._polling_action.triggered.connect(self._on_toggle_polling)
 
         self._logging_action = QAction(_icon("mdi6.record-rec", _PRIMARY), "Start Logging", self)
+        self._logging_action.setShortcut("Ctrl+L")
         self._logging_action.triggered.connect(self._on_toggle_logging)
 
         self._load_config_action = QAction(_icon("mdi6.folder-upload-outline", _ic), "Import Config", self)
@@ -971,14 +975,24 @@ class MainWindow(QMainWindow):
                 QApplication.clipboard().setText(text)
 
     def _on_info(self) -> None:
+        import json as _json
+        _vpath = Path(__file__).resolve().parents[2] / "version.json"
+        try:
+            _v = _json.loads(_vpath.read_text(encoding="utf-8"))
+        except Exception:
+            _v = {}
+        version   = _v.get("version",   self._version)
+        developer = _v.get("Developer", "Shreyas P")
+        publisher = _v.get("publisher", "Decibels Lab Pvt. Ltd.")
         self._popup_about(
             "About Serial Monitor",
             (
                 f"{APP_DISPLAY_NAME} App\n\n"
-                "Version: 0.1.0\n"
-                "Publisher: Decibels\n"
-                "Build Date: May 2026\n"
-                "Website: https://lms.decibelslab.com/\n\n"
+                f"Version:   {version}\n"
+                f"Developer: {developer}\n"
+                f"Publisher: {publisher}\n"
+                f"Build Date: May 2026\n"
+                f"Website:   https://lms.decibelslab.com/\n\n"
                 "Serial Data Logger and Visualizer.\n"
                 "Configuration-driven decoding."
             ),
@@ -987,6 +1001,43 @@ class MainWindow(QMainWindow):
     def _on_view_docs(self) -> None:
         docs_path = Path(__file__).resolve().parents[1] / "resources" / "index.html"
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(docs_path)))
+
+    def _on_show_config_info(self) -> None:
+        """View → Config Info… — shows current config, protocol and logging state."""
+        from PySide6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QDialogButtonBox, QPushButton
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Config Info")
+        dlg.setMinimumWidth(420)
+        root = QVBoxLayout(dlg)
+        root.setSpacing(12)
+        root.setContentsMargins(16, 16, 16, 16)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        form.setSpacing(8)
+
+        def _row(lbl: str, val: str) -> None:
+            v = QLabel(val)
+            v.setWordWrap(True)
+            v.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            form.addRow(lbl, v)
+
+        _row("Config file:", self._config_label.text())
+        _row("Protocol:", self._protocol_label.text())
+        _row("Frames:", self._frames_label.text())
+        _row("Logging:", self._logging_label.text())
+
+        root.addLayout(form)
+
+        btn_row = QDialogButtonBox()
+        open_log_btn = QPushButton("📂  Open Log Folder")
+        open_log_btn.clicked.connect(self._on_open_log_folder)
+        btn_row.addButton(open_log_btn, QDialogButtonBox.ButtonRole.ActionRole)
+        btn_row.addButton(QDialogButtonBox.StandardButton.Close)
+        btn_row.rejected.connect(dlg.reject)
+        root.addWidget(btn_row)
+
+        dlg.exec()
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
@@ -1118,55 +1169,69 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self._group_combo)
         top_row.addWidget(self._show_calcs_check)
 
+        # Config/logging status labels — kept as hidden attributes so
+        # _refresh_config_status / logging helpers can still update their text.
+        # Visible via View → Config Info...
+        self._config_label = QLabel("No config loaded")
+        self._protocol_label = QLabel("-")
+        self._frames_label = QLabel("-")
+        self._logging_label = QLabel("Logging: stopped")
+        self._open_log_btn = QPushButton("\U0001f4c2")
+        self._open_log_btn.setToolTip("Open Log Folder")
+        self._open_log_btn.clicked.connect(self._on_open_log_folder)
+
         center_layout.addLayout(top_row)
         center_layout.addWidget(self._table)
-        
+
         self.setCentralWidget(center_widget)
 
-        self._settings_dock = QDockWidget("Connection", self)
-        self._settings_dock.setObjectName("SettingsDock")
-        self._settings_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
-        self._settings_dock.setWidget(self._build_left_panel())
-        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self._settings_dock)
+        # Connection dock REMOVED — Connect button opens ConnectionDialog popup.
+        # Poll Configure accessible via Device menu.
+        # Config/logging status shown in the central info bar.
 
+        # ── Right column: tabbed panels (top) ─────────────────────────────
         self._plot_dock = QDockWidget("Live Plot", self)
         self._plot_dock.setObjectName("PlotDock")
-        self._plot_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
+        self._plot_dock.setAllowedAreas(
+            Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea
+        )
         self._plot_dock.setWidget(self._build_plot_tab())
-        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._plot_dock)
+        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._plot_dock)
 
         self._bitfields_dock = QDockWidget("Bitfields", self)
         self._bitfields_dock.setObjectName("BitfieldsDock")
         self._bitfields_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self._bitfields_dock.setWidget(self._build_bitfield_tab())
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._bitfields_dock)
-        self.tabifyDockWidget(self._plot_dock, self._bitfields_dock)
 
         self._enums_dock = QDockWidget("Enums", self)
         self._enums_dock.setObjectName("EnumsDock")
         self._enums_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self._enums_dock.setWidget(self._build_enum_tab())
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._enums_dock)
-        self.tabifyDockWidget(self._plot_dock, self._enums_dock)
+        self.tabifyDockWidget(self._bitfields_dock, self._enums_dock)
 
         self._tx_dock = QDockWidget("TX Commands", self)
         self._tx_dock.setObjectName("TxDock")
         self._tx_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self._tx_dock.setWidget(self._build_tx_tab())
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._tx_dock)
-        self.tabifyDockWidget(self._plot_dock, self._tx_dock)
+        self.tabifyDockWidget(self._bitfields_dock, self._tx_dock)
 
         self._editor_dock = QDockWidget("Parameter Editor", self)
         self._editor_dock.setObjectName("EditorDock")
         self._editor_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self._editor_dock.setWidget(self._build_editor_tab())
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._editor_dock)
-        self.tabifyDockWidget(self._plot_dock, self._editor_dock)
+        self.tabifyDockWidget(self._bitfields_dock, self._editor_dock)
 
+        self._tx_dock.raise_()
 
+        # Build the left-panel widgets (recent config combo, poll list, etc.)
+        # without attaching them to a dock — they are accessed by other methods.
+        self._build_left_panel()
 
-        self._plot_dock.raise_()
-
+        # ── Logs: bottom-right, split below the panel tabs ─────────────────
         self._console = QPlainTextEdit(self)
         self._console.setReadOnly(True)
         self._console.setPlaceholderText("Raw RX/TX frames will appear here...")
@@ -1175,9 +1240,9 @@ class MainWindow(QMainWindow):
 
         self._console_dock = QDockWidget("Raw Console", self)
         self._console_dock.setObjectName("ConsoleDock")
-        self._console_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea)
+        self._console_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.BottomDockWidgetArea)
         self._console_dock.setWidget(self._console)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._console_dock)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._console_dock)
 
         self._activity_log = QPlainTextEdit(self)
         self._activity_log.setReadOnly(True)
@@ -1187,14 +1252,17 @@ class MainWindow(QMainWindow):
 
         self._activity_dock = QDockWidget("Activity Log", self)
         self._activity_dock.setObjectName("ActivityDock")
-        self._activity_dock.setAllowedAreas(Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.TopDockWidgetArea)
+        self._activity_dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea | Qt.DockWidgetArea.BottomDockWidgetArea)
         self._activity_dock.setWidget(self._activity_log)
-        self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._activity_dock)
+        self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, self._activity_dock)
         self.tabifyDockWidget(self._console_dock, self._activity_dock)
-        self._console_dock.raise_()
+        self._activity_dock.raise_()
+
+        # NOTE: splitDockWidget is deferred to showEvent — Qt ignores it
+        # during __init__ before the window geometry is finalised.
+
 
         for dock in (
-            self._settings_dock,
             self._plot_dock,
             self._bitfields_dock,
             self._enums_dock,
@@ -1215,7 +1283,6 @@ class MainWindow(QMainWindow):
 
         panels_menu = menu.addMenu("Panels")
         for dock, label in (
-            (self._settings_dock, "Connection"),
             (self._plot_dock, "Live Plot"),
             (self._bitfields_dock, "Bitfields"),
             (self._enums_dock, "Enums"),
@@ -1227,6 +1294,11 @@ class MainWindow(QMainWindow):
             action = dock.toggleViewAction()
             action.setText(label)
             panels_menu.addAction(action)
+
+        menu.addSeparator()
+        config_info_action = QAction(_icon("mdi6.information-outline", ic), "Config Info\u2026", self)
+        config_info_action.triggered.connect(self._on_show_config_info)
+        menu.addAction(config_info_action)
 
         theme_menu = menu.addMenu("Theme")
         self._theme_group = QActionGroup(self)
@@ -1316,10 +1388,23 @@ class MainWindow(QMainWindow):
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
         theme = str(self._settings.value("ui/theme", "dark"))
-        # Use singleShot(0) so the native HWND is fully created before we call
-        # DwmSetWindowAttribute — calling it synchronously in showEvent can
-        # return a non-zero (failure) result because the handle isn't stable yet.
         QTimer.singleShot(0, lambda: _apply_windows_dark_titlebar(self, dark=(theme == "dark")))
+        # Split right column after the window is fully shown so Qt honours it.
+        if not self._settings.value("window/state"):  # only on first launch
+            QTimer.singleShot(50, self._apply_default_dock_split)
+
+    def _apply_default_dock_split(self) -> None:
+        """Split right column: panels top, logs bottom. Called once on first show."""
+        self.splitDockWidget(self._bitfields_dock, self._console_dock, Qt.Orientation.Vertical)
+        # Give logs ~35% of the right column height
+        h = self.height()
+        self.resizeDocks(
+            [self._bitfields_dock, self._console_dock],
+            [int(h * 0.65), int(h * 0.35)],
+            Qt.Orientation.Vertical,
+        )
+        self._tx_dock.raise_()
+        self._activity_dock.raise_()
 
     def _reset_plot_view(self) -> None:
         """Reset View / Ctrl+R: snap back to Live mode (0 → current time)."""
@@ -1333,12 +1418,10 @@ class MainWindow(QMainWindow):
         self.restoreGeometry(self._default_geometry)
         self.restoreState(self._default_state)
         for dock in (
-            self._settings_dock,
             self._plot_dock,
             self._bitfields_dock,
             self._enums_dock,
             self._tx_dock,
-            self._editor_dock,
             self._editor_dock,
             self._console_dock,
             self._activity_dock,
@@ -1382,66 +1465,19 @@ class MainWindow(QMainWindow):
         layout.addWidget(title_label)
         return frame, layout
 
-    def _build_left_panel(self) -> QWidget:
-        panel = QWidget(self)
-        layout = QVBoxLayout(panel)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(10)
-
-        # --- Serial Connection status card ----------------------------------
-
-        proto_card, proto_layout = self._card("Protocol Config", panel)
-
-        recent_row = QHBoxLayout()
-        self._recent_config_combo = QComboBox(proto_card)
+    def _build_left_panel(self) -> None:
+        """Initialise sidebar-only widgets (not visible anywhere in the UI).
+        These attributes are read by _on_load_recent_config, _populate_polling_list, etc.
+        """
+        self._recent_config_combo = QComboBox()
         self._recent_config_combo.setMinimumWidth(120)
-        recent_load = QPushButton("Load", proto_card)
-        recent_load.clicked.connect(self._on_load_recent_config)
-        recent_row.addWidget(self._recent_config_combo, 1)
-        recent_row.addWidget(recent_load)
-        proto_layout.addLayout(recent_row)
 
-        self._config_label = QLabel("No config loaded", proto_card)
-        self._protocol_label = QLabel("-", proto_card)
-        self._frames_label = QLabel("-", proto_card)
-        for lbl in (self._config_label, self._protocol_label, self._frames_label):
-            lbl.setWordWrap(True)
-            proto_layout.addWidget(lbl)
-
-        logging_row = QHBoxLayout()
-        self._logging_label = QLabel("Logging: stopped", proto_card)
-        self._logging_label.setWordWrap(True)
-        logging_row.addWidget(self._logging_label, 1)
-        self._open_log_btn = QPushButton("\U0001f4c2")
-        self._open_log_btn.setToolTip("Open Log Folder")
-        self._open_log_btn.setFixedWidth(28)
-        self._open_log_btn.clicked.connect(self._on_open_log_folder)
-        logging_row.addWidget(self._open_log_btn)
-        proto_layout.addLayout(logging_row)
-        layout.addWidget(proto_card)
-
-        # --- Poll Schedule status card --------------------------------------
-        poll_card, poll_layout = self._card("Poll Schedule", panel)
-        self._poll_status_label = QLabel("No targets loaded", poll_card)
+        self._poll_status_label = QLabel("No targets loaded")
         self._poll_status_label.setWordWrap(True)
-        poll_layout.addWidget(self._poll_status_label)
 
-        # Read-only list shows which targets are active (updated on config load
-        # and after each PollingConfigDialog accept).
-        self._polling_list = QListWidget(poll_card)
+        self._polling_list = QListWidget()
         self._polling_list.setMaximumHeight(130)
-        self._polling_list.setEnabled(False)   # display only in sidebar
-        poll_layout.addWidget(self._polling_list)
-
-        poll_configure_btn = QPushButton("Configure\u2026", poll_card)
-        poll_configure_btn.setToolTip("Open polling target selector")
-        poll_configure_btn.clicked.connect(self._open_poll_config_dialog)
-        poll_layout.addWidget(poll_configure_btn)
-        layout.addWidget(poll_card)
-
-        layout.addStretch(1)
-        panel.setMinimumWidth(240)
-        return panel
+        self._polling_list.setEnabled(False)
 
     def _build_plot_tab(self) -> QWidget:
         outer = QWidget(self)
@@ -1481,6 +1517,12 @@ class MainWindow(QMainWindow):
             "Click  ⟳ Reset View  (or Ctrl+R) to return to Live."
         )
         controls.addWidget(self._plot_mode_label)
+
+        # Session clock — updates every second via _flush_ui
+        self._session_clock_label = QLabel("⏱ 0:00:00", outer)
+        self._session_clock_label.setToolTip("Elapsed time since session start (or last config load).")
+        self._session_clock_label.setStyleSheet("font-size:11px; color:#94A3B8; padding-left:8px;")
+        controls.addWidget(self._session_clock_label)
 
         root_layout.addLayout(controls)
 
@@ -1684,6 +1726,7 @@ class MainWindow(QMainWindow):
             self._sync_plot_keys()
             self._persist_panel_assignments()
             self._rebuild_panel_strips()
+            self._update_panel_ylabel(panel_idx)
             self._redraw_plot()
 
     def _remove_signal_from_panel(self, panel_idx: int, key: Tuple[int, str]) -> None:
@@ -1697,6 +1740,7 @@ class MainWindow(QMainWindow):
             self._sync_plot_keys()
             self._persist_panel_assignments()
             self._rebuild_panel_strips()
+            self._update_panel_ylabel(panel_idx)
             self._redraw_plot()
 
     def _sync_plot_keys(self) -> None:
@@ -1713,6 +1757,19 @@ class MainWindow(QMainWindow):
     def _persist_panel_assignments(self) -> None:
         for i, panel in enumerate(self._plot_panels):
             self._settings.setValue(f"plot/panel/{i}/keys", [list(k) for k in panel.assigned_keys])
+
+    def _update_panel_ylabel(self, panel_idx: int) -> None:
+        """Set the Y-axis label to the distinct units of all assigned signals."""
+        if panel_idx >= len(self._plot_panels) or not self._config:
+            return
+        panel = self._plot_panels[panel_idx]
+        sig_map = {(s.frame_id, s.signal_name): s for s in self._config.all_signals}
+        units: list[str] = []
+        for key in panel.assigned_keys:
+            sig = sig_map.get(key)
+            if sig and getattr(sig, 'unit', None) and sig.unit not in units:
+                units.append(sig.unit)
+        panel.plot_item.setLabel("left", " / ".join(units) if units else "")
 
     def _mouseMoved(self, evt):
         """Crosshair handler — disabled in multi-panel mode (panels use their own)."""
@@ -1841,7 +1898,18 @@ class MainWindow(QMainWindow):
             self._popup_critical("Config error", str(exc))
 
     def _load_config_from_path(self, path: Path) -> None:
-        self._config = load_config(path)
+        # Keep a snapshot so we can revert on failure
+        _prev_config = self._config
+        _prev_config_path = self._config_path
+        _prev_parser = self._parser
+        try:
+            self._config = load_config(path)
+        except Exception as exc:  # ConfigError or unexpected
+            self._config = _prev_config
+            self._config_path = _prev_config_path
+            self._parser = _prev_parser
+            self._popup_critical("Config error", str(exc))
+            return
         self._config_path = path
         self._parser = create_parser(self._config.protocol)
         self._session_started = datetime.now()
@@ -1854,8 +1922,17 @@ class MainWindow(QMainWindow):
         self._populate_table_from_config()
         self._populate_group_selector()
         self._plot_keys.clear()
+        # Clear panel assignments — old signals may not exist in the new config
+        for i, panel in enumerate(self._plot_panels):
+            panel.assigned_keys.clear()
+            for curve in panel.curves.values():
+                panel.plot_item.removeItem(curve)
+            panel.curves.clear()
+            self._rebuild_panel_strips()
+            self._update_panel_ylabel(i)
+        self._persist_panel_assignments()
         self._populate_tx_commands()
-        self._update_poll_status_sidebar()   # refresh sidebar read-only list
+        self._update_poll_status_sidebar()
         self._populate_editor_table()
         self._refresh_config_status()
         self._remember_config(path)
@@ -2022,6 +2099,12 @@ class MainWindow(QMainWindow):
         self._table_model.commit_staged()
         # Redraw the plot once for the entire batch.
         self._redraw_plot()
+        # Update the session elapsed clock in the plot toolbar (cheap string op).
+        if self._session_started is not None and hasattr(self, '_session_clock_label'):
+            elapsed = int((datetime.now() - self._session_started).total_seconds())
+            h, rem = divmod(elapsed, 3600)
+            m, s = divmod(rem, 60)
+            self._session_clock_label.setText(f"\u23f1 {h}:{m:02d}:{s:02d}")
 
     def _on_connection_lost(self) -> None:
         """Called when the worker detects a physical USB unplug."""
@@ -2042,22 +2125,38 @@ class MainWindow(QMainWindow):
         self._led_label.setToolTip("Connected (No Data)")
         self._set_status("Connected (No Data)")
 
-    def _on_metrics_updated(self, timeouts: int, crc: int, rx_bytes: int) -> None:
-        self._rx_bytes = rx_bytes
-        self._error_count = crc
-        buffered = self._parser.buffered_bytes if self._parser else 0
+    @staticmethod
+    def _fmt_bytes(n: int) -> str:
+        """Human-readable byte count, always the same character width."""
+        if n >= 1_048_576:
+            return f"{n / 1_048_576:6.1f} MB"
+        if n >= 1_024:
+            return f"{n / 1_024:6.1f} KB"
+        return f"{n:7d}  B"
+
+    def _refresh_counts_label(self) -> None:
+        """Single source of truth for the status-bar metrics string.
+        Always the same format so the label never changes width.
+        """
+        if not hasattr(self, "_counts_label"):
+            return
         self._counts_label.setText(
-            f"frames: {self._packet_count}   errors/crc: {self._error_count}   "
-            f"timeouts: {timeouts}   "
-            f"RX: {self._rx_bytes}B   TX: {self._tx_bytes}B   lat: {self._delta_t_ms:.1f}ms"
+            f"Frames: {self._packet_count:>6d}"
+            f"  |  Errors: {self._error_count:>4d}"
+            f"  |  Timeouts: {self._timeouts:>4d}"
+            f"  |  RX: {self._fmt_bytes(self._rx_bytes)}"
+            f"  |  TX: {self._fmt_bytes(self._tx_bytes)}"
+            f"  |  Lat: {self._delta_t_ms:>6.1f} ms"
         )
 
+    def _on_metrics_updated(self, timeouts: int, crc: int, rx_bytes: int) -> None:
+        self._timeouts = timeouts
+        self._rx_bytes = rx_bytes
+        self._error_count = crc
+        self._refresh_counts_label()
+
     def _update_counts(self) -> None:
-        if hasattr(self, "_counts_label"):
-            self._counts_label.setText(
-                f"frames: {self._packet_count}   errors/crc: {self._error_count}   "
-                f"RX: {self._rx_bytes}B   TX: {self._tx_bytes}B   lat: {self._delta_t_ms:.1f}ms"
-            )
+        self._refresh_counts_label()
         
     def _on_tx_recorded(self, packet: bytes) -> None:
         self._tx_bytes += len(packet)
@@ -2416,22 +2515,51 @@ class MainWindow(QMainWindow):
         except ValueError as e:
             self._popup_warning("Invalid Input", str(e))
             return
-            
-        # Build write packet
-        from ..protocol.packet_builder import build_packet, build_modbus_packet
-        if self._config.protocol.parser_type == "modbus_rtu":
-            # For FC06 write single register (simplified: convert val to 2 bytes)
-            payload = int(val).to_bytes(2, "big", signed=True)
-            pkt = build_modbus_packet(self._config.protocol, signal.frame_id, payload)
-        else:
-            self._popup_warning(
-                "Write",
-                "Parameter editing for framed protocol not yet fully implemented",
-            )
+
+        from ..protocol.packet_builder import build_packet
+        import struct
+
+        try:
+            # Step 1: reverse scale/offset → raw = (user_value - offset) / scale
+            raw = (val - signal.offset) / signal.scale
+
+            # Step 2: encode raw into bytes per data_type and byte_order
+            byteorder: str = signal.endianness   # "little" | "big"
+            dt: str = signal.data_type            # "uint8", "int16", "float32", etc.
+
+            if "float" in dt:
+                fmt = ("<" if byteorder == "little" else ">") + (
+                    "f" if signal.byte_length == 4 else "d"
+                )
+                encoded = struct.pack(fmt, float(raw))
+            elif "int" in dt:
+                signed = dt.startswith("int")
+                encoded = round(raw).to_bytes(signal.byte_length, byteorder, signed=signed)
+            else:
+                raise ValueError(f"Unsupported data_type for write: {dt!r}")
+
+            if len(encoded) != signal.byte_length:
+                raise ValueError(
+                    f"Encoded value is {len(encoded)} bytes but signal expects {signal.byte_length}"
+                )
+
+            # Step 3: place encoded bytes at start_byte in a zero-padded payload
+            payload = bytearray(signal.end_byte)
+            payload[signal.start_byte:signal.end_byte] = encoded
+
+            # Step 4: wrap in the full packet envelope (header + CRC + footer)
+            pkt = build_packet(self._config.protocol, signal.frame_id, bytes(payload))
+
+        except (OverflowError, struct.error, ValueError) as exc:
+            self._popup_warning("Write Error", str(exc))
             return
-            
+
         self._serial.enqueue_priority_tx(pkt)
-        self._log_activity(f"Priority Write: {signal.signal_name} = {val}")
+        self._log_activity(
+            f"Write: {signal.signal_name} = {val} {signal.unit}  "
+            f"(raw=0x{pkt.hex().upper()})"
+        )
+
 
     def _populate_table_from_config(self) -> None:
         assert self._config is not None
@@ -2640,15 +2768,15 @@ class MainWindow(QMainWindow):
         else:
             n_panels = len(self._plot_panels)
             if n_panels <= 1:
-                # Single panel — just one action
                 menu.addAction("Add to Live Plot").triggered.connect(
                     lambda: self._toggle_plot_key(key)
                 )
             else:
-                # Multiple panels — offer a sub-menu
                 add_sub = menu.addMenu("Add to Live Plot")
                 for idx in range(n_panels):
-                    label = f"Panel {idx + 1}"
+                    n_sigs = len(self._plot_panels[idx].assigned_keys)
+                    count_str = "empty" if n_sigs == 0 else f"{n_sigs} signal{'s' if n_sigs > 1 else ''}"
+                    label = f"Panel {idx + 1}  ({count_str})"
                     add_sub.addAction(label).triggered.connect(
                         lambda _=False, i=idx: self._add_signal_to_panel(i, key)
                     )
@@ -2887,6 +3015,20 @@ class MainWindow(QMainWindow):
         return f"{timestamp}, ERR, {packet.error or 'unknown'}, {hex_text}"
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        # Warn if logging is active — data is safe (flushed per-frame) but
+        # the user may not realise they are about to stop a recording.
+        if self._logging:
+            reply = QMessageBox.question(
+                self,
+                "Active Log Session",
+                "A log session is currently recording.\n\n"
+                "Stop logging and close the application?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if reply != QMessageBox.StandardButton.Yes:
+                event.ignore()
+                return
         # Stop the 60 Hz UI flush timer first.
         self._ui_timer.stop()
         # Signal the worker thread to exit and wait up to 2 s for the COM
