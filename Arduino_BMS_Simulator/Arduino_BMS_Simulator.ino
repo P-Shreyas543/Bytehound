@@ -108,8 +108,8 @@ void loop() {
 
     // Simulate some simple changes over time
     simulated_voltage += 1;
-    if (simulated_voltage > 550) {
-      simulated_voltage = 450;
+    if (simulated_voltage > 42) {
+      simulated_voltage = 3.65;
     }
     
     simulated_current += 1;
