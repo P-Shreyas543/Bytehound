@@ -83,8 +83,8 @@ void setup() {
 }
 
 void loop() {
-  // Send telemetry every 500ms
-  if (millis() - lastSendTime >= 500) {
+  // Send telemetry every 100ms
+  if (millis() - lastSendTime >= 100) {
     lastSendTime = millis();
 
     // -- Frame 0x1000: BMS Status (Voltage and Current) --

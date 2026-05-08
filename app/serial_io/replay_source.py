@@ -47,8 +47,8 @@ def parse_log_file(path: str | Path) -> Tuple[List[ReplayRow], List[str]]:
 
 def _is_csv_header(line: str) -> bool:
     """Detect the CSV header row written by :class:`RawLogger`."""
-    parts = [p.strip().lower() for p in line.split(",", 2)]
-    return parts == ["timestamp", "direction", "hex"]
+    parts = [p.strip().lower() for p in line.split(",")]
+    return len(parts) >= 3 and parts[:3] == ["timestamp", "direction", "hex"]
 
 
 def replay_bytes(
@@ -61,10 +61,10 @@ def replay_bytes(
 
 
 def _parse_log_line(line: str) -> Tuple[ReplayRow | None, str | None]:
-    parts = [p.strip() for p in line.split(",", 2)]
-    if len(parts) != 3:
+    parts = [p.strip() for p in line.split(",")]
+    if len(parts) < 3:
         return None, f"expected 'timestamp, direction, hex' but got {line!r}"
-    timestamp, direction, hex_str = parts
+    timestamp, direction, hex_str = parts[:3]
     cleaned = hex_str.replace(" ", "").replace("0x", "").replace("0X", "")
     if len(cleaned) % 2 != 0:
         return None, f"odd-length hex string: {hex_str!r}"

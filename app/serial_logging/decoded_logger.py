@@ -1,13 +1,24 @@
-"""Decoded signal CSV log writer."""
+"""Decoded signal CSV log writer.
+
+Buffered I/O
+------------
+``log_signal()`` writes to the file object's in-memory buffer but only
+calls the OS-level ``flush()`` every ``FLUSH_INTERVAL`` seconds (default
+0.5 s) to avoid per-frame syscall overhead at high baud rates. A final
+``flush()`` is guaranteed when the logger is closed.
+"""
 
 from __future__ import annotations
 
 import csv
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import TextIO
 
 from ..decoder.frame_decoder import DecodedFrame, DecodedSignal
+
+_FLUSH_INTERVAL = 0.5  # seconds between explicit OS-level flushes
 
 
 class DecodedLogger:
@@ -31,6 +42,7 @@ class DecodedLogger:
         self.path = Path(path)
         self._fp: TextIO | None = None
         self._writer: csv.DictWriter | None = None
+        self._last_flush: float = 0.0
 
     def __enter__(self) -> "DecodedLogger":
         self.open()
@@ -44,11 +56,13 @@ class DecodedLogger:
         new_file = not self.path.exists() or self.path.stat().st_size == 0
         self._fp = self.path.open("a", encoding="utf-8", newline="")
         self._writer = csv.DictWriter(self._fp, fieldnames=self.COLUMNS)
+        self._last_flush = time.monotonic()
         if new_file:
             self._writer.writeheader()
 
     def close(self) -> None:
         if self._fp is not None:
+            self._fp.flush()  # guaranteed final flush before close
             self._fp.close()
             self._fp = None
             self._writer = None
@@ -70,7 +84,7 @@ class DecodedLogger:
     ) -> None:
         if self._writer is None:
             self.open()
-        assert self._writer is not None
+        assert self._writer is not None and self._fp is not None
         ts = (timestamp or datetime.now()).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self._writer.writerow(
             {
@@ -89,5 +103,8 @@ class DecodedLogger:
                 "is_calculated": signal.is_calculated,
             }
         )
-        if self._fp is not None:
+        # Periodic flush — avoids an OS syscall after every single signal row.
+        now = time.monotonic()
+        if now - self._last_flush >= _FLUSH_INTERVAL:
             self._fp.flush()
+            self._last_flush = now

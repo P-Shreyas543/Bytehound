@@ -10,35 +10,34 @@ def test_polling_worker_queue_interleaving():
     pc = dummy_protocol_config(parser_type="framed")
     sched = PollingScheduleSpec(target_id=0x100, interval_ms=10, timeout_ms=5)
     worker = PollingWorker(settings, pc, [sched])
-    
+
     # Mock the serial port
     worker._serial = MagicMock()
     worker._serial.is_open = True
     worker._serial.in_waiting = 0
-    worker._running = True
-    
+    # New: stop_event is a threading.Event; clear it so the loop runs initially.
+    worker._stop_event.clear()
+
     # Enqueue priority
     worker.enqueue_priority_tx(b"\xAA\xBB")
-    
-    # We will call worker.run() but we need to stop it after a few iterations
-    # We'll override the _running flag inside a side effect or just run the logic manually.
-    # Actually it's easier to just call the inside of the loop manually or use a trick.
-    
+
+    # We will call worker.run() but we need to stop it after a few iterations.
+    # Override _serial.write: set the stop event once the priority TX is sent.
+
     def mock_write(data):
         if data == b"\xAA\xBB":
             mock_write.priority_sent = True
         else:
             mock_write.poll_sent = True
-        # stop after priority is sent
+        # Signal the run loop to stop after priority TX is confirmed.
         if getattr(mock_write, 'priority_sent', False):
-            worker._running = False
-            
+            worker._stop_event.set()
+
     mock_write.priority_sent = False
     mock_write.poll_sent = False
     worker._serial.write = mock_write
-    
-    worker.start = MagicMock() # don't actually start thread
+
+    worker.start = MagicMock()  # don't actually start a QThread
     worker.run()
-    
+
     assert mock_write.priority_sent
-    

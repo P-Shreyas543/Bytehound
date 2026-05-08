@@ -9,9 +9,22 @@ from datetime import datetime
 from pathlib import Path
 from typing import Deque, Dict, Optional, Tuple
 
-from PySide6.QtCore import QSettings, Qt, QTimer, QUrl, QObject, Signal
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QIcon, QPixmap, QFont, QColor
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, QObject, Signal, QSortFilterProxyModel, QLocale
+from PySide6.QtGui import (
+    QAction,
+    QActionGroup,
+    QBrush,
+    QColor,
+    QDesktopServices,
+    QFont,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPen,
+    QPixmap,
+)
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QDockWidget,
@@ -27,18 +40,25 @@ from PySide6.QtWidgets import (
     QFrame,
     QInputDialog,
     QMainWindow,
+    QMenu,
     QMessageBox,
     QPlainTextEdit,
     QProgressDialog,
     QPushButton,
     QSizePolicy,
     QStatusBar,
+    QStyle,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+    QTableView,
     QTableWidget,
     QTableWidgetItem,
     QToolBar,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
+from PySide6.QtGui import QIntValidator, QDoubleValidator
 
 try:
     import pyqtgraph as pg
@@ -50,11 +70,211 @@ try:
 except ImportError:  # pragma: no cover
     qdarktheme = None
 
+try:
+    import qtawesome as qta  # type: ignore
+except ImportError:  # pragma: no cover - icons degrade to empty if missing
+    qta = None
+
+
+def _icon(name: str, color: str = "#F8FAFC") -> QIcon:
+    """Return a qtawesome icon tinted with *color*, or an empty QIcon.
+
+    Pass ``color='#1F2937'`` for light-theme icons and ``color='#F8FAFC'``
+    (default) for dark-theme icons so they contrast against their background.
+    """
+    if qta is None:
+        return QIcon()
+    try:
+        return qta.icon(name, color=color)
+    except Exception:
+        return QIcon()
+
 APP_ORG = "Decibels"
 APP_NAME = "Serial-MonitorApp"
 APP_DISPLAY_NAME = "Serial Monitor"
 
+
+def _project_root() -> Path:
+    """Return the dir to look for runtime assets (branding/, version.json).
+
+    Frozen build: next to Serial-MonitorApp.exe (build.py copies branding/ here).
+    Dev run:      the repo root.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+def _read_version() -> str:
+    try:
+        import json
+        with (_project_root() / "version.json").open("r", encoding="utf-8") as fp:
+            return json.load(fp).get("version", "0.0.0")
+    except Exception:
+        return "0.0.0"
+
+
+def _find_logo(name: str) -> Optional[Path]:
+    """Search a few common locations for a branding asset."""
+    root = _project_root()
+    for candidate in (root / "branding" / name, root / name):
+        if candidate.exists():
+            return candidate
+    return None
+
+
+def _apply_windows_dark_titlebar(widget, dark: bool) -> None:
+    """Toggle the Windows 10/11 dark title bar on a top-level widget.
+
+    No-op on non-Windows or if the DWM call is unavailable.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        hwnd = int(widget.winId())
+        DWMWA_USE_IMMERSIVE_DARK_MODE = 20
+        value = ctypes.c_int(1 if dark else 0)
+        result = ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            DWMWA_USE_IMMERSIVE_DARK_MODE,
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+        if result != 0:
+            # Older Windows 10 builds use attribute 19 instead.
+            DWMWA_USE_IMMERSIVE_DARK_MODE_OLD = 19
+            ctypes.windll.dwmapi.DwmSetWindowAttribute(
+                hwnd,
+                DWMWA_USE_IMMERSIVE_DARK_MODE_OLD,
+                ctypes.byref(value),
+                ctypes.sizeof(value),
+            )
+    except Exception:
+        pass
+
+
+_PLOT_PALETTE = (
+    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
+    "#8c564b", "#e377c2", "#7f7f7f", "#17becf", "#bcbd22",
+    "#ff9896", "#98df8a", "#c5b0d5", "#393b79",
+)
+
+
+def _pad_dock_content(dock: "QDockWidget", margin: int = 12) -> None:
+    """Apply uniform internal margins to a dock's content widget.
+
+    If the inner widget already has a layout, set its contentsMargins. Otherwise
+    wrap the widget in a thin QVBoxLayout shim so the padding takes effect.
+    """
+    inner = dock.widget()
+    if inner is None:
+        return
+    layout = inner.layout()
+    if layout is not None:
+        layout.setContentsMargins(margin, margin, margin, margin)
+        return
+    shim = QWidget()
+    shim_layout = QVBoxLayout(shim)
+    shim_layout.setContentsMargins(margin, margin, margin, margin)
+    shim_layout.addWidget(inner)
+    dock.setWidget(shim)
+
+
+class _StatusBadgeDelegate(QStyledItemDelegate):
+    """Paint the Status column as a rounded pill badge.
+
+    Green for "ok", red for "error"/"fail", orange for everything else
+    non-empty/non-dash. Falls back to the default delegate for empty / "-".
+    Colors mirror the LED status palette for visual consistency.
+    """
+
+    _GREEN = QColor("#10B981")   # Tailwind emerald-500
+    _RED = QColor("#EF4444")     # Tailwind rose-500
+    _ORANGE = QColor("#F59E0B")  # Tailwind amber-500
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
+        text = str(index.data(Qt.ItemDataRole.DisplayRole) or "").strip()
+        if not text or text == "-":
+            super().paint(painter, option, index)
+            return
+
+        # Honor selection highlight from the style first.
+        if option.state & QStyle.StateFlag.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+
+        lower = text.lower()
+        if "ok" in lower and "error" not in lower:
+            color = self._GREEN
+        elif "error" in lower or "fail" in lower:
+            color = self._RED
+        else:
+            color = self._ORANGE
+
+        rect = option.rect.adjusted(6, 4, -6, -4)
+
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        path = QPainterPath()
+        path.addRoundedRect(rect, rect.height() / 2.0, rect.height() / 2.0)
+        painter.fillPath(path, QBrush(color))
+        painter.setPen(QPen(QColor("white")))
+        font = painter.font()
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
+        painter.restore()
+
+
+class TitleBarThemeFilter(QObject):
+    """Application-wide event filter that themes the native title bar of
+    every top-level widget (main window, dialogs, popups) when it is shown."""
+
+    def __init__(self, settings: QSettings, parent: Optional[QObject] = None) -> None:
+        super().__init__(parent)
+        self._settings = settings
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() == QEvent.Type.Show:
+            try:
+                if hasattr(obj, "isWindow") and obj.isWindow() and hasattr(obj, "winId"):
+                    theme = str(self._settings.value("ui/theme", "dark"))
+                    _apply_windows_dark_titlebar(obj, dark=(theme == "dark"))
+            except Exception:
+                pass
+        return False
+
+
+def _format_serial_open_error(port: str, exc: BaseException) -> str:
+    """Return a user-friendly explanation for a failed serial port open.
+
+    Falls back to the raw exception text if the error doesn't match a known
+    pattern, but always includes the original detail at the end.
+    """
+    raw = str(exc)
+    lower = raw.lower()
+    port_label = port or "the selected port"
+
+    if isinstance(exc, PermissionError) or "permissionerror" in lower or "access is denied" in lower:
+        friendly = (
+            f"Cannot open {port_label}.\n\n"
+            "The port is unavailable. Common causes:\n"
+            "  • The device was unplugged or its driver glitched — try unplugging and re-plugging it.\n"
+            "  • Another application is using the port (Arduino IDE Serial Monitor, PuTTY, another terminal, or a previous instance of this app).\n"
+            "  • The port no longer exists — refresh the port list.\n"
+        )
+    elif "could not open port" in lower or "filenotfounderror" in lower:
+        friendly = (
+            f"Could not open {port_label}.\n\n"
+            "The port does not exist. It may have been disconnected; refresh the port list and try again.\n"
+        )
+    else:
+        friendly = f"Failed to open {port_label}.\n"
+
+    return f"{friendly}\nDetails: {raw}"
+
 from .updater import UpdateChecker, UpdateDownloader, launch_installer
+from .telemetry_model import TelemetryTableModel, COLUMNS as _MODEL_COLUMNS
 from ..commands.tx_command_builder import CommandBuildError, build_tx_command
 from ..decoder.config_loader import ConfigError, load_config
 from ..decoder.frame_decoder import DecodedFrame, DecodedSignal, decode_frame
@@ -66,22 +286,12 @@ from ..protocol.packet_parser import create_parser, ParserProtocol, ParsedPacket
 from ..serial_io.replay_source import parse_log_file, replay_bytes
 from ..serial_io.serial_worker import SerialSettings, PollingWorker, available_ports
 
-class OutputLogger(QObject):
-    emit_text = Signal(str)
-
-    def write(self, text):
-        if text.strip():
-            self.emit_text.emit(text.strip())
-
-    def flush(self):
-        pass
-
-
 _COLUMNS = (
-    ("Frame", 130),
+    ("Frame", 100),
     ("Group", 90),
     ("Variable", 190),
-    ("Index", 55),
+    ("Start B.", 60),
+    ("Data Type", 75),
     ("Raw", 95),
     ("Value", 95),
     ("Unit", 70),
@@ -89,12 +299,169 @@ _COLUMNS = (
     ("Updated", 110),
 )
 
+# ---------------------------------------------------------------------------
+# QSS stylesheets
+# ---------------------------------------------------------------------------
+# _QSS_BASE — rules shared by every theme.
+# Uses palette() references so they adapt to both dark and light themes when
+# qdarktheme is NOT installed or when the light theme is active.
+_QSS_BASE = """
+QWidget#centralPanel {
+    background-color: palette(window);
+}
+QFrame[card="true"] {
+    background-color: palette(alternate-base);
+    border: 1px solid palette(mid);
+    border-radius: 10px;
+}
+QLabel[cardTitle="true"] {
+    font-family: "PT Sans";
+    font-size: 11pt;
+    font-weight: bold;
+}
+QDockWidget {
+    border: none;
+}
+QDockWidget::title {
+    background: palette(window);
+    padding: 4px 8px;
+    border-bottom: 1px solid palette(mid);
+    font-weight: bold;
+}
+QToolButton#primaryAction {
+    background-color: #388E3C;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-weight: bold;
+}
+QToolButton#primaryAction:hover  { background-color: #4CAF50; }
+QToolButton#primaryAction:pressed { background-color: #2E7D32; }
+QToolButton#primaryAction:disabled { background-color: #555; color: #aaa; }
+QMenu { padding: 5px; }
+QMenu::item {
+    padding: 6px 24px 6px 24px;
+    border-radius: 4px;
+}
+QMenu::item:selected { background-color: #2563EB; color: white; }
+QMenu::separator {
+    height: 1px;
+    background: palette(mid);
+    margin: 4px 8px;
+}
+"""
+
+# _QSS_DARK_OVERRIDES — appended on top of _QSS_BASE when dark mode is active.
+# These rules use explicit hex codes to override the qdarktheme palette values
+# that cause the three visual bugs:
+#   1. Dock title bars rendering with bright white background / invisible text
+#   2. White separators / bleed-through behind the main table
+#   3. Toolbar icon buttons too dark against the dark toolbar
+_QSS_DARK_OVERRIDES = """
+/* 1. Main window and separator backgrounds */
+QMainWindow, QMainWindow::separator {
+    background-color: #0F172A;
+}
+/* The central panel contains the filter bar + main table.
+   objectName is set to "centralPanel" in _build_main_layout(). */
+QWidget#centralPanel {
+    background-color: #1E293B;
+}
+
+/* 2. Dock widget panels and title bars */
+QDockWidget {
+    color: #F8FAFC;
+}
+QDockWidget > QWidget {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 4px;
+}
+QDockWidget::title {
+    background-color: #1E293B;
+    text-align: left;
+    padding: 6px 10px;
+    color: #F8FAFC;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    border-bottom: 1px solid #334155;
+    font-weight: bold;
+}
+
+/* 3. Toolbar icon contrast */
+QToolBar QToolButton {
+    color: #F8FAFC;
+}
+
+/* 4. Central panel: also make its direct QWidget children (layout containers)
+   inherit the dark background so no white sub-panels bleed through. */
+QWidget#centralPanel > QWidget {
+    background-color: #1E293B;
+}
+
+/* 5. Input controls — search bar, dropdowns, spinboxes */
+QLineEdit, QComboBox, QSpinBox {
+    background-color: #0F172A;
+    color: #F8FAFC;
+    border: 1px solid #334155;
+    padding: 4px 8px;
+    border-radius: 3px;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+    border-color: #2563EB;
+}
+QComboBox QAbstractItemView {
+    background-color: #1E293B;
+    color: #F8FAFC;
+    selection-background-color: #2563EB;
+    border: 1px solid #334155;
+}
+
+/* 6. Checkboxes */
+QCheckBox {
+    color: #F8FAFC;
+    background-color: transparent;
+}
+
+/* 7. Main data table body */
+QTableView {
+    background-color: #0F172A;
+    alternate-background-color: #1E293B;
+    color: #F8FAFC;
+    gridline-color: #334155;
+    border: 1px solid #334155;
+    border-radius: 3px;
+}
+QTableView::item:selected {
+    background-color: #2563EB;
+    color: #F8FAFC;
+}
+
+/* 8. Table column headers */
+QHeaderView::section {
+    background-color: #1E293B;
+    color: #F8FAFC;
+    padding: 4px 6px;
+    border: 1px solid #334155;
+    font-weight: bold;
+}
+QHeaderView::section:hover {
+    background-color: #273549;
+}
+"""
+
 
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
-        self.setWindowTitle(APP_DISPLAY_NAME)
-        self.resize(1400, 820)
+        self._version = _read_version()
+        self.setWindowTitle(f"{APP_DISPLAY_NAME} v{self._version}")
+        self.resize(1280, 780)
+
+        icon_path = _find_logo("logo_sq.ico") or _find_logo("logo_sq.png")
+        if icon_path is not None:
+            self.setWindowIcon(QIcon(str(icon_path)))
 
         self._config: Optional[FrameConfig] = None
         self._config_path: Optional[Path] = None
@@ -115,19 +482,28 @@ class MainWindow(QMainWindow):
         # Timer removed; using PollingWorker QThread
 
         self._plot_history: Dict[Tuple[int, str], Deque[Tuple[float, float]]] = defaultdict(
-            lambda: deque(maxlen=1500)
+            # 250,000 points per signal — ~70 hours at 1 Hz, ~41 min at 100 Hz.
+            # deque handles its own memory (O(1) pop); no manual pruning needed.
+            lambda: deque(maxlen=250_000)
         )
+        self._plot_keys: list[Tuple[int, str]] = []
+        self._curve_icon_cache: Dict[Tuple[int, str, str], QIcon] = {}
         self._session_started = datetime.now()
+        # Plot mode: True = rolling (auto-scroll last N seconds),
+        # False = explore (user has panned/zoomed, we stop moving the X axis).
+        self._plot_rolling: bool = True
+        self._plot_range_changing: bool = False  # re-entrancy guard
+
+        # Packet queue + 60 Hz throttle timer
+        # Bounded deque prevents OOM if the Qt event loop stalls (e.g. user
+        # drags the window title bar for several seconds): oldest packets are
+        # silently dropped rather than growing the list without bound.
+        self._pending_packets: deque = deque(maxlen=10_000)
+        self._ui_timer = QTimer(self)
+        self._ui_timer.setInterval(16)  # ~60 Hz
+        self._ui_timer.timeout.connect(self._flush_ui)
 
         self._build_ui()
-        
-        self._stdout_logger = OutputLogger()
-        self._stdout_logger.emit_text.connect(self._append_to_console)
-        sys.stdout = self._stdout_logger
-        self._stderr_logger = OutputLogger()
-        self._stderr_logger.emit_text.connect(self._append_to_console)
-        sys.stderr = self._stderr_logger
-        
         self._load_default_config()
         self._refresh_ports()
         self._refresh_action_state()
@@ -146,7 +522,7 @@ class MainWindow(QMainWindow):
         self._build_main_layout()
 
         self._led_label = QLabel("⬤")
-        self._led_label.setStyleSheet("color: red;")
+        self._led_label.setStyleSheet("color: #ef5350;")
         self._led_label.setToolTip("Disconnected")
         self._status_label = QLabel("")
         self._counts_label = QLabel("")
@@ -156,21 +532,30 @@ class MainWindow(QMainWindow):
         bar.addPermanentWidget(self._counts_label)
         self.setStatusBar(bar)
 
-        # Subtle "card" styling for compact panels.
-        self.setStyleSheet(
-            (self.styleSheet() or "")
-            + "\n"
-            + """
-            QFrame[card=\"true\"] {
-                background-color: palette(alternate-base);
-                border: 1px solid palette(mid);
-                border-radius: 10px;
-            }
-            QLabel[cardTitle=\"true\"] {
-                font-weight: 600;
-            }
-            """
-        )
+        # Subtle "card" styling for compact panels + dock + primary action.
+        # Pick the right QSS set based on the saved theme preference.
+        _saved_theme = str(self._settings.value("ui/theme", "dark"))
+        self._apply_card_qss(_saved_theme)
+
+    def _apply_card_qss(self, theme: str) -> None:
+        """Install card + dock QSS.  Called on startup and on every theme switch.
+
+        Key design note: ``qdarktheme`` applies its palette to the
+        ``QApplication`` object, NOT to individual windows.  Therefore
+        ``self.styleSheet()`` only ever contains *our* card rules, never the
+        qdarktheme base.  We must set from scratch here (not append), otherwise
+        dark overrides accumulate and leak into subsequent light-theme switches.
+
+        Rules applied:
+          - ``_QSS_BASE`` always — palette-relative rules for cards, menus, etc.
+          - ``_QSS_DARK_OVERRIDES`` only when ``theme == "dark"`` — explicit hex
+            codes that fix dock title bars, separators, table body, and inputs.
+        """
+        qss = _QSS_BASE
+        if theme == "dark":
+            qss += "\n" + _QSS_DARK_OVERRIDES
+        self.setStyleSheet(qss)
+
 
     def _build_actions(self) -> None:
         self._port_combo = QComboBox(self)
@@ -179,86 +564,124 @@ class MainWindow(QMainWindow):
         self._baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"])
         self._baud_combo.setCurrentText("115200")
 
-        self._connect_action = QAction("Connect", self)
+        # Pick icon tint color based on the saved theme so icons are readable
+        # on first launch without needing a theme switch to trigger a rebuild.
+        _saved_theme = str(self._settings.value("ui/theme", "dark"))
+        _ic = "#F8FAFC" if _saved_theme == "dark" else "#1F2937"
+
+        self._connect_action = QAction(_icon("mdi6.usb-port", _ic), "Connect", self)
         self._connect_action.triggered.connect(self._on_toggle_connect)
 
-        self._polling_action = QAction("Start Polling", self)
+        self._polling_action = QAction(_icon("mdi6.play-circle-outline", _ic), "Start Auto-Fetch", self)
         self._polling_action.setCheckable(True)
-        self._polling_action.setChecked(True)
+        self._polling_action.setChecked(False)
         self._polling_action.triggered.connect(self._on_toggle_polling)
 
-        self._polling_action = QAction("Start Polling", self)
-        self._polling_action.setCheckable(True)
-        self._polling_action.setChecked(True)
-        self._polling_action.triggered.connect(self._on_toggle_polling)
-
-        self._logging_action = QAction("Start Logging", self)
+        self._logging_action = QAction(_icon("mdi6.record-rec", _ic), "Start Logging", self)
         self._logging_action.triggered.connect(self._on_toggle_logging)
 
-        self._load_config_action = QAction("Import Config", self)
+        self._load_config_action = QAction(_icon("mdi6.folder-upload-outline", _ic), "Import Config", self)
         self._load_config_action.triggered.connect(self._on_load_config)
 
-        self._export_template_action = QAction("Export Template", self)
+        self._export_template_action = QAction(_icon("mdi6.file-export-outline", _ic), "Export Template", self)
         self._export_template_action.triggered.connect(self._on_export_template)
 
-        self._load_log_action = QAction("Load Raw Log", self)
+        self._load_log_action = QAction(_icon("mdi6.history", _ic), "Load Raw Log", self)
         self._load_log_action.triggered.connect(self._on_load_log)
 
-        self._clear_action = QAction("Clear", self)
+        self._clear_action = QAction(_icon("mdi6.broom", _ic), "Clear Console / Log", self)
         self._clear_action.triggered.connect(self._on_clear)
 
-        self._exit_action = QAction("Exit", self)
+        self._copy_value_action = QAction(_icon("mdi6.content-copy", _ic), "Copy Value", self)
+        self._copy_value_action.setShortcut("Ctrl+Shift+C")
+        self._copy_value_action.triggered.connect(self._on_copy_value)
+
+        self._exit_action = QAction(_icon("mdi6.exit-to-app", _ic), "Exit", self)
         self._exit_action.triggered.connect(self.close)
 
-        self._info_action = QAction("Info", self)
+        self._info_action = QAction(_icon("mdi6.information-outline", _ic), "About Serial Monitor", self)
         self._info_action.triggered.connect(self._on_info)
-        
-        self._docs_action = QAction("View Documentation", self)
+
+        self._docs_action = QAction(_icon("mdi6.book-open-page-variant-outline", _ic), "View Documentation", self)
         self._docs_action.triggered.connect(self._on_view_docs)
 
-        self._update_action = QAction("Check for Updates", self)
+        self._update_action = QAction(_icon("mdi6.cloud-download-outline", _ic), "Check for Updates", self)
         self._update_action.triggered.connect(self._on_check_updates)
+
+        self._analysis_action = QAction(_icon("mdi6.chart-line", _ic), "Analysis Suite", self)
+        self._analysis_action.triggered.connect(self._on_analysis_suite)
+
 
     def _build_menus(self) -> None:
         menubar = self.menuBar()
+
+        # Add a thin separator line between each top-level menu so the
+        # menu bar reads  File | Edit | View | Device | Tools | Help
+        def _add_sep():
+            menubar.addSeparator()
 
         file_menu = menubar.addMenu("&File")
         file_menu.addAction(self._load_config_action)
         file_menu.addAction(self._export_template_action)
         file_menu.addSeparator()
         file_menu.addAction(self._load_log_action)
-        file_menu.addAction(self._logging_action)
         file_menu.addSeparator()
         file_menu.addAction(self._exit_action)
+        _add_sep()
 
         edit_menu = menubar.addMenu("&Edit")
+        edit_menu.addAction(self._copy_value_action)
         edit_menu.addAction(self._clear_action)
+        _add_sep()
 
         self._view_menu = menubar.addMenu("&View")
-        self._panels_menu = menubar.addMenu("&Panels")
+        _add_sep()
 
-        run_menu = menubar.addMenu("&Run")
-        run_menu.addAction(self._connect_action)
+        device_menu = menubar.addMenu("&Device")
+        device_menu.addAction(self._connect_action)
+        device_menu.addAction(self._polling_action)
+        device_menu.addAction(self._logging_action)
+        _add_sep()
+
+        tools_menu = menubar.addMenu("&Tools")
+        tools_menu.addAction(self._analysis_action)
+        _add_sep()
 
         help_menu = menubar.addMenu("&Help")
-        help_menu.addAction(self._update_action)
         help_menu.addAction(self._docs_action)
+        help_menu.addAction(self._update_action)
+        help_menu.addSeparator()
         help_menu.addAction(self._info_action)
 
     def _on_check_updates(self) -> None:
         self._update_checker = UpdateChecker()
         self._update_checker.update_available.connect(self._on_update_available)
-        self._update_checker.up_to_date.connect(lambda: QMessageBox.information(self, "Updater", "You are on the latest version."))
-        self._update_checker.error.connect(lambda e: QMessageBox.warning(self, "Updater", f"Failed to check for updates:\n{e}"))
+        self._update_checker.up_to_date.connect(
+            lambda: self._popup_information("Updater", "You are on the latest version.")
+        )
+        self._update_checker.error.connect(
+            lambda e: self._popup_warning("Updater", f"Failed to check for updates:\n{e}")
+        )
         self._update_checker.start()
         self._set_status("Checking for updates...")
 
+    def _on_analysis_suite(self) -> None:
+        if not hasattr(self, "_analysis_window") or self._analysis_window is None:
+            from .analysis_suite import AnalysisSuiteWindow
+            self._analysis_window = AnalysisSuiteWindow(self)
+        self._analysis_window.show()
+        self._analysis_window.raise_()
+        self._analysis_window.activateWindow()
+
     def _on_update_available(self, version: str, url: str, release_notes: str) -> None:
-        reply = QMessageBox.question(
-            self,
+        reply = self._popup_question(
             "Update Available",
-            f"Version {version} is available.\n\nNotes:\n{release_notes}\n\nWould you like to download and install it?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            (
+                f"Version {version} is available.\n\n"
+                f"Notes:\n{release_notes}\n\n"
+                "Would you like to download and install it?"
+            ),
+            buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             self._download_update(url)
@@ -273,7 +696,9 @@ class MainWindow(QMainWindow):
         self._downloader = UpdateDownloader(url, dest_path)
         self._downloader.progress.connect(self._on_download_progress)
         self._downloader.finished.connect(self._on_download_finished)
-        self._downloader.error.connect(lambda e: QMessageBox.critical(self, "Updater Error", f"Download failed:\n{e}"))
+        self._downloader.error.connect(
+            lambda e: self._popup_critical("Updater Error", f"Download failed:\n{e}")
+        )
         self._progress.canceled.connect(self._downloader.requestInterruption)
         self._downloader.start()
 
@@ -283,26 +708,34 @@ class MainWindow(QMainWindow):
 
     def _on_download_finished(self, dest_path: str) -> None:
         self._progress.close()
-        reply = QMessageBox.question(
-            self,
+        reply = self._popup_question(
             "Update Ready",
             "Download complete. Install now? The application will restart.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+            buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
             launch_installer(dest_path)
 
+    def _on_copy_value(self) -> None:
+        indexes = self._table.selectedIndexes()
+        if indexes:
+            row = indexes[0].row()
+            text = self._table_model.cell_text(row, 6)  # col 6 = Value
+            if text:
+                QApplication.clipboard().setText(text)
+
     def _on_info(self) -> None:
-        QMessageBox.about(
-            self,
-            "Info",
-            f"{APP_DISPLAY_NAME} App\n\n"
-            "Version: 0.1.0\n"
-            "Publisher: Decibels\n"
-            "Build Date: May 2026\n"
-            "Website: https://lms.decibelslab.com/\n\n"
-            "Serial Data Logger and Visualizer.\n"
-            "Configuration-driven decoding."
+        self._popup_about(
+            "About Serial Monitor",
+            (
+                f"{APP_DISPLAY_NAME} App\n\n"
+                "Version: 0.1.0\n"
+                "Publisher: Decibels\n"
+                "Build Date: May 2026\n"
+                "Website: https://lms.decibelslab.com/\n\n"
+                "Serial Data Logger and Visualizer.\n"
+                "Configuration-driven decoding."
+            ),
         )
 
     def _on_view_docs(self) -> None:
@@ -313,20 +746,33 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Main", self)
         toolbar.setObjectName("MainToolBar")
         toolbar.setMovable(False)
+        # Show text beside icons for all secondary actions so their purpose is
+        # immediately obvious without hovering for a tooltip.
+        toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._toolbar = toolbar
 
+        # --- Secondary actions (file / log) ---
         toolbar.addAction(self._load_config_action)
         toolbar.addAction(self._export_template_action)
         toolbar.addSeparator()
         toolbar.addAction(self._load_log_action)
-        toolbar.addAction(self._logging_action)
         toolbar.addSeparator()
+
+        # --- Primary actions (Connect, Poll, Log) ---
+        # These get the green #primaryAction styling and are forced to
+        # ToolButtonTextOnly so the label is prominent without a duplicate icon.
         toolbar.addAction(self._connect_action)
-        toolbar.addSeparator()
         toolbar.addAction(self._polling_action)
+        toolbar.addAction(self._logging_action)
+
+        for action in (self._connect_action, self._polling_action, self._logging_action):
+            btn = toolbar.widgetForAction(action)
+            if isinstance(btn, QToolButton):
+                btn.setObjectName("primaryAction")
+                btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+
         toolbar.addSeparator()
-        toolbar.addAction(self._polling_action)
-        
+
         spacer = QWidget()
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
@@ -346,21 +792,27 @@ class MainWindow(QMainWindow):
         self.setCorner(Qt.Corner.TopRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
         self.setCorner(Qt.Corner.BottomRightCorner, Qt.DockWidgetArea.RightDockWidgetArea)
 
-        self._table = QTableWidget(0, len(_COLUMNS), self)
-        self._table.setHorizontalHeaderLabels([column[0] for column in _COLUMNS])
+        self._table_model = TelemetryTableModel(self)
+        self._table = QTableView(self)
+        self._table.setModel(self._table_model)
         self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+        self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self._table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self._table.setAlternatingRowColors(True)
         self._table.horizontalHeader().setStretchLastSection(True)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         self._table.setFont(QFont("Consolas", 10))
-        for index, (_, width) in enumerate(_COLUMNS):
+        self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self._table.customContextMenuRequested.connect(self._on_table_context_menu)
+        self._status_delegate = _StatusBadgeDelegate(self._table)
+        self._table.setItemDelegateForColumn(8, self._status_delegate)
+        for index, (_, width) in enumerate(_MODEL_COLUMNS):
             self._table.setColumnWidth(index, width)
 
         center_widget = QWidget(self)
+        center_widget.setObjectName("centralPanel")
         center_layout = QVBoxLayout(center_widget)
-        center_layout.setContentsMargins(8, 8, 8, 8)
+        center_layout.setContentsMargins(12, 12, 12, 12)
 
         top_row = QHBoxLayout()
         self._search_input = QLineEdit(center_widget)
@@ -387,7 +839,7 @@ class MainWindow(QMainWindow):
         
         self.setCentralWidget(center_widget)
 
-        self._settings_dock = QDockWidget("Settings", self)
+        self._settings_dock = QDockWidget("Connection", self)
         self._settings_dock.setObjectName("SettingsDock")
         self._settings_dock.setAllowedAreas(Qt.DockWidgetArea.LeftDockWidgetArea | Qt.DockWidgetArea.RightDockWidgetArea)
         self._settings_dock.setWidget(self._build_left_panel())
@@ -457,70 +909,65 @@ class MainWindow(QMainWindow):
         self.tabifyDockWidget(self._console_dock, self._activity_dock)
         self._console_dock.raise_()
 
+        for dock in (
+            self._settings_dock,
+            self._plot_dock,
+            self._bitfields_dock,
+            self._enums_dock,
+            self._tx_dock,
+            self._editor_dock,
+            self._console_dock,
+            self._activity_dock,
+        ):
+            _pad_dock_content(dock)
+
         self._populate_view_menu()
-        self._populate_panels_menu()
 
     def _populate_view_menu(self) -> None:
         menu = self._view_menu
         menu.clear()
 
+        panels_menu = menu.addMenu("Panels")
+        for dock, label in (
+            (self._settings_dock, "Connection"),
+            (self._plot_dock, "Live Plot"),
+            (self._bitfields_dock, "Bitfields"),
+            (self._enums_dock, "Enums"),
+            (self._tx_dock, "TX Commands"),
+            (self._editor_dock, "Parameter Editor"),
+            (self._console_dock, "Raw Console"),
+            (self._activity_dock, "Activity Log"),
+        ):
+            action = dock.toggleViewAction()
+            action.setText(label)
+            panels_menu.addAction(action)
+
         theme_menu = menu.addMenu("Theme")
         self._theme_group = QActionGroup(self)
         self._theme_group.setExclusive(True)
         current_theme = str(self._settings.value("ui/theme", "dark"))
-        for label, key in (("Dark", "dark"), ("Light", "light"), ("System", "auto")):
-            action = QAction(label, self, checkable=True)
+        for label, key, icon_name in (
+            ("Dark", "dark", "mdi6.weather-night"),
+            ("Light", "light", "mdi6.weather-sunny"),
+            ("System", "auto", "mdi6.theme-light-dark"),
+        ):
+            action = QAction(_icon(icon_name), label, self, checkable=True)
             action.setData(key)
             action.setChecked(key == current_theme)
             action.triggered.connect(lambda _checked=False, k=key: self._apply_theme(k))
             self._theme_group.addAction(action)
             theme_menu.addAction(action)
 
-        menu.addSeparator()
-
-        reset_plot_action = QAction("Auto-Range Plot", self)
-        reset_plot_action.setShortcut("Ctrl+R")
-        reset_plot_action.triggered.connect(self._reset_plot_view)
-        menu.addAction(reset_plot_action)
-
-        reset_layout_action = QAction("Reset Window Layout", self)
+        reset_layout_action = QAction(_icon("mdi6.view-grid-outline"), "Reset Window Layout", self)
         reset_layout_action.triggered.connect(self._reset_window_layout)
         menu.addAction(reset_layout_action)
 
-    def _populate_panels_menu(self) -> None:
-        menu = self._panels_menu
-        menu.clear()
-
-        toolbar_action = self._toolbar.toggleViewAction()
-        toolbar_action.setText("Toolbar")
-        menu.addAction(toolbar_action)
-
         menu.addSeparator()
 
-        settings_action = self._settings_dock.toggleViewAction()
-        settings_action.setText("Settings")
-        menu.addAction(settings_action)
-
-        analysis_menu = menu.addMenu("Analysis")
-        for dock, label in (
-            (self._plot_dock, "Live Plot"),
-            (self._bitfields_dock, "Bitfields"),
-            (self._enums_dock, "Enums"),
-            (self._tx_dock, "TX Commands"),
-            (self._editor_dock, "Parameter Editor"),
-        ):
-            action = dock.toggleViewAction()
-            action.setText(label)
-            analysis_menu.addAction(action)
-
-        logs_menu = menu.addMenu("Logs")
-        for dock, label in (
-            (self._console_dock, "Raw Console"),
-            (self._activity_dock, "Activity Log"),
-        ):
-            action = dock.toggleViewAction()
-            action.setText(label)
-            logs_menu.addAction(action)
+        reset_plot_action = QAction(_icon("mdi6.image-auto-adjust"), "Auto-Range Plot", self)
+        reset_plot_action.setShortcut("Ctrl+R")
+        reset_plot_action.triggered.connect(self._reset_plot_view)
+        menu.addAction(reset_plot_action)
 
     def _apply_theme(self, theme: str) -> None:
         if qdarktheme is None:
@@ -528,16 +975,63 @@ class MainWindow(QMainWindow):
         try:
             qdarktheme.setup_theme(theme, corner_shape="rounded")
         except Exception as exc:
-            QMessageBox.warning(self, "Theme", f"Failed to apply theme: {exc}")
+            self._popup_warning("Theme", f"Failed to apply theme: {exc}")
             return
+        # Re-apply our card + dark-override QSS on top of the fresh qdarktheme base.
+        self._apply_card_qss(theme)
+        # Rebuild qtawesome icons with the correct tint for the new theme.
+        self._rebuild_action_icons(theme)
         self._settings.setValue("ui/theme", theme)
+        from PySide6.QtWidgets import QApplication
+        # Schedule title-bar update via singleShot so the native HWND is stable.
+        dark = (theme == "dark")
+        for w in QApplication.topLevelWidgets():
+            QTimer.singleShot(0, lambda _w=w, _d=dark: _apply_windows_dark_titlebar(_w, _d))
         self._set_status(f"Theme: {theme}")
 
+    def _rebuild_action_icons(self, theme: str) -> None:
+        """Re-tint all QAction icons to match the current theme.
+
+        qtawesome bakes the color into the QPixmap at icon() creation time, so
+        we must recreate the icons whenever the theme changes.  Light icons
+        (#F8FAFC) for dark theme, dark icons (#1F2937) for light theme.
+        """
+        color = "#F8FAFC" if theme == "dark" else "#1F2937"
+        # Map of action attribute → mdi6 icon name
+        _action_icons = [
+            (self._connect_action,          "mdi6.usb-port"),
+            (self._polling_action,           "mdi6.play-circle-outline"),
+            (self._logging_action,           "mdi6.record-rec"),
+            (self._load_config_action,       "mdi6.folder-upload-outline"),
+            (self._export_template_action,   "mdi6.file-export-outline"),
+            (self._load_log_action,          "mdi6.history"),
+            (self._clear_action,             "mdi6.broom"),
+            (self._copy_value_action,        "mdi6.content-copy"),
+            (self._exit_action,              "mdi6.exit-to-app"),
+            (self._info_action,              "mdi6.information-outline"),
+            (self._analysis_action,          "mdi6.chart-line"),
+            (self._docs_action,              "mdi6.book-open-variant"),
+            (self._update_action,            "mdi6.update"),
+        ]
+        for action, icon_name in _action_icons:
+            action.setIcon(_icon(icon_name, color))
+
+    def showEvent(self, event) -> None:  # type: ignore[override]
+        super().showEvent(event)
+        theme = str(self._settings.value("ui/theme", "dark"))
+        # Use singleShot(0) so the native HWND is fully created before we call
+        # DwmSetWindowAttribute — calling it synchronously in showEvent can
+        # return a non-zero (failure) result because the handle isn't stable yet.
+        QTimer.singleShot(0, lambda: _apply_windows_dark_titlebar(self, dark=(theme == "dark")))
+
     def _reset_plot_view(self) -> None:
+        """Ctrl+R: snap back to Rolling mode and re-centre on current data."""
         if pg is None or self._plot_widget is None:
             return
-        self._plot_widget.enableAutoRange()
-        self._plot_widget.getPlotItem().getViewBox().autoRange()
+        self._plot_rolling = True
+        self._plot_mode_label.setText("\U0001f504 Rolling")
+        # Force an immediate redraw so the X-axis snaps to the rolling window.
+        self._redraw_plot()
 
     def _reset_window_layout(self) -> None:
         self.restoreGeometry(self._default_geometry)
@@ -565,6 +1059,19 @@ class MainWindow(QMainWindow):
         state = self._settings.value("window/state")
         if geometry:
             self.restoreGeometry(geometry)
+            # Clamp to the current screen's available area (excludes taskbar).
+            # This prevents QWindowsWindow::setGeometry warnings when the saved
+            # geometry came from a larger monitor or a previous HiDPI session.
+            from PySide6.QtWidgets import QApplication
+            screen = self.screen() or QApplication.primaryScreen()
+            if screen is not None:
+                available = screen.availableGeometry()
+                geo = self.frameGeometry()
+                new_w = min(geo.width(),  available.width())
+                new_h = min(geo.height(), available.height())
+                new_x = max(available.x(), min(geo.x(), available.right()  - new_w))
+                new_y = max(available.y(), min(geo.y(), available.bottom() - new_h))
+                self.setGeometry(new_x, new_y, new_w, new_h)
         if state:
             self.restoreState(state)
 
@@ -678,30 +1185,34 @@ class MainWindow(QMainWindow):
         widget = QWidget(self)
         layout = QVBoxLayout(widget)
         controls = QHBoxLayout()
-        
-        self._plot_variable_list = QListWidget(widget)
-        self._plot_variable_list.setMaximumHeight(100)
-        self._plot_variable_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self._plot_variable_list.itemChanged.connect(self._redraw_plot)
-        self._plot_variable_list.itemClicked.connect(self._toggle_plot_item)
 
         self._plot_window_combo = QComboBox(widget)
-        self._plot_window_combo.addItems(["60", "120", "300", "600"])
-        self._plot_window_combo.setCurrentText("300")
-        self._plot_window_combo.currentIndexChanged.connect(self._redraw_plot)
+        self._plot_window_combo.addItems(["30", "60", "120", "300", "600"])
+        self._plot_window_combo.setCurrentText("60")
+        self._plot_window_combo.currentIndexChanged.connect(self._on_plot_window_changed)
         clear_plot = QPushButton("Clear", widget)
         clear_plot.clicked.connect(self._clear_plot)
         export_plot = QPushButton("Export", widget)
         export_plot.clicked.connect(self._export_plot_data)
-        
-        controls.addWidget(QLabel("Window s"))
+
+        # Mode indicator — updates live to tell the user which mode they are in.
+        self._plot_mode_label = QLabel("\U0001f504 Rolling", widget)
+        self._plot_mode_label.setToolTip(
+            "Rolling: X-axis auto-scrolls to show the last N seconds.\n"
+            "Explore: You panned/zoomed manually. Press Ctrl+R to return to Rolling."
+        )
+
+        hint = QLabel("Right-click any row in the table to add it to the plot.", widget)
+        hint.setEnabled(False)
+
+        controls.addWidget(QLabel("Rolling window (s)"))
         controls.addWidget(self._plot_window_combo)
+        controls.addWidget(self._plot_mode_label)
+        controls.addStretch(1)
         controls.addWidget(clear_plot)
         controls.addWidget(export_plot)
-        controls.addStretch(1)
 
-        layout.addWidget(QLabel("Select Variables to Plot:"))
-        layout.addWidget(self._plot_variable_list)
+        layout.addWidget(hint)
         layout.addLayout(controls)
 
         self._plot_curves = {}
@@ -711,25 +1222,26 @@ class MainWindow(QMainWindow):
             self._plot_widget.setBackground(pg.mkColor("#1e1e1e"))
             self._plot_widget.showGrid(x=True, y=True, alpha=0.25)
             self._plot_widget.addLegend()
-            
+            # Disable pyqtgraph's own auto-range — we manage it ourselves.
+            self._plot_widget.getPlotItem().getViewBox().setMouseEnabled(x=True, y=True)
+            # Detect manual pan/zoom to switch from Rolling → Explore mode.
+            self._plot_widget.getPlotItem().getViewBox().sigXRangeChanged.connect(
+                self._on_plot_range_changed
+            )
+
             # Setup interactive crosshairs
             self._vLine = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("w", style=Qt.PenStyle.DashLine))
             self._hLine = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen("w", style=Qt.PenStyle.DashLine))
             self._plot_widget.addItem(self._vLine, ignoreBounds=True)
             self._plot_widget.addItem(self._hLine, ignoreBounds=True)
-            
+
             self._proxy = pg.SignalProxy(self._plot_widget.scene().sigMouseMoved, rateLimit=60, slot=self._mouseMoved)
-            
+
             layout.addWidget(self._plot_widget, 1)
         else:
             self._plot_widget = None
             layout.addWidget(QLabel("pyqtgraph is not installed.", widget), 1)
         return widget
-
-    def _toggle_plot_item(self, item: QListWidgetItem) -> None:
-        item.setCheckState(
-            Qt.CheckState.Unchecked if item.checkState() == Qt.CheckState.Checked else Qt.CheckState.Checked
-        )
 
     def _mouseMoved(self, evt):
         if self._plot_widget is None:
@@ -835,13 +1347,13 @@ class MainWindow(QMainWindow):
         elif suffix == ".csv":
             path = chosen.parent
         else:
-            QMessageBox.warning(self, "Config error", f"Unsupported config selection: {chosen.name}")
+            self._popup_warning("Config error", f"Unsupported config selection: {chosen.name}")
             return
 
         try:
             self._load_config_from_path(path)
         except ConfigError as exc:
-            QMessageBox.critical(self, "Config error", str(exc))
+            self._popup_critical("Config error", str(exc))
 
     def _load_config_from_path(self, path: Path) -> None:
         self._config = load_config(path)
@@ -856,7 +1368,7 @@ class MainWindow(QMainWindow):
         self._console.clear()
         self._populate_table_from_config()
         self._populate_group_selector()
-        self._populate_plot_selector()
+        self._plot_keys.clear()
         self._populate_tx_commands()
         self._populate_polling_list()
         self._populate_editor_table()
@@ -874,7 +1386,7 @@ class MainWindow(QMainWindow):
         try:
             self._load_config_from_path(Path(path_text))
         except ConfigError as exc:
-            QMessageBox.critical(self, "Config error", str(exc))
+            self._popup_critical("Config error", str(exc))
 
     def _recent_paths(self) -> list[str]:
         value = self._settings.value("recent_configs", [])
@@ -901,7 +1413,7 @@ class MainWindow(QMainWindow):
 
     def _on_export_template(self) -> None:
         if self._config_path is None:
-            QMessageBox.information(self, "Export template", "Load a config first.")
+            self._popup_information("Export template", "Load a config first.")
             return
         target, _ = QFileDialog.getSaveFileName(
             self,
@@ -914,7 +1426,7 @@ class MainWindow(QMainWindow):
         try:
             export_excel_template(self._config_path, target)
         except Exception as exc:
-            QMessageBox.critical(self, "Export template", str(exc))
+            self._popup_critical("Export template", str(exc))
             return
         self._set_status(f"Exported Excel template to {target}")
 
@@ -922,28 +1434,29 @@ class MainWindow(QMainWindow):
         if self._config is None or self._parser is None:
             return
         path_str, _ = QFileDialog.getOpenFileName(
-            self, "Select raw log file", "", "Log files (*.txt *.log);;All files (*)"
+            self, "Select raw log file", "", "Log files (*.csv *.txt *.log);;All files (*)"
         )
         if not path_str:
             return
 
         rows, errors = parse_log_file(path_str)
         if errors:
-            QMessageBox.warning(
-                self,
+            self._popup_warning(
                 "Log parse warnings",
                 f"{len(errors)} line(s) skipped:\n" + "\n".join(errors[:5]),
             )
         for chunk in replay_bytes(rows):
             self._rx_bytes += len(chunk)
             self._parser.feed(chunk)
-        self._drain_parser()
+            for pkt in self._parser.extract_all():
+                self._handle_packet(pkt)
         self._set_status(f"Replayed {len(rows)} log row(s) from {Path(path_str).name}")
 
 
 
     def _on_toggle_connect(self) -> None:
         if self._serial is not None and self._serial.is_open:
+            self._ui_timer.stop()
             self._serial.close()
             self._serial = None
             self._set_connection_ui(False)
@@ -952,11 +1465,11 @@ class MainWindow(QMainWindow):
             return
 
         if self._config is None:
-            QMessageBox.warning(self, "Connect", "Please load a configuration first.")
+            self._popup_warning("Connect", "Please load a configuration first.")
             return
 
         settings = SerialSettings(
-            port=self._port_combo.currentText(),
+            port=self._port_combo.currentData(Qt.ItemDataRole.UserRole) or self._port_combo.currentText(),
             baud_rate=int(self._baud_combo.currentText()),
             data_bits=int(self._data_bits_combo.currentText()),
             stop_bits=float(self._stop_bits_combo.currentText()),
@@ -966,31 +1479,71 @@ class MainWindow(QMainWindow):
 
         try:
             self._serial = PollingWorker(settings, self._config.protocol, self._config.polling_schedules)
-            self._serial.packet_received.connect(self._on_packet_received)
+            self._serial.packets_received.connect(self._on_packets_received)
             self._serial.metrics_updated.connect(self._on_metrics_updated)
             self._serial.error_occurred.connect(self._on_serial_error)
             self._serial.tx_recorded.connect(self._on_tx_recorded)
+            self._serial.connection_lost.connect(self._on_connection_lost)
+            self._serial.device_timeout.connect(self._on_device_timeout)
             self._serial.open()
             self._serial.set_polling_global(self._polling_action.isChecked())
-            
+            self._ui_timer.start()
+
             self._set_connection_ui(True)
             self._set_status(f"Connected to {settings.port}")
             self._log_activity(f"Connected to {settings.port} @ {settings.baud_rate}")
         except Exception as exc:
             self._serial = None
-            QMessageBox.critical(self, "Connection Error", str(exc))
+            self._popup_critical(
+                "Connection Error",
+                _format_serial_open_error(getattr(settings, "port", ""), exc),
+            )
 
     def _on_serial_error(self, err: str) -> None:
         self._log_activity(f"Serial Error: {err}")
         self._set_status(f"Error: {err}")
+        self._ui_timer.stop()
         if self._serial:
             self._serial.close()
             self._serial = None
         self._set_connection_ui(False)
 
-    def _on_packet_received(self, packet: ParsedPacket, delta_t_ms: float) -> None:
-        self._delta_t_ms = delta_t_ms
-        self._handle_packet(packet)
+    def _on_packets_received(self, batch: list) -> None:
+        """Slot called by the worker's batch signal. Queues for the 60Hz UI timer.
+
+        The underlying deque is bounded (maxlen=10_000) so a stalled Qt event
+        loop cannot cause an OOM crash — oldest packets are silently dropped.
+        """
+        self._pending_packets.extend(batch)
+
+    def _flush_ui(self) -> None:
+        """Drain the pending packet queue and refresh the UI at 60 Hz."""
+        if not self._pending_packets:
+            return
+        # Swap atomically: take all pending packets, reset the deque.
+        packets = list(self._pending_packets)
+        self._pending_packets.clear()
+        for packet in packets:
+            self._handle_packet(packet)
+        # Commit all staged model cell updates in ONE dataChanged per row.
+        self._table_model.commit_staged()
+        # Redraw the plot once for the entire batch.
+        self._redraw_plot()
+
+    def _on_connection_lost(self) -> None:
+        """Called when the worker detects a physical USB unplug."""
+        self._ui_timer.stop()
+        self._serial = None  # worker already cleaned up the port
+        self._set_connection_ui(False)
+        self._set_status("USB device disconnected")
+        self._log_activity("[WARN] Connection lost — USB device was disconnected")
+
+    def _on_device_timeout(self) -> None:
+        """Called when the device is connected but has sent no data for ≥ 3 s."""
+        # Amber LED — connected but silent
+        self._led_label.setStyleSheet("color: #F59E0B;")
+        self._led_label.setToolTip("Connected (No Data)")
+        self._set_status("Connected (No Data)")
 
     def _on_metrics_updated(self, timeouts: int, crc: int, rx_bytes: int) -> None:
         self._rx_bytes = rx_bytes
@@ -1099,7 +1652,7 @@ class MainWindow(QMainWindow):
         if default_dir.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(default_dir)))
         else:
-            QMessageBox.information(self, "Logs", f"Log directory does not exist yet:\n{default_dir}")
+            self._popup_information("Logs", f"Log directory does not exist yet:\n{default_dir}")
 
     def _on_clear(self) -> None:
         self._console.clear()
@@ -1110,9 +1663,7 @@ class MainWindow(QMainWindow):
         self._plot_history.clear()
         self._bitfield_table.setRowCount(0)
         self._enum_table.setRowCount(0)
-        for row in range(self._table.rowCount()):
-            for col in (4, 5, 7, 8):
-                self._table.setItem(row, col, QTableWidgetItem("-"))
+        self._table_model.clear_live_columns()
         self._redraw_plot()
         self._update_counts()
         self._set_status("Cleared decoded values and console")
@@ -1170,13 +1721,13 @@ class MainWindow(QMainWindow):
         try:
             packet = self._build_current_tx_packet()
         except (CommandBuildError, ValueError) as exc:
-            QMessageBox.warning(self, "TX command", str(exc))
+            self._popup_warning("TX command", str(exc))
             return
         if self._serial is None or not self._serial.is_open:
-            QMessageBox.warning(self, "TX command", "Connect a serial port before sending.")
+            self._popup_warning("TX command", "Connect a serial port before sending.")
             return
-        written = self._serial.write(packet)
-        self._tx_bytes += written
+        self._serial.enqueue_priority_tx(packet)
+        self._tx_bytes += len(packet)
         if self._raw_logger:
             self._raw_logger.log("TX", packet)
         self._console.appendPlainText(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, TX, {packet.hex(' ').upper()}")
@@ -1193,15 +1744,20 @@ class MainWindow(QMainWindow):
         if self._raw_logger:
             self._raw_logger.log("RX", packet.raw, delta_t_ms=self._delta_t_ms)
         if not packet.ok:
-            print(f"[DEBUG] Packet NOT ok: {packet.error}")
             self._error_count += 1
             self._update_counts()
             return
 
-        print(f"[DEBUG] Packet OK: {packet.frame_id} payload: {packet.payload.hex()}")
+        # Reset LED to green when data is flowing again after a timeout.
+        if self._serial is not None:
+            current_tooltip = self._led_label.toolTip()
+            if current_tooltip == "Connected (No Data)":
+                self._led_label.setStyleSheet("color: #66BB6A;")
+                self._led_label.setToolTip("Connected")
+                self._set_status(f"Connected")
+
         assert self._config is not None
         decoded = decode_frame(self._config, packet.frame_id, packet.payload)
-        print(f"[DEBUG] Decoded frame signals count: {len(decoded.signals)}")
         self._apply_decoded(decoded)
         if self._decoded_logger:
             self._decoded_logger.log_frame(self._packet_count, decoded)
@@ -1229,28 +1785,50 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_polling(self) -> None:
         enabled = self._polling_action.isChecked()
-        self._polling_action.setText("Stop Polling" if enabled else "Start Polling")
+        self._polling_action.setText("Stop Auto-Fetch" if enabled else "Start Auto-Fetch")
         if self._serial:
             self._serial.set_polling_global(enabled)
 
     def _populate_editor_table(self) -> None:
         self._editor_table.setRowCount(0)
-        if not self._config: return
+        if not self._config:
+            return
         rw_signals = [s for s in self._config.all_signals if s.read_write in ("W", "RW")]
+        # Integer data types — use QIntValidator
+        _INT_TYPES = {"uint8", "int8", "uint16", "int16", "uint32", "int32"}
         for s in rw_signals:
             row = self._editor_table.rowCount()
             self._editor_table.insertRow(row)
             self._editor_table.setItem(row, 0, QTableWidgetItem(f"0x{s.frame_id:04X}"))
             self._editor_table.setItem(row, 1, QTableWidgetItem(s.signal_name))
-            
+
             curr_val = QTableWidgetItem("-")
             self._editor_table.setItem(row, 2, curr_val)
-            
-            # Action layout: LineEdit + Write Button
+
+            # Action layout: LineEdit (with validator) + Write Button
             widget = QWidget()
             layout = QHBoxLayout(widget)
             layout.setContentsMargins(0, 0, 0, 0)
             inp = QLineEdit()
+
+            # --- Input Validation (Step 8) ---
+            lo = s.min_value
+            hi = s.max_value
+            if s.data_type in _INT_TYPES:
+                ilo = int(lo) if lo is not None else -2_147_483_648
+                ihi = int(hi) if hi is not None else  2_147_483_647
+                inp.setValidator(QIntValidator(ilo, ihi))
+                inp.setPlaceholderText(f"{ilo}\u2026{ihi}")
+            else:
+                flo = lo if lo is not None else -1e18
+                fhi = hi if hi is not None else  1e18
+                # Fix: force "C" locale so the validator always uses a dot as
+                # the decimal separator regardless of the OS regional format.
+                _dv = QDoubleValidator(flo, fhi, 6)
+                _dv.setLocale(QLocale(QLocale.Language.C))
+                inp.setValidator(_dv)
+                inp.setPlaceholderText(f"{flo:g}\u2026{fhi:g}")
+
             btn = QPushButton("Write")
             btn.clicked.connect(lambda _, inp=inp, s=s: self._on_editor_write(s, inp.text()))
             layout.addWidget(inp)
@@ -1259,7 +1837,7 @@ class MainWindow(QMainWindow):
 
     def _on_editor_write(self, signal, text: str) -> None:
         if not self._serial or not self._serial.is_open:
-            QMessageBox.warning(self, "Write", "Not connected")
+            self._popup_warning("Write", "Not connected")
             return
         try:
             val = float(text)
@@ -1268,7 +1846,7 @@ class MainWindow(QMainWindow):
             if signal.max_value is not None and val > signal.max_value:
                 raise ValueError(f"Max value is {signal.max_value}")
         except ValueError as e:
-            QMessageBox.warning(self, "Invalid Input", str(e))
+            self._popup_warning("Invalid Input", str(e))
             return
             
         # Build write packet
@@ -1278,81 +1856,10 @@ class MainWindow(QMainWindow):
             payload = int(val).to_bytes(2, "big", signed=True)
             pkt = build_modbus_packet(self._config.protocol, signal.frame_id, payload)
         else:
-            QMessageBox.warning(self, "Write", "Parameter editing for framed protocol not yet fully implemented")
-            return
-            
-        self._serial.enqueue_priority_tx(pkt)
-        self._log_activity(f"Priority Write: {signal.signal_name} = {val}")
-
-    
-    def _populate_polling_list(self) -> None:
-        self._polling_list.clear()
-        if not self._config: return
-        for sched in self._config.polling_schedules:
-            item = QListWidgetItem(f"Target 0x{sched.target_id:04X} ({sched.interval_ms}ms)")
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked if sched.enabled else Qt.CheckState.Unchecked)
-            item.setData(Qt.ItemDataRole.UserRole, sched.target_id)
-            self._polling_list.addItem(item)
-
-    def _on_polling_item_changed(self, item: QListWidgetItem) -> None:
-        target_id = item.data(Qt.ItemDataRole.UserRole)
-        enabled = item.checkState() == Qt.CheckState.Checked
-        if self._serial:
-            self._serial.toggle_schedule(target_id, enabled)
-
-    def _on_toggle_polling(self) -> None:
-        enabled = self._polling_action.isChecked()
-        self._polling_action.setText("Stop Polling" if enabled else "Start Polling")
-        if self._serial:
-            self._serial.set_polling_global(enabled)
-
-    def _populate_editor_table(self) -> None:
-        self._editor_table.setRowCount(0)
-        if not self._config: return
-        rw_signals = [s for s in self._config.all_signals if s.read_write in ("W", "RW")]
-        for s in rw_signals:
-            row = self._editor_table.rowCount()
-            self._editor_table.insertRow(row)
-            self._editor_table.setItem(row, 0, QTableWidgetItem(f"0x{s.frame_id:04X}"))
-            self._editor_table.setItem(row, 1, QTableWidgetItem(s.signal_name))
-            
-            curr_val = QTableWidgetItem("-")
-            self._editor_table.setItem(row, 2, curr_val)
-            
-            # Action layout: LineEdit + Write Button
-            widget = QWidget()
-            layout = QHBoxLayout(widget)
-            layout.setContentsMargins(0, 0, 0, 0)
-            inp = QLineEdit()
-            btn = QPushButton("Write")
-            btn.clicked.connect(lambda _, inp=inp, s=s: self._on_editor_write(s, inp.text()))
-            layout.addWidget(inp)
-            layout.addWidget(btn)
-            self._editor_table.setCellWidget(row, 3, widget)
-
-    def _on_editor_write(self, signal, text: str) -> None:
-        if not self._serial or not self._serial.is_open:
-            QMessageBox.warning(self, "Write", "Not connected")
-            return
-        try:
-            val = float(text)
-            if signal.min_value is not None and val < signal.min_value:
-                raise ValueError(f"Min value is {signal.min_value}")
-            if signal.max_value is not None and val > signal.max_value:
-                raise ValueError(f"Max value is {signal.max_value}")
-        except ValueError as e:
-            QMessageBox.warning(self, "Invalid Input", str(e))
-            return
-            
-        # Build write packet
-        from ..protocol.packet_builder import build_packet, build_modbus_packet
-        if self._config.protocol.parser_type == "modbus_rtu":
-            # For FC06 write single register (simplified: convert val to 2 bytes)
-            payload = int(val).to_bytes(2, "big", signed=True)
-            pkt = build_modbus_packet(self._config.protocol, signal.frame_id, payload)
-        else:
-            QMessageBox.warning(self, "Write", "Parameter editing for framed protocol not yet fully implemented")
+            self._popup_warning(
+                "Write",
+                "Parameter editing for framed protocol not yet fully implemented",
+            )
             return
             
         self._serial.enqueue_priority_tx(pkt)
@@ -1360,39 +1867,50 @@ class MainWindow(QMainWindow):
 
     def _populate_table_from_config(self) -> None:
         assert self._config is not None
-        self._table.setRowCount(0)
         self._row_index.clear()
-        row_no = 0
+        rows = []
         for frame_id, signals in self._config.signals_by_frame.items():
             for signal in signals:
-                self._add_signal_row(row_no, frame_id, signal.frame_name, signal.signal_name, signal.group, signal.index, signal.unit)
-                row_no += 1
+                key = (frame_id, signal.signal_name)
+                rows.append({
+                    "key": key,
+                    "Frame": f"0x{frame_id:04X}",
+                    "Group": signal.group or "-",
+                    "Variable": signal.signal_name,
+                    "Start B.": str(signal.start_byte),
+                    "Data Type": signal.data_type or "-",
+                    "Raw": "-",
+                    "Value": "-",
+                    "Unit": signal.unit,
+                    "Status": "-",
+                    "Updated": "-",
+                    "is_calculated": False,
+                })
+        self._table_model.reset_from_config(rows)
 
     def _add_signal_row(
         self,
-        row: int,
+        row: int,  # kept for API compatibility but ignored (model appends)
         frame_id: int,
-        frame_name: str,
         signal_name: str,
         group: str,
-        index: Optional[int],
+        start_byte: int,
+        data_type: str,
         unit: str,
         is_calculated: bool = False,
     ) -> None:
-        self._table.insertRow(row)
-        self._set_cell(row, 0, f"0x{frame_id:04X}  {frame_name}")
-        self._set_cell(row, 1, group or "-")
-        self._set_cell(row, 2, signal_name)
-        self._set_cell(row, 3, "" if index is None else str(index))
-        self._set_cell(row, 4, "-")
-        self._set_cell(row, 5, "-")
-        self._set_cell(row, 6, unit)
-        self._set_cell(row, 7, "-")
-        self._set_cell(row, 8, "-")
-        group_item = self._table.item(row, 1)
-        if group_item is not None:
-            group_item.setData(Qt.ItemDataRole.UserRole, is_calculated)
-        self._row_index[(frame_id, signal_name)] = row
+        """Add a new row to the telemetry model (called for runtime-discovered signals)."""
+        key = (frame_id, signal_name)
+        self._table_model.add_row(
+            key=key,
+            frame_hex=f"0x{frame_id:04X}",
+            group=group or "-",
+            signal_name=signal_name,
+            start_byte=str(start_byte),
+            data_type=data_type or "-",
+            unit=unit,
+            is_calculated=is_calculated,
+        )
 
     def _apply_decoded(self, decoded: DecodedFrame) -> None:
         if decoded.error is not None:
@@ -1405,43 +1923,49 @@ class MainWindow(QMainWindow):
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         elapsed = (datetime.now() - self._session_started).total_seconds()
         for signal in [*decoded.signals, *decoded.calculations]:
-            row = self._row_index.get((signal.frame_id, signal.signal_name))
-            print(f"[DEBUG] applying signal {signal.signal_name}: row={row}, raw={signal.raw_value}, scaled={signal.scaled_value}")
-            if row is None:
-                row = self._table.rowCount()
+            key = (signal.frame_id, signal.signal_name)
+            # If the key isn't in the model yet, add it (calculated / late-arriving signals)
+            if self._table_model.row_for_key(key) is None:
+                spec = next(
+                    (s for s in self._config.all_signals
+                     if s.frame_id == signal.frame_id and s.signal_name == signal.signal_name),
+                    None,
+                )
                 self._add_signal_row(
-                    row,
+                    0,  # ignored by model-backed version
                     signal.frame_id,
-                    signal.frame_name,
                     signal.signal_name,
                     signal.group,
-                    signal.index,
+                    spec.start_byte if spec else 0,
+                    spec.data_type if spec else "-",
                     signal.unit,
                     signal.is_calculated,
                 )
+
+            if signal.raw_value is None:
+                continue
+
             raw_text = "-" if signal.raw_value is None else _format_number(signal.raw_value)
             value_text = "-" if signal.scaled_value is None else _format_number(signal.scaled_value)
-            print(f"[DEBUG] updating row {row}: raw_text={raw_text}, value_text={value_text}")
-            self._set_cell(row, 4, raw_text)
-            self._set_cell(row, 5, signal.display_value or value_text)
-            self._set_cell(row, 7, self._status_text(signal))
-            self._set_cell(row, 8, timestamp)
-            self._apply_group_filter(self._group_combo.currentText())
-            
+            self._table_model.stage_live_cells(
+                key,
+                raw=raw_text,
+                value=signal.display_value or value_text,
+                status=self._status_text(signal),
+                updated=timestamp,
+            )
             self._update_detail_tabs(signal)
-            # Update editor table
-            for row in range(self._editor_table.rowCount()):
-                if self._editor_table.item(row, 1).text() == signal.signal_name:
-                    self._editor_table.item(row, 2).setText(signal.display_value or value_text)
-            
-            if signal.scaled_value is not None and signal.status == "ok":
+            # Update editor table current-value column
+            for erow in range(self._editor_table.rowCount()):
+                if self._editor_table.item(erow, 1).text() == signal.signal_name:
+                    self._editor_table.item(erow, 2).setText(signal.display_value or value_text)
 
-                key = (signal.frame_id, signal.signal_name)
+            if signal.scaled_value is not None and signal.status == "ok":
                 self._plot_history[key].append((elapsed, signal.scaled_value))
-                self._prune_plot_history(key, elapsed)
             if signal.status != "ok":
                 self._error_count += 1
-        self._redraw_plot()
+        # NOTE: _redraw_plot() is intentionally NOT called here.
+        # It is called once per batch in _flush_ui() to avoid per-packet redraws.
 
     def _status_text(self, signal: DecodedSignal) -> str:
         if signal.enum_label:
@@ -1498,59 +2022,55 @@ class MainWindow(QMainWindow):
         self._group_combo.setCurrentIndex(max(0, index))
         self._group_combo.blockSignals(False)
 
-    def _populate_plot_selector(self) -> None:
-        assert self._config is not None
-        self._plot_variable_list.clear()
-        for signal in self._config.all_signals:
-            item = QListWidgetItem(f"0x{signal.frame_id:04X} {signal.signal_name}")
-            item.setData(Qt.ItemDataRole.UserRole, (signal.frame_id, signal.signal_name))
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Unchecked)
-            self._plot_variable_list.addItem(item)
-
     def _apply_group_filter(self, group: str) -> None:
         search_text = ""
         if hasattr(self, "_search_input"):
             search_text = self._search_input.text().lower()
 
-        for row in range(self._table.rowCount()):
-            item_group = self._table.item(row, 1)
-            item_name = self._table.item(row, 2)
-            row_group = item_group.text() if item_group else ""
-            row_name = item_name.text().lower() if item_name else ""
-            
-            is_calculated = bool(item_group.data(Qt.ItemDataRole.UserRole)) if item_group else False
-            
+        n = self._table_model.row_count()
+        for row in range(n):
+            row_group = self._table_model.group_for_row(row)
+            row_name = self._table_model.signal_name_for_row(row).lower()
+            is_calculated = self._table_model.is_calculated_row(row)
+
             visible = group in ("", "All") or row_group == group
             if is_calculated and not self._show_calcs_check.isChecked():
                 visible = False
             if search_text and search_text not in row_name:
                 visible = False
-                
+
             self._table.setRowHidden(row, not visible)
 
     def _clear_plot(self) -> None:
         self._plot_history.clear()
+        self._plot_rolling = True
+        self._plot_mode_label.setText("\U0001f504 Rolling")
         self._redraw_plot()
 
-    def _prune_plot_history(self, key: Tuple[int, str], now_seconds: float) -> None:
-        try:
-            window = float(self._plot_window_combo.currentText())
-        except ValueError:
-            window = 300.0
-        history = self._plot_history[key]
-        while history and now_seconds - history[0][0] > window:
-            history.popleft()
+    def _on_plot_window_changed(self) -> None:
+        """When the user changes the rolling window combo, re-enter Rolling mode."""
+        self._plot_rolling = True
+        self._plot_mode_label.setText("\U0001f504 Rolling")
+        self._redraw_plot()
+
+    def _on_plot_range_changed(self, vb, x_range) -> None:
+        """Called by pyqtgraph when the ViewBox X range changes.
+
+        We use a re-entrancy guard (``_plot_range_changing``) to ignore the
+        range changes that WE trigger from ``_redraw_plot`` (i.e. our own
+        ``setXRange`` calls), and only respond to user-initiated pan/zoom.
+        """
+        if self._plot_range_changing:
+            return
+        if self._plot_rolling:
+            self._plot_rolling = False
+            self._plot_mode_label.setText("\U0001f50d Explore  (Ctrl+R = Rolling)")
 
     def _export_plot_data(self) -> None:
-        selected_keys = []
-        for i in range(self._plot_variable_list.count()):
-            item = self._plot_variable_list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                selected_keys.append(item.data(Qt.ItemDataRole.UserRole))
-                
+        selected_keys = list(self._plot_keys)
+
         if not selected_keys:
-            QMessageBox.information(self, "Export plot", "No variables selected for plotting.")
+            self._popup_information("Export plot", "No variables selected for plotting.")
             return
 
         target, _ = QFileDialog.getSaveFileName(
@@ -1572,66 +2092,162 @@ class MainWindow(QMainWindow):
                 
         self._set_status(f"Exported plot data to {target}")
 
+    def _on_table_context_menu(self, pos) -> None:
+        index = self._table.indexAt(pos)
+        if not index.isValid():
+            return
+        row = index.row()
+        key = self._table_model.key_for_row(row)
+        if key is None:
+            return
+
+        menu = QMenu(self._table)
+        if key in self._plot_keys:
+            plot_action = menu.addAction("Remove from Live Plot")
+        else:
+            plot_action = menu.addAction("Add to Live Plot")
+        copy_action = menu.addAction("Copy Value")
+
+        chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
+        if chosen is plot_action:
+            self._toggle_plot_key(key)
+        elif chosen is copy_action:
+            QApplication.clipboard().setText(self._table_model.cell_text(row, 6))
+
+    def _toggle_plot_key(self, key: Tuple[int, str]) -> None:
+        if key in self._plot_keys:
+            self._plot_keys.remove(key)
+        else:
+            self._plot_keys.append(key)
+        self._redraw_plot()
+
+    def _curve_color_icon(self, color_hex: str) -> QIcon:
+        cache_key = ("dot", color_hex, "12")
+        cached = self._curve_icon_cache.get(cache_key)
+        if cached is not None:
+            return cached
+        pixmap = QPixmap(12, 12)
+        pixmap.fill(Qt.GlobalColor.transparent)
+        painter = QPainter(pixmap)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setBrush(QBrush(QColor(color_hex)))
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawEllipse(1, 1, 10, 10)
+        painter.end()
+        icon = QIcon(pixmap)
+        self._curve_icon_cache[cache_key] = icon
+        return icon
+
+    def _refresh_plot_indicators(self) -> None:
+        """Update the colored dot icon in the Variable column for plotted signals."""
+        key_to_color: Dict[Tuple[int, str], str] = {
+            key: _PLOT_PALETTE[idx % len(_PLOT_PALETTE)]
+            for idx, key in enumerate(self._plot_keys)
+        }
+        n = self._table_model.row_count()
+        for row in range(n):
+            key = self._table_model.key_for_row(row)
+            color = key_to_color.get(key) if key is not None else None
+            # We pass an icon via the model's DecorationRole, but the model
+            # doesn't implement DecorationRole directly — instead we set it
+            # directly on the view's persistent model index data via the
+            # QSortFilterProxyModel/selection model. The simplest approach
+            # for a QTableView is to use model.setData with DecorationRole.
+            # Since TelemetryTableModel is read-only for that role, we store
+            # the icon on a side dict and override paint via the delegate.
+            # For now: skip — the _StatusBadgeDelegate handles col 8.
+            # Plot color feedback is provided by the legend in the plot widget.
+
     def _redraw_plot(self) -> None:
+        self._refresh_plot_indicators()
         if pg is None or self._plot_widget is None:
             return
-            
-        selected_items = []
-        for i in range(self._plot_variable_list.count()):
-            item = self._plot_variable_list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                selected_items.append(item)
 
-        # Clear curves that are no longer selected
-        active_keys = {item.data(Qt.ItemDataRole.UserRole) for item in selected_items}
+        active_keys = set(self._plot_keys)
         for key in list(self._plot_curves.keys()):
             if key not in active_keys:
                 self._plot_widget.removeItem(self._plot_curves[key])
                 del self._plot_curves[key]
-                
-        # Add and update selected curves
-        colors = ["#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", "#8c564b", "#e377c2"]
-        for idx, item in enumerate(selected_items):
-            key = item.data(Qt.ItemDataRole.UserRole)
+
+        current_t = (datetime.now() - self._session_started).total_seconds()
+        try:
+            window = float(self._plot_window_combo.currentText())
+        except ValueError:
+            window = 60.0
+
+        for idx, key in enumerate(self._plot_keys):
             values = list(self._plot_history.get(key, []))
             if not values:
                 x_values, y_values = [], []
             else:
                 x_values, y_values = zip(*values)
-                
+
+            color = _PLOT_PALETTE[idx % len(_PLOT_PALETTE)]
             if key not in self._plot_curves:
-                color = colors[idx % len(colors)]
-                self._plot_curves[key] = self._plot_widget.plot(name=item.text(), pen=pg.mkPen(color, width=2))
-                
-            self._plot_curves[key].setData(list(x_values), list(y_values))
+                label = f"0x{key[0]:04X} {key[1]}"
+                self._plot_curves[key] = self._plot_widget.plot(
+                    name=label, pen=pg.mkPen(color, width=2)
+                )
+            else:
+                self._plot_curves[key].setPen(pg.mkPen(color, width=2))
+
+            # autoDownsample + clipToView: pyqtgraph only renders visible
+            # pixels, preventing lag when viewing hours of data.
+            self._plot_curves[key].setData(
+                list(x_values), list(y_values),
+                autoDownsample=True,
+                clipToView=True,
+            )
+
+        # Rolling mode: set X range to [current_t - window, current_t].
+        # Use the re-entrancy guard so setXRange doesn't trigger
+        # _on_plot_range_changed and accidentally switch to Explore mode.
+        if self._plot_rolling and self._plot_keys:
+            self._plot_range_changing = True
+            try:
+                self._plot_widget.setXRange(current_t - window, current_t, padding=0)
+            finally:
+                self._plot_range_changing = False
 
     def _set_cell(self, row: int, col: int, text: str) -> None:
         item = QTableWidgetItem(text)
-        if col in (3, 4, 5):
+        if col in (3, 5, 6):
             item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            
-        if col == 7:
-            lower_text = text.lower()
-            if "ok" in lower_text and not "error" in lower_text:
-                item.setForeground(QColor("#10b981")) # Green
-            elif "error" in lower_text or "fail" in lower_text:
-                item.setForeground(QColor("#ef4444")) # Red
-            elif text != "-":
-                item.setForeground(QColor("#eab308")) # Yellow
-                
+        elif col == 8:
+            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+
         self._table.setItem(row, col, item)
 
     # ------------------------------------------------------------------
     # Misc helpers
     # ------------------------------------------------------------------
     def _refresh_ports(self) -> None:
-        current = self._port_combo.currentText()
-        ports = list(available_ports())
+        """Repopulate the port combo with full device descriptions.
+
+        Each item displays  "COM3 \u2013 USB Serial Device"  but stores the raw
+        device name ("COM3") as Qt.ItemDataRole.UserRole so that the connect
+        logic always passes the correct identifier to serial.Serial().
+        """
+        # Remember the previously selected device name (UserRole data).
+        current_device = self._port_combo.currentData(Qt.ItemDataRole.UserRole) or ""
+        ports = list(available_ports())   # list of (device, description) tuples
         self._port_combo.clear()
-        self._port_combo.addItems(ports or ["No ports"])
-        index = self._port_combo.findText(current)
-        if index >= 0:
-            self._port_combo.setCurrentIndex(index)
+        if ports:
+            for device, description in ports:
+                # Build a compact label: "COM3 – USB Serial Device"
+                # Avoid repeating the device name if it already appears in description.
+                if device in description:
+                    label = description          # e.g. "USB Serial Device (COM3)"
+                else:
+                    label = f"{device} \u2013 {description}"
+                self._port_combo.addItem(label, userData=device)
+            # Restore previous selection if it is still present.
+            for i in range(self._port_combo.count()):
+                if self._port_combo.itemData(i, Qt.ItemDataRole.UserRole) == current_device:
+                    self._port_combo.setCurrentIndex(i)
+                    break
+        else:
+            self._port_combo.addItem("No ports found", userData="")
 
     def _apply_serial_defaults(self) -> None:
         if self._config is None:
@@ -1675,6 +2291,12 @@ class MainWindow(QMainWindow):
         self._timeout_combo.setEnabled(not connected)
         if hasattr(self, "_connection_label"):
             self._connection_label.setText(f"Serial: {'connected' if connected else 'disconnected'}")
+        if connected:
+            self._led_label.setStyleSheet("color: #66BB6A;")
+            self._led_label.setToolTip("Connected")
+        else:
+            self._led_label.setStyleSheet("color: #ef5350;")
+            self._led_label.setToolTip("Disconnected")
 
     def _set_status(self, text: str) -> None:
         self._status_label.setText(text)
@@ -1685,11 +2307,54 @@ class MainWindow(QMainWindow):
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self._activity_log.appendPlainText(f"{timestamp}  {text}")
 
+    def _log_popup(self, kind: str, title: str, message: str) -> None:
+        """Log a popup/error message into the Activity Log.
 
+        Keeps single-line popups on one line; multi-line popups are logged
+        as a small block for readability.
+        """
+        message_text = "" if message is None else str(message)
+        lines = message_text.splitlines()
+        if not lines:
+            self._log_activity(f"[{kind}] {title}")
+            return
+        if len(lines) == 1:
+            self._log_activity(f"[{kind}] {title}: {lines[0]}")
+            return
+        self._log_activity(f"[{kind}] {title}:")
+        for line in lines:
+            self._log_activity(f"    {line}")
 
-    def _append_to_console(self, text: str) -> None:
-        if hasattr(self, "_console"):
-            self._console.appendPlainText(text)
+    def _popup_information(self, title: str, message: str) -> None:
+        self._log_popup("INFO", title, message)
+        QMessageBox.information(self, title, message)
+
+    def _popup_warning(self, title: str, message: str) -> None:
+        self._log_popup("WARN", title, message)
+        QMessageBox.warning(self, title, message)
+
+    def _popup_critical(self, title: str, message: str) -> None:
+        self._log_popup("ERROR", title, message)
+        QMessageBox.critical(self, title, message)
+
+    def _popup_about(self, title: str, message: str) -> None:
+        self._log_popup("ABOUT", title, message)
+        QMessageBox.about(self, title, message)
+
+    def _popup_question(
+        self,
+        title: str,
+        message: str,
+        *,
+        buttons: QMessageBox.StandardButtons = QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+        default_button: QMessageBox.StandardButton = QMessageBox.StandardButton.NoButton,
+    ) -> QMessageBox.StandardButton:
+        self._log_popup("QUESTION", title, message)
+        reply = QMessageBox.question(self, title, message, buttons, default_button)
+        selected = "Yes" if reply == QMessageBox.StandardButton.Yes else "No" if reply == QMessageBox.StandardButton.No else str(reply)
+        self._log_activity(f"[QUESTION] {title}: user selected {selected}")
+        return reply
+
 
     def _format_console_row(self, packet: ParsedPacket) -> str:
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -1699,10 +2364,19 @@ class MainWindow(QMainWindow):
         return f"{timestamp}, ERR, {packet.error or 'unknown'}, {hex_text}"
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        # Stop the 60 Hz UI flush timer first.
+        self._ui_timer.stop()
+        # Signal the worker thread to exit and wait up to 2 s for the COM
+        # port to be released cleanly (avoids zombie processes on Windows).
         if self._serial:
-            self._serial.close()
+            self._serial.stop()
+            self._serial.wait(2000)
+            try:
+                self._serial.close()
+            except Exception:
+                pass
         if self._logging:
-            self._stop_logging()
+            self._stop_logging()  # flushes final buffered log data
         self._save_window_state()
         super().closeEvent(event)
 

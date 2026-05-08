@@ -1,11 +1,47 @@
-venv/
+# Byte-compiled / cache
 __pycache__/
-*.pyc
-*.pyo
+*.py[cod]
+*$py.class
+*.so
+*.pyd
+
+# Virtual envs
+.venv/
+venv/
+env/
+ENV/
+
+# PyInstaller / build output
+build/
+dist/
+installer_output/
+*.manifest
+*.spec.bak
+*.egg-info/
+
+# Test / coverage
 .pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+.tox/
+.nox/
+
+# Editors / OS
 .vscode/
 .idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs / scratch
+*.log
 logs/
-*.egg-info/
-dist/
-build/
+scratch/
+*.tmp
+*.bak
+
+# App-generated runtime files
+*.csv.lock
+session_*.json

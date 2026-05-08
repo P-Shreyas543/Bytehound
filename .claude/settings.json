@@ -1,7 +1,19 @@
 {
   "permissions": {
     "allow": [
-      "Bash(python -c \"import sys; sys.path.insert\\(0,'.'\\); from app.protocol.crc import compute; print\\(hex\\(compute\\('crc16_modbus', bytes.fromhex\\('AA550042 06 F6090000 0500'.replace\\(' ',''\\)\\)\\)\\)\\)\")"
+      "Bash(python -c \"import sys; sys.path.insert\\(0,'.'\\); from app.protocol.crc import compute; print\\(hex\\(compute\\('crc16_modbus', bytes.fromhex\\('AA550042 06 F6090000 0500'.replace\\(' ',''\\)\\)\\)\\)\\)\")",
+      "Bash(dir /b c:\\\\Users\\\\Shreyas\\\\Documents\\\\Python\\\\BMS-MonitorApp)",
+      "Bash(powershell -c \"Get-Item c:\\\\Users\\\\Shreyas\\\\Documents\\\\Python\\\\BMS-MonitorApp\\\\app\\\\ui\\\\main_window.py | Select-Object -ExpandProperty Length\")",
+      "Bash(powershell -c \"Get-Item c:\\\\Users\\\\Shreyas\\\\Documents\\\\Python\\\\BMS-MonitorApp\\\\app\\\\ui\\\\analysis_suite.py | Select-Object -ExpandProperty Length\")",
+      "Bash(xargs grep -l \"class.*Widget\")",
+      "Bash(Get-ChildItem -Path \"c:\\\\Users\\\\Shreyas\\\\Documents\\\\Python\\\\BMS-MonitorApp\" -Recurse -File)",
+      "Bash(Select-Object -ExpandProperty FullName)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(r'c:\\\\Users\\\\Shreyas\\\\Documents\\\\Python\\\\BMS-MonitorApp\\\\app\\\\ui\\\\main_window.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python -c \"from app.ui.main_window import MainWindow, TitleBarThemeFilter, _StatusBadgeDelegate, _PLOT_PALETTE, _pad_dock_content; print\\('imports ok'\\); print\\('palette length:', len\\(_PLOT_PALETTE\\)\\)\")",
+      "Bash(python -c \"import qtawesome; print\\(qtawesome.__version__\\)\")",
+      "Bash(python -c \"import ast; ast.parse\\(open\\(r'c:\\\\Users\\\\Shreyas\\\\Documents\\\\Python\\\\BMS-MonitorApp\\\\app\\\\ui\\\\main_window.py', encoding='utf-8'\\).read\\(\\)\\); print\\('parse ok'\\)\")",
+      "Bash(python -c \"from app.ui.main_window import MainWindow, _icon, _StatusBadgeDelegate; print\\('imports ok'\\)\")",
+      "Bash(python -c \"from app.ui.main_window import MainWindow, _icon, _StatusBadgeDelegate, TitleBarThemeFilter, _PLOT_PALETTE; print\\('imports ok'\\); print\\('badge colors:', _StatusBadgeDelegate._GREEN.name\\(\\), _StatusBadgeDelegate._RED.name\\(\\), _StatusBadgeDelegate._ORANGE.name\\(\\)\\)\")"
     ]
   }
 }
