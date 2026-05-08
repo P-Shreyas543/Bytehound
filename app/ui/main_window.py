@@ -5,9 +5,10 @@ from __future__ import annotations
 import os
 import sys
 from collections import defaultdict, deque
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Deque, Dict, Optional, Tuple
+from typing import Deque, Dict, List, Optional, Set, Tuple
 
 from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, QObject, Signal, QSortFilterProxyModel, QLocale
 from PySide6.QtGui import (
@@ -455,6 +456,43 @@ QHeaderView::section:hover {
 
 
 # ---------------------------------------------------------------------------
+# Primary toolbar button colour palette
+# ---------------------------------------------------------------------------
+# Three semantic states; all buttons show white (#FFFFFF) text/icons on top.
+_BTN_GREEN  = "#16A34A"   # idle / safe-to-activate  (Connect, Start Auto-Fetch)
+_BTN_YELLOW = "#D97706"   # ready but not running     (Start Logging — inactive)
+_BTN_PINK   = "#DB2777"   # currently active / danger (Disconnect, Stop Fetch/Log)
+
+# ---------------------------------------------------------------------------
+# Live Plot grid layouts
+# ---------------------------------------------------------------------------
+# Each entry: display label → (rows, cols)
+GRID_LAYOUTS: Dict[str, Tuple[int, int]] = {
+    "1×1": (1, 1),
+    "1×2": (1, 2),
+    "2×1": (2, 1),
+    "1×3": (1, 3),
+    "3×1": (3, 1),
+    "2×2": (2, 2),
+    "2×4": (2, 4),
+    "4×2": (4, 2),
+}
+
+
+@dataclass
+class PlotPanel:
+    """State for one subplot cell in the multi-grid live plot.
+
+    ``plot_item``     – the pyqtgraph PlotItem for this cell.
+    ``assigned_keys`` – ordered list of (frame_id, signal_name) signals to draw.
+    ``curves``        – mapping from key → PlotDataItem (the live curve object).
+    """
+    plot_item: object                                     # pg.PlotItem
+    assigned_keys: List[Tuple[int, str]] = field(default_factory=list)
+    curves:        Dict[Tuple[int, str], object] = field(default_factory=dict)
+
+
+# ---------------------------------------------------------------------------
 # Configuration dialogs
 # ---------------------------------------------------------------------------
 
@@ -687,17 +725,19 @@ class MainWindow(QMainWindow):
         # Timer removed; using PollingWorker QThread
 
         self._plot_history: Dict[Tuple[int, str], Deque[Tuple[float, float]]] = defaultdict(
-            # 250,000 points per signal — ~70 hours at 1 Hz, ~41 min at 100 Hz.
-            # deque handles its own memory (O(1) pop); no manual pruning needed.
             lambda: deque(maxlen=250_000)
         )
-        self._plot_keys: list[Tuple[int, str]] = []
+        # Multi-grid plot state
+        self._plot_panels: List[PlotPanel] = []   # one entry per subplot cell
+        self._gl_widget = None                     # pg.GraphicsLayoutWidget
+        self._plot_widget = None                   # alias → panels[0].plot_item (compat)
+        self._plot_curves: Dict = {}               # compat shim (unused after refactor)
+        self._plot_keys: List[Tuple[int, str]] = []  # union of all panel keys
         self._curve_icon_cache: Dict[Tuple[int, str, str], QIcon] = {}
         self._session_started = datetime.now()
-        # Plot mode: True = rolling (auto-scroll last N seconds),
-        # False = explore (user has panned/zoomed, we stop moving the X axis).
         self._plot_rolling: bool = True
-        self._plot_range_changing: bool = False  # re-entrancy guard
+        self._plot_range_changing: bool = False
+
 
         # Packet queue + 60 Hz throttle timer
         # Bounded deque prevents OOM if the Qt event loop stalls (e.g. user
@@ -711,6 +751,10 @@ class MainWindow(QMainWindow):
         self._build_ui()
         self._load_default_config()
         self._refresh_action_state()
+        # Rebuild icon tints after all widgets exist so secondary menu/toolbar
+        # icons get the correct colour even without a manual theme switch.
+        _saved_theme = str(self._settings.value("ui/theme", "dark"))
+        self._rebuild_action_icons(_saved_theme)
 
         self._default_state = self.saveState()
         self._default_geometry = self.saveGeometry()
@@ -763,20 +807,22 @@ class MainWindow(QMainWindow):
 
     def _build_actions(self) -> None:
 
-        # Pick icon tint color based on the saved theme so icons are readable
-        # on first launch without needing a theme switch to trigger a rebuild.
+        # Pick icon tint color based on the saved theme for secondary actions.
+        # Primary actions (Connect / Poll / Log) always get white icons because
+        # they always sit on a coloured background (_BTN_GREEN / YELLOW / PINK).
         _saved_theme = str(self._settings.value("ui/theme", "dark"))
         _ic = "#F8FAFC" if _saved_theme == "dark" else "#1F2937"
+        _PRIMARY = "#FFFFFF"   # always white on coloured button backgrounds
 
-        self._connect_action = QAction(_icon("mdi6.usb-port", _ic), "Connect", self)
+        self._connect_action = QAction(_icon("mdi6.usb-port", _PRIMARY), "Connect", self)
         self._connect_action.triggered.connect(self._on_toggle_connect)
 
-        self._polling_action = QAction(_icon("mdi6.play-circle-outline", _ic), "Start Auto-Fetch", self)
+        self._polling_action = QAction(_icon("mdi6.play-circle-outline", _PRIMARY), "Start Auto-Fetch", self)
         self._polling_action.setCheckable(True)
         self._polling_action.setChecked(False)
         self._polling_action.triggered.connect(self._on_toggle_polling)
 
-        self._logging_action = QAction(_icon("mdi6.record-rec", _ic), "Start Logging", self)
+        self._logging_action = QAction(_icon("mdi6.record-rec", _PRIMARY), "Start Logging", self)
         self._logging_action.triggered.connect(self._on_toggle_logging)
 
         self._load_config_action = QAction(_icon("mdi6.folder-upload-outline", _ic), "Import Config", self)
@@ -945,8 +991,6 @@ class MainWindow(QMainWindow):
         toolbar = QToolBar("Main", self)
         toolbar.setObjectName("MainToolBar")
         toolbar.setMovable(False)
-        # Show text beside icons for all secondary actions so their purpose is
-        # immediately obvious without hovering for a tooltip.
         toolbar.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
         self._toolbar = toolbar
 
@@ -957,9 +1001,12 @@ class MainWindow(QMainWindow):
         toolbar.addAction(self._load_log_action)
         toolbar.addSeparator()
 
-        # --- Primary actions (Connect, Poll, Log) ---
-        # These get the green #primaryAction styling and are forced to
-        # ToolButtonTextOnly so the label is prominent without a duplicate icon.
+        # --- Primary actions: Connect, Poll, Log ---
+        # Icons are always white because these buttons always have a
+        # coloured background (green / yellow / pink).  We don't use
+        # #primaryAction QSS for these — we drive their colour via
+        # _style_action_btn() so states (connected, fetching, logging)
+        # can have distinct colours.
         toolbar.addAction(self._connect_action)
         toolbar.addAction(self._polling_action)
         toolbar.addAction(self._logging_action)
@@ -967,8 +1014,12 @@ class MainWindow(QMainWindow):
         for action in (self._connect_action, self._polling_action, self._logging_action):
             btn = toolbar.widgetForAction(action)
             if isinstance(btn, QToolButton):
-                btn.setObjectName("primaryAction")
                 btn.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+
+        # Set initial button colours before any connection is made.
+        self._style_action_btn(self._connect_action,  _BTN_GREEN)   # idle → green
+        self._style_action_btn(self._polling_action,  _BTN_GREEN)   # idle → green
+        self._style_action_btn(self._logging_action,  _BTN_YELLOW)  # idle → yellow
 
         toolbar.addSeparator()
 
@@ -984,6 +1035,39 @@ class MainWindow(QMainWindow):
         toolbar.addWidget(self._logo_button)
 
         self.addToolBar(toolbar)
+
+    def _style_action_btn(self, action: "QAction", bg: str) -> None:
+        """Colour a primary toolbar button with *bg* and always-white text/icon.
+
+        Three semantic states drive the three distinct colours:
+          ``_BTN_GREEN``  — idle / safe to activate (Connect, Start Auto-Fetch)
+          ``_BTN_YELLOW`` — ready but not started (Start Logging)
+          ``_BTN_PINK``   — currently active / click to stop
+        """
+        if not hasattr(self, "_toolbar"):
+            return
+        btn = self._toolbar.widgetForAction(action)
+        if not isinstance(btn, QToolButton):
+            return
+        btn.setStyleSheet(
+            f"""
+            QToolButton {{
+                background-color: {bg};
+                color: #FFFFFF;
+                border: none;
+                border-radius: 5px;
+                padding: 4px 14px;
+                font-weight: 700;
+            }}
+            QToolButton:hover   {{ background-color: {bg}; }}
+            QToolButton:pressed {{ background-color: {bg}; }}
+            QToolButton:disabled {{
+                background-color: {bg};
+                color: #AAAAAA;
+                border: 2px dashed #AAAAAA;
+            }}
+            """
+        )
 
     def _build_main_layout(self) -> None:
         self.setCorner(Qt.Corner.TopLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
@@ -1125,6 +1209,8 @@ class MainWindow(QMainWindow):
     def _populate_view_menu(self) -> None:
         menu = self._view_menu
         menu.clear()
+        theme = str(self._settings.value("ui/theme", "dark"))
+        ic = "#F8FAFC" if theme == "dark" else "#1F2937"
 
         panels_menu = menu.addMenu("Panels")
         for dock, label in (
@@ -1146,24 +1232,24 @@ class MainWindow(QMainWindow):
         self._theme_group.setExclusive(True)
         current_theme = str(self._settings.value("ui/theme", "dark"))
         for label, key, icon_name in (
-            ("Dark", "dark", "mdi6.weather-night"),
-            ("Light", "light", "mdi6.weather-sunny"),
-            ("System", "auto", "mdi6.theme-light-dark"),
+            ("Dark",   "dark",  "mdi6.weather-night"),
+            ("Light",  "light", "mdi6.weather-sunny"),
+            ("System", "auto",  "mdi6.theme-light-dark"),
         ):
-            action = QAction(_icon(icon_name), label, self, checkable=True)
+            action = QAction(_icon(icon_name, ic), label, self, checkable=True)
             action.setData(key)
             action.setChecked(key == current_theme)
             action.triggered.connect(lambda _checked=False, k=key: self._apply_theme(k))
             self._theme_group.addAction(action)
             theme_menu.addAction(action)
 
-        reset_layout_action = QAction(_icon("mdi6.view-grid-outline"), "Reset Window Layout", self)
+        reset_layout_action = QAction(_icon("mdi6.view-grid-outline", ic), "Reset Window Layout", self)
         reset_layout_action.triggered.connect(self._reset_window_layout)
         menu.addAction(reset_layout_action)
 
         menu.addSeparator()
 
-        reset_plot_action = QAction(_icon("mdi6.image-auto-adjust"), "Auto-Range Plot", self)
+        reset_plot_action = QAction(_icon("mdi6.image-auto-adjust", ic), "Auto-Range Plot", self)
         reset_plot_action.setShortcut("Ctrl+R")
         reset_plot_action.triggered.connect(self._reset_plot_view)
         menu.addAction(reset_plot_action)
@@ -1192,28 +1278,39 @@ class MainWindow(QMainWindow):
         """Re-tint all QAction icons to match the current theme.
 
         qtawesome bakes the color into the QPixmap at icon() creation time, so
-        we must recreate the icons whenever the theme changes.  Light icons
-        (#F8FAFC) for dark theme, dark icons (#1F2937) for light theme.
+        we must recreate the icons whenever the theme changes.
+
+        Primary actions (Connect / Poll / Log) sit on coloured backgrounds so
+        their icons are *always* white — independent of the app theme.
+        Secondary actions (file/edit/help) use the standard theme tint.
         """
         color = "#F8FAFC" if theme == "dark" else "#1F2937"
-        # Map of action attribute → mdi6 icon name
-        _action_icons = [
-            (self._connect_action,          "mdi6.usb-port"),
-            (self._polling_action,           "mdi6.play-circle-outline"),
-            (self._logging_action,           "mdi6.record-rec"),
-            (self._load_config_action,       "mdi6.folder-upload-outline"),
-            (self._export_template_action,   "mdi6.file-export-outline"),
-            (self._load_log_action,          "mdi6.history"),
-            (self._clear_action,             "mdi6.broom"),
-            (self._copy_value_action,        "mdi6.content-copy"),
-            (self._exit_action,              "mdi6.exit-to-app"),
-            (self._info_action,              "mdi6.information-outline"),
-            (self._analysis_action,          "mdi6.chart-line"),
-            (self._docs_action,              "mdi6.book-open-variant"),
-            (self._update_action,            "mdi6.update"),
-        ]
-        for action, icon_name in _action_icons:
-            action.setIcon(_icon(icon_name, color))
+
+        # Primary: always white (coloured button background)
+        for action, name in [
+            (self._connect_action,  "mdi6.usb-port"),
+            (self._polling_action,  "mdi6.play-circle-outline"),
+            (self._logging_action,  "mdi6.record-rec"),
+        ]:
+            action.setIcon(_icon(name, "#FFFFFF"))
+
+        # Secondary: follow the active theme
+        for action, name in [
+            (self._load_config_action,      "mdi6.folder-upload-outline"),
+            (self._export_template_action,  "mdi6.file-export-outline"),
+            (self._load_log_action,         "mdi6.history"),
+            (self._clear_action,            "mdi6.broom"),
+            (self._copy_value_action,       "mdi6.content-copy"),
+            (self._exit_action,             "mdi6.exit-to-app"),
+            (self._info_action,             "mdi6.information-outline"),
+            (self._analysis_action,         "mdi6.chart-line"),
+            (self._docs_action,             "mdi6.book-open-variant"),
+            (self._update_action,           "mdi6.update"),
+        ]:
+            action.setIcon(_icon(name, color))
+
+        # View menu is rebuilt from scratch each time — call it with the new tint
+        self._populate_view_menu()
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
@@ -1224,13 +1321,15 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda: _apply_windows_dark_titlebar(self, dark=(theme == "dark")))
 
     def _reset_plot_view(self) -> None:
-        """Ctrl+R: snap back to Rolling mode and re-centre on current data."""
-        if pg is None or self._plot_widget is None:
+        """Ctrl+R / Reset View: auto-range all panels so all data is visible
+        (including t=0), then switch to Explore mode so it stays put.
+        """
+        if pg is None or not self._plot_panels:
             return
-        self._plot_rolling = True
-        self._plot_mode_label.setText("\U0001f504 Rolling")
-        # Force an immediate redraw so the X-axis snaps to the rolling window.
-        self._redraw_plot()
+        for panel in self._plot_panels:
+            panel.plot_item.getViewBox().autoRange()
+        self._plot_rolling = False
+        self._plot_mode_label.setText("🔍 Explore  (Ctrl+R = Rolling)")
 
     def _reset_window_layout(self) -> None:
         self.restoreGeometry(self._default_geometry)
@@ -1292,18 +1391,7 @@ class MainWindow(QMainWindow):
         layout.setSpacing(10)
 
         # --- Serial Connection status card ----------------------------------
-        conn_card, conn_layout = self._card("Serial Connection", panel)
-        self._connection_label = QLabel("\u25cf  Disconnected", conn_card)
-        self._connection_label.setWordWrap(True)
-        conn_layout.addWidget(self._connection_label)
 
-        conn_btn = QPushButton("Configure & Connect\u2026", conn_card)
-        conn_btn.clicked.connect(self._on_toggle_connect)
-        self._connect_button = conn_btn          # keep ref for text updates
-        conn_layout.addWidget(conn_btn)
-        layout.addWidget(conn_card)
-
-        # --- Protocol Config status card ------------------------------------
         proto_card, proto_layout = self._card("Protocol Config", panel)
 
         recent_row = QHBoxLayout()
@@ -1358,75 +1446,288 @@ class MainWindow(QMainWindow):
         return panel
 
     def _build_plot_tab(self) -> QWidget:
-        widget = QWidget(self)
-        layout = QVBoxLayout(widget)
+        outer = QWidget(self)
+        root_layout = QVBoxLayout(outer)
+        root_layout.setContentsMargins(4, 4, 4, 4)
+        root_layout.setSpacing(4)
+
+        # ── Top control bar ────────────────────────────────────────────────
         controls = QHBoxLayout()
+        controls.setSpacing(8)
 
-        self._plot_window_combo = QComboBox(widget)
-        self._plot_window_combo.addItems(["30", "60", "120", "300", "600"])
-        self._plot_window_combo.setCurrentText("60")
-        self._plot_window_combo.currentIndexChanged.connect(self._on_plot_window_changed)
-        clear_plot = QPushButton("Clear", widget)
-        clear_plot.clicked.connect(self._clear_plot)
-        export_plot = QPushButton("Export", widget)
-        export_plot.clicked.connect(self._export_plot_data)
-
-        # Mode indicator — updates live to tell the user which mode they are in.
-        self._plot_mode_label = QLabel("\U0001f504 Rolling", widget)
-        self._plot_mode_label.setToolTip(
-            "Rolling: X-axis auto-scrolls to show the last N seconds.\n"
-            "Explore: You panned/zoomed manually. Press Ctrl+R to return to Rolling."
-        )
-
-        hint = QLabel("Right-click any row in the table to add it to the plot.", widget)
+        hint = QLabel("Right-click a table row → Add to Plot  |  Ctrl+R = Reset view")
         hint.setEnabled(False)
-
-        controls.addWidget(QLabel("Rolling window (s)"))
-        controls.addWidget(self._plot_window_combo)
-        controls.addWidget(self._plot_mode_label)
+        hint.setStyleSheet("font-size: 11px;")
+        controls.addWidget(hint)
         controls.addStretch(1)
-        controls.addWidget(clear_plot)
-        controls.addWidget(export_plot)
 
-        layout.addWidget(hint)
-        layout.addLayout(controls)
+        controls.addWidget(QLabel("Window (s):"))
+        self._plot_window_combo = QComboBox(outer)
+        self._plot_window_combo.addItems(["30", "60", "120", "300", "600"])
+        saved_w = str(self._settings.value("plot/window", "60"))
+        self._plot_window_combo.setCurrentText(saved_w)
+        self._plot_window_combo.currentIndexChanged.connect(self._on_plot_window_changed)
+        controls.addWidget(self._plot_window_combo)
 
-        self._plot_curves = {}
+        controls.addWidget(QLabel("Layout:"))
+        self._layout_combo = QComboBox(outer)
+        self._layout_combo.addItems(list(GRID_LAYOUTS.keys()))
+        saved_layout = str(self._settings.value("plot/layout", "2×1"))
+        self._layout_combo.setCurrentText(saved_layout if saved_layout in GRID_LAYOUTS else "2×1")
+        self._layout_combo.currentTextChanged.connect(self._on_layout_changed)
+        controls.addWidget(self._layout_combo)
 
-        if pg is not None:
-            self._plot_widget = pg.PlotWidget(widget)
-            self._plot_widget.setBackground(pg.mkColor("#1e1e1e"))
-            self._plot_widget.showGrid(x=True, y=True, alpha=0.25)
-            self._plot_widget.addLegend()
-            # Disable pyqtgraph's own auto-range — we manage it ourselves.
-            self._plot_widget.getPlotItem().getViewBox().setMouseEnabled(x=True, y=True)
-            # Detect manual pan/zoom to switch from Rolling → Explore mode.
-            self._plot_widget.getPlotItem().getViewBox().sigXRangeChanged.connect(
-                self._on_plot_range_changed
-            )
+        reset_btn = QPushButton("⟳ Reset View", outer)
+        reset_btn.setToolTip("Snap all subplots back to rolling mode (Ctrl+R)")
+        reset_btn.clicked.connect(self._reset_plot_view)
+        controls.addWidget(reset_btn)
 
-            # Setup interactive crosshairs
-            self._vLine = pg.InfiniteLine(angle=90, movable=False, pen=pg.mkPen("w", style=Qt.PenStyle.DashLine))
-            self._hLine = pg.InfiniteLine(angle=0, movable=False, pen=pg.mkPen("w", style=Qt.PenStyle.DashLine))
-            self._plot_widget.addItem(self._vLine, ignoreBounds=True)
-            self._plot_widget.addItem(self._hLine, ignoreBounds=True)
+        clear_btn = QPushButton("Clear", outer)
+        clear_btn.clicked.connect(self._clear_plot)
+        controls.addWidget(clear_btn)
 
-            self._proxy = pg.SignalProxy(self._plot_widget.scene().sigMouseMoved, rateLimit=60, slot=self._mouseMoved)
+        export_btn = QPushButton("Export", outer)
+        export_btn.clicked.connect(self._export_plot_data)
+        controls.addWidget(export_btn)
 
-            layout.addWidget(self._plot_widget, 1)
+        self._plot_mode_label = QLabel("🔄 Rolling", outer)
+        self._plot_mode_label.setToolTip(
+            "Rolling: X-axis auto-scrolls.\n"
+            "Explore: You panned/zoomed. Click Reset View or Ctrl+R to return."
+        )
+        controls.addWidget(self._plot_mode_label)
+
+        root_layout.addLayout(controls)
+
+        if pg is None:
+            root_layout.addWidget(QLabel("pyqtgraph is not installed."))
+            self._gl_widget = None
+            self._panel_strip_container = None
+            return outer
+
+        # ── Per-panel variable-strip container ─────────────────────────────
+        # Strips live in a QWidget ABOVE the GraphicsLayoutWidget because
+        # pg.GraphicsLayoutWidget is an OpenGL canvas and cannot host Qt widgets.
+        self._panel_strip_container = QWidget(outer)
+        self._panel_strip_layout = QHBoxLayout(self._panel_strip_container)
+        self._panel_strip_layout.setContentsMargins(0, 0, 0, 0)
+        self._panel_strip_layout.setSpacing(4)
+        root_layout.addWidget(self._panel_strip_container)
+
+        # ── Graphics canvas ────────────────────────────────────────────────
+        self._gl_widget = pg.GraphicsLayoutWidget(outer)
+        self._gl_widget.setBackground(pg.mkColor("#1e1e1e"))
+        root_layout.addWidget(self._gl_widget, 1)
+
+        # Build the initial grid from saved (or default) layout
+        rows, cols = GRID_LAYOUTS.get(self._layout_combo.currentText(), (2, 1))
+        self._rebuild_plot_grid(rows, cols, restore=True)
+
+        return outer
+
+    # ------------------------------------------------------------------
+    # Grid management
+    # ------------------------------------------------------------------
+
+    def _rebuild_plot_grid(self, rows: int, cols: int, restore: bool = False) -> None:
+        """Tear down the existing grid and build a fresh rows×cols layout.
+
+        When *restore* is True, previously-assigned keys are loaded from
+        QSettings (used on startup).  Otherwise assigned keys from the old
+        panels are redistributed across new panels in order.
+        """
+        if pg is None or self._gl_widget is None:
+            return
+
+        # Collect previously assigned keys in panel order
+        old_keys: List[List[Tuple[int, str]]] = [
+            list(p.assigned_keys) for p in self._plot_panels
+        ]
+        flat_old: List[Tuple[int, str]] = [k for sub in old_keys for k in sub]
+
+        # Clear graphics canvas and panel list
+        self._gl_widget.clear()
+        self._plot_panels.clear()
+
+        # Clear variable-strip widgets
+        if hasattr(self, "_panel_strip_layout") and self._panel_strip_layout is not None:
+            while self._panel_strip_layout.count():
+                item = self._panel_strip_layout.takeAt(0)
+                if item.widget():
+                    item.widget().deleteLater()
+
+        n = rows * cols
+        # Determine assigned keys for each new panel
+        if restore:
+            panel_keys: List[List[Tuple[int, str]]] = []
+            for i in range(n):
+                raw = self._settings.value(f"plot/panel/{i}/keys", [])
+                if isinstance(raw, list):
+                    decoded = [tuple(k) for k in raw if isinstance(k, (list, tuple)) and len(k) == 2]
+                else:
+                    decoded = []
+                panel_keys.append(decoded)
         else:
-            self._plot_widget = None
-            layout.addWidget(QLabel("pyqtgraph is not installed.", widget), 1)
-        return widget
+            # Spread old keys: panel i gets old_keys[i] if it exists
+            panel_keys = [old_keys[i] if i < len(old_keys) else [] for i in range(n)]
+
+        # Build PlotItems and variable strips
+        first_vb = None
+        for idx in range(n):
+            row_idx, col_idx = divmod(idx, cols)
+            pi = self._gl_widget.addPlot(row=row_idx, col=col_idx)
+            pi.showGrid(x=True, y=True, alpha=0.25)
+            pi.addLegend(offset=(10, 10))
+            pi.getViewBox().setMouseEnabled(x=True, y=True)
+
+            # Share X-axis with the first subplot (oscilloscope-style)
+            if first_vb is None:
+                first_vb = pi.getViewBox()
+            else:
+                pi.getViewBox().setXLink(first_vb)
+
+            # Detect user pan/zoom → switch to Explore mode
+            pi.getViewBox().sigXRangeChanged.connect(self._on_plot_range_changed)
+
+            panel = PlotPanel(plot_item=pi, assigned_keys=list(panel_keys[idx]))
+            self._plot_panels.append(panel)
+
+            # Redraw existing curves for this panel
+            for key in panel.assigned_keys:
+                label = f"0x{key[0]:04X} {key[1]}"
+                color_idx = sum(len(p.assigned_keys) for p in self._plot_panels[:-1]) + len(panel.curves)
+                color = _PLOT_PALETTE[color_idx % len(_PLOT_PALETTE)]
+                panel.curves[key] = pi.plot(name=label, pen=pg.mkPen(color, width=2))
+
+            # Build variable-strip widget for this panel
+            if hasattr(self, "_panel_strip_layout") and self._panel_strip_layout is not None:
+                strip = self._make_panel_strip(idx)
+                self._panel_strip_layout.addWidget(strip, 1)
+
+        # Update aggregate _plot_keys
+        self._sync_plot_keys()
+        # Persist new layout
+        self._settings.setValue("plot/layout", self._layout_combo.currentText())
+
+    def _make_panel_strip(self, panel_idx: int) -> QWidget:
+        """Build the variable-chip strip for one subplot panel."""
+        strip = QWidget()
+        strip.setObjectName(f"panelStrip_{panel_idx}")
+        strip.setMaximumHeight(36)
+        hl = QHBoxLayout(strip)
+        hl.setContentsMargins(2, 2, 2, 2)
+        hl.setSpacing(4)
+        lbl = QLabel(f"P{panel_idx + 1}:")
+        lbl.setStyleSheet("font-weight:bold; font-size:11px;")
+        hl.addWidget(lbl)
+        self._refresh_panel_strip_contents(panel_idx, hl)
+        add_btn = QPushButton("+ Add")
+        add_btn.setFixedHeight(24)
+        add_btn.setStyleSheet("font-size:11px; padding: 0 6px;")
+        add_btn.clicked.connect(lambda _, i=panel_idx: self._on_panel_add_signal(i))
+        hl.addWidget(add_btn)
+        hl.addStretch(1)
+        return strip
+
+    def _refresh_panel_strip_contents(self, panel_idx: int, layout: QHBoxLayout) -> None:
+        """Add chip labels for each assigned key in the panel strip."""
+        if panel_idx >= len(self._plot_panels):
+            return
+        panel = self._plot_panels[panel_idx]
+        color_offset = sum(len(self._plot_panels[i].assigned_keys) for i in range(panel_idx))
+        for local_idx, key in enumerate(panel.assigned_keys):
+            color = _PLOT_PALETTE[(color_offset + local_idx) % len(_PLOT_PALETTE)]
+            chip = QPushButton(f"● {key[1]}  ✕")
+            chip.setFixedHeight(22)
+            chip.setStyleSheet(
+                f"font-size:10px; padding:0 5px; border-radius:4px;"
+                f"background:{color}; color:#fff; border:none;"
+            )
+            chip.clicked.connect(lambda _, i=panel_idx, k=key: self._remove_signal_from_panel(i, k))
+            layout.addWidget(chip)
+
+    def _rebuild_panel_strips(self) -> None:
+        """Rebuild all variable-chip strips after assignments change."""
+        if not hasattr(self, "_panel_strip_layout") or self._panel_strip_layout is None:
+            return
+        while self._panel_strip_layout.count():
+            item = self._panel_strip_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for idx in range(len(self._plot_panels)):
+            strip = self._make_panel_strip(idx)
+            self._panel_strip_layout.addWidget(strip, 1)
+
+    def _on_layout_changed(self, label: str) -> None:
+        rows, cols = GRID_LAYOUTS.get(label, (2, 1))
+        self._rebuild_plot_grid(rows, cols, restore=False)
+        self._redraw_plot()
+
+    def _on_panel_add_signal(self, panel_idx: int) -> None:
+        """Open a dialog to pick a signal to assign to panel *panel_idx*."""
+        if self._config is None:
+            self._popup_warning("Add Signal", "Load a configuration first.")
+            return
+        all_keys = [(sig.frame_id, sig.signal_name) for sig in self._config.all_signals]
+        already: Set[Tuple[int, str]] = {k for p in self._plot_panels for k in p.assigned_keys}
+        choices = [f"0x{fid:04X}  {nm}" for fid, nm in all_keys]
+        if not choices:
+            self._popup_information("Add Signal", "No signals available in the loaded config.")
+            return
+        text, ok = QInputDialog.getItem(
+            self, f"Add signal to Panel {panel_idx + 1}",
+            "Choose a signal:", choices, 0, False
+        )
+        if not ok:
+            return
+        chosen_idx = choices.index(text)
+        key = all_keys[chosen_idx]
+        self._add_signal_to_panel(panel_idx, key)
+
+    def _add_signal_to_panel(self, panel_idx: int, key: Tuple[int, str]) -> None:
+        if panel_idx >= len(self._plot_panels):
+            return
+        panel = self._plot_panels[panel_idx]
+        if key not in panel.assigned_keys:
+            panel.assigned_keys.append(key)
+            self._sync_plot_keys()
+            self._persist_panel_assignments()
+            self._rebuild_panel_strips()
+            self._redraw_plot()
+
+    def _remove_signal_from_panel(self, panel_idx: int, key: Tuple[int, str]) -> None:
+        if panel_idx >= len(self._plot_panels):
+            return
+        panel = self._plot_panels[panel_idx]
+        if key in panel.assigned_keys:
+            panel.assigned_keys.remove(key)
+            if key in panel.curves:
+                panel.plot_item.removeItem(panel.curves.pop(key))
+            self._sync_plot_keys()
+            self._persist_panel_assignments()
+            self._rebuild_panel_strips()
+            self._redraw_plot()
+
+    def _sync_plot_keys(self) -> None:
+        """Rebuild the aggregate _plot_keys from all panels (maintains order)."""
+        seen: Set[Tuple[int, str]] = set()
+        merged: List[Tuple[int, str]] = []
+        for panel in self._plot_panels:
+            for k in panel.assigned_keys:
+                if k not in seen:
+                    seen.add(k)
+                    merged.append(k)
+        self._plot_keys = merged
+
+    def _persist_panel_assignments(self) -> None:
+        for i, panel in enumerate(self._plot_panels):
+            self._settings.setValue(f"plot/panel/{i}/keys", [list(k) for k in panel.assigned_keys])
 
     def _mouseMoved(self, evt):
-        if self._plot_widget is None:
-            return
-        pos = evt[0]
-        if self._plot_widget.sceneBoundingRect().contains(pos):
-            mousePoint = self._plot_widget.plotItem.vb.mapSceneToView(pos)
-            self._vLine.setPos(mousePoint.x())
-            self._hLine.setPos(mousePoint.y())
+        """Crosshair handler — disabled in multi-panel mode (panels use their own)."""
+        pass
+
+
 
     def _build_bitfield_tab(self) -> QWidget:
         self._bitfield_table = QTableWidget(0, 4, self)
@@ -1820,6 +2121,7 @@ class MainWindow(QMainWindow):
 
         self._logging = True
         self._logging_action.setText("Stop Logging")
+        self._style_action_btn(self._logging_action, _BTN_PINK)   # active → pink
 
         label_parts = []
         if raw_path:
@@ -1840,6 +2142,7 @@ class MainWindow(QMainWindow):
         self._decoded_logger = None
         self._logging = False
         self._logging_action.setText("Start Logging")
+        self._style_action_btn(self._logging_action, _BTN_YELLOW)   # back to yellow
         self._logging_label.setText("Logging: stopped")
         self._set_status("Logging stopped")
 
@@ -1993,6 +2296,10 @@ class MainWindow(QMainWindow):
             if self._serial:
                 self._serial.set_polling_global(False)
         self._polling_action.setText("Stop Auto-Fetch" if enabled else "Start Auto-Fetch")
+        self._style_action_btn(
+            self._polling_action,
+            _BTN_PINK if enabled else _BTN_GREEN,
+        )
         if self._serial:
             self._serial.set_polling_global(enabled)
 
@@ -2288,42 +2595,39 @@ class MainWindow(QMainWindow):
 
     def _clear_plot(self) -> None:
         self._plot_history.clear()
+        for panel in self._plot_panels:
+            for curve in panel.curves.values():
+                panel.plot_item.removeItem(curve)
+            panel.curves.clear()
         self._plot_rolling = True
-        self._plot_mode_label.setText("\U0001f504 Rolling")
+        self._plot_mode_label.setText("🔄 Rolling")
         self._redraw_plot()
 
     def _on_plot_window_changed(self) -> None:
-        """When the user changes the rolling window combo, re-enter Rolling mode."""
+        """Re-enter Rolling mode and persist the chosen window duration."""
+        self._settings.setValue("plot/window", self._plot_window_combo.currentText())
         self._plot_rolling = True
-        self._plot_mode_label.setText("\U0001f504 Rolling")
+        self._plot_mode_label.setText("🔄 Rolling")
         self._redraw_plot()
 
     def _on_plot_range_changed(self, vb, x_range) -> None:
-        """Called by pyqtgraph when the ViewBox X range changes.
-
-        We use a re-entrancy guard (``_plot_range_changing``) to ignore the
-        range changes that WE trigger from ``_redraw_plot`` (i.e. our own
-        ``setXRange`` calls), and only respond to user-initiated pan/zoom.
-        """
+        """Called when any ViewBox X-range changes.  Guard suppresses our own calls."""
         if self._plot_range_changing:
             return
         if self._plot_rolling:
             self._plot_rolling = False
-            self._plot_mode_label.setText("\U0001f50d Explore  (Ctrl+R = Rolling)")
+            self._plot_mode_label.setText("🔍 Explore  (Ctrl+R = Rolling)")
 
     def _export_plot_data(self) -> None:
         selected_keys = list(self._plot_keys)
-
         if not selected_keys:
             self._popup_information("Export plot", "No variables selected for plotting.")
             return
-
         target, _ = QFileDialog.getSaveFileName(
             self, "Export plot data", "plot_data.csv", "CSV files (*.csv)"
         )
         if not target:
             return
-            
         with Path(target).open("w", encoding="utf-8", newline="") as fp:
             for key in selected_keys:
                 values = list(self._plot_history.get(key, []))
@@ -2334,7 +2638,6 @@ class MainWindow(QMainWindow):
                 for seconds, value in values:
                     fp.write(f"{seconds:.3f},{value:.12g}\n")
                 fp.write("\n")
-                
         self._set_status(f"Exported plot data to {target}")
 
     def _on_table_context_menu(self, pos) -> None:
@@ -2348,23 +2651,42 @@ class MainWindow(QMainWindow):
 
         menu = QMenu(self._table)
         if key in self._plot_keys:
-            plot_action = menu.addAction("Remove from Live Plot")
+            menu.addAction("Remove from Live Plot").triggered.connect(
+                lambda: self._toggle_plot_key(key)
+            )
         else:
-            plot_action = menu.addAction("Add to Live Plot")
+            n_panels = len(self._plot_panels)
+            if n_panels <= 1:
+                # Single panel — just one action
+                menu.addAction("Add to Live Plot").triggered.connect(
+                    lambda: self._toggle_plot_key(key)
+                )
+            else:
+                # Multiple panels — offer a sub-menu
+                add_sub = menu.addMenu("Add to Live Plot")
+                for idx in range(n_panels):
+                    label = f"Panel {idx + 1}"
+                    add_sub.addAction(label).triggered.connect(
+                        lambda _=False, i=idx: self._add_signal_to_panel(i, key)
+                    )
+        menu.addSeparator()
         copy_action = menu.addAction("Copy Value")
-
         chosen = menu.exec(self._table.viewport().mapToGlobal(pos))
-        if chosen is plot_action:
-            self._toggle_plot_key(key)
-        elif chosen is copy_action:
+        if chosen is copy_action:
             QApplication.clipboard().setText(self._table_model.cell_text(row, 6))
 
     def _toggle_plot_key(self, key: Tuple[int, str]) -> None:
+        """Toggle a signal in Panel 0 (right-click shortcut from data table)."""
+        if not self._plot_panels:
+            return
         if key in self._plot_keys:
-            self._plot_keys.remove(key)
+            for idx, panel in enumerate(self._plot_panels):
+                if key in panel.assigned_keys:
+                    self._remove_signal_from_panel(idx, key)
+                    break
         else:
-            self._plot_keys.append(key)
-        self._redraw_plot()
+            self._add_signal_to_panel(0, key)
+
 
     def _curve_color_icon(self, color_hex: str) -> QIcon:
         cache_key = ("dot", color_hex, "12")
@@ -2404,15 +2726,10 @@ class MainWindow(QMainWindow):
             # Plot color feedback is provided by the legend in the plot widget.
 
     def _redraw_plot(self) -> None:
+        """Redraw all subplots with current data from _plot_history."""
         self._refresh_plot_indicators()
-        if pg is None or self._plot_widget is None:
+        if pg is None or not self._plot_panels:
             return
-
-        active_keys = set(self._plot_keys)
-        for key in list(self._plot_curves.keys()):
-            if key not in active_keys:
-                self._plot_widget.removeItem(self._plot_curves[key])
-                del self._plot_curves[key]
 
         current_t = (datetime.now() - self._session_started).total_seconds()
         try:
@@ -2420,37 +2737,47 @@ class MainWindow(QMainWindow):
         except ValueError:
             window = 60.0
 
-        for idx, key in enumerate(self._plot_keys):
-            values = list(self._plot_history.get(key, []))
-            if not values:
-                x_values, y_values = [], []
-            else:
-                x_values, y_values = zip(*values)
+        has_any_data = False
+        color_offset = 0
 
-            color = _PLOT_PALETTE[idx % len(_PLOT_PALETTE)]
-            if key not in self._plot_curves:
+        for panel in self._plot_panels:
+            pi = panel.plot_item
+            active_keys = set(panel.assigned_keys)
+
+            # Remove curves for keys no longer assigned
+            for key in list(panel.curves):
+                if key not in active_keys:
+                    pi.removeItem(panel.curves.pop(key))
+
+            for local_idx, key in enumerate(panel.assigned_keys):
+                values = list(self._plot_history.get(key, []))
+                x_values, y_values = (zip(*values) if values else ([], []))
+
+                color = _PLOT_PALETTE[(color_offset + local_idx) % len(_PLOT_PALETTE)]
                 label = f"0x{key[0]:04X} {key[1]}"
-                self._plot_curves[key] = self._plot_widget.plot(
-                    name=label, pen=pg.mkPen(color, width=2)
+
+                if key not in panel.curves:
+                    panel.curves[key] = pi.plot(name=label, pen=pg.mkPen(color, width=2))
+                else:
+                    panel.curves[key].setPen(pg.mkPen(color, width=2))
+
+                panel.curves[key].setData(
+                    list(x_values), list(y_values),
+                    autoDownsample=True,
+                    clipToView=True,
                 )
-            else:
-                self._plot_curves[key].setPen(pg.mkPen(color, width=2))
+                if values:
+                    has_any_data = True
 
-            # autoDownsample + clipToView: pyqtgraph only renders visible
-            # pixels, preventing lag when viewing hours of data.
-            self._plot_curves[key].setData(
-                list(x_values), list(y_values),
-                autoDownsample=True,
-                clipToView=True,
-            )
+            color_offset += len(panel.assigned_keys)
 
-        # Rolling mode: set X range to [current_t - window, current_t].
-        # Use the re-entrancy guard so setXRange doesn't trigger
-        # _on_plot_range_changed and accidentally switch to Explore mode.
-        if self._plot_rolling and self._plot_keys:
+        # Rolling: clamp x_min to 0 so the origin is always visible.
+        if self._plot_rolling and has_any_data and self._plot_panels:
             self._plot_range_changing = True
             try:
-                self._plot_widget.setXRange(current_t - window, current_t, padding=0)
+                x_min = max(0.0, current_t - window)
+                first_pi = self._plot_panels[0].plot_item
+                first_pi.setXRange(x_min, current_t, padding=0)
             finally:
                 self._plot_range_changing = False
 
@@ -2489,16 +2816,24 @@ class MainWindow(QMainWindow):
         self._logging_action.setEnabled(ready and self._serial is not None)
 
     def _set_connection_ui(self, connected: bool) -> None:
-        text = "Disconnect" if connected else "Configure & Connect\u2026"
         self._connect_action.setText("Disconnect" if connected else "Connect")
-        if hasattr(self, "_connect_button"):
-            self._connect_button.setText(text)
-        if hasattr(self, "_connection_label"):
-            status = f"\u25cf  {self._serial.settings.port} @ {self._serial.settings.baud_rate}" \
-                if connected and self._serial else "\u25cf  Disconnected"
-            self._connection_label.setText(status)
+        # Connect button: pink = active/danger (disconnect), green = safe/idle
+        self._style_action_btn(
+            self._connect_action,
+            _BTN_PINK if connected else _BTN_GREEN,
+        )
+        # Logging button: green = connected & ready, yellow = disabled (no device)
+        self._style_action_btn(
+            self._logging_action,
+            _BTN_GREEN if connected else _BTN_YELLOW,
+        )
         # Logging action only enabled while connected
         self._logging_action.setEnabled(connected)
+        if not connected:
+            # Reset polling button colour and state too when disconnecting
+            self._style_action_btn(self._polling_action, _BTN_GREEN)
+            self._polling_action.setChecked(False)
+            self._polling_action.setText("Start Auto-Fetch")
         if connected:
             self._led_label.setStyleSheet("color: #66BB6A;")
             self._led_label.setToolTip("Connected")
