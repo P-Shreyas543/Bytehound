@@ -29,32 +29,28 @@ def main():
     decoded_logger = DecodedLogger(decoded_log_path)
     
     packet_count = [0]
-    
-    def on_packet(packet, delta_t):
-        packet_count[0] += 1
-        
-        # Test Feature: Raw Logger
-        raw_logger.log("RX", packet.raw, delta_t_ms=delta_t)
-        
-        if not packet.ok:
-            print(f"Packet error: {packet.error}")
-            return
-            
-        decoded = decode_frame(config, packet.frame_id, packet.payload)
-        
-        # Test Feature: Decoded Logger
-        decoded_logger.log_frame(packet_count[0], decoded)
-        print(f"[RX] [{delta_t:.1f}ms] Frame 0x{packet.frame_id:04X} -> {[sig.display_value for sig in decoded.signals]}")
-            
+
+    def on_packets(packets):
+        # PollingWorker now emits batched lists of packets (up to 50 per signal)
+        for packet in packets:
+            packet_count[0] += 1
+            raw_logger.log("RX", packet.raw)
+            if not packet.ok:
+                print(f"Packet error: {packet.error}")
+                continue
+            decoded = decode_frame(config, packet.frame_id, packet.payload)
+            decoded_logger.log_frame(packet_count[0], decoded)
+            print(f"[RX] Frame 0x{packet.frame_id:04X} -> {[sig.display_value for sig in decoded.signals]}")
+
     def on_error(err):
         print(f"ERROR: {err}")
-        
+
     def on_tx(data):
         print(f"[TX] {data.hex().upper()}")
         raw_logger.log("TX", data)
 
     worker.tx_recorded.connect(on_tx)
-    worker.packet_received.connect(on_packet)
+    worker.packets_received.connect(on_packets)
     worker.error_occurred.connect(on_error)
     
     print("--- 1. Testing Connection & Polling ---")
