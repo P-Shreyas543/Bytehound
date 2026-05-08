@@ -1,2 +1,3 @@
-command_name,id_or_address,payload_hex
-Reset,0x1001,FF FF
+command_name,id_or_address,payload_hex,description,enabled
+Reset,0x1001,FF FF,Reset BMS counters,true
+Set_Voltage_Limit,0x2001,,Set voltage limit (40-60 V),true

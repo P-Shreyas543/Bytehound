@@ -2,3 +2,5 @@ id_or_address,frame_name,signal_name,start_byte,length_bytes,byte_order,data_typ
 0x1000,BMS_Status,Voltage,0,2,little,uint16,0.1,0.0,V,Battery,0,holding,R,0.0,60.0
 0x1000,BMS_Status,Current,2,2,little,int16,0.1,0.0,A,Battery,0,holding,R,-100.0,100.0
 0x2000,BMS_Settings,Voltage_Limit,0,2,little,uint16,0.1,0.0,V,Limits,0,holding,RW,40.0,60.0
+0x3000,Status_Flags,Status_Bits,0,1,little,uint8,1,0.0,,Status,0,holding,R,,
+0x3000,Status_Flags,Mode,1,1,little,uint8,1,0.0,,Status,0,holding,R,,

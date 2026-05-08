@@ -1,0 +1,6 @@
+id_or_address,signal_name,value,label
+0x3000,Mode,0,Idle
+0x3000,Mode,1,Charging
+0x3000,Mode,2,Discharging
+0x3000,Mode,3,Fault
+0x3000,Mode,4,Service

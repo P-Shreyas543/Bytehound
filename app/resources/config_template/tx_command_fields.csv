@@ -1,0 +1,2 @@
+command_name,signal_name,data_type,unit,scale,offset,byte_order,min_value,max_value,default
+Set_Voltage_Limit,voltage_v,uint16,V,0.1,0.0,little,40.0,60.0,55.0
