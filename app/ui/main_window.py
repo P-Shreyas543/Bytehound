@@ -342,13 +342,23 @@ QToolButton#primaryAction {
 }
 QToolButton#primaryAction:hover  { background-color: #4CAF50; }
 QToolButton#primaryAction:pressed { background-color: #2E7D32; }
-QToolButton#primaryAction:disabled { background-color: #555; color: #aaa; }
+QToolButton#primaryAction:disabled {
+    /* Use palette roles so disabled state is legible in both themes. */
+    background-color: palette(midlight);
+    color: palette(mid);
+}
 QMenu { padding: 5px; }
 QMenu::item {
     padding: 6px 24px 6px 24px;
     border-radius: 4px;
 }
-QMenu::item:selected { background-color: #2563EB; color: white; }
+QMenu::item:selected {
+    /* Track the active palette: qdarktheme picks an appropriate highlight
+       blue for dark mode and a paler one for light mode. Hard-coding a
+       saturated blue here used to clash with the light-theme menu. */
+    background-color: palette(highlight);
+    color: palette(highlighted-text);
+}
 QMenu::separator {
     height: 1px;
     background: palette(mid);
@@ -1344,6 +1354,9 @@ class MainWindow(QMainWindow):
         self._apply_card_qss(theme)
         # Rebuild qtawesome icons with the correct tint for the new theme.
         self._rebuild_action_icons(theme)
+        # Repaint the pyqtgraph canvas — it is not a QWidget child so it does
+        # not pick up the QPalette change automatically.
+        self._apply_plot_theme(theme)
         self._settings.setValue("ui/theme", theme)
         from PySide6.QtWidgets import QApplication
         # Schedule title-bar update via singleShot so the native HWND is stable.
@@ -1351,6 +1364,28 @@ class MainWindow(QMainWindow):
         for w in QApplication.topLevelWidgets():
             QTimer.singleShot(0, lambda _w=w, _d=dark: _apply_windows_dark_titlebar(_w, _d))
         self._set_status(f"Theme: {theme}")
+
+    def _apply_plot_theme(self, theme: str) -> None:
+        """Tint the pyqtgraph canvas + axis labels for the active theme."""
+        if pg is None or not hasattr(self, "_gl_widget"):
+            return
+        if theme == "dark":
+            bg = "#1E293B"          # match QDockWidget body — same Slate
+            axis = "#CBD5E1"        # high-contrast on dark
+        else:
+            bg = "#FFFFFF"
+            axis = "#475569"        # readable on light
+        self._gl_widget.setBackground(pg.mkColor(bg))
+        # Repaint the axis lines + tick labels on every existing PlotItem.
+        for panel in getattr(self, "_plot_panels", []):
+            plot = getattr(panel, "plot_item", None)
+            if plot is None:
+                continue
+            for ax_name in ("left", "bottom", "right", "top"):
+                ax = plot.getAxis(ax_name)
+                if ax is not None:
+                    ax.setPen(pg.mkPen(axis))
+                    ax.setTextPen(pg.mkPen(axis))
 
     def _rebuild_action_icons(self, theme: str) -> None:
         """Re-tint all QAction icons to match the current theme.
@@ -1382,8 +1417,11 @@ class MainWindow(QMainWindow):
             (self._exit_action,             "mdi6.exit-to-app"),
             (self._info_action,             "mdi6.information-outline"),
             (self._analysis_action,         "mdi6.chart-line"),
-            (self._docs_action,             "mdi6.book-open-variant"),
-            (self._update_action,           "mdi6.update"),
+            # Names MUST match the icons used at QAction construction in
+            # _create_actions(); otherwise the menu icon silently changes
+            # shape the first time the user switches theme.
+            (self._docs_action,             "mdi6.book-open-page-variant-outline"),
+            (self._update_action,           "mdi6.cloud-download-outline"),
         ]:
             action.setIcon(_icon(name, color))
 
@@ -1526,7 +1564,10 @@ class MainWindow(QMainWindow):
         # Session clock — updates every second via _flush_ui
         self._session_clock_label = QLabel("⏱ 0:00:00", outer)
         self._session_clock_label.setToolTip("Elapsed time since session start (or last config load).")
-        self._session_clock_label.setStyleSheet("font-size:11px; color:#94A3B8; padding-left:8px;")
+        # palette(mid) is a muted role that adapts to both themes: a dim grey
+        # on dark, a darker grey on light. The hard-coded slate-400 we used
+        # before became almost invisible on the light-theme background.
+        self._session_clock_label.setStyleSheet("font-size:11px; color: palette(mid); padding-left:8px;")
         controls.addWidget(self._session_clock_label)
 
         root_layout.addLayout(controls)
@@ -1548,7 +1589,10 @@ class MainWindow(QMainWindow):
 
         # ── Graphics canvas ────────────────────────────────────────────────
         self._gl_widget = pg.GraphicsLayoutWidget(outer)
-        self._gl_widget.setBackground(pg.mkColor("#1e1e1e"))
+        # The pyqtgraph canvas is not a QWidget child so qdarktheme does not
+        # paint it; we tint it explicitly per theme. Re-applied on every
+        # theme switch by _apply_plot_theme().
+        self._apply_plot_theme(str(self._settings.value("ui/theme", "dark")))
         root_layout.addWidget(self._gl_widget, 1)
 
         # Build the initial grid from saved (or default) layout
@@ -1646,6 +1690,10 @@ class MainWindow(QMainWindow):
         self._sync_plot_keys()
         # Persist new layout
         self._settings.setValue("plot/layout", self._layout_combo.currentText())
+        # Newly-created panels start with default axis pens; re-tint them for
+        # the active theme so a layout change after a theme switch does not
+        # leave dark axes on a light canvas.
+        self._apply_plot_theme(str(self._settings.value("ui/theme", "dark")))
 
     def _make_panel_strip(self, panel_idx: int) -> QWidget:
         """Build the variable-chip strip for one subplot panel."""
@@ -1807,7 +1855,7 @@ class MainWindow(QMainWindow):
             "appear here. Connect to write a new value."
         )
         info.setWordWrap(True)
-        info.setStyleSheet("font-size:11px; color: #94A3B8; padding-bottom:4px;")
+        info.setStyleSheet("font-size:11px; color: palette(mid); padding-bottom:4px;")
         vlay.addWidget(info)
 
         self._editor_table = QTableWidget(0, 4, outer)
@@ -2499,7 +2547,14 @@ class MainWindow(QMainWindow):
             )
             label = f"0x{sched.target_id:04X}  ({sched.interval_ms} ms)"
             item = QListWidgetItem(("\u25cf " if is_on else "\u25cb ") + label)
-            item.setForeground(QColor("#66BB6A") if is_on else QColor("#9CA3AF"))
+            # Active = saturated green (works on both themes); inactive = the
+            # disabled-text palette role so it dims correctly in light mode
+            # instead of disappearing into the white background.
+            if is_on:
+                item.setForeground(QColor("#16A34A"))
+            else:
+                item.setForeground(self.palette().color(self.palette().ColorGroup.Disabled,
+                                                        self.palette().ColorRole.Text))
             self._polling_list.addItem(item)
             if is_on:
                 active += 1
