@@ -93,7 +93,7 @@ def _icon(name: str, color: str = "#F8FAFC") -> QIcon:
     except Exception:
         return QIcon()
 
-APP_ORG = "Decibels"
+APP_ORG  = "Serial-MonitorApp"
 APP_NAME = "Serial-MonitorApp"
 APP_DISPLAY_NAME = "Serial Monitor"
 
@@ -1285,18 +1285,16 @@ class MainWindow(QMainWindow):
             _v = {}
         version   = _v.get("version",   self._version)
         developer = _v.get("Developer", "Shreyas P")
-        publisher = _v.get("publisher", "Decibels Lab Pvt. Ltd.")
         self._popup_about(
             "About Serial Monitor",
             (
                 f"{APP_DISPLAY_NAME} App\n\n"
                 f"Version:   {version}\n"
                 f"Developer: {developer}\n"
-                f"Publisher: {publisher}\n"
-                f"Build Date: May 2026\n"
-                f"Website:   https://lms.decibelslab.com/\n\n"
+                f"Build Date: May 2026\n\n"
                 "Serial Data Logger and Visualizer.\n"
-                "Configuration-driven decoding."
+                "Configuration-driven decoding.\n\n"
+                "Released under the MIT License."
             ),
         )
 
@@ -1385,7 +1383,7 @@ class MainWindow(QMainWindow):
         self._logo_button.setIcon(QIcon(str(Path(__file__).resolve().parents[2] / "logo_rec.png")))
         self._logo_button.setFlat(True)
         self._logo_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._logo_button.clicked.connect(lambda: QDesktopServices.openUrl(QUrl("https://lms.decibelslab.com/")))
+        self._logo_button.clicked.connect(lambda: None)  # no external URL
         toolbar.addWidget(self._logo_button)
 
         self.addToolBar(toolbar)
@@ -2562,7 +2560,7 @@ class MainWindow(QMainWindow):
         log_raw = choice in ("Raw + Decoded", "Raw only")
         log_decoded = choice in ("Raw + Decoded", "Decoded only")
 
-        default_dir = Path(os.path.expanduser("~")) / "Documents" / "Decibels" / APP_NAME
+        default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
         default_dir.mkdir(parents=True, exist_ok=True)
         default_file = default_dir / "serial_log.csv"
 
@@ -2644,7 +2642,7 @@ class MainWindow(QMainWindow):
         self._set_status("Logging stopped")
 
     def _on_open_log_folder(self) -> None:
-        default_dir = Path(os.path.expanduser("~")) / "Documents" / "Decibels" / APP_NAME
+        default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
         if default_dir.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(default_dir)))
         else:
