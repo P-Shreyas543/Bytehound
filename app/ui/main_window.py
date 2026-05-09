@@ -977,22 +977,28 @@ class MainWindow(QMainWindow):
 
     def _build_actions(self) -> None:
 
-        # Pick icon tint color based on the saved theme for secondary actions.
-        # Primary actions (Connect / Poll / Log) always get white icons because
-        # they always sit on a coloured background (_BTN_GREEN / YELLOW / PINK).
+        # All action icons follow the active theme tint. Primary actions
+        # (Connect / Poll / Log) live in BOTH the toolbar (on a coloured
+        # button background) AND the Device menu (on the regular menu
+        # background), so a fixed white tint that looked great on the
+        # toolbar made the same icons invisible in the Device menu under
+        # light theme. The theme-tinted icon is readable in both contexts:
+        #   dark menu bg + white icon  -> good
+        #   light menu bg + dark icon  -> good
+        #   green/yellow/pink button + white-or-dark icon -> still readable
+        #     because the button colours are saturated (high contrast both ways).
         _saved_theme = str(self._settings.value("ui/theme", "dark"))
         _ic = "#F8FAFC" if _saved_theme == "dark" else "#1F2937"
-        _PRIMARY = "#FFFFFF"   # always white on coloured button backgrounds
 
-        self._connect_action = QAction(_icon("mdi6.usb-port", _PRIMARY), "Connect", self)
+        self._connect_action = QAction(_icon("mdi6.usb-port", _ic), "Connect", self)
         self._connect_action.triggered.connect(self._on_toggle_connect)
 
-        self._polling_action = QAction(_icon("mdi6.play-circle-outline", _PRIMARY), "Start Auto-Fetch", self)
+        self._polling_action = QAction(_icon("mdi6.play-circle-outline", _ic), "Start Auto-Fetch", self)
         self._polling_action.setCheckable(True)
         self._polling_action.setChecked(False)
         self._polling_action.triggered.connect(self._on_toggle_polling)
 
-        self._logging_action = QAction(_icon("mdi6.record-rec", _PRIMARY), "Start Logging", self)
+        self._logging_action = QAction(_icon("mdi6.record-rec", _ic), "Start Logging", self)
         self._logging_action.setShortcut("Ctrl+L")
         self._logging_action.triggered.connect(self._on_toggle_logging)
 
@@ -1510,6 +1516,12 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self._popup_warning("Theme", f"Failed to apply theme: {exc}")
             return
+        # Persist the new theme BEFORE rebuilding any UI that reads it back
+        # from QSettings. _rebuild_action_icons -> _populate_view_menu reads
+        # the saved value to decide its icon tint; without this ordering,
+        # the View submenu stayed on the previous theme's tint until the
+        # NEXT theme change.
+        self._settings.setValue("ui/theme", theme)
         # Re-apply our card + dark-override QSS on top of the fresh qdarktheme base.
         self._apply_card_qss(theme)
         # Rebuild qtawesome icons with the correct tint for the new theme.
@@ -1517,7 +1529,6 @@ class MainWindow(QMainWindow):
         # Repaint the pyqtgraph canvas — it is not a QWidget child so it does
         # not pick up the QPalette change automatically.
         self._apply_plot_theme(theme)
-        self._settings.setValue("ui/theme", theme)
         from PySide6.QtWidgets import QApplication
         # Schedule title-bar update via singleShot so the native HWND is stable.
         dark = (theme == "dark")
@@ -1553,19 +1564,22 @@ class MainWindow(QMainWindow):
         qtawesome bakes the color into the QPixmap at icon() creation time, so
         we must recreate the icons whenever the theme changes.
 
-        Primary actions (Connect / Poll / Log) sit on coloured backgrounds so
-        their icons are *always* white — independent of the app theme.
-        Secondary actions (file/edit/help) use the standard theme tint.
+        Every action — primary (Connect / Poll / Log) and secondary
+        (File / Edit / Help) — follows the active theme tint. We used to
+        pin primary icons to white because they sat on coloured toolbar
+        buttons, but the same QAction also lives in the Device menu where
+        a fixed white icon vanishes against a light-theme menu background.
+        Theme-tinted icons read well in both places.
         """
         color = "#F8FAFC" if theme == "dark" else "#1F2937"
 
-        # Primary: always white (coloured button background)
+        # Primary AND secondary actions all use the theme tint.
         for action, name in [
             (self._connect_action,  "mdi6.usb-port"),
             (self._polling_action,  "mdi6.play-circle-outline"),
             (self._logging_action,  "mdi6.record-rec"),
         ]:
-            action.setIcon(_icon(name, "#FFFFFF"))
+            action.setIcon(_icon(name, color))
 
         # Secondary: follow the active theme
         for action, name in [
