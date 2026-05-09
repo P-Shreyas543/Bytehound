@@ -463,6 +463,150 @@ QHeaderView::section {
 QHeaderView::section:hover {
     background-color: #273549;
 }
+
+/* 9. Tabbed dock bars — match the dock title surface so the tabs
+      look like an extension of the dock header, not a separate band. */
+QTabBar {
+    background-color: #1E293B;
+}
+QTabBar::tab {
+    background-color: #1E293B;
+    color: #CBD5E1;
+    padding: 6px 14px;
+    border: 1px solid transparent;
+    border-bottom: 1px solid #334155;
+}
+QTabBar::tab:selected {
+    background-color: #0F172A;
+    color: #F8FAFC;
+    border: 1px solid #334155;
+    border-bottom: 2px solid #2563EB;
+}
+QTabBar::tab:hover:!selected {
+    background-color: #273549;
+    color: #F8FAFC;
+}
+"""
+
+
+# _QSS_LIGHT_OVERRIDES — mirror of _QSS_DARK_OVERRIDES with light-theme colors.
+# qdarktheme's light palette doesn't always propagate cleanly through Qt's
+# QDockWidget::title rendering (especially on Windows with PySide6 6.6+),
+# leaving dock title bars stuck on the previous dark colours after a theme
+# switch. Explicit hex codes here guarantee the light theme actually looks
+# light, mirroring the role each rule plays in the dark variant.
+_QSS_LIGHT_OVERRIDES = """
+/* 1. Main window and separator backgrounds */
+QMainWindow, QMainWindow::separator {
+    background-color: #F1F5F9;
+}
+/* Central panel + its direct widget children */
+QWidget#centralPanel {
+    background-color: #FFFFFF;
+}
+QWidget#centralPanel > QWidget {
+    background-color: #FFFFFF;
+}
+
+/* 2. Dock widget panels and title bars */
+QDockWidget {
+    color: #1F2937;
+}
+QDockWidget > QWidget {
+    background-color: #FFFFFF;
+    border: 1px solid #E5E7EB;
+    border-radius: 4px;
+}
+QDockWidget::title {
+    background-color: #F3F4F6;
+    text-align: left;
+    padding: 6px 10px;
+    color: #1F2937;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    border-bottom: 1px solid #E5E7EB;
+    font-weight: bold;
+}
+
+/* 3. Toolbar icon contrast on light bg */
+QToolBar QToolButton {
+    color: #1F2937;
+}
+
+/* 4. Input controls */
+QLineEdit, QComboBox, QSpinBox {
+    background-color: #FFFFFF;
+    color: #1F2937;
+    border: 1px solid #D1D5DB;
+    padding: 4px 8px;
+    border-radius: 3px;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+    border-color: #2563EB;
+}
+QComboBox QAbstractItemView {
+    background-color: #FFFFFF;
+    color: #1F2937;
+    selection-background-color: #2563EB;
+    selection-color: #FFFFFF;
+    border: 1px solid #D1D5DB;
+}
+
+/* 5. Checkboxes */
+QCheckBox {
+    color: #1F2937;
+    background-color: transparent;
+}
+
+/* 6. Main data table body */
+QTableView {
+    background-color: #FFFFFF;
+    alternate-background-color: #F9FAFB;
+    color: #1F2937;
+    gridline-color: #E5E7EB;
+    border: 1px solid #E5E7EB;
+    border-radius: 3px;
+}
+QTableView::item:selected {
+    background-color: #2563EB;
+    color: #FFFFFF;
+}
+
+/* 7. Table column headers */
+QHeaderView::section {
+    background-color: #F3F4F6;
+    color: #1F2937;
+    padding: 4px 6px;
+    border: 1px solid #E5E7EB;
+    font-weight: bold;
+}
+QHeaderView::section:hover {
+    background-color: #E5E7EB;
+}
+
+/* 8. Tabbed dock bars (Bitfields | Enums | TX Commands | … and the
+      Raw Console | Activity Log pair). Without these, Qt's default
+      tab rendering picks up a hold-over dark colour from earlier
+      stylesheets and the tab strip looks black in light mode. */
+QTabBar {
+    background-color: #F3F4F6;
+}
+QTabBar::tab {
+    background-color: #F3F4F6;
+    color: #1F2937;
+    padding: 6px 14px;
+    border: 1px solid transparent;
+    border-bottom: 1px solid #E5E7EB;
+}
+QTabBar::tab:selected {
+    background-color: #FFFFFF;
+    color: #1F2937;
+    border: 1px solid #E5E7EB;
+    border-bottom: 2px solid #2563EB;
+}
+QTabBar::tab:hover:!selected {
+    background-color: #E5E7EB;
+}
 """
 
 
@@ -815,12 +959,19 @@ class MainWindow(QMainWindow):
 
         Rules applied:
           - ``_QSS_BASE`` always — palette-relative rules for cards, menus, etc.
-          - ``_QSS_DARK_OVERRIDES`` only when ``theme == "dark"`` — explicit hex
-            codes that fix dock title bars, separators, table body, and inputs.
+          - ``_QSS_DARK_OVERRIDES`` when ``theme == "dark"``  — explicit hex
+            codes for dock titles, separators, table body, inputs.
+          - ``_QSS_LIGHT_OVERRIDES`` when ``theme == "light"`` — same surfaces
+            re-styled with explicit light hex codes.  Without this, qdarktheme's
+            light palette propagation through QDockWidget::title is unreliable
+            on Windows / PySide6 6.6+ and the dock titles ended up stuck on the
+            previous dark colours.
         """
         qss = _QSS_BASE
         if theme == "dark":
             qss += "\n" + _QSS_DARK_OVERRIDES
+        elif theme == "light":
+            qss += "\n" + _QSS_LIGHT_OVERRIDES
         self.setStyleSheet(qss)
 
 
