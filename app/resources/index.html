@@ -169,6 +169,12 @@
                     <li><a href="#config-protocol">protocol</a></li>
                 </ul>
             </li>
+            <li><a href="#section-6">6. Appearance &amp; Updates</a>
+                <ul class="sub-menu">
+                    <li><a href="#theme-switching">Switching Light / Dark Theme</a></li>
+                    <li><a href="#check-for-updates">Check for Updates</a></li>
+                </ul>
+            </li>
         </ul>
     </div>
 
@@ -604,6 +610,37 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     </table>
     <div class="warning">
         If your hardware <strong>streams data automatically</strong> without being asked (e.g. sends packets every 50 ms on its own), leave this sheet <strong>empty</strong> and do <strong>not</strong> use Auto-Fetch. Polling an already-streaming device sends unnecessary requests and may corrupt the data stream.
+    </div>
+
+    <!-- Section 6 -->
+    <h2 id="section-6">6. Appearance &amp; Updates</h2>
+
+    <h3 id="theme-switching">Switching Light / Dark Theme</h3>
+    <p>Open <strong>View → Theme</strong> and pick one of:</p>
+    <ul>
+        <li><strong>Dark</strong> — slate background with light text. Best for long monitoring sessions and dim labs.</li>
+        <li><strong>Light</strong> — white background with dark text. Best for outdoor / brightly lit environments and screenshots in reports.</li>
+        <li><strong>System</strong> — follows the Windows light/dark setting automatically.</li>
+    </ul>
+    <p>The theme switch is instant — every panel, menu, table cell, plot canvas, toolbar icon, and even the Windows title bar re-tints in place. Your choice is remembered between launches.</p>
+    <div class="note">
+        Toolbar and menu icons are theme-aware. In light theme they are drawn with a dark glyph so they remain readable on the white menu background; in dark theme they switch to a light glyph automatically. No restart needed.
+    </div>
+
+    <h3 id="check-for-updates">Check for Updates</h3>
+    <p>Open <strong>Help → Check for Updates</strong>. The app will:</p>
+    <ol>
+        <li>Contact the publisher's update manifest over HTTPS and compare the published version against your installed version.</li>
+        <li>If you are already on the latest build, show a brief <em>Up to date</em> confirmation.</li>
+        <li>If a newer version is available, show the version number and release notes and ask whether you want to install it.</li>
+        <li>On confirmation, the new installer is downloaded to your system temp folder and its <strong>SHA-256 checksum</strong> is verified against the manifest before launching. If the digest does not match, the partial download is deleted and the install is refused — this protects you from a corrupted or tampered binary.</li>
+        <li>The verified installer launches in silent mode and the app exits so the new version can replace the running executable. When the installer finishes, just relaunch the Serial Monitor.</li>
+    </ol>
+    <div class="note">
+        Update checks are entirely on-demand. The app never contacts the network on its own — nothing is downloaded or installed without your explicit click.
+    </div>
+    <div class="warning">
+        If you see <em>"Failed to check for updates: connection timed out"</em>, the publisher's manifest server is unreachable from this machine. Check your firewall / proxy settings, or simply skip the update — the app continues to work normally.
     </div>
 
 </div>

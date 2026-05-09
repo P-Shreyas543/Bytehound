@@ -488,10 +488,12 @@ class DecodedFrame:
 
 ### Signals
 
-- `packet_received(ParsedPacket, float delta_t_ms)`
+- `packets_received(list[ParsedPacket])` — batched, one emit per worker iteration
 - `metrics_updated(int timeouts, int crc_errors, int rx_bytes)`
 - `error_occurred(str)`
 - `tx_recorded(bytes)`
+- `connection_lost()` — USB physically unplugged
+- `device_timeout()` — connected but no data for the watchdog window (debounced)
 
 ### Construction
 
@@ -509,15 +511,42 @@ Each iteration, **in this priority order**:
 1. **Priority TX**: drain at most one entry from the priority TX queue, write
    it, emit `tx_recorded`. For Modbus, block briefly to await the response so
    the next request doesn't collide.
-2. **Polling**: if `_polling_global_enabled` is true, find the first schedule
-   whose `next_run <= now`, send its request, await response (or time out),
-   reschedule. Only one poll per loop iteration to interleave with priority TX.
+2. **Polling**: if `_polling_global_enabled` is true *and* the boot-grace gate
+   has cleared (see below), find the first schedule whose `next_run <= now`,
+   send its request, await response (or time out), reschedule. Only one poll
+   per loop iteration to interleave with priority TX.
 3. **Drain RX**: if no poll happened, read whatever is in the input buffer,
-   feed the parser, emit `packet_received` for each extracted packet.
-4. Sleep 10 ms.
+   feed the parser, emit `packets_received` (batched) for the iteration.
+4. **Watchdog**: every iteration, debounce `device_timeout` if `_rx_bytes`
+   has been flat for `WATCHDOG_SILENCE_MS` ms.
+5. Sleep 10 ms.
 
 Counters: `_timeouts`, `_crc_errors`, `_rx_bytes` are emitted via
-`metrics_updated` after each batch.
+`metrics_updated` after each batch. `reset_metrics()` (mutex-guarded) zeroes
+all three so *Edit → Clear* and *Import Config* start from a clean slate.
+
+### Boot-grace gate
+
+`POLLING_BOOT_GRACE = 2.5` seconds. After `open()` succeeds, polling stays
+suppressed until *either* the first RX byte arrives *or* the grace expires.
+This prevents the worker from hammering an Arduino-style device that auto-
+resets on DTR (USB-CDC bootloader window is ~1.5 s) and getting stuck with a
+silent link. NXP/STM32 boards that don't auto-reset clear the grace
+immediately on the first response.
+
+### Bounded TX queue
+
+The priority TX queue is `queue.Queue(maxsize=256)`. `enqueue_priority_tx`
+uses `put_nowait` and emits `error_occurred("TX queue full")` if a flood of
+writes outpaces the wire — instead of unbounded memory growth.
+
+### Failed-schedule disable
+
+If `build_packet` raises `ValueError` for a poll target (e.g. the user
+loaded a config whose `polling_schedule` references a frame ID with no
+`tx_pad_length` and no payload), `_disable_failed_schedule(target_id)` flags
+that row as disabled for the rest of the session and logs the reason. This
+keeps a single bad row from flooding the error log every cycle.
 
 `available_ports()` wraps `serial.tools.list_ports.comports()` for the UI's
 port combo.
@@ -573,6 +602,12 @@ One row per `DecodedSignal` (including calculated). `frame_id` is formatted as
 
 Both loggers append to existing files (writing the header only if empty) and
 flush after every record so a crash never loses more than the current frame.
+
+**Header-match validation.** On `open()`, both loggers read the existing
+header row (if any) and refuse to append when its columns don't match the
+current `COLUMNS` tuple. The UI catches the resulting `ValueError` and shows
+a popup so the user picks a fresh path instead of silently corrupting an
+old log with a different schema.
 
 When logging starts, the active config is snapshotted next to the log via
 `snapshot_config(...)` so the file is self-describing.
@@ -916,22 +951,51 @@ Files: [app/ui/updater.py](app/ui/updater.py), [version.json](version.json).
   "version": "0.1.0",
   "publisher": "Decibels",
   "manifest_url": "https://.../version.json",
-  "installer_url": "https://.../Serial-MonitorApp_Setup_X.Y.Z.exe",
+  "installer_url": "https://.../SerialMonitor_Setup_X.Y.Z.exe",
   "release_notes": "...",
-  "sha256": ""
+  "sha256": "<hex sha256 of the installer .exe>"
 }
 ```
 
-Flow:
+### `version.json` location
+
+`updater.py` resolves `version.json` via `_project_root()`:
+
+- **Dev mode:** `Path(__file__).resolve().parents[2]` → repo root.
+- **Frozen build:** `Path(sys.executable).resolve().parent` →
+  the directory containing `Serial-MonitorApp.exe`.
+
+This mirrors `main_window._project_root()`. A previous `parent.parent` walk
+resolved to `app/` and produced *FileNotFoundError: …\\app\\version.json* on
+every check.
+
+### Flow
 
 1. *Help → Check for Updates* spawns `UpdateChecker(QThread)`.
 2. Checker fetches the remote `manifest_url`, compares numeric `version`
-   tuples (`[int, ...]`), emits `update_available(version, url, notes)` or
+   tuples (`[int, ...]`), emits
+   `update_available(version, installer_url, release_notes, sha256)` or
    `up_to_date()`.
-3. UI confirms with the user, spawns `UpdateDownloader(QThread)` — chunks
-   8 KB writes to `%TEMP%/Serial-MonitorApp_Update.exe`, emits progress.
-4. On confirmation, `launch_installer(path)` spawns the installer with
+3. UI confirms with the user, spawns
+   `UpdateDownloader(url, dest_path, expected_sha256)` — streams 8 KB chunks
+   to `%TEMP%/Serial-MonitorApp_Update.exe` while updating a running
+   `hashlib.sha256()`.
+4. After the download completes, the hex digest is compared against
+   `expected_sha256` (case-insensitive). On mismatch the partial file is
+   deleted and `error` is emitted with both expected and actual digests.
+   If the remote manifest has **no** `sha256` field at all the downloader
+   refuses to install rather than launching an unverified binary.
+5. On a passing checksum, `launch_installer(path)` spawns the installer with
    `/SILENT` and `sys.exit(0)`s the app.
+
+### `sha256` field
+
+`build.py` runs Inno Setup *before* `write_sha256()`, then hashes the
+produced installer at `installer_output/SerialMonitor_Setup_<version>.exe`
+and writes the hex digest into the in-tree `version.json`. The published
+manifest (the one `manifest_url` points at) must carry the same digest —
+both `build.py` and the manifest must be updated together for an auto-update
+release.
 
 Network errors are surfaced to the user; the app never crashes on a failed
 update check.
@@ -1020,10 +1084,30 @@ Convenience wrapper. Steps, in order:
 1. Wipe `build/` and `dist/` (unless `--no-clean`).
 2. Run `pyinstaller --noconfirm Serial-MonitorApp.spec`.
 3. Copy `branding/*.ico` and `branding/*.png` to `dist/Serial-MonitorApp/`.
-4. Zip the dist folder to `dist/Serial-MonitorApp_<version>.zip` (unless
+4. Run **Inno Setup** (`ISCC.exe installer.iss`) to produce
+   `installer_output/SerialMonitor_Setup_<version>.exe`. Skipped with a
+   warning if `ISCC.exe` is not on PATH.
+5. Compute SHA-256 of the produced installer and write it to
+   `version.json`'s `sha256` field. Step 4 must run before step 5 because
+   the digest is taken from the Inno Setup output, not from the inner
+   `Serial-MonitorApp.exe`.
+6. Zip the dist folder to `dist/Serial-MonitorApp_<version>.zip` (unless
    `--no-zip`). Version is read from [version.json](version.json).
 
-Flags: `--no-clean`, `--no-zip`. Output: `dist/Serial-MonitorApp/Serial-MonitorApp.exe`.
+Flags: `--no-clean`, `--no-zip`. Output:
+`dist/Serial-MonitorApp/Serial-MonitorApp.exe` and
+`installer_output/SerialMonitor_Setup_<version>.exe`.
+
+### Inno Setup (`installer.iss`)
+
+Targets Inno Setup 6. Notes:
+
+- Do **not** set `Flags: checked` on `[Tasks]` entries — that flag was
+  removed in Inno 6 and `ISCC` rejects it.
+- Do **not** set `WizardResizable` — obsolete in Inno 6.
+- The installer ships the entire `dist/Serial-MonitorApp/` tree; the
+  `[Setup]` `AppId` must remain stable across releases so upgrades replace
+  the previous install instead of side-by-side installing it.
 
 ### Manual build
 
@@ -1091,11 +1175,12 @@ pytest -q
 
 ### Optional hardware smoke tests
 
-Two ad-hoc scripts at the repo root are useful for manual verification on a machine
-with a real device attached. They are **not** part of the pytest suite:
+Three ad-hoc scripts at the repo root are useful for manual verification on a
+machine with a real device attached. They are **not** part of the pytest suite:
 
 - [test_com7.py](test_com7.py) — quick serial decode smoke test (defaults to `COM7` @ `115200`).
 - [test_headless.py](test_headless.py) — headless (no GUI) end-to-end run that exercises every protocol-layer feature against a real serial device.
+- [test_stress.py](test_stress.py) — 13-phase stress harness (CRC bursts, device-silence windows, TX flood, polling-toggle storm, reconnect cycles, watchdog timing, rapid config reload). Drives the Arduino BMS simulator via the 0x1002/0x1003/0x1004 stress hooks.
 
 Run:
 
@@ -1136,6 +1221,9 @@ The script exits with a non-zero code equal to the number of failed checks, and 
 | `0x1000 / 0x2000 / 0x3000` (length 0) | — | Empty-payload poll; replies with the corresponding telemetry frame immediately |
 | `0x1001 Reset`              | `FF FF`           | Resets `Voltage`, `Current`, `Status_Bits`, `Mode` to defaults |
 | `0x2001 Set_Voltage_Limit`  | `uint16 LE` (scale 0.1, range 40.0–60.0 V) | Updates the streamed `Voltage_Limit` and re-emits `0x2000` immediately so the round-trip is observable in one tick |
+| `0x1002 Stress_Mode`        | `uint8`           | `1` = 5× streaming cadence (every 20 ms), `0` = back to normal — used by `test_stress.py` to exercise the parser/UI under high RX rate |
+| `0x1003 Force_CRC_Errors`   | `uint8 N`         | Send the next `N` 0x1000 frames with a deliberately wrong CRC to verify the **Errors** counter increments and the parser resyncs cleanly |
+| `0x1004 Go_Silent`          | `uint8 seconds`   | Stop streaming for `N` seconds — verifies the host watchdog (`device_timeout`) fires and the **Lat / Frames** counters stop climbing |
 
 The sketch contains a byte-by-byte RX state machine that validates the full frame (header `AA 55`, frame ID LE, length, payload, CRC16 Modbus LE, footer `EE`) before dispatching to a command handler. Bytes that fail any check are silently discarded and the parser resyncs on the next `AA 55`.
 
