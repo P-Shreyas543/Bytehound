@@ -14,7 +14,6 @@ import multiprocessing
 import os
 import sys
 from pathlib import Path
-
 import qdarktheme
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
