@@ -185,6 +185,133 @@ def _pad_dock_content(dock: "QDockWidget", margin: int = 12) -> None:
     dock.setWidget(shim)
 
 
+class _CheckableGroupCombo(QPushButton):
+    """A button that opens a checkable list of group names.
+
+    Behaviour:
+    • "All groups"  (top item) — when checked, all other items are checked;
+      when unchecked, all are unchecked.
+    • Individual groups can be checked/unchecked independently.
+    • Button label shows:  "All groups" | "<group name>" | "N groups"
+    • ``selection_changed`` is emitted whenever the selection changes.
+    """
+
+    selection_changed = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMinimumWidth(160)
+        self.setText("All groups")
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        # Popup container ──────────────────────────────────────
+        self._popup = QFrame(self.window(), Qt.WindowType.Popup)
+        self._popup.setFrameShape(QFrame.Shape.StyledPanel)
+        self._popup.setFrameShadow(QFrame.Shadow.Raised)
+        layout = QVBoxLayout(self._popup)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        self._list = QListWidget(self._popup)
+        self._list.setFrameShape(QFrame.Shape.NoFrame)
+        self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        layout.addWidget(self._list)
+
+        self._list.itemChanged.connect(self._on_item_changed)
+        self.clicked.connect(self._show_popup)
+
+    # ── public API ────────────────────────────────────────────
+
+    def set_groups(self, groups: list[str]) -> None:
+        """Rebuild the list from a sorted list of group names.
+
+        Existing selection is cleared (all groups selected = show all).
+        """
+        self._list.blockSignals(True)
+        self._list.clear()
+
+        # "All groups" header item
+        all_item = QListWidgetItem("All groups")
+        all_item.setFlags(all_item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+        all_item.setCheckState(Qt.CheckState.Checked)
+        self._list.addItem(all_item)
+
+        for g in groups:
+            item = QListWidgetItem(g)
+            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
+            item.setCheckState(Qt.CheckState.Checked)
+            self._list.addItem(item)
+
+        # Resize list height to content (max ~300 px)
+        row_h = self._list.sizeHintForRow(0) + 2
+        total = min(row_h * (len(groups) + 1) + 8, 300)
+        self._list.setFixedHeight(total)
+
+        self._list.blockSignals(False)
+        self._update_button_label()
+
+    def selected_groups(self) -> set[str]:
+        """Return the set of checked group names.
+
+        An empty set means *all* groups are selected (or there are no groups).
+        """
+        if self._list.count() == 0:
+            return set()
+        all_item = self._list.item(0)
+        if all_item and all_item.checkState() == Qt.CheckState.Checked:
+            return set()          # "All" checked → no filter
+        result = set()
+        for i in range(1, self._list.count()):
+            item = self._list.item(i)
+            if item and item.checkState() == Qt.CheckState.Checked:
+                result.add(item.text())
+        return result
+
+    # ── internals ─────────────────────────────────────────────
+
+    def _show_popup(self) -> None:
+        # Position popup below the button
+        pos = self.mapToGlobal(self.rect().bottomLeft())
+        self._popup.move(pos)
+        self._popup.setFixedWidth(max(self.width(), 180))
+        self._popup.show()
+        self._popup.raise_()
+
+    def _on_item_changed(self, changed_item: QListWidgetItem) -> None:
+        self._list.blockSignals(True)
+        if self._list.row(changed_item) == 0:
+            # "All groups" toggled → apply to all
+            state = changed_item.checkState()
+            for i in range(1, self._list.count()):
+                self._list.item(i).setCheckState(state)
+        else:
+            # Individual item toggled → sync "All groups" header
+            all_checked = all(
+                self._list.item(i).checkState() == Qt.CheckState.Checked
+                for i in range(1, self._list.count())
+            )
+            self._list.item(0).setCheckState(
+                Qt.CheckState.Checked if all_checked else Qt.CheckState.Unchecked
+            )
+        self._list.blockSignals(False)
+        self._update_button_label()
+        self.selection_changed.emit()
+
+    def _update_button_label(self) -> None:
+        checked = [
+            self._list.item(i).text()
+            for i in range(1, self._list.count())
+            if self._list.item(i).checkState() == Qt.CheckState.Checked
+        ]
+        total = self._list.count() - 1   # excluding "All groups" row
+        if total == 0 or len(checked) == total:
+            self.setText("All groups")
+        elif len(checked) == 1:
+            self.setText(checked[0])
+        else:
+            self.setText(f"{len(checked)} groups")
+
+
 class _StatusBadgeDelegate(QStyledItemDelegate):
     """Paint the Status column as a rounded pill badge.
 
@@ -1328,16 +1455,14 @@ class MainWindow(QMainWindow):
         self._search_input = QLineEdit(center_widget)
         self._search_input.setPlaceholderText("Search / Filter variables...")
 
-        self._group_combo = QComboBox(center_widget)
-        self._group_combo.addItem("All")
-        self._group_combo.setMinimumWidth(150)
-        self._group_combo.currentTextChanged.connect(self._apply_group_filter)
+        self._group_combo = _CheckableGroupCombo(center_widget)
+        self._group_combo.selection_changed.connect(self._apply_group_filter)
 
         self._show_calcs_check = QCheckBox("Show calculations", center_widget)
         self._show_calcs_check.setChecked(True)
-        self._show_calcs_check.toggled.connect(lambda: self._apply_group_filter(self._group_combo.currentText()))
+        self._show_calcs_check.toggled.connect(self._apply_group_filter)
 
-        self._search_input.textChanged.connect(lambda: self._apply_group_filter(self._group_combo.currentText()))
+        self._search_input.textChanged.connect(self._apply_group_filter)
 
         top_row.addWidget(self._search_input, 1)
         top_row.addWidget(QLabel("Group", center_widget))
@@ -3002,28 +3127,26 @@ class MainWindow(QMainWindow):
 
     def _populate_group_selector(self) -> None:
         assert self._config is not None
-        current = self._group_combo.currentText()
         groups = sorted({signal.group for signal in self._config.all_signals if signal.group})
-        self._group_combo.blockSignals(True)
-        self._group_combo.clear()
-        self._group_combo.addItem("All")
-        self._group_combo.addItems(groups)
-        index = self._group_combo.findText(current)
-        self._group_combo.setCurrentIndex(max(0, index))
-        self._group_combo.blockSignals(False)
+        self._group_combo.set_groups(groups)
 
-    def _apply_group_filter(self, group: str) -> None:
+    def _apply_group_filter(self) -> None:
+        selected_groups = self._group_combo.selected_groups()   # empty set = All
         search_text = ""
         if hasattr(self, "_search_input"):
             search_text = self._search_input.text().lower()
 
         n = self._table_model.row_count()
         for row in range(n):
-            row_group = self._table_model.group_for_row(row)
-            row_name = self._table_model.signal_name_for_row(row).lower()
+            row_group   = self._table_model.group_for_row(row)
+            row_name    = self._table_model.signal_name_for_row(row).lower()
             is_calculated = self._table_model.is_calculated_row(row)
 
-            visible = group in ("", "All") or row_group == group
+            # Empty selected_groups means "All"
+            if selected_groups:
+                visible = row_group in selected_groups
+            else:
+                visible = True
             if is_calculated and not self._show_calcs_check.isChecked():
                 visible = False
             if search_text and search_text not in row_name:
