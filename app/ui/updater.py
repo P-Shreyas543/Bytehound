@@ -10,7 +10,21 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
 
-VERSION_FILE = Path(__file__).resolve().parent.parent / "version.json"
+
+def _project_root() -> Path:
+    """Repo root in dev, exe-adjacent dir in a frozen PyInstaller build.
+
+    Mirrors main_window._project_root so the updater finds version.json
+    regardless of where the install layout puts it. The previous
+    ``parent.parent`` walked from app/ui/updater.py to app/ — one level
+    short — and the updater raised FileNotFoundError on every check.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[2]
+
+
+VERSION_FILE = _project_root() / "version.json"
 
 
 def get_current_version() -> str:
