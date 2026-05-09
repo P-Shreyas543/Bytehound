@@ -13,12 +13,23 @@
 //                           uint8  Mode (enum 0..4)                every 200 ms
 //
 //   TX (PC -> board):
-//     0x1001 Reset             payload "FF FF" - zero counters/flags
+//     0x1001 Reset             payload "FF FF"  - zero counters/flags
 //     0x2000 (write)           payload uint16 LE (scale 0.1) - direct register
 //                                                              write to Voltage_Limit
 //                                                              (used by GUI parameter editor)
 //     0x2001 Set_Voltage_Limit payload uint16 LE (scale 0.1) - same effect via the
 //                                                              named TX command
+//
+//   Stress-test hooks (used only by test_stress.py):
+//     0x1002 stress_mode       payload uint8 (1=on, 0=off) - 5x faster
+//                                                            telemetry cadence
+//     0x1003 inject_crc_errors payload uint8 N            - emit next N
+//                                                            telemetry frames
+//                                                            with deliberately
+//                                                            corrupted CRC
+//     0x1004 go_silent         payload uint8 seconds      - suppress all RX
+//                                                            for N seconds
+//                                                            (tests watchdog)
 //
 // Build: Arduino IDE 1.8+ / 2.x, board "Arduino Mega 2560" (or any Arduino
 // with hardware Serial), 115200 baud.
@@ -37,6 +48,17 @@ static uint16_t crc16_modbus(const uint8_t *data, uint16_t length) {
   }
   return crc;
 }
+
+// ---------- Stress-test state -------------------------------------------
+// pending_crc_corruptions: when > 0, the next sendFrame() XORs the high CRC
+//   byte with 0xFF before transmitting, then decrements. This is how the
+//   stress test exercises the host-side CRC error counter.
+// silent_until_ms: while millis() < silent_until_ms, all telemetry emission
+//   is suppressed. The host uses this to verify the data-watchdog fires.
+// stress_mode_on: 5x faster cadence on the periodic emitters.
+static uint8_t        pending_crc_corruptions = 0;
+static unsigned long  silent_until_ms = 0;
+static bool           stress_mode_on = false;
 
 // ---------- Send one framed packet --------------------------------------
 static void sendFrame(uint16_t frame_id, const uint8_t *payload, uint8_t payload_length) {
@@ -57,6 +79,13 @@ static void sendFrame(uint16_t frame_id, const uint8_t *payload, uint8_t payload
         crc = (crc & 1) ? ((crc >> 1) ^ 0xA001) : (crc >> 1);
       }
     }
+  }
+  // Stress-test hook: corrupt the CRC bytes of the next N frames so the host
+  // sees real on-the-wire CRC failures. The footer is left intact so the
+  // parser still aligns; only the CRC mismatches.
+  if (pending_crc_corruptions > 0) {
+    crc ^= 0xFF00;  // flip the high byte
+    pending_crc_corruptions--;
   }
   uint8_t tail[3] = { (uint8_t)(crc & 0xFF), (uint8_t)((crc >> 8) & 0xFF), 0xEE };
   Serial.write(tail, 3);
@@ -137,7 +166,9 @@ static void emit_1000(); static void emit_2000(); static void emit_3000();
 
 static void on_command(uint16_t frame_id, const uint8_t *payload, uint8_t length) {
   // Poll requests: empty payload, just echo current telemetry for that ID.
+  // Suppressed during silent-mode so we can verify the host watchdog.
   if (length == 0) {
+    if (millis() < silent_until_ms) return;
     if (frame_id == 0x1000) { emit_1000(); return; }
     if (frame_id == 0x2000) { emit_2000(); return; }
     if (frame_id == 0x3000) { emit_3000(); return; }
@@ -150,6 +181,9 @@ static void on_command(uint16_t frame_id, const uint8_t *payload, uint8_t length
     current_dA = 20;
     status_bits = 0x80; // Ready only
     mode = 0;           // Idle
+    pending_crc_corruptions = 0;
+    silent_until_ms = 0;
+    stress_mode_on = false;
     return;
   }
 
@@ -165,6 +199,24 @@ static void on_command(uint16_t frame_id, const uint8_t *payload, uint8_t length
       // the UI) can confirm the round-trip without waiting for the next tick.
       emit_2000();
     }
+    return;
+  }
+
+  // ----- Stress-test hooks --------------------------------------------
+  // 0x1002 [01|00] : enable / disable 5x cadence stress mode.
+  if (frame_id == 0x1002 && length == 1) {
+    stress_mode_on = (payload[0] != 0);
+    return;
+  }
+  // 0x1003 [N] : the next N telemetry frames will have corrupted CRC.
+  if (frame_id == 0x1003 && length == 1) {
+    pending_crc_corruptions = payload[0];
+    return;
+  }
+  // 0x1004 [seconds] : suppress all telemetry for `seconds` seconds so the
+  //                    host can prove its data-watchdog fires.
+  if (frame_id == 0x1004 && length == 1) {
+    silent_until_ms = millis() + (unsigned long)payload[0] * 1000UL;
     return;
   }
 }
@@ -203,21 +255,33 @@ void loop() {
 
   unsigned long now = millis();
 
-  if (now - last_1000_ms >= 100) {
+  // Silent mode: suppress all timer-driven emissions until silent_until_ms.
+  // Inbound poll requests are also gated in on_command(). Used to test the
+  // host's data watchdog.
+  bool silent = (now < silent_until_ms);
+
+  // Stress mode pulls every cadence in by 5x so the host has to keep up
+  // with a much faster RX stream + more frequent cycle updates.
+  unsigned long iv_1000  = stress_mode_on ?  20 : 100;
+  unsigned long iv_2000  = stress_mode_on ? 100 : 500;
+  unsigned long iv_3000  = stress_mode_on ?  40 : 200;
+  unsigned long iv_cycle = stress_mode_on ? 200 : 1000;
+
+  if (!silent && now - last_1000_ms >= iv_1000) {
     last_1000_ms = now;
     emit_1000();
   }
-  if (now - last_2000_ms >= 500) {
+  if (!silent && now - last_2000_ms >= iv_2000) {
     last_2000_ms = now;
     emit_2000();
   }
-  if (now - last_3000_ms >= 200) {
+  if (!silent && now - last_3000_ms >= iv_3000) {
     last_3000_ms = now;
     emit_3000();
   }
 
   // Slowly walk telemetry + cycle the bitfield/enum so the UI shows motion.
-  if (now - last_cycle_ms >= 1000) {
+  if (now - last_cycle_ms >= iv_cycle) {
     last_cycle_ms = now;
 
     voltage_dV += 1;

@@ -81,7 +81,10 @@ class FramedParser(ParserProtocol):
 
         length_off = len(header) + pc.frame_id_size
         length_bytes = bytes(self._buf[length_off : length_off + pc.length_size])
-        payload_len = int.from_bytes(length_bytes, pc.frame_id_byte_order)
+        # length_byte_order falls back to frame_id_byte_order when not
+        # explicitly configured. Backward-compatible with existing configs.
+        length_endian = pc.length_byte_order or pc.frame_id_byte_order
+        payload_len = int.from_bytes(length_bytes, length_endian)
 
         total_size = fixed_size + payload_len
         if len(self._buf) < total_size:

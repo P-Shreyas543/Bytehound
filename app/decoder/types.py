@@ -47,6 +47,11 @@ class ProtocolConfig:
     parser_type: str = "framed"
     tx_pad_length: Optional[int] = None
     inter_frame_delay_ms: int = 10
+    # Endianness of the payload-length field. Optional in the config — when
+    # omitted (None) it falls back to ``frame_id_byte_order``. With
+    # ``length_size=1`` (the common case) this field is irrelevant; it only
+    # matters for protocols whose length is multi-byte.
+    length_byte_order: Optional[str] = None
 
 
 @dataclass(frozen=True)

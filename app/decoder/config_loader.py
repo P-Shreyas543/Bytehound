@@ -298,6 +298,17 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
             f"protocol: unsupported crc_type {crc_type!r} "
             f"(supported: {sorted(SUPPORTED_CRC_TYPES)})"
         )
+    length_byte_order_raw = (row.get("length_byte_order") or "").strip().lower()
+    length_byte_order: Optional[str]
+    if length_byte_order_raw == "":
+        length_byte_order = None
+    elif length_byte_order_raw in {"big", "little"}:
+        length_byte_order = length_byte_order_raw
+    else:
+        raise ConfigError(
+            f"protocol: length_byte_order must be 'big', 'little', or empty (got {length_byte_order_raw!r})"
+        )
+
     protocol = ProtocolConfig(
         profile_name=row["profile_name"],
         header=_hex_to_bytes(row["header_hex"], "header_hex"),
@@ -316,6 +327,7 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         parser_type=(row.get("parser_type") or "framed").strip().lower(),
         tx_pad_length=_to_optional_int(row.get("tx_pad_length", ""), field_name="tx_pad_length"),
         inter_frame_delay_ms=_to_int(row.get("inter_frame_delay_ms", "10"), field_name="inter_frame_delay_ms"),
+        length_byte_order=length_byte_order,
     )
     _validate_protocol(protocol)
     return protocol

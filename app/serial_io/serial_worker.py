@@ -41,6 +41,12 @@ from ..decoder.types import PollingScheduleSpec, ProtocolConfig
 _BATCH_SIZE = 50          # emit after accumulating this many packets …
 _BATCH_INTERVAL = 0.016  # … or after this many seconds (≈ 60 Hz), whichever is first
 WATCHDOG_TIMEOUT = 3.0   # seconds of silence before emitting device_timeout
+# Hold off polling for this long after open() if the device has not yet sent
+# anything. Cover Arduino bootloader (~1.5 s) plus a margin. Once the first
+# byte arrives the gate opens immediately, so request/response-only devices
+# still see polling start as soon as the user enables it AND the timeout
+# elapses (whichever comes second).
+POLLING_BOOT_GRACE = 2.5
 
 # OS error codes that indicate a physical disconnect on Windows.
 _DISCONNECT_WINERRORS = {5, 22, 31, 1167}
@@ -104,6 +110,8 @@ class PollingWorker(QThread):
         # Watchdog state
         self._last_rx_time: float = time.time()
         self._watchdog_fired = False  # debounce: only emit once per silence window
+        # Set in open() — used by the polling-boot-grace gate in _run_loop.
+        self._open_time: float = time.time()
 
     # ------------------------------------------------------------------
     # Public API
@@ -132,6 +140,8 @@ class PollingWorker(QThread):
         self._stop_event.clear()
         self._last_rx_time = time.time()
         self._last_emit_time = time.time()
+        # Used by the polling gate in _run_loop — see POLLING_BOOT_GRACE.
+        self._open_time = time.time()
         self.start()
 
 
@@ -154,11 +164,12 @@ class PollingWorker(QThread):
         try:
             self._priority_tx_queue.put_nowait(data)
         except queue.Full:
-            # Drop and surface — a full queue means the UI is generating TX
+            # Drop and surface. A full queue means the UI is generating TX
             # commands faster than the wire can carry them. Better to lose one
-            # command than silently grow memory unbounded.
+            # command than silently grow memory unbounded. ASCII-only so the
+            # message renders cleanly on Windows' cp1252 console.
             self.error_occurred.emit(
-                "TX queue full — command dropped (UI is sending faster than the link can sustain)."
+                "TX queue full - command dropped (UI is sending faster than the link can sustain)."
             )
 
     def set_polling_global(self, enabled: bool) -> None:
@@ -278,7 +289,14 @@ class PollingWorker(QThread):
                     polling_enabled = self._polling_global_enabled
 
                 polled = False
-                if polling_enabled:
+                # Polling gate: hold off until the device has either sent us
+                # at least one byte (proof it is alive) OR the boot-grace
+                # window has elapsed (so devices that are request/response
+                # only still get polled). Hammering polls during an Arduino
+                # bootloader window leaves the link stuck — the device cannot
+                # answer, timeouts accumulate, and we never get out.
+                grace_expired = (time.time() - self._open_time) > POLLING_BOOT_GRACE
+                if polling_enabled and (self._rx_bytes > 0 or grace_expired):
                     now = time.time()
                     for sched in self._schedules:
                         if sched["enabled"] and now >= sched["next_run"]:
@@ -298,8 +316,15 @@ class PollingWorker(QThread):
                         self._parser.feed(data)
                         self._accumulate(self._parser.extract_all())
                         self.metrics_updated.emit(self._timeouts, self._crc_errors, self._rx_bytes)
-                    else:
-                        self._check_watchdog()
+
+                # Always check the watchdog at the end of the iteration. If we
+                # only ran it inside the "not polled and no bytes waiting"
+                # branch, a busy polling schedule that the device has stopped
+                # responding to would never trip device_timeout — _last_rx_time
+                # would simply stop advancing while polls keep firing. The
+                # watchdog is debounced internally so calling it every loop
+                # iteration is cheap and safe.
+                self._check_watchdog()
 
                 # Flush batch on timer even when quiet
                 if self._should_flush():

@@ -27,7 +27,10 @@ def build_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> byt
         raise ValueError(
             f"Payload is {len(payload)} bytes but length field can hold {max_payload}"
         )
-    length_bytes = len(payload).to_bytes(pc.length_size, pc.frame_id_byte_order)
+    # length_byte_order falls back to frame_id_byte_order when unset, matching
+    # the parser's behaviour so build/parse round-trips are byte-exact.
+    length_endian = pc.length_byte_order or pc.frame_id_byte_order
+    length_bytes = len(payload).to_bytes(pc.length_size, length_endian)
 
     coverage = pc.header + fid_bytes + length_bytes + payload
 
