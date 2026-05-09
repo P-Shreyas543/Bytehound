@@ -1024,7 +1024,10 @@ class MainWindow(QMainWindow):
         self._update_action = QAction(_icon("mdi6.cloud-download-outline", _ic), "Check for Updates", self)
         self._update_action.triggered.connect(self._on_check_updates)
 
-        self._analysis_action = QAction(_icon("mdi6.chart-line", _ic), "Analysis Suite", self)
+        # chart-multiple distinguishes the offline "Analysis Suite" (which
+        # overlays many recordings) from the Live Plot panel which uses
+        # plain chart-line.
+        self._analysis_action = QAction(_icon("mdi6.chart-multiple", _ic), "Analysis Suite", self)
         self._analysis_action.triggered.connect(self._on_analysis_suite)
 
 
@@ -1447,26 +1450,32 @@ class MainWindow(QMainWindow):
         theme = str(self._settings.value("ui/theme", "dark"))
         ic = "#F8FAFC" if theme == "dark" else "#1F2937"
 
-        panels_menu = menu.addMenu("Panels")
-        for dock, label in (
-            (self._plot_dock, "Live Plot"),
-            (self._bitfields_dock, "Bitfields"),
-            (self._enums_dock, "Enums"),
-            (self._tx_dock, "TX Commands"),
-            (self._editor_dock, "Parameter Editor"),
-            (self._console_dock, "Raw Console"),
-            (self._activity_dock, "Activity Log"),
+        # Each toggle gets a distinctive Material Design icon that hints at
+        # the panel's content. Without these the Panels submenu was a wall
+        # of plain-text toggles indistinguishable at a glance.
+        panels_menu = menu.addMenu(_icon("mdi6.view-quilt-outline", ic), "Panels")
+        for dock, label, dock_icon in (
+            (self._plot_dock,       "Live Plot",        "mdi6.chart-line"),
+            (self._bitfields_dock,  "Bitfields",        "mdi6.toggle-switch-outline"),
+            (self._enums_dock,      "Enums",            "mdi6.format-list-bulleted-type"),
+            (self._tx_dock,         "TX Commands",      "mdi6.send-outline"),
+            (self._editor_dock,     "Parameter Editor", "mdi6.tune-vertical"),
+            (self._console_dock,    "Raw Console",      "mdi6.console-line"),
+            (self._activity_dock,   "Activity Log",     "mdi6.text-box-outline"),
         ):
             action = dock.toggleViewAction()
             action.setText(label)
+            action.setIcon(_icon(dock_icon, ic))
             panels_menu.addAction(action)
 
         menu.addSeparator()
-        config_info_action = QAction(_icon("mdi6.information-outline", ic), "Config Info\u2026", self)
+        # Use file-cog so this is visually distinct from "About Serial Monitor"
+        # which uses information-outline.
+        config_info_action = QAction(_icon("mdi6.file-cog-outline", ic), "Config Info\u2026", self)
         config_info_action.triggered.connect(self._on_show_config_info)
         menu.addAction(config_info_action)
 
-        theme_menu = menu.addMenu("Theme")
+        theme_menu = menu.addMenu(_icon("mdi6.palette-outline", ic), "Theme")
         self._theme_group = QActionGroup(self)
         self._theme_group.setExclusive(True)
         current_theme = str(self._settings.value("ui/theme", "dark"))
@@ -1567,7 +1576,7 @@ class MainWindow(QMainWindow):
             (self._copy_value_action,       "mdi6.content-copy"),
             (self._exit_action,             "mdi6.exit-to-app"),
             (self._info_action,             "mdi6.information-outline"),
-            (self._analysis_action,         "mdi6.chart-line"),
+            (self._analysis_action,         "mdi6.chart-multiple"),
             # Names MUST match the icons used at QAction construction in
             # _create_actions(); otherwise the menu icon silently changes
             # shape the first time the user switches theme.
