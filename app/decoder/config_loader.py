@@ -45,8 +45,8 @@ _PROTOCOL_REQUIRED = {
     "crc_type",
     "crc_size",
     "crc_byte_order",
-    "crc_coverage",
-    "raw_log_format",
+    # crc_coverage and raw_log_format are optional — only one value is
+    # supported for each so they default to the single valid value.
 }
 
 _LEGACY_FRAME_CONFIG_REQUIRED = {
@@ -319,10 +319,14 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         crc_type=crc_type,
         crc_size=_to_int(row["crc_size"], field_name="crc_size"),
         crc_byte_order=row["crc_byte_order"].strip().lower(),
-        crc_coverage=row["crc_coverage"].strip().lower(),
+        # crc_coverage: only "header_to_payload" is implemented; default to it
+        # so the column can be omitted from user-facing config sheets.
+        crc_coverage=(row.get("crc_coverage") or "header_to_payload").strip().lower(),
         footer=_hex_to_bytes(row.get("footer_hex", ""), "footer_hex"),
+        # escape_mode: only "none" is implemented; default to it.
         escape_mode=(row.get("escape_mode") or "none").strip().lower(),
-        raw_log_format=row["raw_log_format"],
+        # raw_log_format: controls hex vs binary log output; default to "hex".
+        raw_log_format=(row.get("raw_log_format") or "hex").strip().lower(),
         enabled=True,
         parser_type=(row.get("parser_type") or "framed").strip().lower(),
         tx_pad_length=_to_optional_int(row.get("tx_pad_length", ""), field_name="tx_pad_length"),

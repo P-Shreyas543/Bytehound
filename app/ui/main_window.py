@@ -2219,9 +2219,10 @@ class MainWindow(QMainWindow):
             self._recent_config_combo.setCurrentIndex(index)
 
     def _on_export_template(self) -> None:
-        if self._config_path is None:
-            self._popup_information("Export template", "Load a config first.")
-            return
+        # Always build the template from the bundled blank CSV files so the
+        # user always receives a complete, fresh workbook — regardless of
+        # whether the currently-loaded config is a CSV folder or an .xlsx.
+        bundled_template_dir = Path(__file__).resolve().parents[1] / "resources" / "config_template"
         target, _ = QFileDialog.getSaveFileName(
             self,
             "Export Excel template",
@@ -2231,7 +2232,7 @@ class MainWindow(QMainWindow):
         if not target:
             return
         try:
-            export_excel_template(self._config_path, target)
+            export_excel_template(bundled_template_dir, target)
         except Exception as exc:
             self._popup_critical("Export template", str(exc))
             return

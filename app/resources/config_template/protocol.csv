@@ -1,2 +1,2 @@
-parser_type,profile_name,header_hex,frame_id_size,frame_id_byte_order,length_size,length_meaning,crc_type,crc_size,crc_byte_order,crc_coverage,footer_hex,escape_mode,raw_log_format,inter_frame_delay_ms,enabled,description
-framed,Default,AA 55,2,little,1,payload_only,crc16_modbus,2,little,header_to_payload,EE,none,hex,50,TRUE,Default Protocol
+profile_name,parser_type,header_hex,frame_id_size,frame_id_byte_order,length_size,length_meaning,crc_type,crc_size,crc_byte_order,footer_hex,inter_frame_delay_ms,tx_pad_length,enabled
+Default,framed,AA 55,2,little,1,payload_only,crc16_modbus,2,little,,10,,TRUE

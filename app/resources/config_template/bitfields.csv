@@ -1,9 +1,9 @@
 id_or_address,signal_name,bit_index,label,active_text,inactive_text
-0x3000,Status_Bits,0,Charging,YES,NO
-0x3000,Status_Bits,1,Discharging,YES,NO
-0x3000,Status_Bits,2,Balancing,YES,NO
-0x3000,Status_Bits,3,Fault,YES,NO
-0x3000,Status_Bits,4,OverVoltage,YES,NO
-0x3000,Status_Bits,5,UnderVoltage,YES,NO
-0x3000,Status_Bits,6,OverTemp,YES,NO
-0x3000,Status_Bits,7,Ready,YES,NO
+0x3000,Fault Flags,0,Charging,YES,NO
+0x3000,Fault Flags,1,Discharging,YES,NO
+0x3000,Fault Flags,2,Balancing,YES,NO
+0x3000,Fault Flags,3,Fault,FAULT,OK
+0x3000,Fault Flags,4,Overvoltage,FAULT,OK
+0x3000,Fault Flags,5,Undervoltage,FAULT,OK
+0x3000,Fault Flags,6,Overtemp,FAULT,OK
+0x3000,Fault Flags,7,Ready,YES,NO

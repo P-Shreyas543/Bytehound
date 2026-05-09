@@ -9,7 +9,7 @@ from typing import Iterable
 
 CONFIG_CSV_FILES = (
     "protocol.csv",
-    "frames.csv",
+    "frames.csv",      # per-frame names and payload_length (replaces protocol-level payload_length)
     "variables.csv",
     "frame_config.csv",
     "bitfields.csv",

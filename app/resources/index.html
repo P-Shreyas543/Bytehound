@@ -418,37 +418,49 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
         <tr><td><code>profile_name</code></td><td>text</td><td><code>BMS_v2</code></td><td>Free-text label for this protocol profile.</td></tr>
-        <tr><td><code>parser_type</code></td><td>enum</td><td><code>framed</code></td><td><code>framed</code> = custom byte-framed protocol. <code>modbus_rtu</code> = standard Modbus RTU.</td></tr>
-        <tr><td><code>header_hex</code></td><td>hex bytes</td><td><code>AA 55</code></td><td>Fixed start-of-frame marker the parser searches for. Space-separated hex bytes.</td></tr>
-        <tr><td><code>frame_id_size</code></td><td>integer</td><td><code>2</code></td><td>How many bytes carry the frame ID after the header.</td></tr>
-        <tr><td><code>frame_id_byte_order</code></td><td>enum</td><td><code>big</code></td><td><code>big</code> or <code>little</code> endian for the frame ID bytes.</td></tr>
-        <tr><td><code>length_size</code></td><td>integer</td><td><code>1</code></td><td>How many bytes carry the payload-length field.</td></tr>
-        <tr><td><code>length_meaning</code></td><td>enum</td><td><code>payload_only</code></td><td>What the length field counts. Currently only <code>payload_only</code> is supported.</td></tr>
-        <tr><td><code>crc_type</code></td><td>enum</td><td><code>crc16_modbus</code></td><td>Checksum algorithm: <code>crc16_modbus</code>, <code>crc16_ccitt</code>, <code>crc32</code>, or <code>none</code>.</td></tr>
-        <tr><td><code>crc_size</code></td><td>integer</td><td><code>2</code></td><td>How many bytes the CRC occupies at the end of the frame.</td></tr>
-        <tr><td><code>crc_byte_order</code></td><td>enum</td><td><code>little</code></td><td><code>big</code> or <code>little</code> byte order for the CRC field.</td></tr>
-        <tr><td><code>footer_hex</code></td><td>hex bytes</td><td><em>(leave blank)</em></td><td>Optional end-of-frame marker. Leave blank if your protocol has no footer.</td></tr>
-        <tr><td><code>inter_frame_delay_ms</code></td><td>integer</td><td><code>10</code></td><td>Minimum gap (ms) between TX requests. Default 10 ms.</td></tr>
-        <tr><td><code>tx_pad_length</code></td><td>integer</td><td><em>(leave blank)</em></td><td>If set, TX packets are zero-padded to this many bytes before the CRC. Leave blank if unused.</td></tr>
+        <tr><td><code>parser_type</code></td><td>enum</td><td><code>framed</code></td><td><code>framed</code> = custom byte-framed protocol (default for most embedded MCUs). <code>modbus_rtu</code> = standard Modbus RTU — framing, FC codes, and CRC are handled automatically.</td></tr>
+        <tr><td><code>header_hex</code></td><td>hex bytes</td><td><code>AA 55</code></td><td>Fixed start-of-frame marker the parser searches for. Space-separated hex bytes. <em>Ignored when parser_type = modbus_rtu.</em></td></tr>
+        <tr><td><code>frame_id_size</code></td><td>integer</td><td><code>2</code></td><td>How many bytes carry the frame ID after the header. <em>Ignored for modbus_rtu.</em></td></tr>
+        <tr><td><code>frame_id_byte_order</code></td><td>enum</td><td><code>little</code></td><td><code>big</code> or <code>little</code> endian for the frame ID bytes.</td></tr>
+        <tr><td><code>length_size</code></td><td>integer</td><td><code>1</code></td><td>How many bytes carry the payload-length field. <em>Ignored for modbus_rtu (length is implicit in each FC).</em></td></tr>
+        <tr><td><code>length_meaning</code></td><td>enum</td><td><code>payload_only</code></td><td>What the length field counts. Only <code>payload_only</code> is supported. <em>Ignored for modbus_rtu.</em></td></tr>
+        <tr><td><code>crc_type</code></td><td>enum</td><td><code>crc16_modbus</code></td><td>Checksum algorithm: <code>crc16_modbus</code>, <code>crc16_ccitt</code>, <code>crc32</code>, or <code>none</code>. For modbus_rtu the CRC is always CRC16/Modbus regardless of this field.</td></tr>
+        <tr><td><code>crc_size</code></td><td>integer</td><td><code>2</code></td><td>How many bytes the CRC occupies at the end of the frame. <em>Ignored for modbus_rtu.</em></td></tr>
+        <tr><td><code>crc_byte_order</code></td><td>enum</td><td><code>little</code></td><td><code>big</code> or <code>little</code> byte order for the CRC field. <em>Ignored for modbus_rtu.</em></td></tr>
+        <tr><td><code>footer_hex</code></td><td>hex bytes</td><td><em>(leave blank)</em></td><td>Optional end-of-frame marker. Leave blank if your protocol has no footer. <em>Ignored for modbus_rtu.</em></td></tr>
+        <tr><td><code>inter_frame_delay_ms</code></td><td>integer</td><td><code>10</code></td><td>Minimum gap (ms) between consecutive TX requests. Default 10 ms.</td></tr>
+        <tr><td><code>tx_pad_length</code></td><td>integer</td><td><em>(leave blank)</em></td><td>If set, outgoing TX packets are zero-padded to this total byte count (before CRC). Leave blank if unused. <em>Framed only.</em></td></tr>
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Only one row may be <code>TRUE</code>. The app uses that row and ignores all others.</td></tr>
     </table>
     <div class="success">
-        <strong>Wire format:</strong> &nbsp;<code>[ header ] [ frame_id ] [ length ] [ payload ] [ CRC ] [ footer? ]</code>
+        <strong>Wire format (framed):</strong> &nbsp;<code>[ header ] [ frame_id ] [ length ] [ payload ] [ CRC ] [ footer? ]</code><br>
+        <strong>Wire format (modbus_rtu):</strong> &nbsp;<code>[ node_addr(1) ] [ FC(1) ] [ data bytes ] [ CRC16(2) ]</code> &mdash; FC03/FC04 read, FC06/FC16 write
+    </div>
+    <div class="note">
+        <strong>modbus_rtu is fully supported.</strong> Set <code>parser_type = modbus_rtu</code> and the parser and TX builder switch to standard Modbus RTU mode automatically. In this mode the <code>id_or_address</code> column in Variables and PollingSchedule is the Modbus register address (not a frame ID).
     </div>
 
     <hr>
 
     <h3 id="sheet-frames">Sheet 2 — Frames</h3>
-    <p>Optional. Gives each frame ID a human-readable name and an expected payload length. If you omit this sheet, frame names are derived automatically from the Variables sheet.</p>
+    <p>Optional. Gives each frame ID a human-readable name and a <strong>per-frame</strong> expected payload length. If you omit this sheet, frame names are derived automatically from the Variables sheet.</p>
+    <div class="note">
+        <strong>payload_length is per-frame, not global.</strong> Each frame row declares its own expected payload size — one frame can carry 8 bytes while another carries 28 bytes. Leave <code>payload_length</code> blank for frames where you do not want length validation. Do <strong>not</strong> put a payload length in the Protocol sheet; that sheet only describes the wire framing (header, CRC, etc.).
+    </div>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
         <tr><td><code>frame_id</code></td><td>hex</td><td><code>0x0010</code></td><td>Frame identifier as sent by hardware. Can be <code>0x10</code>, <code>10</code>, or <code>16</code> (decimal).</td></tr>
         <tr><td><code>frame_name</code></td><td>text</td><td><code>BMS Status</code></td><td>Display name shown in the Data Table's Frame column.</td></tr>
-        <tr><td><code>payload_length</code></td><td>integer</td><td><code>8</code></td><td>Expected payload size in bytes. A mismatch shows a warning in the Status column.</td></tr>
+        <tr><td><code>payload_length</code></td><td>integer</td><td><code>8</code></td><td>Expected payload size in bytes <em>for this frame only</em>. If the received payload differs, a warning appears in the Status column. Leave blank to skip validation for this frame.</td></tr>
         <tr><td><code>direction</code></td><td>enum</td><td><code>rx</code></td><td><code>rx</code> for frames received from hardware, <code>tx</code> for outgoing frames.</td></tr>
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Set <code>FALSE</code> to completely ignore this frame.</td></tr>
         <tr><td><code>description</code></td><td>text</td><td><code>Battery pack telemetry</code></td><td>Optional free-text note — not displayed in the app.</td></tr>
     </table>
+    <p><strong>Example — two frames with different payload sizes:</strong></p>
+    <pre>frame_id | frame_name    | payload_length | direction
+0x0010   | BMS Status    | 8              | rx
+0x0020   | Cell Voltages | 28             | rx
+0x0030   | Fault Flags   |                | rx    ← blank = no length check</pre>
 
     <hr>
 
