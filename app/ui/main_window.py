@@ -1283,20 +1283,36 @@ class MainWindow(QMainWindow):
             _v = _json.loads(_vpath.read_text(encoding="utf-8"))
         except Exception:
             _v = {}
-        version   = _v.get("version",   self._version)
-        developer = _v.get("Developer", "Shreyas P")
-        self._popup_about(
-            "About Bytehound",
-            (
-                f"{APP_DISPLAY_NAME}\n\n"
-                f"Version:   {version}\n"
-                f"Developer: {developer}\n"
-                f"Build Date: May 2026\n\n"
-                "Serial Data Logger and Visualizer.\n"
-                "Configuration-driven decoding.\n\n"
-                "Released under the MIT License."
-            ),
-        )
+        version    = _v.get("version",    self._version)
+        developer  = _v.get("Developer",  "Shreyas P")
+        build_date = _v.get("build_date", "")
+        license_   = _v.get("license",    "MIT")
+        homepage   = _v.get("homepage",   "")
+        issue_url  = _v.get("issue_url",  "")
+
+        lines = [
+            f"<b>{APP_DISPLAY_NAME}</b>",
+            "",
+            f"Version:&nbsp;&nbsp;&nbsp;{version}",
+            f"Developer:&nbsp;{developer}",
+        ]
+        if build_date:
+            lines.append(f"Build Date:&nbsp;{build_date}")
+        lines += [
+            "",
+            "Serial Data Logger and Visualizer.",
+            "Configuration-driven decoding.",
+            "",
+            f"Released under the {license_} License.",
+        ]
+        if homepage or issue_url:
+            lines.append("")
+            if homepage:
+                lines.append(f'<a href="{homepage}">View on GitHub</a>')
+            if issue_url:
+                lines.append(f'<a href="{issue_url}">Report an Issue</a>')
+
+        self._popup_about("About Bytehound", "<br>".join(lines))
 
     def _on_view_docs(self) -> None:
         docs_path = Path(__file__).resolve().parents[1] / "resources" / "index.html"

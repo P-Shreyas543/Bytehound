@@ -1,6 +1,10 @@
 {
     "version": "0.1.0",
     "Developer": "Shreyas P",
+    "build_date": "2026-05-11",
+    "license": "MIT",
+    "homepage": "https://github.com/P-Shreyas543/Bytehound",
+    "issue_url": "https://github.com/P-Shreyas543/Bytehound/issues",
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
     "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.1.0/Bytehound_Setup_0.1.0.exe",
     "release_notes": "Initial release.",
