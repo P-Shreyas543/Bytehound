@@ -1048,6 +1048,8 @@ class MainWindow(QMainWindow):
         self._default_geometry = self.saveGeometry()
         self._restore_window_state()
 
+        self._log_activity(f"[SESSION] Started {APP_DISPLAY_NAME} v{self._version}")
+
     # ------------------------------------------------------------------
     # UI construction
     # ------------------------------------------------------------------
@@ -1206,6 +1208,7 @@ class MainWindow(QMainWindow):
         help_menu.addAction(self._info_action)
 
     def _on_check_updates(self) -> None:
+        self._log_activity("[ACTION] Check for updates")
         self._update_checker = UpdateChecker()
         self._update_checker.update_available.connect(self._on_update_available)
         self._update_checker.up_to_date.connect(
@@ -1218,6 +1221,7 @@ class MainWindow(QMainWindow):
         self._set_status("Checking for updates...")
 
     def _on_analysis_suite(self) -> None:
+        self._log_activity("[ACTION] Open Analysis Suite")
         if not hasattr(self, "_analysis_window") or self._analysis_window is None:
             from .analysis_suite import AnalysisSuiteWindow
             self._analysis_window = AnalysisSuiteWindow(self)
@@ -1275,6 +1279,7 @@ class MainWindow(QMainWindow):
             text = self._table_model.cell_text(row, 6)  # col 6 = Value
             if text:
                 QApplication.clipboard().setText(text)
+                self._log_activity(f"[ACTION] Copy value: {text}")
 
     def _on_info(self) -> None:
         import json as _json
@@ -1315,11 +1320,13 @@ class MainWindow(QMainWindow):
         self._popup_about("About Bytehound", "<br>".join(lines))
 
     def _on_view_docs(self) -> None:
+        self._log_activity("[ACTION] View documentation")
         docs_path = Path(__file__).resolve().parents[1] / "resources" / "index.html"
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(docs_path)))
 
     def _on_show_config_info(self) -> None:
         """View → Config Info… — shows current config, protocol and logging state."""
+        self._log_activity("[ACTION] Open Config Info dialog")
         from PySide6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QDialogButtonBox, QPushButton
         dlg = QDialog(self)
         dlg.setWindowTitle("Config Info")
@@ -1674,6 +1681,7 @@ class MainWindow(QMainWindow):
         for w in QApplication.topLevelWidgets():
             QTimer.singleShot(0, lambda _w=w, _d=dark: _apply_windows_dark_titlebar(_w, _d))
         self._set_status(f"Theme: {theme}")
+        self._log_activity(f"[ACTION] Theme changed to {theme}")
 
     def _apply_plot_theme(self, theme: str) -> None:
         """Tint the pyqtgraph canvas + axis labels for the active theme."""
@@ -1769,8 +1777,10 @@ class MainWindow(QMainWindow):
         self._plot_live = True
         self._plot_mode_label.setText("📊 Live")
         self._redraw_plot()   # will call setXRange(0, current_t) immediately
+        self._log_activity("[ACTION] Reset plot view (Live mode)")
 
     def _reset_window_layout(self) -> None:
+        self._log_activity("[ACTION] Reset window layout")
         self.restoreGeometry(self._default_geometry)
         self.restoreState(self._default_state)
         for dock in (
@@ -2061,6 +2071,7 @@ class MainWindow(QMainWindow):
         rows, cols = GRID_LAYOUTS.get(label, (2, 1))
         self._rebuild_plot_grid(rows, cols, restore=False)
         self._redraw_plot()
+        self._log_activity(f"[ACTION] Plot layout changed to {label} ({rows}x{cols})")
 
     def _on_panel_add_signal(self, panel_idx: int) -> None:
         """Open a dialog to pick a signal to assign to panel *panel_idx*."""
@@ -2094,6 +2105,9 @@ class MainWindow(QMainWindow):
             self._rebuild_panel_strips()
             self._update_panel_ylabel(panel_idx)
             self._redraw_plot()
+            self._log_activity(
+                f"[ACTION] Added signal 0x{key[0]:04X} {key[1]} to panel {panel_idx + 1}"
+            )
 
     def _remove_signal_from_panel(self, panel_idx: int, key: Tuple[int, str]) -> None:
         if panel_idx >= len(self._plot_panels):
@@ -2108,6 +2122,9 @@ class MainWindow(QMainWindow):
             self._rebuild_panel_strips()
             self._update_panel_ylabel(panel_idx)
             self._redraw_plot()
+            self._log_activity(
+                f"[ACTION] Removed signal 0x{key[0]:04X} {key[1]} from panel {panel_idx + 1}"
+            )
 
     def _sync_plot_keys(self) -> None:
         """Rebuild the aggregate _plot_keys from all panels (maintains order)."""
@@ -2238,6 +2255,7 @@ class MainWindow(QMainWindow):
             self._set_status(f"Default config failed: {exc}")
 
     def _on_load_config(self) -> None:
+        self._log_activity("[ACTION] Load configuration (dialog opened)")
         start_dir = str(Path(__file__).resolve().parents[1] / "resources")
         path_str, _ = QFileDialog.getOpenFileName(
             self,
@@ -2329,6 +2347,7 @@ class MainWindow(QMainWindow):
         path_text = self._recent_config_combo.currentText()
         if not path_text:
             return
+        self._log_activity(f"[ACTION] Load recent config: {path_text}")
         try:
             self._load_config_from_path(Path(path_text))
         except ConfigError as exc:
@@ -2358,6 +2377,7 @@ class MainWindow(QMainWindow):
             self._recent_config_combo.setCurrentIndex(index)
 
     def _on_export_template(self) -> None:
+        self._log_activity("[ACTION] Export Excel template (dialog opened)")
         # Always build the template from the bundled blank CSV files so the
         # user always receives a complete, fresh workbook — regardless of
         # whether the currently-loaded config is a CSV folder or an .xlsx.
@@ -2376,6 +2396,7 @@ class MainWindow(QMainWindow):
             self._popup_critical("Export template", str(exc))
             return
         self._set_status(f"Exported Excel template to {target}")
+        self._log_activity(f"[ACTION] Exported Excel template: {target}")
 
     def _on_load_log(self) -> None:
         if self._config is None or self._parser is None:
@@ -2398,10 +2419,15 @@ class MainWindow(QMainWindow):
             for pkt in self._parser.extract_all():
                 self._handle_packet(pkt)
         self._set_status(f"Replayed {len(rows)} log row(s) from {Path(path_str).name}")
+        self._log_activity(f"[ACTION] Replayed log file ({len(rows)} rows): {path_str}")
 
 
 
     def _on_toggle_connect(self) -> None:
+        self._log_activity(
+            "[ACTION] Connect toggle requested "
+            f"({'disconnect' if (self._serial is not None and self._serial.is_open) else 'connect'})"
+        )
         # --- Already connected: disconnect immediately -----------------------
         if self._serial is not None and self._serial.is_open:
             self._ui_timer.stop()
@@ -2645,6 +2671,7 @@ class MainWindow(QMainWindow):
         self._log_activity(f"Logging started ({choice}): {summary}")
 
     def _stop_logging(self) -> None:
+        was_logging = self._logging
         if self._raw_logger:
             self._raw_logger.close()
         if self._decoded_logger:
@@ -2656,9 +2683,12 @@ class MainWindow(QMainWindow):
         self._style_action_btn(self._logging_action, _BTN_YELLOW)   # back to yellow
         self._logging_label.setText("Logging: stopped")
         self._set_status("Logging stopped")
+        if was_logging:
+            self._log_activity("Logging stopped")
 
     def _on_open_log_folder(self) -> None:
         default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
+        self._log_activity(f"[ACTION] Open log folder: {default_dir}")
         if default_dir.exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(default_dir)))
         else:
@@ -2684,6 +2714,7 @@ class MainWindow(QMainWindow):
         self._redraw_plot()
         self._update_counts()
         self._set_status("Cleared decoded values and console")
+        self._log_activity("[ACTION] Cleared console and decoded values")
 
     def _populate_tx_commands(self) -> None:
         self._tx_command_combo.clear()
@@ -2749,6 +2780,10 @@ class MainWindow(QMainWindow):
             self._raw_logger.log("TX", packet)
         self._console.appendPlainText(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, TX, {packet.hex(' ').upper()}")
         self._update_counts()
+        self._log_activity(
+            f"[ACTION] TX command sent: {self._tx_command_combo.currentText()} "
+            f"(raw=0x{packet.hex().upper()})"
+        )
 
     # ------------------------------------------------------------------
     # Data feed
@@ -2800,6 +2835,7 @@ class MainWindow(QMainWindow):
 
     def _on_toggle_polling(self) -> None:
         enabled = self._polling_action.isChecked()
+        self._log_activity(f"[ACTION] Auto-Fetch toggle requested: {'start' if enabled else 'stop'}")
         if enabled:
             # Turning ON: open the config dialog to let the user pick targets
             if self._config is None:
@@ -2830,9 +2866,11 @@ class MainWindow(QMainWindow):
         )
         if self._serial:
             self._serial.set_polling_global(enabled)
+        self._log_activity(f"[ACTION] Auto-Fetch {'started' if enabled else 'stopped'}")
 
     def _open_poll_config_dialog(self) -> None:
         """Sidebar Configure… button — opens dialog without toggling the action."""
+        self._log_activity("[ACTION] Open Poll Schedule configure dialog")
         if self._config is None:
             self._popup_warning("Poll Schedule", "Load a configuration first.")
             return
@@ -2844,6 +2882,9 @@ class MainWindow(QMainWindow):
             for sched in self._config.polling_schedules:
                 self._serial.toggle_schedule(sched.target_id, sched.target_id in enabled_ids)
         self._update_poll_status_sidebar(enabled_ids)
+        self._log_activity(
+            f"[ACTION] Poll Schedule updated ({len(enabled_ids)} target(s) enabled)"
+        )
 
     def _update_poll_status_sidebar(self, enabled_ids: set | None = None) -> None:
         """Refresh the read-only Poll Schedule sidebar list."""
@@ -3181,6 +3222,7 @@ class MainWindow(QMainWindow):
         if self._plot_live:
             self._plot_live = False
             self._plot_mode_label.setText("🔍 Explore  (⟳ Reset View = Live)")
+            self._log_activity("[ACTION] Plot switched to Explore mode (user pan/zoom)")
 
     def _on_table_context_menu(self, pos) -> None:
         index = self._table.indexAt(pos)
@@ -3446,6 +3488,7 @@ class MainWindow(QMainWindow):
         return f"{timestamp}, ERR, {packet.error or 'unknown'}, {hex_text}"
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
+        self._log_activity("[SESSION] Close requested by user")
         # Warn if logging is active — data is safe (flushed per-frame) but
         # the user may not realise they are about to stop a recording.
         if self._logging:
