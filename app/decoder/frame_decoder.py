@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Union
 
 from .calculations import calculate_group_value
-from .types import BitfieldSpec, CalcGroupSpec, FrameConfig, SignalSpec
+from .types import BitfieldSpec, CalcGroupSpec, DecodeWarning, FrameConfig, SignalSpec
 
 
 @dataclass
@@ -33,7 +33,7 @@ class DecodedFrame:
     frame_name: str
     signals: List[DecodedSignal]
     calculations: List[DecodedSignal] = field(default_factory=list)
-    warnings: List[str] = field(default_factory=list)
+    warnings: List[DecodeWarning] = field(default_factory=list)
     error: Optional[str] = None
 
 
@@ -195,17 +195,33 @@ def _calculate_groups(
 
 def _payload_warnings(
     config: FrameConfig, frame_id: int, payload: bytes, specs: List[SignalSpec]
-) -> List[str]:
-    warnings: List[str] = []
+) -> List[DecodeWarning]:
+    warnings: List[DecodeWarning] = []
     frame = config.frames.get(frame_id)
     if frame and frame.payload_length is not None and len(payload) != frame.payload_length:
         warnings.append(
-            f"Frame 0x{frame_id:04X} payload length is {len(payload)} bytes, "
-            f"expected {frame.payload_length}"
+            DecodeWarning(
+                kind="length_mismatch",
+                frame_id=frame_id,
+                message=(
+                    f"Frame 0x{frame_id:04X} payload length is {len(payload)} bytes, "
+                    f"expected {frame.payload_length}"
+                ),
+            )
         )
     expected_from_signals = max((spec.end_byte for spec in specs), default=0)
     if len(payload) > expected_from_signals:
+        tail = payload[expected_from_signals : expected_from_signals + 32]
         warnings.append(
-            f"Frame 0x{frame_id:04X} has {len(payload) - expected_from_signals} extra payload byte(s)"
+            DecodeWarning(
+                kind="extra_bytes",
+                frame_id=frame_id,
+                message=(
+                    f"Frame 0x{frame_id:04X} has {len(payload) - expected_from_signals} "
+                    "extra payload byte(s)"
+                ),
+                offset=expected_from_signals,
+                extra_hex=tail.hex(" ").upper(),
+            )
         )
     return warnings

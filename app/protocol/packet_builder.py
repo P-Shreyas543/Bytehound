@@ -35,14 +35,21 @@ def build_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> byt
     coverage = pc.header + fid_bytes + length_bytes + payload
 
     if pc.tx_pad_length is not None:
-        total_len_without_crc = len(coverage)
         target_total_len = pc.tx_pad_length - pc.crc_size - len(pc.footer)
-        if target_total_len > total_len_without_crc:
-            padding = b'\x00' * (target_total_len - total_len_without_crc)
-            coverage += padding
-            # update payload length byte if length_meaning is payload_only?
-            # actually if we pad, usually padding is part of payload or just extra bytes.
-            # let's just append the padding.
+        if target_total_len < 0:
+            raise ValueError(
+                f"tx_pad_length={pc.tx_pad_length} is smaller than CRC+footer "
+                f"({pc.crc_size + len(pc.footer)} bytes); cannot pad"
+            )
+        unpadded_total = len(coverage) + pc.crc_size + len(pc.footer)
+        if unpadded_total > pc.tx_pad_length:
+            raise ValueError(
+                f"TX frame (id=0x{frame_id:X}) is {unpadded_total} bytes but "
+                f"tx_pad_length is {pc.tx_pad_length}; increase tx_pad_length "
+                f"or shrink the command payload"
+            )
+        if target_total_len > len(coverage):
+            coverage += b'\x00' * (target_total_len - len(coverage))
 
     if pc.crc_type == "none":
         crc_bytes = b""

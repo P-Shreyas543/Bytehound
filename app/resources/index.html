@@ -429,7 +429,7 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         <tr><td><code>crc_byte_order</code></td><td>enum</td><td><code>little</code></td><td><code>big</code> or <code>little</code> byte order for the CRC field. <em>Ignored for modbus_rtu.</em></td></tr>
         <tr><td><code>footer_hex</code></td><td>hex bytes</td><td><em>(leave blank)</em></td><td>Optional end-of-frame marker. Leave blank if your protocol has no footer. <em>Ignored for modbus_rtu.</em></td></tr>
         <tr><td><code>inter_frame_delay_ms</code></td><td>integer</td><td><code>10</code></td><td>Minimum gap (ms) between consecutive TX requests. Default 10 ms.</td></tr>
-        <tr><td><code>tx_pad_length</code></td><td>integer</td><td><em>(leave blank)</em></td><td>If set, outgoing TX packets are zero-padded to this total byte count (before CRC). Leave blank if unused. <em>Framed only.</em></td></tr>
+        <tr><td><code>tx_pad_length</code></td><td>integer</td><td><code>16</code> <em>(or blank)</em></td><td>Forces every outgoing TX packet to be exactly this many bytes on the wire. Short commands are zero-padded between payload and CRC; CRC is computed <em>over</em> the padding so the receiver's check still passes. Leave blank to send variable-length packets. <em>Framed only — see <a href="#tx-pad-length">Fixed-length TX</a> below.</em></td></tr>
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Only one row may be <code>TRUE</code>. The app uses that row and ignores all others.</td></tr>
     </table>
     <div class="success">
@@ -438,6 +438,34 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     </div>
     <div class="note">
         <strong>modbus_rtu is fully supported.</strong> Set <code>parser_type = modbus_rtu</code> and the parser and TX builder switch to standard Modbus RTU mode automatically. In this mode the <code>id_or_address</code> column in Variables and PollingSchedule is the Modbus register address (not a frame ID).
+    </div>
+
+    <h4 id="tx-pad-length">Fixed-length TX (<code>tx_pad_length</code>) — for buffer-full RX interrupts</h4>
+    <p>
+        Many microcontrollers receive serial data using a <strong>buffer-full</strong> or <strong>DMA-complete</strong> interrupt: the ISR fires once N bytes have arrived, and the firmware parses that fixed-size block. If your host sends commands of varying length, those firmwares either miss bytes, split commands across two interrupts, or sit waiting for bytes that never come. Setting <code>tx_pad_length</code> makes Bytehound transmit a constant-size frame for every command, regardless of payload.
+    </p>
+    <p><strong>Wire layout when padding is active:</strong></p>
+    <pre><code>[ header ][ frame_id ][ length ][ payload ][ 0x00 0x00 … ][ CRC ][ footer? ]
+└──────────────── padded region ────────────────┘
+└──────────────── tx_pad_length total bytes ────────────────────────────────┘</code></pre>
+    <ul>
+        <li>Padding bytes (<code>0x00</code>) are inserted <em>between</em> the payload and the CRC.</li>
+        <li>The CRC is computed over header + frame_id + length + payload + padding, so the receiver's checksum still matches without any firmware change.</li>
+        <li>The <code>length</code> field still reports the <strong>real payload length</strong> (not including padding). Firmware that uses buffer-full RX usually ignores this field anyway — it knows the frame size from the buffer size.</li>
+        <li>Only TX is affected. Received frames are still parsed by header + length + CRC as normal.</li>
+    </ul>
+    <p><strong>How to pick the value:</strong> set <code>tx_pad_length</code> equal to your MCU's RX buffer size (or DMA transfer count). Example: an STM32 with <code>HAL_UART_Receive_IT(&amp;huart1, buf, 16)</code> needs <code>tx_pad_length = 16</code>.</p>
+    <div class="success">
+        <strong>Worked example.</strong> Protocol with <code>header = AA 55</code>, <code>frame_id_size = 2</code>, <code>length_size = 1</code>, <code>crc_size = 2</code>, no footer, and <code>tx_pad_length = 16</code>:<br><br>
+        Command with 1-byte payload <code>0x42</code> for frame <code>0x0010</code> goes out as:<br>
+        <code>AA 55 &nbsp; 10 00 &nbsp; 01 &nbsp; 42 &nbsp; 00 00 00 00 00 00 00 &nbsp; CRC_lo CRC_hi</code><br>
+        Total = 2 + 2 + 1 + 1 + 7 + 2 = <strong>16 bytes</strong>. The CRC covers the first 14 bytes, padding included.
+    </div>
+    <div class="warning">
+        <strong>If a command is bigger than <code>tx_pad_length</code>, the app errors out</strong> instead of silently sending an oversized frame — you'll see <code>TX frame (id=0x…) is N bytes but tx_pad_length is M</code>. Either raise <code>tx_pad_length</code> or shrink the command. Also, <code>tx_pad_length</code> must be at least <code>crc_size + len(footer)</code>, otherwise there's no room for the CRC and the app rejects the config.
+    </div>
+    <div class="note">
+        <strong>Not for Modbus RTU.</strong> Modbus has its own fixed-per-FC framing — <code>tx_pad_length</code> is ignored when <code>parser_type = modbus_rtu</code>.
     </div>
 
     <hr>

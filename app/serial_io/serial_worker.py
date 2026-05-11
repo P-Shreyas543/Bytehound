@@ -87,6 +87,12 @@ class PollingWorker(QThread):
             {"spec": s, "next_run": time.time(), "enabled": s.enabled}
             for s in schedules
         ]
+        # Round-robin cursor into _schedules. The polling loop scans starting
+        # here instead of from index 0 every time, so a schedule near the top
+        # of the list can't starve schedules further down (which happened when
+        # a dummy frame's timeout blocked the loop long enough for earlier
+        # schedules to become due again before the cursor reached the tail).
+        self._sched_cursor: int = 0
         self._parser = create_parser(protocol)
 
         self._serial: serial.Serial | None = None
@@ -298,10 +304,20 @@ class PollingWorker(QThread):
                 grace_expired = (time.time() - self._open_time) > POLLING_BOOT_GRACE
                 if polling_enabled and (self._rx_bytes > 0 or grace_expired):
                     now = time.time()
-                    for sched in self._schedules:
+                    n = len(self._schedules)
+                    # Round-robin: start scanning at _sched_cursor and wrap.
+                    # Each successful poll advances the cursor by one, so the
+                    # next iteration begins with the *following* schedule —
+                    # not the head of the list. Guarantees every enabled
+                    # schedule that is due gets visited in turn even when
+                    # some entries are slow (full-timeout) and others fast.
+                    for offset in range(n):
+                        idx = (self._sched_cursor + offset) % n
+                        sched = self._schedules[idx]
                         if sched["enabled"] and now >= sched["next_run"]:
                             self._do_poll(sched)
                             sched["next_run"] = time.time() + (sched["spec"].interval_ms / 1000.0)
+                            self._sched_cursor = (idx + 1) % n
                             polled = True
                             break
 

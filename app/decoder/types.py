@@ -98,6 +98,15 @@ class SignalSpec:
 
 
 @dataclass(frozen=True)
+class DecodeWarning:
+    kind: str
+    frame_id: int
+    message: str
+    offset: Optional[int] = None
+    extra_hex: Optional[str] = None
+
+
+@dataclass(frozen=True)
 class BitfieldSpec:
     frame_id: int
     variable_name: str

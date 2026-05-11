@@ -1008,6 +1008,7 @@ class MainWindow(QMainWindow):
         self._decoded_logger: Optional[DecodedLogger] = None
         self._settings = QSettings(APP_ORG, APP_NAME)
         self._tx_field_inputs: Dict[str, QLineEdit] = {}
+        self._seen_decode_warnings: set[tuple[int, str, int]] = set()
 
         # Timer removed; using PollingWorker QThread
 
@@ -2312,6 +2313,7 @@ class MainWindow(QMainWindow):
         self._parser = create_parser(self._config.protocol)
         self._session_started = datetime.now()
         self._plot_history.clear()
+        self._seen_decode_warnings.clear()
         self._packet_count = 0
         self._error_count = 0
         self._timeouts = 0
@@ -2413,6 +2415,7 @@ class MainWindow(QMainWindow):
                 "Log parse warnings",
                 f"{len(errors)} line(s) skipped:\n" + "\n".join(errors[:5]),
             )
+        self._seen_decode_warnings.clear()
         for chunk in replay_bytes(rows):
             self._rx_bytes += len(chunk)
             self._parser.feed(chunk)
@@ -2456,6 +2459,7 @@ class MainWindow(QMainWindow):
             self._popup_warning("Connect", "No port selected. Please plug in a device and refresh.")
             return
 
+        self._seen_decode_warnings.clear()
         try:
             self._serial = PollingWorker(settings, self._config.protocol, self._config.polling_schedules)
             self._serial.packets_received.connect(self._on_packets_received)
@@ -2711,6 +2715,7 @@ class MainWindow(QMainWindow):
         self._bitfield_table.setRowCount(0)
         self._enum_table.setRowCount(0)
         self._table_model.clear_live_columns()
+        self._seen_decode_warnings.clear()
         self._redraw_plot()
         self._update_counts()
         self._set_status("Cleared decoded values and console")
@@ -3085,8 +3090,14 @@ class MainWindow(QMainWindow):
             # wire-level CRC failures only.
             self._console.appendPlainText(f"[decode] {decoded.error}")
             return
-        for warning in decoded.warnings:
-            self._console.appendPlainText(f"[decode warning] {warning}")
+        for w in decoded.warnings:
+            key = (w.frame_id, w.kind, w.offset if w.offset is not None else -1)
+            if key in self._seen_decode_warnings:
+                continue
+            self._seen_decode_warnings.add(key)
+            tail = f"  tail@byte{w.offset}: {w.extra_hex}" if w.extra_hex else ""
+            self._log_activity(f"[DECODE WARN] {w.message}{tail}")
+            self._console.appendPlainText(f"[decode warning] {w.message}")
 
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         elapsed = (datetime.now() - self._session_started).total_seconds()
@@ -3123,10 +3134,15 @@ class MainWindow(QMainWindow):
                 updated=timestamp,
             )
             self._update_detail_tabs(signal)
-            # Update editor table current-value column
+            # Update editor table current-value column. Skip placeholder rows
+            # (e.g. the "no writable signals" notice) where col 1 has no item.
             for erow in range(self._editor_table.rowCount()):
-                if self._editor_table.item(erow, 1).text() == signal.signal_name:
-                    self._editor_table.item(erow, 2).setText(signal.display_value or value_text)
+                name_item = self._editor_table.item(erow, 1)
+                if name_item is None or name_item.text() != signal.signal_name:
+                    continue
+                val_item = self._editor_table.item(erow, 2)
+                if val_item is not None:
+                    val_item.setText(signal.display_value or value_text)
 
             if signal.scaled_value is not None and signal.status == "ok":
                 self._plot_history[key].append((elapsed, signal.scaled_value))

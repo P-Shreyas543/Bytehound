@@ -436,7 +436,20 @@ For Modbus, `build_modbus_packet`:
 - 2-byte payload → FC 06 single-register write.
 - Larger payload → FC 16 multi-register write.
 
-`tx_pad_length` (if set) zero-pads `coverage` (header..payload) before CRC.
+`tx_pad_length` (if set) zero-pads `coverage` (header..payload) before CRC so
+every TX frame is exactly `tx_pad_length` bytes on the wire — required for
+MCUs that use buffer-full / DMA-complete RX interrupts (`HAL_UART_Receive_IT`).
+CRC is computed *over* the padding, so the receiver's checksum still validates.
+
+Validation (raised as `ValueError`, caught by `CommandBuildError` upstream):
+
+- `tx_pad_length < crc_size + len(footer)` → no room for CRC, rejected.
+- Built frame > `tx_pad_length` → command is too big to fit, rejected with the
+  offending frame ID and actual byte count so the user can either raise
+  `tx_pad_length` or shrink the command payload.
+
+Silent oversize sends are not allowed — better to error loudly than confuse
+a buffer-full RX firmware with a frame that's too long.
 
 ---
 
