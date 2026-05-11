@@ -4,6 +4,10 @@ Usage:
     python build.py              # clean + build + zip
     python build.py --no-clean   # build without wiping build/ and dist/
     python build.py --no-zip     # skip the zip step
+
+Code signing (opt-in): set SIGN_PFX and SIGN_PASSWORD env vars before running
+to sign the inner .exe and the Inno Setup installer. Requires signtool.exe in
+the Windows SDK (see tools/sign.ps1 for details).
 """
 
 from __future__ import annotations
@@ -11,6 +15,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -22,6 +27,7 @@ APP_NAME = "Serial-MonitorApp"
 DIST_DIR = ROOT / "dist" / APP_NAME
 BRANDING_DIR = ROOT / "branding"
 BRANDING_PATTERNS = ("*.ico", "*.png")
+SIGN_SCRIPT = ROOT / "tools" / "sign.ps1"
 
 
 def clean() -> None:
@@ -116,6 +122,40 @@ def make_zip() -> Path:
     return zip_path
 
 
+def signing_enabled() -> bool:
+    return bool(os.environ.get("SIGN_PFX")) and bool(os.environ.get("SIGN_PASSWORD"))
+
+
+def find_signtool() -> Path | None:
+    """Locate signtool.exe via $SIGNTOOL_PATH or the Windows 10/11 SDK bin tree."""
+    env = os.environ.get("SIGNTOOL_PATH")
+    if env and Path(env).exists():
+        return Path(env)
+    sdk_root = Path(r"C:\Program Files (x86)\Windows Kits\10\bin")
+    if not sdk_root.exists():
+        return None
+    candidates = [p for p in sdk_root.rglob("signtool.exe") if "x64" in str(p).lower()]
+    if not candidates:
+        return None
+    return sorted(candidates, reverse=True)[0]
+
+
+def sign_exe(exe: Path) -> int:
+    """Sign exe with tools/sign.ps1. Returns 0 if disabled or success."""
+    if not signing_enabled():
+        return 0
+    if not SIGN_SCRIPT.exists():
+        print(f"[build] WARNING: signing requested but {SIGN_SCRIPT} missing")
+        return 1
+    cmd = [
+        "powershell.exe", "-NoProfile", "-ExecutionPolicy", "Bypass",
+        "-File", str(SIGN_SCRIPT),
+        "-ExePath", str(exe),
+    ]
+    print(f"[build] signing {exe.name}")
+    return subprocess.call(cmd, cwd=ROOT)
+
+
 def run_inno_setup() -> tuple[int, Path | None]:
     """Compile installer.iss with Inno Setup. Returns (rc, installer_path)."""
     iss = ROOT / "installer.iss"
@@ -137,8 +177,30 @@ def run_inno_setup() -> tuple[int, Path | None]:
 
     out_dir = ROOT / "installer_output"
     out_dir.mkdir(exist_ok=True)
-    cmd = [str(iscc), str(iss)]
-    print(f"[build] running Inno Setup: {' '.join(cmd)}")
+    cmd: list[str] = [str(iscc)]
+
+    if signing_enabled():
+        signtool = find_signtool()
+        if signtool is None:
+            print("[build] WARNING: SIGN_PFX set but signtool.exe not found; building unsigned.")
+        else:
+            # Generate a tiny .cmd shim for Inno's SignTool. Embedding the full
+            # signtool command directly in /Ssigntool= breaks when the SDK path
+            # contains spaces — the nested quoting confuses ISCC's parser into
+            # seeing extra positional args. The shim path has no spaces so the
+            # /Ssigntool= value stays simple.
+            runner = ROOT / "tools" / "sign-runner.cmd"
+            runner.write_text(
+                "@echo off\r\n"
+                f'"{signtool}" sign /f "%SIGN_PFX%" /p "%SIGN_PASSWORD%" '
+                "/fd sha256 /tr http://timestamp.digicert.com /td sha256 %1\r\n",
+                encoding="ascii",
+            )
+            cmd += ["/dSIGN", f"/Ssigntool=signtool={runner} $f"]
+            print("[build] Inno Setup will sign installer + uninstaller")
+
+    cmd.append(str(iss))
+    print(f"[build] running Inno Setup")
     rc = subprocess.call(cmd, cwd=ROOT)
     if rc != 0:
         print(f"[build] Inno Setup FAILED with exit code {rc}", file=sys.stderr)
@@ -181,6 +243,12 @@ def main() -> int:
     print(f"\n[build] done. exe at: {exe}")
 
     copy_branding()
+
+    if signing_enabled():
+        rc = sign_exe(exe)
+        if rc != 0:
+            print(f"[build] inner exe signing FAILED (rc={rc})", file=sys.stderr)
+            return rc
 
     # Build the installer FIRST, then hash whichever artifact end-users will
     # actually download. version.json's installer_url points at the Inno Setup

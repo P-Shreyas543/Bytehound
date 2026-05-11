@@ -13,9 +13,7 @@
 #define MyAppName      "Serial Monitor"
 #define MyAppSlug      "Serial-MonitorApp"
 #define MyAppVersion   "0.1.0"
-#define MyPublisher    "Decibels Lab Pvt. Ltd."
-#define MyDeveloper    "Shreyas P"
-#define MyAppURL       "https://lms.decibelslab.com/"
+#define MyPublisher    "Serial Monitor"
 #define MyAppExe       "Serial-MonitorApp.exe"
 #define MyAppIcon      "branding\logo_sq.ico"
 #define MyDistDir      "dist\Serial-MonitorApp"
@@ -27,15 +25,12 @@ AppName                   = {#MyAppName}
 AppVersion                = {#MyAppVersion}
 AppVerName                = {#MyAppName} v{#MyAppVersion}
 AppPublisher              = {#MyPublisher}
-AppPublisherURL           = {#MyAppURL}
-AppSupportURL             = {#MyAppURL}
-AppUpdatesURL             = {#MyAppURL}
 AppCopyright              = Copyright (C) 2026 {#MyPublisher}
 
 ; ── Install location ────────────────────────────────────────────────────────
-; Installs to C:\Program Files\Decibels\Serial-MonitorApp  (admin)
+; Installs to C:\Program Files\Serial-MonitorApp  (admin)
 ; Falls back to %LocalAppData%\Programs\...  (no admin)
-DefaultDirName            = {autopf}\Decibels\{#MyAppSlug}
+DefaultDirName            = {autopf}\{#MyAppSlug}
 DefaultGroupName          = {#MyAppName}
 AllowNoIcons              = no
 DisableProgramGroupPage   = yes
@@ -73,6 +68,14 @@ CloseApplications         = yes
 RestartApplications       = no
 ChangesAssociations       = no
 
+; ── Code signing (opt-in) ───────────────────────────────────────────────────
+; Build signed: invoke ISCC with /dSIGN and /Ssigntool="<full signtool cmd> $f"
+; build.py passes both automatically when SIGN_PFX + SIGN_PASSWORD env vars are set.
+#ifdef SIGN
+SignTool                  = signtool
+SignedUninstaller         = yes
+#endif
+
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
 
@@ -84,7 +87,7 @@ Name: "startmenu";     Description: "Create a &Start Menu entry";   GroupDescrip
 
 [Dirs]
 ; Pre-create the default logs directory so the app finds it on first launch
-Name: "{userdocs}\Decibels\{#MyAppSlug}"; Flags: uninsneveruninstall
+Name: "{userdocs}\{#MyAppSlug}"; Flags: uninsneveruninstall
 
 [Files]
 ; ── Entire PyInstaller output (fully offline, all deps bundled) ──────────────

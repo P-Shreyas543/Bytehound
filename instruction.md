@@ -39,16 +39,15 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 | Property              | Value                                              |
 |-----------------------|----------------------------------------------------|
 | **App Name**          | Serial Monitor                                     |
-| **Publisher**         | Decibels                                           |
+| **Publisher**         | Serial Monitor                                     |
 | **Version**           | 0.1.0 (sourced from [version.json](version.json))  |
 | **Platform**          | Windows 10 / 11 (x64). Code is cross-platform but the shipped binary targets Windows. |
 | **Window Size**       | 1400 × 900 px                                      |
 | **Window Title**      | `Serial Monitor v<Version>` (e.g. `Serial Monitor v0.1.0`) |
-| **Website**           | https://lms.decibelslab.com/                       |
 | **Executable Name**   | `Serial-MonitorApp.exe`                            |
 | **Logging Format**    | CSV — `*_raw.csv` (timestamped hex frames) + `*_decoded.csv` (per-signal scaled values). See §12. |
 | **Plotting Library**  | pyqtgraph (live plot in main window + Analysis Suite) |
-| **Settings Storage**  | `QSettings("Decibels", "Serial-MonitorApp")` → Windows registry `HKCU\Software\Decibels\Serial-MonitorApp` |
+| **Settings Storage**  | `QSettings("Serial-MonitorApp", "Serial-MonitorApp")` → Windows registry `HKCU\Software\Serial-MonitorApp\Serial-MonitorApp` |
 | **Update Manifest**   | `manifest_url` field in [version.json](version.json) |
 
 ---
@@ -634,7 +633,7 @@ RX path 1:1.
 ### Window
 
 `QMainWindow`, title "Serial Monitor", default size 1400×820. Uses
-`QSettings("Decibels", "Serial-MonitorApp")` for persistence (window state,
+`QSettings("Serial-MonitorApp", "Serial-MonitorApp")` for persistence (window state,
 theme, last config path, last port/baud).
 
 Theme: `qdarktheme.setup_theme("dark"|"light", corner_shape="rounded")`,
@@ -949,7 +948,7 @@ Files: [app/ui/updater.py](app/ui/updater.py), [version.json](version.json).
 ```json
 {
   "version": "0.1.0",
-  "publisher": "Decibels",
+  "publisher": "Serial Monitor",
   "manifest_url": "https://.../version.json",
   "installer_url": "https://.../SerialMonitor_Setup_X.Y.Z.exe",
   "release_notes": "...",
@@ -1004,8 +1003,8 @@ update check.
 
 ## 17. Settings Persistence
 
-`QSettings("Decibels", "Serial-MonitorApp")` keys (Windows registry
-`HKCU\Software\Decibels\Serial-MonitorApp`):
+`QSettings("Serial-MonitorApp", "Serial-MonitorApp")` keys (Windows registry
+`HKCU\Software\Serial-MonitorApp\Serial-MonitorApp`):
 
 | Key                    | Type    | Meaning                                       |
 |------------------------|---------|-----------------------------------------------|

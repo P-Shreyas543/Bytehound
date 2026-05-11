@@ -1,9 +1,9 @@
 {
     "version": "0.1.0",
     "Developer": "Shreyas P",
-    "publisher": "Decibels Lab Pvt. Ltd.",
+    "publisher": "Serial Monitor",
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Serial-MonitorApp/master/version.json",
     "installer_url": "https://github.com/P-Shreyas543/Serial-MonitorApp/releases/download/v0.1.0/SerialMonitor_Setup_0.1.0.exe",
     "release_notes": "Initial release.",
-    "sha256": "d1286b6752a4360b11f9c0292b79fb3e088b9b6cb0a15076ef939958cf9a9e07"
+    "sha256": "79ad836f3a4cec3f6a394936b3ee976b454a207b23ba777693a245166776f011"
 }

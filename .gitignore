@@ -45,3 +45,10 @@ scratch/
 # App-generated runtime files
 *.csv.lock
 session_*.json
+
+# Code signing artifacts (NEVER commit private keys or passwords)
+*.pfx
+*.p12
+tools/codesign.*
+tools/sign-runner.cmd
+sign-password.txt

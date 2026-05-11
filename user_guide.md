@@ -105,7 +105,7 @@ Tabs showing live ON/OFF state per named bit and the active enum label per varia
    - `<name>_session/` — snapshot of the active configuration.
 3. **File → Stop Logging** to finalize.
 
-The default log directory is `~/Documents/Decibels/Serial-MonitorApp` and a 📂 button next to the logging status opens it.
+The default log directory is `~/Documents/Serial-MonitorApp` and a 📂 button next to the logging status opens it.
 
 ### Replay
 1. Make sure the appropriate config is loaded (preferably the saved snapshot).
@@ -147,7 +147,7 @@ pyinstaller Serial-MonitorApp.spec
 Output lives in `dist/Serial-MonitorApp`.
 
 ### Inno Setup
-Open `installer.iss` in the Inno Setup Compiler and press F9. The offline installer is produced in `installer_output/`. The default install location is `Program Files\Decibels\Serial-MonitorApp`.
+Open `installer.iss` in the Inno Setup Compiler and press F9. The offline installer is produced in `installer_output/`. The default install location is `Program Files\Serial-MonitorApp`.
 
 ---
 
