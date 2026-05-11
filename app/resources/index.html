@@ -642,7 +642,7 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <h3 id="check-for-updates">Check for Updates</h3>
     <p>Open <strong>Help → Check for Updates</strong>. The app will:</p>
     <ol>
-        <li>Contact the publisher's update manifest over HTTPS and compare the published version against your installed version.</li>
+        <li>Contact the update manifest over HTTPS and compare the published version against your installed version.</li>
         <li>If you are already on the latest build, show a brief <em>Up to date</em> confirmation.</li>
         <li>If a newer version is available, show the version number and release notes and ask whether you want to install it.</li>
         <li>On confirmation, the new installer is downloaded to your system temp folder and its <strong>SHA-256 checksum</strong> is verified against the manifest before launching. If the digest does not match, the partial download is deleted and the install is refused — this protects you from a corrupted or tampered binary.</li>
@@ -652,7 +652,7 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         Update checks are entirely on-demand. The app never contacts the network on its own — nothing is downloaded or installed without your explicit click.
     </div>
     <div class="warning">
-        If you see <em>"Failed to check for updates: connection timed out"</em>, the publisher's manifest server is unreachable from this machine. Check your firewall / proxy settings, or simply skip the update — the app continues to work normally.
+        If you see <em>"Failed to check for updates: connection timed out"</em>, the manifest server is unreachable from this machine. Check your firewall / proxy settings, or simply skip the update — the app continues to work normally.
     </div>
 
 </div>

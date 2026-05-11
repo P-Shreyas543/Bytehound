@@ -1,7 +1,6 @@
 {
     "version": "0.1.0",
     "Developer": "Shreyas P",
-    "publisher": "Bytehound",
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
     "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.1.0/Bytehound_Setup_0.1.0.exe",
     "release_notes": "Initial release.",

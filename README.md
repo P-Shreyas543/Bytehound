@@ -36,3 +36,7 @@ The Inno Setup script `installer.iss` packages `dist/Bytehound` into an offline 
 ## In-app User Manual
 
 Help → View Documentation opens `app/resources/index.html` — a complete handbook covering configuration, UART frame definition, TX commands, logging, plotting, and troubleshooting.
+
+## License
+
+This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.

@@ -39,7 +39,7 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 | Property              | Value                                              |
 |-----------------------|----------------------------------------------------|
 | **App Name**          | Bytehound                                     |
-| **Publisher**         | Bytehound                                     |
+| **Developer**         | Shreyas P                                          |
 | **Version**           | 0.1.0 (sourced from [version.json](version.json))  |
 | **Platform**          | Windows 10 / 11 (x64). Code is cross-platform but the shipped binary targets Windows. |
 | **Window Size**       | 1400 × 900 px                                      |
@@ -694,7 +694,7 @@ Built dynamically in `_populate_view_menu()`. Items in order:
 | **View Documentation** | `_on_view_docs` | Opens [app/resources/index.html](app/resources/index.html) in the default browser. |
 | **Check for Updates** | `_on_check_updates` | Spawns `UpdateChecker` (see §16). |
 | — separator — |  |  |
-| **About Bytehound** | `_on_info` | Shows version + publisher dialog. |
+| **About Bytehound** | `_on_info` | Shows version + developer dialog. |
 
 ### Toolbar
 
@@ -948,7 +948,7 @@ Files: [app/ui/updater.py](app/ui/updater.py), [version.json](version.json).
 ```json
 {
   "version": "0.1.0",
-  "publisher": "Bytehound",
+  "Developer": "Shreyas P",
   "manifest_url": "https://.../version.json",
   "installer_url": "https://.../Bytehound_Setup_X.Y.Z.exe",
   "release_notes": "...",

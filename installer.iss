@@ -13,7 +13,7 @@
 #define MyAppName      "Bytehound"
 #define MyAppSlug      "Bytehound"
 #define MyAppVersion   "0.1.0"
-#define MyPublisher    "Bytehound"
+#define MyDeveloper    "Shreyas P"
 #define MyAppExe       "Bytehound.exe"
 #define MyAppIcon      "branding\logo_sq.ico"
 #define MyDistDir      "dist\Bytehound"
@@ -24,8 +24,8 @@ AppId                     = {{FD5F3D1F-A6B1-4A59-99E7-2485AC78B5F6}
 AppName                   = {#MyAppName}
 AppVersion                = {#MyAppVersion}
 AppVerName                = {#MyAppName} v{#MyAppVersion}
-AppPublisher              = {#MyPublisher}
-AppCopyright              = Copyright (C) 2026 {#MyPublisher}
+AppPublisher              = {#MyDeveloper}
+AppCopyright              = Copyright (C) 2026 {#MyDeveloper}
 
 ; ── Install location ────────────────────────────────────────────────────────
 ; Installs to C:\Program Files\Bytehound  (admin)
@@ -57,7 +57,7 @@ ShowLanguageDialog        = auto
 
 ; ── Version info stamped into the installer PE ──────────────────────────────
 VersionInfoVersion        = {#MyAppVersion}.0
-VersionInfoCompany        = {#MyPublisher}
+VersionInfoCompany        = {#MyDeveloper}
 VersionInfoDescription    = {#MyAppName} Installer
 VersionInfoProductName    = {#MyAppName}
 VersionInfoProductVersion = {#MyAppVersion}
