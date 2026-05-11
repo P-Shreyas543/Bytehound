@@ -524,14 +524,36 @@ Each iteration, **in this priority order**:
    it, emit `tx_recorded`. For Modbus, block briefly to await the response so
    the next request doesn't collide.
 2. **Polling**: if `_polling_global_enabled` is true *and* the boot-grace gate
-   has cleared (see below), find the first schedule whose `next_run <= now`,
-   send its request, await response (or time out), reschedule. Only one poll
-   per loop iteration to interleave with priority TX.
+   has cleared (see below), scan the schedule list **round-robin** starting at
+   `_sched_cursor`, find the first enabled schedule whose `next_run <= now`,
+   send its request, await response (or time out), advance `_sched_cursor`
+   past it, and reschedule. Only one poll per loop iteration to interleave
+   with priority TX.
 3. **Drain RX**: if no poll happened, read whatever is in the input buffer,
    feed the parser, emit `packets_received` (batched) for the iteration.
 4. **Watchdog**: every iteration, debounce `device_timeout` if `_rx_bytes`
    has been flat for `WATCHDOG_SILENCE_MS` ms.
 5. Sleep 10 ms.
+
+### Round-robin polling cursor
+
+`_sched_cursor: int` is an index into `_schedules`. The polling scan starts at
+this index and wraps. After a successful poll, the cursor advances to the
+*next* index so the following iteration begins one step further down the list,
+not back at index 0.
+
+This guarantees **fairness** when multiple schedules are due simultaneously:
+without the cursor, a fast schedule near the top of the list (or a dummy
+frame whose poll blocks for the full `timeout_ms` while earlier schedules
+become re-due) could starve schedules near the tail indefinitely. The
+classic symptom was the last `polling_schedule` row never getting a TX even
+though it was enabled — verified in the field with a five-schedule config
+where the fifth frame ID was never queried. With the cursor, every enabled
+schedule is visited in turn; only intervals (not list position) determine
+poll frequency.
+
+Toggling a schedule via `toggle_schedule(target_id, enabled)` does not shift
+the cursor — disabled entries are simply skipped on the next pass.
 
 Counters: `_timeouts`, `_crc_errors`, `_rx_bytes` are emitted via
 `metrics_updated` after each batch. `reset_metrics()` (mutex-guarded) zeroes
