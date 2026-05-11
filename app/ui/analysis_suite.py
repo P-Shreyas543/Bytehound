@@ -149,44 +149,61 @@ class LogLoaderThread(QThread):
         """Parse a _decoded.csv file produced by DecodedLogger."""
         with open(self._path, newline='', encoding='utf-8') as f:
             reader = csv.DictReader(f)
+            fieldnames = reader.fieldnames or []
             rows = list(reader)
 
+        if not fieldnames:
+            self.error.emit(self._path, "CSV header row is missing.")
+            return
         if not rows:
             self.error.emit(self._path, "No data rows found in CSV.")
             return
 
-        # Build elapsed time from timestamp column
+        data_columns = [
+            name for name in fieldnames
+            if name and name not in {"timestamp", "elapsed_ms"}
+        ]
+        if not data_columns:
+            self.error.emit(self._path, "No data columns found in CSV.")
+            return
+
         import datetime as dt
         first_ts = None
-        elapsed_list = []
-        col_data: dict[str, list] = {}  # variable_name -> list of (elapsed, value)
+        col_data: dict[str, list[tuple[float, float]]] = {name: [] for name in data_columns}
 
         for row in rows:
-            ts_str = row.get('timestamp', '')
-            try:
-                ts = dt.datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S.%f")
-            except ValueError:
+            elapsed_s: float | None = None
+            elapsed_raw = row.get("elapsed_ms", "")
+            if elapsed_raw is not None and str(elapsed_raw).strip() != "":
                 try:
-                    ts = dt.datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                    elapsed_s = float(elapsed_raw) / 1000.0
                 except ValueError:
-                    ts = None
+                    elapsed_s = None
 
-            if first_ts is None and ts is not None:
-                first_ts = ts
-            elapsed = (ts - first_ts).total_seconds() if (ts and first_ts) else 0.0
+            if elapsed_s is None:
+                ts_str = row.get("timestamp", "")
+                try:
+                    ts = dt.datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S.%f")
+                except ValueError:
+                    try:
+                        ts = dt.datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
+                    except ValueError:
+                        ts = None
+                if first_ts is None and ts is not None:
+                    first_ts = ts
+                elapsed_s = (ts - first_ts).total_seconds() if (ts and first_ts) else 0.0
 
-            var = row.get('variable', '')
-            unit = row.get('unit', '')
-            label = f"{var} ({unit})" if unit else var
-            try:
-                val = float(row.get('scaled_value', 'nan'))
-            except (ValueError, TypeError):
-                val = float('nan')
+            for label in data_columns:
+                cell = row.get(label, "")
+                if cell is None or str(cell).strip() == "":
+                    continue
+                try:
+                    value = float(cell)
+                except (ValueError, TypeError):
+                    continue
+                col_data[label].append((elapsed_s, value))
 
-            if label not in col_data:
-                col_data[label] = []
-            col_data[label].append((elapsed, val))
-
+        col_data = {label: pairs for label, pairs in col_data.items() if pairs}
         if not col_data:
             self.error.emit(self._path, "No numeric columns found in CSV.")
             return

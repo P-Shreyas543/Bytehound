@@ -118,7 +118,8 @@ def main() -> int:
         tx_seen.clear()
 
     raw_logger = RawLogger(raw_path)
-    decoded_logger = DecodedLogger(dec_path)
+    decoded_logger = DecodedLogger(dec_path, cfg)
+    log_start = time.perf_counter()
     raw_logger.open()
     decoded_logger.open()
 
@@ -166,7 +167,8 @@ def main() -> int:
                 continue
             seen_ids.add(p.frame_id)
             decoded = decode_frame(cfg, p.frame_id, p.payload)
-            decoded_logger.log_frame(pkt_total, decoded)
+            elapsed_ms = int((time.perf_counter() - log_start) * 1000)
+            decoded_logger.log_frame(decoded, elapsed_ms)
             for sig in decoded.signals:
                 if sig.frame_id == 0x2000 and sig.signal_name == "Voltage_Limit" and sig.scaled_value is not None:
                     voltage_limits.append(sig.scaled_value)

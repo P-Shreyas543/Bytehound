@@ -149,7 +149,8 @@ def main() -> int:
     raw_path = Path("scratch/test_raw.csv")
     dec_path = Path("scratch/test_decoded.csv")
     raw_logger = RawLogger(raw_path)
-    decoded_logger = DecodedLogger(dec_path)
+    decoded_logger = DecodedLogger(dec_path, config)
+    log_start = time.perf_counter()
 
     # Per-feature observation buckets
     seen_frame_ids: set[int] = set()
@@ -170,7 +171,8 @@ def main() -> int:
                 continue
             seen_frame_ids.add(pkt.frame_id)
             decoded = decode_frame(config, pkt.frame_id, pkt.payload)
-            decoded_logger.log_frame(pkt_total, decoded)
+            elapsed_ms = int((time.perf_counter() - log_start) * 1000)
+            decoded_logger.log_frame(decoded, elapsed_ms)
 
             for sig in decoded.signals:
                 if sig.frame_id == 0x2000 and sig.signal_name == "Voltage_Limit" and sig.scaled_value is not None:

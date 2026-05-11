@@ -2637,7 +2637,11 @@ class MainWindow(QMainWindow):
             decoded_path = base.with_name(f"{base_stem}.csv")
 
         self._raw_logger = RawLogger(raw_path) if raw_path else None
-        self._decoded_logger = DecodedLogger(decoded_path) if decoded_path else None
+        if decoded_path:
+            assert self._config is not None
+            self._decoded_logger = DecodedLogger(decoded_path, self._config)
+        else:
+            self._decoded_logger = None
 
         # Open eagerly so header-mismatch / permission errors surface here as
         # a popup, instead of being raised inside the 60 Hz UI flush callback
@@ -2827,7 +2831,8 @@ class MainWindow(QMainWindow):
         decoded = decode_frame(self._config, packet.frame_id, packet.payload)
         self._apply_decoded(decoded)
         if self._decoded_logger:
-            self._decoded_logger.log_frame(self._packet_count, decoded)
+            elapsed_ms = int((datetime.now() - self._session_started).total_seconds() * 1000)
+            self._decoded_logger.log_frame(decoded, elapsed_ms)
         self._update_counts()
 
     # ------------------------------------------------------------------

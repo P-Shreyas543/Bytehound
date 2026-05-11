@@ -628,14 +628,23 @@ Header: `timestamp,direction,hex,delta_t_ms`
 
 ### `*_decoded.csv` — `DecodedLogger`
 
-Header:
-`timestamp,frame_number,frame_id,frame_name,variable,index,raw_value,scaled_value,display_value,unit,group,status,is_calculated`
+Header (wide format):
+`timestamp,elapsed_ms,<signal 1>,<signal 2>,...,<calc N>`
 
-One row per `DecodedSignal` (including calculated). `frame_id` is formatted as
-`0x%04X`.
+- One row per decoded frame (sparse): only the columns for that frame's
+  signals/calculations are filled; the rest are blank.
+- Signal column labels are the signal name, suffixed with `(<unit>)` when a
+  unit is present. Counted signals already include their index in the name.
+- Calculations are appended after the frame signals, named
+  `<group> <stat>` with the same unit suffix rule.
+- Values are scaled engineering numbers only (raw bytes and display strings
+  are not logged).
+- `timestamp` is local time, millisecond resolution
+  (`%Y-%m-%d %H:%M:%S.%f` truncated to ms).
+- `elapsed_ms` is the integer milliseconds since the logging session started.
 
 Both loggers append to existing files (writing the header only if empty) and
-flush after every record so a crash never loses more than the current frame.
+flush periodically so a crash never loses more than the current short buffer.
 
 **Header-match validation.** On `open()`, both loggers read the existing
 header row (if any) and refuse to append when its columns don't match the
