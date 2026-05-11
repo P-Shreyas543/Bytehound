@@ -32,7 +32,7 @@ from PySide6.QtWidgets import (
 # ═══════════════════════════════════════════════════════════════════════
 # Stubs to replace missing dependencies
 # ═══════════════════════════════════════════════════════════════════════
-APP_NAME = "Serial-MonitorApp"
+APP_NAME = "Bytehound"
 
 def get_datalogs_dir() -> str:
     path = Path.home() / "Documents" / APP_NAME / "Logs"

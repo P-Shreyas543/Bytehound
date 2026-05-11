@@ -93,15 +93,15 @@ def _icon(name: str, color: str = "#F8FAFC") -> QIcon:
     except Exception:
         return QIcon()
 
-APP_ORG  = "Serial-MonitorApp"
-APP_NAME = "Serial-MonitorApp"
-APP_DISPLAY_NAME = "Serial Monitor"
+APP_ORG  = "Bytehound"
+APP_NAME = "Bytehound"
+APP_DISPLAY_NAME = "Bytehound"
 
 
 def _project_root() -> Path:
     """Return the dir to look for runtime assets (branding/, version.json).
 
-    Frozen build: next to Serial-MonitorApp.exe (build.py copies branding/ here).
+    Frozen build: next to Bytehound.exe (build.py copies branding/ here).
     Dev run:      the repo root.
     """
     if getattr(sys, "frozen", False):
@@ -1148,7 +1148,7 @@ class MainWindow(QMainWindow):
         self._exit_action = QAction(_icon("mdi6.exit-to-app", _ic), "Exit", self)
         self._exit_action.triggered.connect(self.close)
 
-        self._info_action = QAction(_icon("mdi6.information-outline", _ic), "About Serial Monitor", self)
+        self._info_action = QAction(_icon("mdi6.information-outline", _ic), "About Bytehound", self)
         self._info_action.triggered.connect(self._on_info)
 
         self._docs_action = QAction(_icon("mdi6.book-open-page-variant-outline", _ic), "View Documentation", self)
@@ -1286,9 +1286,9 @@ class MainWindow(QMainWindow):
         version   = _v.get("version",   self._version)
         developer = _v.get("Developer", "Shreyas P")
         self._popup_about(
-            "About Serial Monitor",
+            "About Bytehound",
             (
-                f"{APP_DISPLAY_NAME} App\n\n"
+                f"{APP_DISPLAY_NAME}\n\n"
                 f"Version:   {version}\n"
                 f"Developer: {developer}\n"
                 f"Build Date: May 2026\n\n"
@@ -1598,7 +1598,7 @@ class MainWindow(QMainWindow):
             panels_menu.addAction(action)
 
         menu.addSeparator()
-        # Use file-cog so this is visually distinct from "About Serial Monitor"
+        # Use file-cog so this is visually distinct from "About Bytehound"
         # which uses information-outline.
         config_info_action = QAction(_icon("mdi6.file-cog-outline", ic), "Config Info\u2026", self)
         config_info_action.triggered.connect(self._on_show_config_info)

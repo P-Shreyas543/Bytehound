@@ -16,7 +16,7 @@
     PFX password. Defaults to $env:SIGN_PASSWORD.
 
 .EXAMPLE
-    .\tools\sign.ps1 -ExePath dist\Serial-MonitorApp\Serial-MonitorApp.exe
+    .\tools\sign.ps1 -ExePath dist\Bytehound\Bytehound.exe
 #>
 param(
     [Parameter(Mandatory=$true)][string]$ExePath,

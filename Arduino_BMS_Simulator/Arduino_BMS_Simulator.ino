@@ -1,5 +1,5 @@
 // =====================================================================
-// Serial-MonitorApp Compatible BMS Simulator
+// Bytehound Compatible BMS Simulator
 //
 // Protocol: AA 55 | Frame ID (2 LE) | Length (1) | Payload | CRC16 (2 LE) | EE
 // CRC16 Modbus over header..payload (poly 0x8005 reflected, init 0xFFFF)

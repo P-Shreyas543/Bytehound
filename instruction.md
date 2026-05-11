@@ -1,6 +1,6 @@
-?# Serial Monitor App — Developer Specification
+?# Bytehound — Developer Specification
 
-This document is a **build-from-scratch blueprint** for the Serial Monitor App.
+This document is a **build-from-scratch blueprint** for the Bytehound.
 A developer (or coding agent) given only this file and the listed dependencies
 should be able to reproduce the app: same architecture, same protocol, same
 config schema, same UI panels, same file formats, and same packaged binary.
@@ -38,16 +38,16 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 
 | Property              | Value                                              |
 |-----------------------|----------------------------------------------------|
-| **App Name**          | Serial Monitor                                     |
-| **Publisher**         | Serial Monitor                                     |
+| **App Name**          | Bytehound                                     |
+| **Publisher**         | Bytehound                                     |
 | **Version**           | 0.1.0 (sourced from [version.json](version.json))  |
 | **Platform**          | Windows 10 / 11 (x64). Code is cross-platform but the shipped binary targets Windows. |
 | **Window Size**       | 1400 × 900 px                                      |
-| **Window Title**      | `Serial Monitor v<Version>` (e.g. `Serial Monitor v0.1.0`) |
-| **Executable Name**   | `Serial-MonitorApp.exe`                            |
+| **Window Title**      | `Bytehound v<Version>` (e.g. `Bytehound v0.1.0`) |
+| **Executable Name**   | `Bytehound.exe`                            |
 | **Logging Format**    | CSV — `*_raw.csv` (timestamped hex frames) + `*_decoded.csv` (per-signal scaled values). See §12. |
 | **Plotting Library**  | pyqtgraph (live plot in main window + Analysis Suite) |
-| **Settings Storage**  | `QSettings("Serial-MonitorApp", "Serial-MonitorApp")` → Windows registry `HKCU\Software\Serial-MonitorApp\Serial-MonitorApp` |
+| **Settings Storage**  | `QSettings("Bytehound", "Bytehound")` → Windows registry `HKCU\Software\Bytehound\Bytehound` |
 | **Update Manifest**   | `manifest_url` field in [version.json](version.json) |
 
 ---
@@ -55,7 +55,7 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 ## 2. Branding & Logo Files
 
 All branding assets live in [branding/](branding/) at the repo root and are
-copied next to `Serial-MonitorApp.exe` after every build by [build.py](build.py).
+copied next to `Bytehound.exe` after every build by [build.py](build.py).
 They are **not** bundled via the PyInstaller spec's `datas` (see §18 for why).
 
 | File             | Size                                  | Purpose                                                              | Used By                                  |
@@ -72,7 +72,7 @@ Asset resolution order at runtime (in `_find_logo()` in
 2. `<root>/<name>` — fallback (matches build.py's copy target)
 
 Where `<root>` is the repo root in dev mode and the directory containing
-`Serial-MonitorApp.exe` in a frozen build.
+`Bytehound.exe` in a frozen build.
 
 A `.gitignore` at the repo root excludes `__pycache__/`, `build/`, `dist/`,
 `installer_output/`, `*.pyc`, virtual envs, editor metadata, and scratch
@@ -158,7 +158,7 @@ BMS-MonitorApp/
 ├── tests/                              # pytest suite (see §17)
 ├── version.json                        # local version + update manifest pointer
 ├── requirements.txt
-├── Serial-MonitorApp.spec              # PyInstaller spec
+├── Bytehound.spec              # PyInstaller spec
 ├── build.py                            # convenience wrapper around PyInstaller
 ├── test_com7.py                        # optional serial decode smoke test (requires hardware)
 ├── test_headless.py                    # optional headless integration smoke test (requires hardware)
@@ -632,8 +632,8 @@ RX path 1:1.
 
 ### Window
 
-`QMainWindow`, title "Serial Monitor", default size 1400×820. Uses
-`QSettings("Serial-MonitorApp", "Serial-MonitorApp")` for persistence (window state,
+`QMainWindow`, title "Bytehound", default size 1400×820. Uses
+`QSettings("Bytehound", "Bytehound")` for persistence (window state,
 theme, last config path, last port/baud).
 
 Theme: `qdarktheme.setup_theme("dark"|"light", corner_shape="rounded")`,
@@ -681,7 +681,7 @@ Built dynamically in `_populate_view_menu()`. Items in order:
 |------|------|----------|
 | **Connect / Disconnect** | `_on_toggle_connect` | Opens or closes the `PollingWorker` against the selected port/baud. Label flips between "Connect" and "Disconnect". |
 | **Start / Stop Auto-Fetch** | `_on_toggle_polling` | Toggles the continuous query schedule (`worker.set_polling_global`). Checkable; label flips. |
-| **Start / Stop Logging** | `_on_toggle_logging` | Toggles writing `*_raw.csv` + `*_decoded.csv` under `~/Documents/Serial-MonitorApp/Logs/`. Disabled until a config is loaded. |
+| **Start / Stop Logging** | `_on_toggle_logging` | Toggles writing `*_raw.csv` + `*_decoded.csv` under `~/Documents/Bytehound/Logs/`. Disabled until a config is loaded. |
 
 #### Tools
 | Item | Slot | Behavior |
@@ -694,7 +694,7 @@ Built dynamically in `_populate_view_menu()`. Items in order:
 | **View Documentation** | `_on_view_docs` | Opens [app/resources/index.html](app/resources/index.html) in the default browser. |
 | **Check for Updates** | `_on_check_updates` | Spawns `UpdateChecker` (see §16). |
 | — separator — |  |  |
-| **About Serial Monitor** | `_on_info` | Shows version + publisher dialog. |
+| **About Bytehound** | `_on_info` | Shows version + publisher dialog. |
 
 ### Toolbar
 
@@ -924,8 +924,8 @@ A separate non-modal `QMainWindow` launched from *Tools → Analysis Suite*.
 
 ### Storage locations
 
-- Logs: `~/Documents/Serial-MonitorApp/Logs/`
-- Saved analysis sessions: `~/Documents/Serial-MonitorApp/Analysis/`
+- Logs: `~/Documents/Bytehound/Logs/`
+- Saved analysis sessions: `~/Documents/Bytehound/Analysis/`
 
 (directories auto-created on first use)
 
@@ -948,9 +948,9 @@ Files: [app/ui/updater.py](app/ui/updater.py), [version.json](version.json).
 ```json
 {
   "version": "0.1.0",
-  "publisher": "Serial Monitor",
+  "publisher": "Bytehound",
   "manifest_url": "https://.../version.json",
-  "installer_url": "https://.../SerialMonitor_Setup_X.Y.Z.exe",
+  "installer_url": "https://.../Bytehound_Setup_X.Y.Z.exe",
   "release_notes": "...",
   "sha256": "<hex sha256 of the installer .exe>"
 }
@@ -962,7 +962,7 @@ Files: [app/ui/updater.py](app/ui/updater.py), [version.json](version.json).
 
 - **Dev mode:** `Path(__file__).resolve().parents[2]` → repo root.
 - **Frozen build:** `Path(sys.executable).resolve().parent` →
-  the directory containing `Serial-MonitorApp.exe`.
+  the directory containing `Bytehound.exe`.
 
 This mirrors `main_window._project_root()`. A previous `parent.parent` walk
 resolved to `app/` and produced *FileNotFoundError: …\\app\\version.json* on
@@ -977,7 +977,7 @@ every check.
    `up_to_date()`.
 3. UI confirms with the user, spawns
    `UpdateDownloader(url, dest_path, expected_sha256)` — streams 8 KB chunks
-   to `%TEMP%/Serial-MonitorApp_Update.exe` while updating a running
+   to `%TEMP%/Bytehound_Update.exe` while updating a running
    `hashlib.sha256()`.
 4. After the download completes, the hex digest is compared against
    `expected_sha256` (case-insensitive). On mismatch the partial file is
@@ -990,7 +990,7 @@ every check.
 ### `sha256` field
 
 `build.py` runs Inno Setup *before* `write_sha256()`, then hashes the
-produced installer at `installer_output/SerialMonitor_Setup_<version>.exe`
+produced installer at `installer_output/Bytehound_Setup_<version>.exe`
 and writes the hex digest into the in-tree `version.json`. The published
 manifest (the one `manifest_url` points at) must carry the same digest —
 both `build.py` and the manifest must be updated together for an auto-update
@@ -1003,8 +1003,8 @@ update check.
 
 ## 17. Settings Persistence
 
-`QSettings("Serial-MonitorApp", "Serial-MonitorApp")` keys (Windows registry
-`HKCU\Software\Serial-MonitorApp\Serial-MonitorApp`):
+`QSettings("Bytehound", "Bytehound")` keys (Windows registry
+`HKCU\Software\Bytehound\Bytehound`):
 
 | Key                    | Type    | Meaning                                       |
 |------------------------|---------|-----------------------------------------------|
@@ -1028,7 +1028,7 @@ Reset is via *Edit → Clear* (clears live state, not settings) plus a manual
 
 ## 18. Packaging & Build
 
-### Spec — [Serial-MonitorApp.spec](Serial-MonitorApp.spec)
+### Spec — [Bytehound.spec](Bytehound.spec)
 
 Key constraints:
 
@@ -1040,7 +1040,7 @@ Key constraints:
 - `excludes=['PyQt5', 'PyQt6', 'PySide2']` — **mandatory**; PyInstaller refuses
   to bundle two Qt bindings.
 - Two-folder build (`exclude_binaries=True` on `EXE`, then `COLLECT`).
-- `console=False`, `upx=True`, `name='Serial-MonitorApp'`.
+- `console=False`, `upx=True`, `name='Bytehound'`.
 - `collect_all('shiboken6')` is required so PySide6's
   `_additional_dll_directories()` finds `_internal/shiboken6/` next to
   `_internal/PySide6/` at runtime — without it, PySide6 falls back to
@@ -1081,21 +1081,21 @@ then looks in `<exe-dir>/branding/` first and falls back to `<exe-dir>/`
 Convenience wrapper. Steps, in order:
 
 1. Wipe `build/` and `dist/` (unless `--no-clean`).
-2. Run `pyinstaller --noconfirm Serial-MonitorApp.spec`.
-3. Copy `branding/*.ico` and `branding/*.png` to `dist/Serial-MonitorApp/`.
+2. Run `pyinstaller --noconfirm Bytehound.spec`.
+3. Copy `branding/*.ico` and `branding/*.png` to `dist/Bytehound/`.
 4. Run **Inno Setup** (`ISCC.exe installer.iss`) to produce
-   `installer_output/SerialMonitor_Setup_<version>.exe`. Skipped with a
+   `installer_output/Bytehound_Setup_<version>.exe`. Skipped with a
    warning if `ISCC.exe` is not on PATH.
 5. Compute SHA-256 of the produced installer and write it to
    `version.json`'s `sha256` field. Step 4 must run before step 5 because
    the digest is taken from the Inno Setup output, not from the inner
-   `Serial-MonitorApp.exe`.
-6. Zip the dist folder to `dist/Serial-MonitorApp_<version>.zip` (unless
+   `Bytehound.exe`.
+6. Zip the dist folder to `dist/Bytehound_<version>.zip` (unless
    `--no-zip`). Version is read from [version.json](version.json).
 
 Flags: `--no-clean`, `--no-zip`. Output:
-`dist/Serial-MonitorApp/Serial-MonitorApp.exe` and
-`installer_output/SerialMonitor_Setup_<version>.exe`.
+`dist/Bytehound/Bytehound.exe` and
+`installer_output/Bytehound_Setup_<version>.exe`.
 
 ### Inno Setup (`installer.iss`)
 
@@ -1104,14 +1104,14 @@ Targets Inno Setup 6. Notes:
 - Do **not** set `Flags: checked` on `[Tasks]` entries — that flag was
   removed in Inno 6 and `ISCC` rejects it.
 - Do **not** set `WizardResizable` — obsolete in Inno 6.
-- The installer ships the entire `dist/Serial-MonitorApp/` tree; the
+- The installer ships the entire `dist/Bytehound/` tree; the
   `[Setup]` `AppId` must remain stable across releases so upgrades replace
   the previous install instead of side-by-side installing it.
 
 ### Manual build
 
 ```powershell
-pyinstaller --noconfirm Serial-MonitorApp.spec
+pyinstaller --noconfirm Bytehound.spec
 ```
 
 The first build is slow (~minutes); incremental builds (`build.py --no-clean`)
@@ -1256,6 +1256,6 @@ The build is "done" when:
 8. **Parameter Editor:** Only RW/W signals appear. Live Value column updates
    in real time. Enter key submits write same as the Write button.
 9. **Frozen build:** `python build.py` produces
-   `dist/Serial-MonitorApp/Serial-MonitorApp.exe` that launches and works
+   `dist/Bytehound/Bytehound.exe` that launches and works
    identically to the dev run, with no PyQt5/6/PySide2 in the bundle.
 10. **Tests:** `pytest -q` is green on Windows + Python 3.10.

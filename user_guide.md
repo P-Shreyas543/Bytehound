@@ -1,6 +1,6 @@
-# Serial-MonitorApp User Guide
+# Bytehound User Guide
 
-Welcome to **Serial-MonitorApp**! This tool is for developers, engineers, and test/debug users who need a configurable, reliable way to interface with serial devices. The application follows an industry-standard layout and provides features for dynamic data decoding, plotting, logging, and command transmission.
+Welcome to **Bytehound**! This tool is for developers, engineers, and test/debug users who need a configurable, reliable way to interface with serial devices. The application follows an industry-standard layout and provides features for dynamic data decoding, plotting, logging, and command transmission.
 
 For the in-depth, illustrated handbook see **Help → View Documentation** inside the app (it opens `app/resources/index.html`).
 
@@ -105,7 +105,7 @@ Tabs showing live ON/OFF state per named bit and the active enum label per varia
    - `<name>_session/` — snapshot of the active configuration.
 3. **File → Stop Logging** to finalize.
 
-The default log directory is `~/Documents/Serial-MonitorApp` and a 📂 button next to the logging status opens it.
+The default log directory is `~/Documents/Bytehound` and a 📂 button next to the logging status opens it.
 
 ### Replay
 1. Make sure the appropriate config is loaded (preferably the saved snapshot).
@@ -142,12 +142,12 @@ If your config defines `TxCommands`:
 
 ### PyInstaller
 ```bash
-pyinstaller Serial-MonitorApp.spec
+pyinstaller Bytehound.spec
 ```
-Output lives in `dist/Serial-MonitorApp`.
+Output lives in `dist/Bytehound`.
 
 ### Inno Setup
-Open `installer.iss` in the Inno Setup Compiler and press F9. The offline installer is produced in `installer_output/`. The default install location is `Program Files\Serial-MonitorApp`.
+Open `installer.iss` in the Inno Setup Compiler and press F9. The offline installer is produced in `installer_output/`. The default install location is `Program Files\Bytehound`.
 
 ---
 

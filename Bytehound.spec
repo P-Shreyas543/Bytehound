@@ -38,7 +38,7 @@ exe = EXE(
     a.scripts,
     [],
     exclude_binaries=True,
-    name='Serial-MonitorApp',
+    name='Bytehound',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -58,5 +58,5 @@ coll = COLLECT(
     strip=False,
     upx=True,
     upx_exclude=[],
-    name='Serial-MonitorApp',
+    name='Bytehound',
 )

@@ -1,4 +1,4 @@
-"""Auto-updater logic for Serial-MonitorApp."""
+"""Auto-updater logic for Bytehound."""
 
 import hashlib
 import json
@@ -52,7 +52,7 @@ class UpdateChecker(QThread):
                 self.error.emit("No manifest URL configured in version.json.")
                 return
 
-            req = urllib.request.Request(manifest_url, headers={'User-Agent': 'Serial-MonitorApp-Updater'})
+            req = urllib.request.Request(manifest_url, headers={'User-Agent': 'Bytehound-Updater'})
             with urllib.request.urlopen(req, timeout=5) as response:
                 remote_data = json.loads(response.read().decode("utf-8"))
 
@@ -91,7 +91,7 @@ class UpdateDownloader(QThread):
     def run(self) -> None:
         try:
             hasher = hashlib.sha256()
-            req = urllib.request.Request(self.url, headers={'User-Agent': 'Serial-MonitorApp-Updater'})
+            req = urllib.request.Request(self.url, headers={'User-Agent': 'Bytehound-Updater'})
             with urllib.request.urlopen(req, timeout=10) as response:
                 total_size = int(response.getheader('Content-Length', 0))
                 downloaded = 0

@@ -1,4 +1,4 @@
-"""Shared pytest fixtures for the Serial-MonitorApp test suite."""
+"""Shared pytest fixtures for the Bytehound test suite."""
 
 from __future__ import annotations
 

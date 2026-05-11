@@ -1,4 +1,4 @@
-# Serial-MonitorApp
+# Bytehound
 
 Python desktop tool for framed serial data logging, decoding, replay, TX command building, and live visualization. Driven entirely by user-editable CSV/Excel configuration — no hard-coded frame layouts.
 
@@ -28,10 +28,10 @@ pytest -q
 ## Build
 
 ```powershell
-pyinstaller Serial-MonitorApp.spec
+pyinstaller Bytehound.spec
 ```
 
-The Inno Setup script `installer.iss` packages `dist/Serial-MonitorApp` into an offline installer.
+The Inno Setup script `installer.iss` packages `dist/Bytehound` into an offline installer.
 
 ## In-app User Manual
 

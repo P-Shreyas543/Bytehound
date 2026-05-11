@@ -1,6 +1,6 @@
 ; ============================================================================
-; Serial-MonitorApp  –  Inno Setup Script
-; Generates: installer_output\SerialMonitor_Setup_<version>.exe
+; Bytehound  –  Inno Setup Script
+; Generates: installer_output\Bytehound_Setup_<version>.exe
 ;
 ; Requirements:
 ;   Inno Setup 6.x  https://jrsoftware.org/isinfo.php
@@ -10,13 +10,13 @@
 ;   "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer.iss
 ; ============================================================================
 
-#define MyAppName      "Serial Monitor"
-#define MyAppSlug      "Serial-MonitorApp"
+#define MyAppName      "Bytehound"
+#define MyAppSlug      "Bytehound"
 #define MyAppVersion   "0.1.0"
-#define MyPublisher    "Serial Monitor"
-#define MyAppExe       "Serial-MonitorApp.exe"
+#define MyPublisher    "Bytehound"
+#define MyAppExe       "Bytehound.exe"
 #define MyAppIcon      "branding\logo_sq.ico"
-#define MyDistDir      "dist\Serial-MonitorApp"
+#define MyDistDir      "dist\Bytehound"
 
 [Setup]
 ; ── Identity ────────────────────────────────────────────────────────────────
@@ -28,7 +28,7 @@ AppPublisher              = {#MyPublisher}
 AppCopyright              = Copyright (C) 2026 {#MyPublisher}
 
 ; ── Install location ────────────────────────────────────────────────────────
-; Installs to C:\Program Files\Serial-MonitorApp  (admin)
+; Installs to C:\Program Files\Bytehound  (admin)
 ; Falls back to %LocalAppData%\Programs\...  (no admin)
 DefaultDirName            = {autopf}\{#MyAppSlug}
 DefaultGroupName          = {#MyAppName}
@@ -37,7 +37,7 @@ DisableProgramGroupPage   = yes
 
 ; ── Installer output ────────────────────────────────────────────────────────
 OutputDir                 = installer_output
-OutputBaseFilename        = SerialMonitor_Setup_{#MyAppVersion}
+OutputBaseFilename        = Bytehound_Setup_{#MyAppVersion}
 SetupIconFile             = {#MyAppIcon}
 UninstallDisplayIcon      = {app}\{#MyAppExe}
 UninstallDisplayName      = {#MyAppName} v{#MyAppVersion}

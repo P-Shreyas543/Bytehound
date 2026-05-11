@@ -1,7 +1,7 @@
 # Branding assets
 
 Drop the following files here. `build.py` copies them next to the
-`Serial-MonitorApp.exe` after every build (NOT into `_internal/`), and the
+`Bytehound.exe` after every build (NOT into `_internal/`), and the
 runtime picks them up via `_find_logo()` in `app/ui/main_window.py`.
 
 | File           | Size                                  | Purpose                                                              |

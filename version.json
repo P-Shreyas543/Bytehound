@@ -1,9 +1,9 @@
 {
     "version": "0.1.0",
     "Developer": "Shreyas P",
-    "publisher": "Serial Monitor",
-    "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Serial-MonitorApp/master/version.json",
-    "installer_url": "https://github.com/P-Shreyas543/Serial-MonitorApp/releases/download/v0.1.0/SerialMonitor_Setup_0.1.0.exe",
+    "publisher": "Bytehound",
+    "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
+    "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.1.0/Bytehound_Setup_0.1.0.exe",
     "release_notes": "Initial release.",
     "sha256": "79ad836f3a4cec3f6a394936b3ee976b454a207b23ba777693a245166776f011"
 }

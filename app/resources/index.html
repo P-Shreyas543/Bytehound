@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Serial Monitor - Comprehensive User Manual</title>
+    <title>Bytehound - Comprehensive User Manual</title>
     <style>
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
@@ -117,7 +117,7 @@
 <body>
 
 <div class="container">
-    <h1>Serial Monitor App: Comprehensive User Manual</h1>
+    <h1>Bytehound: Comprehensive User Manual</h1>
     
     <p style="font-size: 18px; text-align: center; color: #7f8c8d;">
         This manual is your complete guide to every feature, panel, and configuration option in the application. Whether you are connecting a simple Arduino or analyzing complex Model-Based Design firmware, this guide will show you how to visualize, control, and analyze your hardware telemetry.
@@ -129,7 +129,7 @@
         <ul>
             <li><a href="#section-1">1. Introduction &amp; Getting Started</a>
                 <ul class="sub-menu">
-                    <li><a href="#what-is-it">What is the Serial Monitor App?</a></li>
+                    <li><a href="#what-is-it">What is the Bytehound?</a></li>
                     <li><a href="#connecting">Connecting Your Hardware</a></li>
                     <li><a href="#active-polling">Active Polling (Auto-Fetch)</a></li>
                 </ul>
@@ -181,15 +181,15 @@
     <!-- Section 1 -->
     <h2 id="section-1">1. Introduction &amp; Getting Started</h2>
 
-    <h3 id="what-is-it">What is the Serial Monitor App?</h3>
-    <p>The Serial Monitor App is a powerful, hardware-agnostic telemetry and control dashboard. It reads raw byte streams over a serial connection (UART/USB), parses them using a custom dictionary that you define, and displays the data in live tables and high-speed graphs — all without writing any Python code.</p>
+    <h3 id="what-is-it">What is the Bytehound?</h3>
+    <p>The Bytehound is a powerful, hardware-agnostic telemetry and control dashboard. It reads raw byte streams over a serial connection (UART/USB), parses them using a custom dictionary that you define, and displays the data in live tables and high-speed graphs — all without writing any Python code.</p>
 
     <h3 id="connecting">Connecting Your Hardware</h3>
     <p>To get your hardware (NXP, STM32, Arduino, etc.) talking to the app:</p>
     <ol>
         <li>Connect your hardware to your computer using a USB cable or Serial adapter.</li>
         <li>Ensure your firmware outputs bytes in the standard packet format: <code>[Header] + [ID] + [Length] + [Data] + [CRC]</code>. (See <a href="#section-5">Section 5</a> for protocol details).</li>
-        <li>Open the <strong>Serial Monitor App</strong>.</li>
+        <li>Open the <strong>Bytehound</strong>.</li>
         <li>Click <strong>Connect</strong> in the toolbar. A <strong>Connection</strong> dialog will appear:
             <ul>
                 <li>Select your hardware's COM port (e.g. <strong>COM7</strong>). Click <em>Refresh</em> if it isn't listed.</li>
@@ -373,7 +373,7 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <ol>
         <li>Ensure you are connected and receiving data.</li>
         <li>Click <strong>Device → Start Logging</strong> (or use the toolbar). The button turns <span style="color:#e91e8c"><strong>pink</strong></span> while logging is active.</li>
-        <li>The app records all incoming traffic to two files under <code>~/Documents/Serial-MonitorApp/</code>:
+        <li>The app records all incoming traffic to two files under <code>~/Documents/Bytehound/</code>:
             <ul>
                 <li><code>*_raw.csv</code> — timestamped hex frames (byte-perfect replay source)</li>
                 <li><code>*_decoded.csv</code> — one row per signal per frame (for Excel/Python analysis)</li>
@@ -403,7 +403,7 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
 
     <!-- Section 5 -->
     <h2 id="section-5">5. Customizing Your Data (The Excel Config)</h2>
-    <p>The Serial Monitor App uses an Excel workbook to know <em>how to decode your hardware's raw bytes</em>, what to call each signal, how to scale it, and how to send commands back. You do not write any Python code — just fill in the sheets.</p>
+    <p>The Bytehound uses an Excel workbook to know <em>how to decode your hardware's raw bytes</em>, what to call each signal, how to scale it, and how to send commands back. You do not write any Python code — just fill in the sheets.</p>
 
     <div class="note">
         <strong>Quick start:</strong> Click <strong>File → Export Template</strong>, save the <code>.xlsx</code> file, open it in Excel, fill in the sheets described below, save, then click <strong>File → Import Config</strong> to load it. Changes take effect immediately.
@@ -646,7 +646,7 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         <li>If you are already on the latest build, show a brief <em>Up to date</em> confirmation.</li>
         <li>If a newer version is available, show the version number and release notes and ask whether you want to install it.</li>
         <li>On confirmation, the new installer is downloaded to your system temp folder and its <strong>SHA-256 checksum</strong> is verified against the manifest before launching. If the digest does not match, the partial download is deleted and the install is refused — this protects you from a corrupted or tampered binary.</li>
-        <li>The verified installer launches in silent mode and the app exits so the new version can replace the running executable. When the installer finishes, just relaunch the Serial Monitor.</li>
+        <li>The verified installer launches in silent mode and the app exits so the new version can replace the running executable. When the installer finishes, just relaunch the Bytehound.</li>
     </ol>
     <div class="note">
         Update checks are entirely on-demand. The app never contacts the network on its own — nothing is downloaded or installed without your explicit click.

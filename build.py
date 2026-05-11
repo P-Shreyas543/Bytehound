@@ -1,4 +1,4 @@
-"""Build the Serial-MonitorApp .exe with PyInstaller and zip it for sharing.
+"""Build the Bytehound .exe with PyInstaller and zip it for sharing.
 
 Usage:
     python build.py              # clean + build + zip
@@ -22,8 +22,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-SPEC = ROOT / "Serial-MonitorApp.spec"
-APP_NAME = "Serial-MonitorApp"
+SPEC = ROOT / "Bytehound.spec"
+APP_NAME = "Bytehound"
 DIST_DIR = ROOT / "dist" / APP_NAME
 BRANDING_DIR = ROOT / "branding"
 BRANDING_PATTERNS = ("*.ico", "*.png")
@@ -98,7 +98,7 @@ def copy_branding() -> int:
 
 
 def make_zip() -> Path:
-    """Zip dist/Serial-MonitorApp/ into dist/Serial-MonitorApp_<version>.zip."""
+    """Zip dist/Bytehound/ into dist/Bytehound_<version>.zip."""
     if not DIST_DIR.exists():
         raise FileNotFoundError(f"dist folder not found: {DIST_DIR}")
 
@@ -207,7 +207,7 @@ def run_inno_setup() -> tuple[int, Path | None]:
         return rc, None
 
     version = read_version()
-    installer = out_dir / f"SerialMonitor_Setup_{version}.exe"
+    installer = out_dir / f"Bytehound_Setup_{version}.exe"
     if installer.exists():
         size_mb = installer.stat().st_size / (1024 * 1024)
         print(f"[build] installer ready: {installer}  ({size_mb:.1f} MB)")
@@ -217,7 +217,7 @@ def run_inno_setup() -> tuple[int, Path | None]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Build Serial-MonitorApp .exe")
+    parser = argparse.ArgumentParser(description="Build Bytehound .exe")
     parser.add_argument("--no-clean",     action="store_true", help="skip wiping build/ and dist/")
     parser.add_argument("--no-zip",       action="store_true", help="skip the zip step")
     parser.add_argument("--no-installer", action="store_true", help="skip Inno Setup installer step")
@@ -281,7 +281,7 @@ def main() -> int:
   1. Commit & push version.json  (sha256 auto-updated above)
   2. git tag v{version} && git push origin v{version}
   3. Create GitHub Release v{version} and upload:
-       installer_output/SerialMonitor_Setup_{version}.exe
+       installer_output/Bytehound_Setup_{version}.exe
        dist/{APP_NAME}_{version}.zip
   4. Update installer_url in version.json to the release asset URL
   5. Commit & push version.json again
