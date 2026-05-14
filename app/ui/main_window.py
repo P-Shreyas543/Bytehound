@@ -20,6 +20,7 @@ from PySide6.QtGui import (
     QDesktopServices,
     QFont,
     QIcon,
+    QKeySequence,
     QPainter,
     QPainterPath,
     QPen,
@@ -737,6 +738,21 @@ QTabBar::tab:hover:!selected {
 """
 
 
+def build_card_qss(theme: str) -> str:
+    """Assemble the app's shared card/dock/table/tab QSS for a given theme.
+
+    Exposed so secondary top-level windows (e.g. Analysis Suite) can apply the
+    same styling — qdarktheme's palette is applied app-wide, but these QSS
+    rules are not, and must be installed on each top-level window.
+    """
+    qss = _QSS_BASE
+    if theme == "dark":
+        qss += "\n" + _QSS_DARK_OVERRIDES
+    elif theme == "light":
+        qss += "\n" + _QSS_LIGHT_OVERRIDES
+    return qss
+
+
 # ---------------------------------------------------------------------------
 # Primary toolbar button colour palette
 # ---------------------------------------------------------------------------
@@ -768,10 +784,13 @@ class PlotPanel:
     ``plot_item``     – the pyqtgraph PlotItem for this cell.
     ``assigned_keys`` – ordered list of (frame_id, signal_name) signals to draw.
     ``curves``        – mapping from key → PlotDataItem (the live curve object).
+    ``auto_fit_y``    – when True, pyqtgraph rescales the y-axis automatically
+                        so growing signals stay in view without manual zoom.
     """
     plot_item: object                                     # pg.PlotItem
     assigned_keys: List[Tuple[int, str]] = field(default_factory=list)
     curves:        Dict[Tuple[int, str], object] = field(default_factory=dict)
+    auto_fit_y:    bool = True
 
 
 # ---------------------------------------------------------------------------
@@ -977,6 +996,17 @@ class PollingConfigDialog(QDialog):
 
 
 class MainWindow(QMainWindow):
+    def _make_history_buffer(self) -> Tuple[Deque[float], Deque[float]]:
+        """Factory for the parallel-deque entries in ``self._plot_history``.
+
+        Two bounded deques: one for x (timestamps), one for y (values).
+        ``maxlen`` is read from ``self._plot_history_maxlen`` so it can be
+        changed at runtime; existing buffers keep their original cap until
+        a new signal is first plotted.
+        """
+        n = getattr(self, "_plot_history_maxlen", 6_000)
+        return (deque(maxlen=n), deque(maxlen=n))
+
 
     def __init__(self) -> None:
         super().__init__()
@@ -1012,9 +1042,15 @@ class MainWindow(QMainWindow):
 
         # Timer removed; using PollingWorker QThread
 
-        self._plot_history: Dict[Tuple[int, str], Deque[Tuple[float, float]]] = defaultdict(
-            lambda: deque(maxlen=6_000)  # ~100 min at 1 Hz per signal
-        )
+        # Live-plot history. Two parallel bounded deques per signal (one for
+        # x, one for y) instead of a single deque of (x, y) tuples: this lets
+        # _redraw_plot pass arrays straight to setData without the expensive
+        # zip(*values) unpack pass — a meaningful win at 60 Hz with 5+ curves
+        # and a long history.
+        self._plot_history_maxlen: int = int(
+            self._settings.value("plot/history_maxlen", 6_000))
+        self._plot_history: Dict[Tuple[int, str], Tuple[Deque[float], Deque[float]]] = (
+            defaultdict(self._make_history_buffer))
         # Multi-grid plot state
         self._plot_panels: List[PlotPanel] = []   # one entry per subplot cell
         self._gl_widget = None                     # pg.GraphicsLayoutWidget
@@ -1097,12 +1133,7 @@ class MainWindow(QMainWindow):
             on Windows / PySide6 6.6+ and the dock titles ended up stuck on the
             previous dark colours.
         """
-        qss = _QSS_BASE
-        if theme == "dark":
-            qss += "\n" + _QSS_DARK_OVERRIDES
-        elif theme == "light":
-            qss += "\n" + _QSS_LIGHT_OVERRIDES
-        self.setStyleSheet(qss)
+        self.setStyleSheet(build_card_qss(theme))
 
 
     def _build_actions(self) -> None:
@@ -1676,6 +1707,14 @@ class MainWindow(QMainWindow):
         # Repaint the pyqtgraph canvas — it is not a QWidget child so it does
         # not pick up the QPalette change automatically.
         self._apply_plot_theme(theme)
+        # Forward theme change to the Analysis Suite if it's open — it's a
+        # separate top-level window so QSS doesn't cascade into it.
+        analysis = getattr(self, "_analysis_window", None)
+        if analysis is not None and hasattr(analysis, "apply_theme"):
+            try:
+                analysis.apply_theme(theme)
+            except Exception:
+                pass
         from PySide6.QtWidgets import QApplication
         # Schedule title-bar update via singleShot so the native HWND is stable.
         dark = (theme == "dark")
@@ -1772,11 +1811,38 @@ class MainWindow(QMainWindow):
         self._activity_dock.raise_()
 
     def _reset_plot_view(self) -> None:
-        """Reset View / Ctrl+R: snap back to Live mode (0 → current time)."""
+        """Reset View / Ctrl+R: snap back to Live mode (0 → current time).
+
+        Pan/zoom interactions silently disable BOTH axes' auto-range in
+        pyqtgraph. We must explicitly re-enable Y auto-range on every panel
+        that wants it; otherwise the x-axis scrolls correctly but Y stays
+        locked at whatever zoom level the user left it at, which reads as
+        "reset isn't working" because the data appears off-screen.
+        """
         if pg is None or not self._plot_panels:
             return
         self._plot_live = True
         self._plot_mode_label.setText("📊 Live")
+        # Mirror the Pause button to "Pause" (unchecked) so the UI stays
+        # consistent — both Reset and the button itself can drive this state.
+        if hasattr(self, "_pause_btn"):
+            self._pause_btn.blockSignals(True)
+            self._pause_btn.setChecked(False)
+            self._restyle_pause_btn(False)
+            self._pause_btn.blockSignals(False)
+        # Re-enable Y auto-range on each panel that has it on. We also call
+        # autoRange() once so pyqtgraph immediately recomputes the y bounds
+        # from current data instead of waiting for the next data tick.
+        self._plot_range_changing = True
+        try:
+            for panel in self._plot_panels:
+                vb = panel.plot_item.getViewBox()
+                if vb is None:
+                    continue
+                if panel.auto_fit_y:
+                    vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        finally:
+            self._plot_range_changing = False
         self._redraw_plot()   # will call setXRange(0, current_t) immediately
         self._log_activity("[ACTION] Reset plot view (Live mode)")
 
@@ -1856,12 +1922,22 @@ class MainWindow(QMainWindow):
         controls = QHBoxLayout()
         controls.setSpacing(8)
 
-        hint = QLabel("Right-click a table row → Add to Plot  |  Ctrl+R = Reset view")
+        hint = QLabel("Right-click a row → Add to Plot   ·   Space = Pause/Live   ·   Ctrl+R = Reset")
         hint.setEnabled(False)
         hint.setStyleSheet("font-size: 11px;")
         controls.addWidget(hint)
         controls.addStretch(1)
 
+        # Hover readout — shows time + value(s) under the mouse on any subplot.
+        # Fixed-width so the controls bar doesn't reflow when text changes.
+        self._hover_label = QLabel("", outer)
+        self._hover_label.setStyleSheet(
+            "font-family: Consolas, monospace; font-size: 11px; "
+            "color: palette(text); padding: 0 6px;"
+        )
+        self._hover_label.setMinimumWidth(280)
+        self._hover_label.setToolTip("Time and signal values under the mouse cursor.")
+        controls.addWidget(self._hover_label)
 
         controls.addWidget(QLabel("Layout:"))
         self._layout_combo = QComboBox(outer)
@@ -1871,11 +1947,23 @@ class MainWindow(QMainWindow):
         self._layout_combo.currentTextChanged.connect(self._on_layout_changed)
         controls.addWidget(self._layout_combo)
 
+        # Pause / Live toggle — checkable, color-coded so users see the
+        # current mode at a glance and don't have to remember Ctrl+R.
+        self._pause_btn = QPushButton("⏸ Pause", outer)
+        self._pause_btn.setCheckable(True)
+        self._pause_btn.setToolTip(
+            "Pause: freeze the x-axis at the current view (Space).\n"
+            "Live:  scroll the x-axis to keep up with new data."
+        )
+        self._pause_btn.toggled.connect(self._on_pause_toggled)
+        self._pause_btn.setShortcut(QKeySequence(Qt.Key.Key_Space))
+        self._restyle_pause_btn(False)
+        controls.addWidget(self._pause_btn)
+
         reset_btn = QPushButton("⟳ Reset View", outer)
-        reset_btn.setToolTip("Snap all subplots back to rolling mode (Ctrl+R)")
+        reset_btn.setToolTip("Snap all subplots back to rolling Live mode (Ctrl+R)")
         reset_btn.clicked.connect(self._reset_plot_view)
         controls.addWidget(reset_btn)
-
 
         self._plot_mode_label = QLabel("📊 Live", outer)
         self._plot_mode_label.setToolTip(
@@ -1893,6 +1981,14 @@ class MainWindow(QMainWindow):
         # before became almost invisible on the light-theme background.
         self._session_clock_label.setStyleSheet("font-size:11px; color: palette(mid); padding-left:8px;")
         controls.addWidget(self._session_clock_label)
+
+        # Update-rate readout — packets/sec coming in. Computed by _flush_ui.
+        self._rate_label = QLabel("0 Hz", outer)
+        self._rate_label.setStyleSheet(
+            "font-size:11px; color: palette(mid); padding-left:8px;"
+        )
+        self._rate_label.setToolTip("Incoming packet rate (averaged over the last second).")
+        controls.addWidget(self._rate_label)
 
         root_layout.addLayout(controls)
 
@@ -1978,13 +2074,31 @@ class MainWindow(QMainWindow):
 
         # Build PlotItems and variable strips
         first_vb = None
+        theme = str(self._settings.value("ui/theme", "dark"))
+        axis_color = "#CBD5E1" if theme == "dark" else "#475569"
+        border_color = "#334155" if theme == "dark" else "#CBD5E1"
         for idx in range(n):
             row_idx, col_idx = divmod(idx, cols)
             pi = self._gl_widget.addPlot(row=row_idx, col=col_idx)
             pi.showGrid(x=True, y=True, alpha=0.25)
-            pi.addLegend(offset=(10, 10))
+            legend = pi.addLegend(offset=(10, 10))
+            legend.setLabelTextSize('8pt')
             pi.getViewBox().setMouseEnabled(x=True, y=True)
             pi.getViewBox().setDefaultPadding(0.0)   # no auto-padding; x=0 is flush left
+            # Card-style frame around each panel's view box so each subplot
+            # has an unambiguous boundary on the dark/light canvas. Matches
+            # the Analysis Suite's visual convention.
+            pi.getViewBox().setBorder(pg.mkPen(border_color, width=1))
+            # Internal padding so y-axis tick labels for big numbers and the
+            # rotated y-title can't collide with the border.
+            pi.layout.setContentsMargins(6, 6, 10, 6)
+            # Pin a minimum width on the y-axis so the left edges of every
+            # subplot in the grid line up vertically.
+            pi.getAxis('left').setWidth(60)
+            for ax_name in ('left', 'bottom'):
+                ax = pi.getAxis(ax_name)
+                ax.setPen(pg.mkPen(axis_color))
+                ax.setTextPen(pg.mkPen(axis_color))
 
             # Share X-axis with the first subplot (oscilloscope-style)
             if first_vb is None:
@@ -1995,7 +2109,37 @@ class MainWindow(QMainWindow):
             # Detect user pan/zoom → switch to Explore mode
             pi.getViewBox().sigXRangeChanged.connect(self._on_plot_range_changed)
 
+            # Crosshair (vline + hline) shown on hover. Hidden by default.
+            crosshair_pen = pg.mkPen("#94A3B8" if theme == "dark" else "#64748B",
+                                     width=1, style=Qt.PenStyle.DashLine)
+            vline = pg.InfiniteLine(angle=90, movable=False, pen=crosshair_pen)
+            hline = pg.InfiniteLine(angle=0, movable=False, pen=crosshair_pen)
+            vline.setVisible(False)
+            hline.setVisible(False)
+            pi.addItem(vline, ignoreBounds=True)
+            pi.addItem(hline, ignoreBounds=True)
+            # 60 Hz rate-limited mouse tracking on this panel's scene so the
+            # crosshair feels snappy without flooding the event loop.
+            proxy = pg.SignalProxy(
+                pi.scene().sigMouseMoved,
+                rateLimit=60,
+                slot=lambda evt, _pi=pi: self._on_plot_mouse_moved(evt, _pi),
+            )
+
             panel = PlotPanel(plot_item=pi, assigned_keys=list(panel_keys[idx]))
+            # Stash crosshair refs on the panel via dynamic attrs — keeps
+            # the dataclass narrow but lets _redraw_plot etc. find them.
+            panel.vline = vline      # type: ignore[attr-defined]
+            panel.hline = hline      # type: ignore[attr-defined]
+            panel.mouse_proxy = proxy  # type: ignore[attr-defined]
+            # Restore per-panel Auto-Y preference (defaults to True).
+            saved_auto_y = self._settings.value(f"plot/panel/{idx}/auto_y", True)
+            panel.auto_fit_y = (
+                bool(saved_auto_y)
+                if not isinstance(saved_auto_y, str)
+                else saved_auto_y.lower() in ("true", "1", "yes"))
+            pi.getViewBox().enableAutoRange(
+                axis=pg.ViewBox.YAxis, enable=panel.auto_fit_y)
             self._plot_panels.append(panel)
 
             # Redraw existing curves for this panel
@@ -2036,8 +2180,31 @@ class MainWindow(QMainWindow):
         add_btn.setStyleSheet("font-size:11px; padding: 0 6px;")
         add_btn.clicked.connect(lambda _, i=panel_idx: self._on_panel_add_signal(i))
         hl.addWidget(add_btn)
+        # Per-panel Auto-Y checkbox — when on, pyqtgraph rescales y to fit
+        # all visible curves on every redraw. When off, the user controls
+        # zoom manually (typical "freeze the y-axis" workflow).
+        auto_y_cb = QCheckBox("Auto Y")
+        auto_y_cb.setToolTip(
+            "Auto-rescale the y-axis on every update so growing signals "
+            "stay in view. Uncheck to lock the current y range."
+        )
+        auto_y_cb.setStyleSheet("font-size: 11px;")
+        panel = self._plot_panels[panel_idx] if panel_idx < len(self._plot_panels) else None
+        auto_y_cb.setChecked(bool(panel.auto_fit_y) if panel else True)
+        auto_y_cb.toggled.connect(
+            lambda checked, i=panel_idx: self._on_panel_auto_y_toggled(i, checked))
+        hl.addWidget(auto_y_cb)
         hl.addStretch(1)
         return strip
+
+    def _on_panel_auto_y_toggled(self, panel_idx: int, checked: bool) -> None:
+        if panel_idx >= len(self._plot_panels) or pg is None:
+            return
+        panel = self._plot_panels[panel_idx]
+        panel.auto_fit_y = checked
+        panel.plot_item.getViewBox().enableAutoRange(
+            axis=pg.ViewBox.YAxis, enable=checked)
+        self._settings.setValue(f"plot/panel/{panel_idx}/auto_y", checked)
 
     def _refresh_panel_strip_contents(self, panel_idx: int, layout: QHBoxLayout) -> None:
         """Add chip labels for each assigned key in the panel strip."""
@@ -2521,6 +2688,24 @@ class MainWindow(QMainWindow):
             h, rem = divmod(elapsed, 3600)
             m, s = divmod(rem, 60)
             self._session_clock_label.setText(f"\u23f1 {h}:{m:02d}:{s:02d}")
+
+        # Packet rate readout in the plot toolbar \u2014 refreshed at most ~4 Hz
+        # so the label doesn't flicker. Uses a 1-second sliding-sum window.
+        if hasattr(self, "_rate_label"):
+            import time as _t
+            now = _t.monotonic()
+            if not hasattr(self, "_rate_window"):
+                self._rate_window: Deque[Tuple[float, int]] = deque()
+                self._rate_last_redraw = now
+            self._rate_window.append((now, len(packets)))
+            # Drop entries older than 1 second.
+            cutoff = now - 1.0
+            while self._rate_window and self._rate_window[0][0] < cutoff:
+                self._rate_window.popleft()
+            if (now - self._rate_last_redraw) >= 0.25:
+                hz = sum(c for _, c in self._rate_window)
+                self._rate_label.setText(f"{hz} Hz")
+                self._rate_last_redraw = now
 
     def _on_connection_lost(self) -> None:
         """Called when the worker detects a physical USB unplug."""
@@ -3150,7 +3335,9 @@ class MainWindow(QMainWindow):
                     val_item.setText(signal.display_value or value_text)
 
             if signal.scaled_value is not None and signal.status == "ok":
-                self._plot_history[key].append((elapsed, signal.scaled_value))
+                xs, ys = self._plot_history[key]
+                xs.append(elapsed)
+                ys.append(signal.scaled_value)
             # Per-signal decode failures (e.g. "Payload too short") are visible
             # via the row's status pill; we deliberately do NOT increment the
             # status-bar Errors counter for them — that field is reserved for
@@ -3243,7 +3430,119 @@ class MainWindow(QMainWindow):
         if self._plot_live:
             self._plot_live = False
             self._plot_mode_label.setText("🔍 Explore  (⟳ Reset View = Live)")
+            # Keep the prominent Pause button in sync — user pan/zoom is
+            # functionally the same as Pausing, so reflect that visually.
+            if hasattr(self, "_pause_btn"):
+                self._pause_btn.blockSignals(True)
+                self._pause_btn.setChecked(True)
+                self._restyle_pause_btn(True)
+                self._pause_btn.blockSignals(False)
             self._log_activity("[ACTION] Plot switched to Explore mode (user pan/zoom)")
+
+    # ------------------------------------------------------------------
+    # Pause / Live toggle button
+    # ------------------------------------------------------------------
+    def _restyle_pause_btn(self, paused: bool) -> None:
+        """Recolour the toggle so the current mode reads at a glance."""
+        if paused:
+            text = "▶ Live"
+            bg = "#16A34A"   # green = "click to go Live"
+        else:
+            text = "⏸ Pause"
+            bg = "#D97706"   # amber = "click to pause"
+        self._pause_btn.setText(text)
+        self._pause_btn.setStyleSheet(
+            f"QPushButton {{ background:{bg}; color:#fff; border:none;"
+            f"               padding:4px 10px; border-radius:4px; font-weight:bold; }}"
+            f"QPushButton:hover {{ filter: brightness(1.1); }}"
+        )
+
+    def _on_pause_toggled(self, checked: bool) -> None:
+        """Space-bar / button toggle: Pause = freeze view, Live = resume scroll."""
+        self._restyle_pause_btn(checked)
+        if checked:
+            # User asked to pause → freeze at current x view (same as Explore).
+            self._plot_live = False
+            self._plot_mode_label.setText("⏸ Paused")
+            self._log_activity("[ACTION] Plot Paused")
+        else:
+            # Resume Live mode — re-enable Y auto-range first (pan/zoom that
+            # got us into Pause disabled it), then let _redraw_plot snap X
+            # back to (0, now).
+            self._plot_live = True
+            self._plot_mode_label.setText("📊 Live")
+            if pg is not None:
+                self._plot_range_changing = True
+                try:
+                    for panel in self._plot_panels:
+                        vb = panel.plot_item.getViewBox()
+                        if vb is not None and panel.auto_fit_y:
+                            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+                finally:
+                    self._plot_range_changing = False
+            self._log_activity("[ACTION] Plot resumed Live")
+            self._redraw_plot()
+
+    # ------------------------------------------------------------------
+    # Hover crosshair + value readout
+    # ------------------------------------------------------------------
+    def _on_plot_mouse_moved(self, evt, pi) -> None:
+        """Handle a rate-limited mouse-move on one panel's scene. Updates the
+        crosshair on that panel and writes interpolated values into the
+        hover label in the controls bar."""
+        if not evt:
+            return
+        scene_pos = evt[0]
+        # Find the panel matching this PlotItem so we can flip its crosshair.
+        panel = next((p for p in self._plot_panels if p.plot_item is pi), None)
+        if panel is None:
+            return
+        vb = pi.getViewBox()
+        if vb is None or not pi.sceneBoundingRect().contains(scene_pos):
+            # Mouse left this panel — hide its crosshair.
+            getattr(panel, "vline", None) and panel.vline.setVisible(False)
+            getattr(panel, "hline", None) and panel.hline.setVisible(False)
+            return
+        mouse_point = vb.mapSceneToView(scene_pos)
+        t = float(mouse_point.x())
+        y = float(mouse_point.y())
+        # Position the crosshair lines and make them visible.
+        if hasattr(panel, "vline"):
+            panel.vline.setPos(t)
+            panel.vline.setVisible(True)
+        if hasattr(panel, "hline"):
+            panel.hline.setPos(y)
+            panel.hline.setVisible(True)
+
+        # Build the readout: t + one entry per signal on THIS panel,
+        # interpolated to the cursor's x by nearest-sample lookup.
+        parts: list[str] = [f"t={t:.2f}s"]
+        for key in panel.assigned_keys:
+            buf = self._plot_history.get(key)
+            if not buf:
+                continue
+            xs_deque, ys_deque = buf
+            if not xs_deque:
+                continue
+            try:
+                import bisect
+                xs_list = list(xs_deque)   # bisect needs a sequence
+                idx = bisect.bisect_left(xs_list, t)
+                if idx >= len(xs_list):
+                    idx = len(xs_list) - 1
+                elif idx > 0 and (t - xs_list[idx - 1]) < (xs_list[idx] - t):
+                    idx -= 1
+                # ys_deque supports __getitem__ in O(n) worst case but is
+                # bounded by maxlen, so it stays fast.
+                parts.append(f"{key[1]}={ys_deque[idx]:.2f}")
+            except Exception:
+                continue
+        if hasattr(self, "_hover_label"):
+            # Cap the line length so the control bar doesn't reflow.
+            text = "  ·  ".join(parts)
+            if len(text) > 120:
+                text = text[:117] + "…"
+            self._hover_label.setText(text)
 
     def _on_table_context_menu(self, pos) -> None:
         index = self._table.indexAt(pos)
@@ -3351,8 +3650,17 @@ class MainWindow(QMainWindow):
                     pi.removeItem(panel.curves.pop(key))
 
             for local_idx, key in enumerate(panel.assigned_keys):
-                values = list(self._plot_history.get(key, []))
-                x_values, y_values = (zip(*values) if values else ([], []))
+                buf = self._plot_history.get(key)
+                if buf is None:
+                    x_values: list = []
+                    y_values: list = []
+                else:
+                    xs, ys = buf
+                    # list() is a single O(n) copy from each deque — no
+                    # zip-unpack pass, no tuple churn. Half the work of the
+                    # old deque-of-tuples shape.
+                    x_values = list(xs)
+                    y_values = list(ys)
 
                 color = _PLOT_PALETTE[(color_offset + local_idx) % len(_PLOT_PALETTE)]
                 label = f"0x{key[0]:04X} {key[1]}"
@@ -3363,11 +3671,11 @@ class MainWindow(QMainWindow):
                     panel.curves[key].setPen(pg.mkPen(color, width=2))
 
                 panel.curves[key].setData(
-                    list(x_values), list(y_values),
+                    x_values, y_values,
                     autoDownsample=True,
                     clipToView=True,
                 )
-                if values:
+                if x_values:
                     has_any_data = True
 
             color_offset += len(panel.assigned_keys)

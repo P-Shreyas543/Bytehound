@@ -73,6 +73,11 @@ class PollingWorker(QThread):
     connection_lost = Signal()   # USB physically unplugged
     device_timeout = Signal()    # connected but no data for WATCHDOG_TIMEOUT s
 
+    # Diagnostics — UI can surface "avg poll latency 12 ms" per target.
+    # Args: (target_id, latency_ms). target_id == -1 for non-addressable
+    # protocols.
+    poll_latency = Signal(int, float)
+
     def __init__(
         self,
         settings: SerialSettings,
@@ -118,6 +123,13 @@ class PollingWorker(QThread):
         self._watchdog_fired = False  # debounce: only emit once per silence window
         # Set in open() — used by the polling-boot-grace gate in _run_loop.
         self._open_time: float = time.time()
+
+        # metrics_updated emission throttle. Without this the signal fires on
+        # every read iteration; at 115200 baud with continuous data that
+        # floods the Qt event queue with hundreds of redundant updates per
+        # second. ~10 Hz is plenty for a status-bar readout.
+        self._last_metrics_emit: float = 0.0
+        self._METRICS_INTERVAL = 0.1  # seconds
 
     # ------------------------------------------------------------------
     # Public API
@@ -202,12 +214,20 @@ class PollingWorker(QThread):
         with QMutexLocker(self._mutex):
             for s in self._schedules:
                 if s["spec"].target_id == target_id:
+                    was_enabled = s["enabled"]
                     s["enabled"] = enabled
                     # Re-enabling a previously-failed schedule clears the
                     # "already reported" flag so a subsequent build error is
                     # surfaced again instead of staying silent.
                     if enabled:
                         s.pop("_failed_reported", None)
+                        # Reset the run timer so a re-enabled schedule waits
+                        # one full interval before firing. The original code
+                        # left next_run at the (long past) time.time() from
+                        # __init__, which made re-enable fire immediately —
+                        # surprising behaviour, especially right after a pause.
+                        if not was_enabled:
+                            s["next_run"] = time.time() + (s["spec"].interval_ms / 1000.0)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -262,6 +282,17 @@ class PollingWorker(QThread):
                 self._watchdog_fired = True
         else:
             self._watchdog_fired = False  # reset once data flows again
+
+    def _emit_metrics_throttled(self) -> None:
+        """Emit metrics_updated at most once per ``_METRICS_INTERVAL``.
+
+        Called from hot paths (every loop iteration that has RX) so the
+        signal queue doesn't fill with redundant updates at high baud rates.
+        """
+        now = time.time()
+        if (now - self._last_metrics_emit) >= self._METRICS_INTERVAL:
+            self.metrics_updated.emit(self._timeouts, self._crc_errors, self._rx_bytes)
+            self._last_metrics_emit = now
 
     # ------------------------------------------------------------------
     # Thread run loop
@@ -331,7 +362,7 @@ class PollingWorker(QThread):
                         self._watchdog_fired = False
                         self._parser.feed(data)
                         self._accumulate(self._parser.extract_all())
-                        self.metrics_updated.emit(self._timeouts, self._crc_errors, self._rx_bytes)
+                        self._emit_metrics_throttled()
 
                 # Always check the watchdog at the end of the iteration. If we
                 # only ran it inside the "not polled and no bytes waiting"
@@ -361,15 +392,24 @@ class PollingWorker(QThread):
                     self.connection_lost.emit()
                     return  # exit the run loop gracefully
                 else:
-                    # Other serial error — report to UI via existing signal.
+                    # Other serial error — report once and keep running. The
+                    # original code killed the thread on any non-disconnect
+                    # SerialException, which meant a single transient I/O
+                    # blip stopped polling forever until the user manually
+                    # reconnected. Stay alive; let the watchdog or the user
+                    # diagnose if it persists.
                     self.error_occurred.emit(str(exc))
-                    self._stop_event.set()
-                    return
+                    time.sleep(0.05)
+                    continue
 
             except Exception as exc:
-                self.error_occurred.emit(str(exc))
-                self._stop_event.set()
-                return
+                # Non-serial exception (parse error, ValueError in build_packet,
+                # etc.). Report it, log a short cool-down, and keep running.
+                # Killing the thread silently disabled polling — far worse than
+                # surfacing a transient error and continuing.
+                self.error_occurred.emit(f"Worker recovered from: {exc!r}")
+                time.sleep(0.05)
+                continue
 
     # ------------------------------------------------------------------
     # Polling helpers (unchanged logic, adapted to use _accumulate)
@@ -403,50 +443,121 @@ class PollingWorker(QThread):
                 self._disable_failed_schedule(sched, exc)
 
     def _disable_failed_schedule(self, sched: dict, exc: BaseException) -> None:
-        """Disable a schedule that cannot build its request, reporting once."""
+        """Disable a schedule that cannot build its request, reporting once.
+
+        Mutex-protected so a concurrent ``toggle_schedule`` from the UI
+        can't race on the ``enabled`` write.
+        """
         target_id = sched["spec"].target_id
-        if not sched.get("_failed_reported"):
-            self.error_occurred.emit(
-                f"Polling for 0x{target_id:X} disabled — could not build "
-                f"request: {exc}"
-            )
-            sched["_failed_reported"] = True
-        sched["enabled"] = False
+        with QMutexLocker(self._mutex):
+            if not sched.get("_failed_reported"):
+                # Emit outside the lock would be safer (avoid blocking
+                # signal-receiver thread if it tries to re-enter), but in
+                # practice error_occurred is queued cross-thread, so it
+                # returns immediately. Holding the lock here is fine.
+                self.error_occurred.emit(
+                    f"Polling for 0x{target_id:X} disabled — could not build "
+                    f"request: {exc}"
+                )
+                sched["_failed_reported"] = True
+            sched["enabled"] = False
 
     def _await_modbus_response(self, req: bytes, target_id: Optional[int], timeout_ms: int = 100) -> None:
         self._await_response(timeout_ms, target_id)
 
+    @staticmethod
+    def _is_response_match(p: ParsedPacket, target_id: Optional[int]) -> bool:
+        """Predicate: is ``p`` the response to a poll for ``target_id``?
+
+        - ``target_id is None`` → any *valid* packet wins. Used by the
+          priority-TX path where the caller hand-built the request and we
+          don't know which slave (if any) was addressed.
+        - ``target_id is set``  → require ``frame_id == target_id`` (modbus
+          frames are patched to satisfy this before we get here).
+        - Bad-CRC frames never satisfy a response wait.
+        """
+        if not p.ok:
+            return False
+        if target_id is None:
+            return True
+        return p.frame_id == target_id
+
     def _await_response(self, timeout_ms: int, target_id: Optional[int]) -> None:
+        """Wait up to ``timeout_ms`` for the response to a poll TX.
+
+        Improvements over the original:
+        * **Strict response matching.** Only a frame whose ``frame_id``
+          matches ``target_id`` ends the wait. Streaming/unrelated frames
+          that arrive in the window are still emitted (they're real data)
+          but don't short-circuit the wait — that was a long-standing
+          mis-attribution bug.
+        * Packets go through ``_accumulate`` (batching pipeline) instead of
+          one ``packets_received.emit`` per frame, so high-rate polls don't
+          flood the UI signal queue.
+        * The priority TX queue is **pumped during the wait** so a user-
+          typed parameter write isn't blocked for up to ``timeout_ms``.
+        * ``metrics_updated`` is throttled to a single emission at the end
+          of the await — the polling loop itself is low-frequency so this
+          is plenty.
+        * Poll latency is reported on a dedicated signal so the UI can
+          surface it (e.g. "avg poll latency 12 ms").
+        """
         tx_time = time.time()
         end_time = tx_time + (timeout_ms / 1000.0)
         packet_found = False
 
         while time.time() < end_time and not self._stop_event.is_set():
-            w = self._serial.in_waiting
+            # Pump priority TX during the wait window. We only send ONE
+            # priority frame per iteration so we don't starve the response
+            # we're nominally waiting for. The UI rate is human-driven, so
+            # a single per-5ms-tick is plenty.
+            if not self._priority_tx_queue.empty() and self._serial:
+                try:
+                    tx_data = self._priority_tx_queue.get_nowait()
+                    self._serial.write(tx_data)
+                    self.tx_recorded.emit(tx_data)
+                except queue.Empty:
+                    pass
+
+            w = self._serial.in_waiting if self._serial else 0
             if w > 0:
                 data = self._serial.read(w)
                 self._rx_bytes += len(data)
                 self._last_rx_time = time.time()
                 self._watchdog_fired = False
                 self._parser.feed(data)
-                for p in self._parser.extract_all():
-                    if not p.ok:
-                        self._crc_errors += 1
-                    else:
-                        if target_id is not None and p.frame_id == 1:
-                            if self.protocol.parser_type == "modbus_rtu":
-                                p.frame_id = target_id
-                    rx_time = time.time()
-                    delta_t = (rx_time - tx_time) * 1000.0
-                    # For polling responses we still emit immediately (low frequency)
-                    self.packets_received.emit([p])
-                    packet_found = True
+                extracted = self._parser.extract_all()
+                # Patch Modbus responses whose parser returns frame_id=1
+                # (a quirk of the current parser implementation) so the
+                # match predicate below can use a uniform comparison.
+                if self.protocol.parser_type == "modbus_rtu" and target_id is not None:
+                    for p in extracted:
+                        if p.ok and p.frame_id == 1:
+                            p.frame_id = target_id
+                if extracted:
+                    # Emit every frame (matching or not) through batching —
+                    # unrelated continuous-stream packets are still real
+                    # data the UI needs to see.
+                    self._accumulate(extracted)
+                    # Only a *matching* packet ends the wait. This is the
+                    # key correctness fix: previously any frame at all
+                    # short-circuited the wait, so a streaming frame would
+                    # mask a missing poll response.
+                    if any(self._is_response_match(p, target_id) for p in extracted):
+                        packet_found = True
             if packet_found:
                 break
             time.sleep(0.005)
 
         if not packet_found:
             self._timeouts += 1
+        else:
+            # Latency = round-trip time from TX to the matching response.
+            latency_ms = (time.time() - tx_time) * 1000.0
+            try:
+                self.poll_latency.emit(target_id if target_id is not None else -1, latency_ms)
+            except Exception:
+                pass
         self.metrics_updated.emit(self._timeouts, self._crc_errors, self._rx_bytes)
 
 
