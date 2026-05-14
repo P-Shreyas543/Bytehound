@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -33,6 +34,7 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDockWidget,
+    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -995,6 +997,83 @@ class PollingConfigDialog(QDialog):
         return result
 
 
+class LoggingSettingsDialog(QDialog):
+    """Modal dialog for configuring logging level and CSV flush interval."""
+
+    _LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
+
+    def __init__(self, settings: QSettings, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Logging Settings")
+        self.setMinimumWidth(320)
+        self._settings = settings
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        header = QLabel("Configure application logging output:", self)
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self._level_combo = QComboBox(self)
+        self._level_combo.addItems(list(self._LEVELS))
+
+        self._flush_spin = QDoubleSpinBox(self)
+        self._flush_spin.setRange(0.0, 10.0)
+        self._flush_spin.setDecimals(2)
+        self._flush_spin.setSingleStep(0.1)
+        self._flush_spin.setSuffix(" s")
+        self._flush_spin.setToolTip("0.0 = flush every write")
+
+        form.addRow("Log level", self._level_combo)
+        form.addRow("Flush interval", self._flush_spin)
+        layout.addLayout(form)
+
+        note = QLabel(
+            "Flush interval applies to raw/decoded CSV loggers. 0.0 flushes every write.",
+            self,
+        )
+        note.setWordWrap(True)
+        layout.addWidget(note)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._restore_from_settings()
+
+    def _restore_from_settings(self) -> None:
+        level = str(self._settings.value("logging/level", "INFO")).upper()
+        if level not in self._LEVELS:
+            level = "INFO"
+        self._level_combo.setCurrentText(level)
+
+        raw_interval = self._settings.value("logging/flush_interval_s", 0.5)
+        try:
+            interval = float(raw_interval)
+        except (TypeError, ValueError):
+            interval = 0.5
+        if interval < 0:
+            interval = 0.0
+        self._flush_spin.setValue(interval)
+
+    def _on_accept(self) -> None:
+        self._settings.setValue("logging/level", self._level_combo.currentText())
+        self._settings.setValue("logging/flush_interval_s", self._flush_spin.value())
+        self.accept()
+
+    def get_values(self) -> Tuple[str, float]:
+        return self._level_combo.currentText(), float(self._flush_spin.value())
+
+
 class MainWindow(QMainWindow):
     def _make_history_buffer(self) -> Tuple[Deque[float], Deque[float]]:
         """Factory for the parallel-deque entries in ``self._plot_history``.
@@ -1037,6 +1116,7 @@ class MainWindow(QMainWindow):
         self._raw_logger: Optional[RawLogger] = None
         self._decoded_logger: Optional[DecodedLogger] = None
         self._settings = QSettings(APP_ORG, APP_NAME)
+        self._apply_logging_level(str(self._settings.value("logging/level", "INFO")))
         self._tx_field_inputs: Dict[str, QLineEdit] = {}
         self._seen_decode_warnings: set[tuple[int, str, int]] = set()
 
@@ -1197,6 +1277,9 @@ class MainWindow(QMainWindow):
         self._analysis_action = QAction(_icon("mdi6.chart-multiple", _ic), "Analysis Suite", self)
         self._analysis_action.triggered.connect(self._on_analysis_suite)
 
+        self._logging_settings_action = QAction(_icon("mdi6.tune-vertical", _ic), "Logging Settings...", self)
+        self._logging_settings_action.triggered.connect(self._on_logging_settings)
+
 
     def _build_menus(self) -> None:
         menubar = self.menuBar()
@@ -1231,6 +1314,7 @@ class MainWindow(QMainWindow):
 
         tools_menu = menubar.addMenu("&Tools")
         tools_menu.addAction(self._analysis_action)
+        tools_menu.addAction(self._logging_settings_action)
         _add_sep()
 
         help_menu = menubar.addMenu("&Help")
@@ -1393,6 +1477,24 @@ class MainWindow(QMainWindow):
         root.addWidget(btn_row)
 
         dlg.exec()
+
+    def _on_logging_settings(self) -> None:
+        self._log_activity("[ACTION] Open Logging Settings dialog")
+        dlg = LoggingSettingsDialog(self._settings, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        level_name, flush_interval = dlg.get_values()
+        self._apply_logging_level(level_name)
+        if self._raw_logger:
+            self._raw_logger.set_flush_interval(flush_interval)
+        if self._decoded_logger:
+            self._decoded_logger.set_flush_interval(flush_interval)
+        self._set_status(
+            f"Logging settings updated: level {level_name}, flush {flush_interval:.2f}s"
+        )
+        self._log_activity(
+            f"[ACTION] Logging settings updated: level {level_name}, flush {flush_interval:.2f}s"
+        )
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main", self)
@@ -1778,6 +1880,7 @@ class MainWindow(QMainWindow):
             (self._exit_action,             "mdi6.exit-to-app"),
             (self._info_action,             "mdi6.information-outline"),
             (self._analysis_action,         "mdi6.chart-multiple"),
+            (self._logging_settings_action, "mdi6.tune-vertical"),
             # Names MUST match the icons used at QAction construction in
             # _create_actions(); otherwise the menu icon silently changes
             # shape the first time the user switches theme.
@@ -2793,7 +2896,8 @@ class MainWindow(QMainWindow):
 
         default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
         default_dir.mkdir(parents=True, exist_ok=True)
-        default_file = default_dir / "serial_log.csv"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_file = default_dir / f"serial_log_{timestamp}.csv"
 
         target, _ = QFileDialog.getSaveFileName(
             self,
@@ -2821,10 +2925,27 @@ class MainWindow(QMainWindow):
         else:
             decoded_path = base.with_name(f"{base_stem}.csv")
 
-        self._raw_logger = RawLogger(raw_path) if raw_path else None
+        flush_interval = self._log_flush_interval()
+        metadata = self._build_log_metadata(choice, raw_path, decoded_path)
+        self._raw_logger = (
+            RawLogger(
+                raw_path,
+                flush_interval=flush_interval,
+                metadata=metadata,
+                on_error=self._on_logger_error,
+            )
+            if raw_path
+            else None
+        )
         if decoded_path:
             assert self._config is not None
-            self._decoded_logger = DecodedLogger(decoded_path, self._config)
+            self._decoded_logger = DecodedLogger(
+                decoded_path,
+                self._config,
+                flush_interval=flush_interval,
+                metadata=metadata,
+                on_error=self._on_logger_error,
+            )
         else:
             self._decoded_logger = None
 
@@ -2862,6 +2983,55 @@ class MainWindow(QMainWindow):
         self._logging_label.setText(f"Logging: {summary}")
         self._set_status(f"Logging started ({choice}): {summary}")
         self._log_activity(f"Logging started ({choice}): {summary}")
+
+    def _log_flush_interval(self) -> float:
+        value = self._settings.value("logging/flush_interval_s", 0.5)
+        try:
+            interval = float(value)
+        except (TypeError, ValueError):
+            interval = 0.5
+        if interval < 0:
+            interval = 0.0
+        return interval
+
+    def _apply_logging_level(self, level_name: str) -> None:
+        raw_level = getattr(logging, str(level_name).upper(), logging.INFO)
+        level = raw_level if isinstance(raw_level, int) else logging.INFO
+        root = logging.getLogger()
+        root.setLevel(level)
+        for handler in root.handlers:
+            handler.setLevel(level)
+
+    def _build_log_metadata(
+        self,
+        choice: str,
+        raw_path: Optional[Path],
+        decoded_path: Optional[Path],
+    ) -> Dict[str, str]:
+        metadata: Dict[str, str] = {
+            "app": APP_NAME,
+            "app_version": _read_version(),
+            "session_started": self._session_started.strftime("%Y-%m-%d %H:%M:%S"),
+            "logging_mode": choice,
+        }
+        if raw_path is not None:
+            metadata["raw_file"] = raw_path.name
+        if decoded_path is not None:
+            metadata["decoded_file"] = decoded_path.name
+        if self._config_path is not None:
+            metadata["config_source"] = str(self._config_path)
+        if self._serial is not None:
+            metadata["serial_port"] = self._serial.settings.port
+            metadata["baud_rate"] = str(self._serial.settings.baud_rate)
+        return metadata
+
+    def _on_logger_error(self, message: str) -> None:
+        logging.getLogger("bytehound.logging").error("Logging error: %s", message)
+        if self._logging:
+            self._stop_logging()
+        self._set_status("Logging stopped (error)")
+        self._log_activity(f"[ERROR] {message}")
+        self._popup_warning("Logging Error", f"Logging stopped due to an error:\n\n{message}")
 
     def _stop_logging(self) -> None:
         was_logging = self._logging

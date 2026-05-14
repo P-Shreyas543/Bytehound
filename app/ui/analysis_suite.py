@@ -221,7 +221,13 @@ class LogLoaderThread(QThread):
     def _load_csv(self):
         """Parse a _decoded.csv file produced by DecodedLogger."""
         with open(self._path, newline='', encoding='utf-8') as f:
-            reader = csv.DictReader(f)
+            def _iter_rows():
+                for line in f:
+                    stripped = line.strip()
+                    if not stripped or stripped.startswith("#"):
+                        continue
+                    yield line
+            reader = csv.DictReader(_iter_rows())
             fieldnames = reader.fieldnames or []
             rows = list(reader)
 

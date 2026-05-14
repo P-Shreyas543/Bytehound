@@ -10,10 +10,12 @@ so editor "run file" buttons don't break.
 
 from __future__ import annotations
 
+import logging
 import multiprocessing
 import os
 import sys
 from pathlib import Path
+from logging.handlers import RotatingFileHandler
 import qdarktheme
 
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -26,8 +28,72 @@ from PySide6.QtWidgets import QApplication
 
 from app.ui.main_window import MainWindow, APP_ORG, APP_NAME, TitleBarThemeFilter, _find_logo
 
+_LOG_MAX_BYTES = 5 * 1024 * 1024
+_LOG_BACKUP_COUNT = 3
+_LOGGING_CONFIGURED = False
+
+
+def _fallback_log_dir() -> Path:
+    if sys.platform == "win32":
+        base = Path(os.getenv("APPDATA") or Path.home())
+        return base / APP_NAME / "logs"
+    return Path.home() / f".{APP_NAME.lower()}" / "logs"
+
+
+def _create_file_handler(log_path: Path) -> RotatingFileHandler | None:
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        return RotatingFileHandler(
+            log_path,
+            maxBytes=_LOG_MAX_BYTES,
+            backupCount=_LOG_BACKUP_COUNT,
+            encoding="utf-8",
+        )
+    except OSError:
+        return None
+
+
+def configure_logging(level: int = logging.INFO) -> None:
+    global _LOGGING_CONFIGURED
+    root = logging.getLogger()
+    if _LOGGING_CONFIGURED:
+        return
+
+    root.setLevel(level)
+    formatter = logging.Formatter(
+        fmt="%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    console = logging.StreamHandler()
+    console.setLevel(level)
+    console.setFormatter(formatter)
+    root.addHandler(console)
+
+    primary_path = _PROJECT_ROOT / "logs" / "bytehound.log"
+    file_handler = _create_file_handler(primary_path)
+    if file_handler is None:
+        file_handler = _create_file_handler(_fallback_log_dir() / "bytehound.log")
+    if file_handler is not None:
+        file_handler.setLevel(level)
+        file_handler.setFormatter(formatter)
+        root.addHandler(file_handler)
+    else:
+        root.warning("File logging disabled: could not create log file.")
+
+    def _handle_uncaught(exc_type, exc, tb):
+        logging.getLogger("bytehound").error(
+            "Uncaught exception",
+            exc_info=(exc_type, exc, tb),
+        )
+        sys.__excepthook__(exc_type, exc, tb)
+
+    sys.excepthook = _handle_uncaught
+    _LOGGING_CONFIGURED = True
+
 
 def main() -> int:
+    configure_logging()
     app = QApplication(sys.argv)
 
     icon_path = _find_logo("logo_sq.ico") or _find_logo("logo_sq.png")
