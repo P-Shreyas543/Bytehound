@@ -91,7 +91,7 @@ def main() -> int:
 
     Path("scratch").mkdir(exist_ok=True)
     raw_path = Path("scratch/stress_raw.csv")
-    dec_path = Path("scratch/stress_decoded.csv")
+    dec_path = Path("scratch/stress_decoded.xlsx")
     raw_path.unlink(missing_ok=True)
     dec_path.unlink(missing_ok=True)
 

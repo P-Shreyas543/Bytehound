@@ -65,7 +65,7 @@ def build_modbus_packet(protocol: ProtocolConfig, target_id: int, payload: bytes
     If payload is empty, we assume it's a read request (FC 03).
     If payload is not empty, we assume it's a write request (FC 06 or 16).
     """
-    node_address = 1  # Default node address since it's not configured
+    node_address = protocol.modbus_node_address
     
     if not payload:
         # Read Holding Registers (FC 03)

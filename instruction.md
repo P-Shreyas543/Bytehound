@@ -45,7 +45,7 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 | **Window Size**       | 1400 × 900 px                                      |
 | **Window Title**      | `Bytehound v<Version>` (e.g. `Bytehound v0.1.0`) |
 | **Executable Name**   | `Bytehound.exe`                            |
-| **Logging Format**    | CSV — `*_raw.csv` (timestamped hex frames) + `*_decoded.csv` (per-signal scaled values). See §12. |
+| **Logging Format**    | `*_raw.csv` (timestamped hex frames, streamed) + `*_decoded.xlsx` (two sheets: `Metadata` key/value + `Data` per-signal scaled values; finalised on Stop). See §12. |
 | **Plotting Library**  | pyqtgraph (live plot in main window + Analysis Suite) |
 | **Settings Storage**  | `QSettings("Bytehound", "Bytehound")` → Windows registry `HKCU\Software\Bytehound\Bytehound` |
 | **Update Manifest**   | `manifest_url` field in [version.json](version.json) |
@@ -147,7 +147,7 @@ BMS-MonitorApp/
 │   │   └── replay_source.py            # read raw_log.csv, yield bytes
 │   ├── serial_logging/
 │   │   ├── raw_logger.py               # CSV writer: timestamp,direction,hex,delta_t_ms
-│   │   └── decoded_logger.py           # CSV writer: per-signal decoded values
+│   │   └── decoded_logger.py           # xlsx writer: Metadata + Data sheets
 │   ├── ui/
 │   │   ├── main_window.py              # QMainWindow w/ docks, menus, panels
 │   │   ├── analysis_suite.py           # post-test multi-log analyzer
@@ -626,31 +626,50 @@ Header: `timestamp,direction,hex,delta_t_ms`
 - `hex` is space-separated, uppercase.
 - `delta_t_ms` is the request-to-response latency for polled responses (else 0.0).
 
-### `*_decoded.csv` — `DecodedLogger`
+### `*_decoded.xlsx` — `DecodedLogger`
 
-Header (wide format):
-`timestamp,elapsed_ms,<signal 1>,<signal 2>,...,<calc N>`
+Excel workbook with two sheets:
 
-- One row per decoded frame (sparse): only the columns for that frame's
-  signals/calculations are filled; the rest are blank.
-- Signal column labels are the signal name, suffixed with `(<unit>)` when a
-  unit is present. Counted signals already include their index in the name.
-- Calculations are appended after the frame signals, named
-  `<group> <stat>` with the same unit suffix rule.
-- Values are scaled engineering numbers only (raw bytes and display strings
-  are not logged).
-- `timestamp` is local time, millisecond resolution
-  (`%Y-%m-%d %H:%M:%S.%f` truncated to ms).
-- `elapsed_ms` is the integer milliseconds since the logging session started.
+* **`Metadata`** — header row `Key | Value`, then one row per metadata
+  entry sorted alphabetically. Populated by `_build_log_metadata()` in
+  `main_window.py` and includes `app`, `app_version`, `baud_rate`,
+  `config_source`, `decoded_file`, `logging_mode`, `raw_file`,
+  `serial_port`, `session_started`.
+* **`Data`** — header row, then one row per **complete poll cycle** in
+  wide format. The header is grouped into **per-frame blocks**, one block
+  per frame in `FrameConfig.frames` insertion order:
 
-Both loggers append to existing files (writing the header only if empty) and
-flush periodically so a crash never loses more than the current short buffer.
+  ```
+  <frame_A>.elapsed_ms | <frame_A>.frame_id | <frame_A>.<signal 1> | ... |
+  <frame_B>.elapsed_ms | <frame_B>.frame_id | <frame_B>.<signal 1> | ...
+  ```
 
-**Header-match validation.** On `open()`, both loggers read the existing
-header row (if any) and refuse to append when its columns don't match the
-current `COLUMNS` tuple. The UI catches the resulting `ValueError` and shows
-a popup so the user picks a fresh path instead of silently corrupting an
-old log with a different schema.
+Cycle Buffer pattern:
+
+- Each incoming `log_frame()` updates an in-memory slot keyed by `frame_id`.
+- The **trigger frame** is the LAST frame in `FrameConfig.frames`. When it
+  arrives, the buffer is examined:
+  - All cycle frames present → emit one wide row, then clear the buffer.
+  - Any cycle frame missing → drop the cycle silently, then clear the buffer.
+- Buffer is always cleared on trigger arrival — no stale data carries across
+  cycles.
+- The block label `<frame>` is `frame_name` from config, or `0xNNNN` if no
+  name is set.
+- `<frame>.elapsed_ms` is the integer ms-since-log-start at which that
+  particular frame was decoded — so each block carries its own arrival time.
+- `<frame>.frame_id` is the hex string (e.g. `0x1000`).
+- Signal columns reuse the existing `name (unit)` form, all dot-prefixed by
+  the block label so cross-frame name collisions are impossible.
+- Calculations land in their parent frame's block; calcs with no explicit
+  `frame_id` fan out across every frame that contributes to the calc group.
+- Values are scaled engineering numbers only.
+
+**Persistence model.** The raw CSV logger streams rows to disk and flushes
+periodically (`flush_interval`, default 0.5 s) so a crash loses ≤ one
+buffer. The decoded `DecodedLogger` uses openpyxl write-only mode and
+**only writes to disk when `close()` is called** (on Stop Logging or
+shutdown). An app crash before Stop loses the decoded workbook; the raw
+CSV is unaffected and can be replayed to regenerate decoded values.
 
 When logging starts, the active config is snapshotted next to the log via
 `snapshot_config(...)` so the file is self-describing.
@@ -717,15 +736,13 @@ Built dynamically in `_populate_view_menu()`. Items in order:
 | **Panels** (submenu) | Toggle visibility of each dockable panel via `dock.toggleViewAction()`. Entries: **Connection**, **Live Plot**, **Bitfields**, **Enums**, **TX Commands**, **Parameter Editor**, **Raw Console**, **Activity Log**. State persists via `QMainWindow.saveState`. |
 | **Theme** (submenu) | Exclusive checkable group: **Dark** / **Light** / **System**. Calls `_apply_theme(key)`. Persists to `QSettings("ui/theme")`. Re-applies the Windows dark/light title bar to every open top-level widget. |
 | **Reset Window Layout** | Restores docks/toolbar to their default arrangement. |
-| — separator — |  |
-| **Auto-Range Plot** (`Ctrl+R`) | Resets the live plot's view box to fit current data. |
 
 #### Device
 | Item | Slot | Behavior |
 |------|------|----------|
 | **Connect / Disconnect** | `_on_toggle_connect` | Opens or closes the `PollingWorker` against the selected port/baud. Label flips between "Connect" and "Disconnect". |
 | **Start / Stop Auto-Fetch** | `_on_toggle_polling` | Toggles the continuous query schedule (`worker.set_polling_global`). Checkable; label flips. |
-| **Start / Stop Logging** | `_on_toggle_logging` | Toggles writing `*_raw.csv` + `*_decoded.csv` under `~/Documents/Bytehound/Logs/`. Disabled until a config is loaded. |
+| **Start / Stop Logging** | `_on_toggle_logging` | Toggles writing `*_raw.csv` + `*_decoded.xlsx` under `~/Documents/Bytehound/Logs/`. Disabled until a config is loaded. |
 
 #### Tools
 | Item | Slot | Behavior |
@@ -909,9 +926,12 @@ per signal.
   | 🔍 Explore | `False` | No auto X-update; user-initiated pan/zoom |
 
   Switching between modes:
-  - Any user pan/zoom fires `_on_plot_range_changed` → sets `_plot_live = False`.
-  - **⟳ Reset View** button (and `Ctrl+R` shortcut) sets `_plot_live = True`
-    and calls `_redraw_plot()` immediately.
+  - Any user pan/zoom fires `_on_plot_range_changed` → sets `_plot_live = False`
+    and visually checks the Pause button.
+  - **⏸ Pause / ▶ Live** toggle button (and `Space` shortcut) is the single
+    control. Going to Live sets `_plot_live = True`, re-enables Y auto-range
+    on every panel, and calls `_redraw_plot()` immediately so X snaps back
+    to `(0, current_t)`.
 
   Re-entrancy guard: `self._plot_range_changing` is set `True` around any
   internal `setXRange` call so `_on_plot_range_changed` ignores it.
@@ -978,8 +998,10 @@ A separate non-modal `QMainWindow` launched from *Tools → Analysis Suite*.
 - Backed by `pyqtgraph` with OpenGL acceleration when available.
 - Minimum panel height 80 px; vertical splitters between subplots.
 
-The analysis suite is independent of the live decoder — it ingests rows from
-exported Excel logs (typically the `*_decoded.csv` re-saved as `.xlsx`).
+The analysis suite is independent of the live decoder — it ingests rows
+from Bytehound `*_decoded.xlsx` logs (auto-detected via the `Data` sheet
+and `elapsed_ms` column) and from external Dyno-style `.xlsx` exports
+(`Record` sheet, `Elapsed (s)` column).
 
 ---
 
@@ -1203,7 +1225,7 @@ Pytest suite under `tests/`. Required coverage:
 - `test_tx_padding.py` — `tx_pad_length` zero-pads correctly before CRC.
 - `test_polling_worker.py` — schedule cadence, priority TX preempts polling
   (use a fake serial transport).
-- `test_logging.py` — raw + decoded CSV row format, append-with-header logic.
+- `test_logging.py` — raw CSV row format + append-with-header logic; decoded xlsx data sheet and metadata sheet contents.
 - `test_replay.py` — both CSV and legacy text formats; bad lines collected,
   not raised.
 
@@ -1294,7 +1316,7 @@ The build is "done" when:
 6. **Multi-grid plot:** The Live Plot correctly renders 1–8 subplots, all
    X-linked. Per-panel variable assignment works from the strip and from the
    right-click table context menu. Live mode (0→now) and Explore mode (frozen
-   on pan/zoom) switch correctly. Reset View (Ctrl+R) snaps back to Live.
+   on pan/zoom) switch correctly. Pause/Live toggle (Space) snaps back to Live.
 7. **Theme-aware icons:** All menu and toolbar icons (File, Edit, View,
    Device, Tools, Help) update their tint when the user switches Dark ↔ Light.
 8. **Parameter Editor:** Only RW/W signals appear. Live Value column updates

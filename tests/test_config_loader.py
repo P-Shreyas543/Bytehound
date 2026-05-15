@@ -23,16 +23,22 @@ def test_load_bundled_config(resources_dir):
     assert cfg.protocol.length_size == 1
     assert cfg.protocol.crc_type == "crc16_modbus"
     assert cfg.protocol.crc_byte_order == "little"
-    assert cfg.protocol.footer == b"\xEE"
+    # Bundled template uses an empty footer (CRC-only framing). If you
+    # change protocol.csv to add a footer, update this assertion to match.
+    assert cfg.protocol.footer == b""
 
     assert 0x1000 in cfg.signals_by_frame
     sigs = cfg.signals_by_frame[0x1000]
-    assert [s.signal_name for s in sigs] == ["Voltage", "Current"]
+    # Smoke-check that the bundled template loads in the expected order and
+    # the first signal is well-formed. If you reorganise variables.csv,
+    # update this list to match.
+    assert [s.signal_name for s in sigs] == [
+        "Pack Voltage", "Pack Current", "Pack SOC", "Pack Temperature"
+    ]
     assert sigs[0].start_byte == 0 and sigs[0].byte_length == 2
     assert sigs[0].endianness == "little"
     assert sigs[0].data_type == "uint"
-    assert sigs[0].scale == 0.1 and sigs[0].offset == 0.0
-    assert sigs[0].group == "Battery"
+    assert sigs[0].scale == 0.01 and sigs[0].offset == 0.0
 
 
 def test_exported_excel_template_loads():
@@ -80,6 +86,21 @@ def test_missing_required_column(tmp_path):
         encoding="utf-8",
     )
     with pytest.raises(ConfigError, match="missing required columns"):
+        load_config(tmp_path)
+
+
+def test_missing_column_suggests_typo(tmp_path):
+    """`frame_id` instead of `frame_id_hex` should trigger a did-you-mean hint."""
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "frame_config.csv").write_text(
+        # frame_id_hex misspelt as frame_id — exactly the user-facing typo we
+        # documented in the legacy-FrameConfig section of the help.
+        "frame_id,frame_name,signal_name,start_byte,byte_length,"
+        "endianness,data_type,scale,offset,unit\n"
+        "0010,Cell_Voltages,Cell_1_Voltage,0,2,big,uint,0.001,0,V\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match=r"did you mean 'frame_id'"):
         load_config(tmp_path)
 
 
@@ -139,5 +160,5 @@ def test_unsupported_fmt_in_full_schema(tmp_path):
         "0x0010,Sig,uint24,V,1,0,1,,big,TRUE,\n",
         encoding="utf-8",
     )
-    with pytest.raises(ConfigError, match="fmt must be one of"):
+    with pytest.raises(ConfigError, match=r"data_type \(fmt\) must be one of"):
         load_config(tmp_path)

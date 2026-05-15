@@ -1,12 +1,12 @@
 {
-    "version": "0.1.0",
+    "version": "0.2.0",
     "Developer": "Shreyas P",
-    "build_date": "2026-05-11",
+    "build_date": "2026-05-15",
     "license": "MIT",
     "homepage": "https://github.com/P-Shreyas543/Bytehound",
     "issue_url": "https://github.com/P-Shreyas543/Bytehound/issues",
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
-    "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.1.0/Bytehound_Setup_0.1.0.exe",
-    "release_notes": "Initial release.",
-    "sha256": "dd524d0a9b093e004055c03f3d0e7d454715bdaf057dd47d6c40c34fdd474713"
+    "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.2.0/Bytehound_Setup_0.2.0.exe",
+    "release_notes": "Performance and stability pass: monotonic-clock worker timing (immune to system-clock jumps), throttled metrics emit on poll response, O(1) editor-table lookup, batched console output, and reduced per-packet UI work.",
+    "sha256": ""
 }

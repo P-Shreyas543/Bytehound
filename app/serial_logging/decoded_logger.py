@@ -1,35 +1,57 @@
-"""Decoded signal CSV log writer.
+"""Decoded signal log writer (.xlsx, two sheets, cycle-buffered wide format).
 
-Buffered I/O
-------------
-``log_frame()`` writes to the file object's in-memory buffer but only
-calls the OS-level ``flush()`` every ``FLUSH_INTERVAL`` seconds (default
-0.5 s) to avoid per-frame syscall overhead at high baud rates. A final
-``flush()`` is guaranteed when the logger is closed.
+Output workbook
+---------------
+* ``Metadata`` – key/value rows describing the session (app, port, baud,
+  config path, file names, start time, etc.).
+* ``Data`` – one wide row per **complete poll cycle**. Each frame in the
+  config gets its own column block:
+  ``<frame>.elapsed_ms | <frame>.frame_id | <frame>.<signal 1> | …``.
+  Frames are emitted in the order they appear in ``FrameConfig.frames``.
+
+Cycle Buffer pattern
+--------------------
+Frames arrive one at a time and each is stashed in an in-memory buffer
+keyed by ``frame_id``. When the **trigger frame** (the last frame in the
+config order) arrives, the buffer is checked: if every configured frame
+has been seen since the previous emit, one wide row is appended to the
+Data sheet. The buffer is **always cleared on trigger arrival** so a
+later cycle never carries stale values forward; incomplete cycles are
+dropped silently.
+
+Persistence trade-off
+---------------------
+openpyxl write-only mode streams rows into the workbook in memory but
+only persists to disk on :meth:`close`. A crash before Stop Logging
+loses the decoded workbook; the raw CSV (streamed) is unaffected and can
+be replayed to regenerate the decoded values.
 """
 
 from __future__ import annotations
 
-import csv
 import logging
-import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Dict, List, Mapping, TextIO, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
+
+from openpyxl import Workbook
 
 from ..decoder.frame_decoder import DecodedFrame
 from ..decoder.types import FrameConfig
 
-_FLUSH_INTERVAL = 0.5  # seconds between explicit OS-level flushes
 _LOG = logging.getLogger("bytehound.serial_logging.decoded")
 
 ErrorCallback = Callable[[str], None]
 
+# Internal slot keys for the per-frame buffer entry. Stored alongside the
+# real column names so we can look up the elapsed_ms / frame_id columns
+# without re-formatting the frame label each time.
+_SLOT_ELAPSED = "__elapsed_ms__"
+_SLOT_FRAME_ID = "__frame_id__"
 
-def _format_number(value: float | int) -> str:
-    if isinstance(value, float):
-        return f"{value:.6g}"
-    return str(value)
+
+def _format_number(value: float | int) -> float | int:
+    return value
 
 
 def _signal_label(name: str, unit: str) -> str:
@@ -37,26 +59,39 @@ def _signal_label(name: str, unit: str) -> str:
 
 
 class DecodedLogger:
+    METADATA_SHEET = "Metadata"
+    DATA_SHEET = "Data"
+
     def __init__(
         self,
         path: str | Path,
         config: FrameConfig,
         *,
-        flush_interval: float = _FLUSH_INTERVAL,
+        flush_interval: float = 0.5,
         metadata: Mapping[str, str] | None = None,
         on_error: ErrorCallback | None = None,
     ) -> None:
         self.path = Path(path)
         self._config = config
-        self._fp: TextIO | None = None
-        self._writer: csv.DictWriter | None = None
-        self._last_flush: float = 0.0
-        self._flush_interval = float(flush_interval)
+        self._workbook: Optional[Workbook] = None
+        self._data_ws = None
         self._metadata = dict(metadata) if metadata else {}
         self._on_error = on_error
         self._disabled = False
-        self._warned_collisions: set[str] = set()
-        self._columns, self._column_by_key = self._build_columns()
+
+        (
+            self._columns,
+            self._column_by_key,
+            self._block_by_frame,
+            self._cycle_frame_ids,
+        ) = self._build_columns()
+        self._trigger_id: Optional[int] = (
+            self._cycle_frame_ids[-1] if self._cycle_frame_ids else None
+        )
+        self._cycle_buffer: Dict[int, Dict[str, Any]] = {}
+
+        # Kept for API compatibility; xlsx output cannot flush incrementally.
+        self._flush_interval = float(flush_interval)
 
     def __enter__(self) -> "DecodedLogger":
         self.open()
@@ -68,48 +103,44 @@ class DecodedLogger:
     def open(self) -> None:
         if self._disabled:
             return
+        if self._workbook is not None:
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        new_file = not self.path.exists() or self.path.stat().st_size == 0
 
-        # Same header-match check as RawLogger — refuse to append rows to a
-        # file whose header was written by a different schema version.
-        if not new_file:
-            existing = self._read_existing_header()
-            if existing != self._columns:
-                raise ValueError(
-                    f"Cannot append to {self.path.name}: existing header "
-                    f"{existing} does not match expected {self._columns}. "
-                    f"Choose a new filename or delete the old log."
-                )
+        wb = Workbook(write_only=True)
+        meta_ws = wb.create_sheet(title=self.METADATA_SHEET)
+        meta_ws.append(["Key", "Value"])
+        for key in sorted(self._metadata):
+            value = str(self._metadata[key]).replace("\n", " ").strip()
+            meta_ws.append([key, value])
 
-        self._fp = self.path.open("a", encoding="utf-8", newline="")
-        self._writer = csv.DictWriter(self._fp, fieldnames=self._columns)
-        self._last_flush = time.monotonic()
-        if new_file:
-            self._write_metadata()
-            self._writer.writeheader()
+        data_ws = wb.create_sheet(title=self.DATA_SHEET)
+        data_ws.append(self._columns)
+
+        self._workbook = wb
+        self._data_ws = data_ws
 
     def close(self) -> None:
-        if self._fp is not None:
+        if self._workbook is None:
+            return
+        try:
+            self._workbook.save(self.path)
+        except Exception as exc:
+            self._handle_error("save", exc)
+        finally:
             try:
-                self._fp.flush()  # guaranteed final flush before close
+                self._workbook.close()
             except Exception:
                 pass
-            try:
-                self._fp.close()
-            except Exception:
-                pass
-            self._fp = None
-            self._writer = None
+            self._workbook = None
+            self._data_ws = None
+            self._cycle_buffer.clear()
 
     def set_flush_interval(self, seconds: float) -> None:
         try:
-            interval = float(seconds)
+            self._flush_interval = max(0.0, float(seconds))
         except (TypeError, ValueError):
-            interval = _FLUSH_INTERVAL
-        if interval < 0:
-            interval = 0.0
-        self._flush_interval = interval
+            self._flush_interval = 0.5
 
     def log_frame(
         self,
@@ -120,43 +151,64 @@ class DecodedLogger:
         if self._disabled:
             return
         try:
-            if self._writer is None:
+            if self._workbook is None:
                 self.open()
-            if self._writer is None or self._fp is None:
+            if self._data_ws is None:
                 return
-            ts = (timestamp or datetime.now()).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            row = {column: "" for column in self._columns}
-            row["timestamp"] = ts
-            row["elapsed_ms"] = elapsed_ms
 
+            block = self._block_by_frame.get(decoded.frame_id)
+            if block is None:
+                # Frame not represented in the schema — nothing to do.
+                return
+
+            slot = self._cycle_buffer.setdefault(decoded.frame_id, {})
+            slot[block[_SLOT_ELAPSED]] = elapsed_ms
+            slot[block[_SLOT_FRAME_ID]] = f"0x{decoded.frame_id:04X}"
             for signal in [*decoded.signals, *decoded.calculations]:
                 if signal.scaled_value is None:
                     continue
-                column = self._column_by_key.get((signal.frame_id, signal.signal_name))
-                if column is None:
+                col = self._column_by_key.get((signal.frame_id, signal.signal_name))
+                if col is None:
                     continue
-                row[column] = _format_number(signal.scaled_value)
+                slot[col] = _format_number(signal.scaled_value)
 
-            self._writer.writerow(row)
-            # Periodic flush — avoids an OS syscall after every single signal row.
-            now = time.monotonic()
-            if self._flush_interval <= 0 or now - self._last_flush >= self._flush_interval:
-                self._fp.flush()
-                self._last_flush = now
+            if self._trigger_id is not None and decoded.frame_id == self._trigger_id:
+                self._maybe_emit_row()
+                # Always clear so the next cycle starts fresh — no stale carry-over.
+                self._cycle_buffer.clear()
         except Exception as exc:
             self._handle_error("write", exc)
 
-    def _build_columns(self) -> Tuple[List[str], Dict[Tuple[int, str], str]]:
-        columns = ["timestamp", "elapsed_ms"]
-        column_by_key: Dict[Tuple[int, str], str] = {}
-        used_labels = set(columns)
+    def _maybe_emit_row(self) -> None:
+        """Emit the cycle row only when every configured frame is present."""
+        if self._data_ws is None:
+            return
+        if not all(fid in self._cycle_buffer for fid in self._cycle_frame_ids):
+            return
+        flat: Dict[str, Any] = {}
+        for slot in self._cycle_buffer.values():
+            flat.update(slot)
+        self._data_ws.append([flat.get(col, "") for col in self._columns])
 
-        for spec in self._config.all_signals:
-            base_label = _signal_label(spec.signal_name, spec.unit)
-            label = self._resolve_label(base_label, spec.frame_name, spec.frame_id, used_labels)
-            columns.append(label)
-            column_by_key[(spec.frame_id, spec.signal_name)] = label
+    def _build_columns(
+        self,
+    ) -> Tuple[
+        List[str],
+        Dict[Tuple[int, str], str],
+        Dict[int, Dict[str, str]],
+        List[int],
+    ]:
+        # Cycle frames = configured frames that have at least one signal,
+        # in the order they appear in FrameConfig.frames (insertion order).
+        cycle_frame_ids = [
+            fid
+            for fid in self._config.frames.keys()
+            if self._config.signals_by_frame.get(fid)
+        ]
 
+        # Map each calc group name to the frame ids that contribute signals
+        # to it, used to fan calc_groups (with no explicit frame_id) into the
+        # right per-frame blocks.
         frames_by_group: Dict[str, List[int]] = {}
         for spec in self._config.all_signals:
             if not spec.group:
@@ -165,71 +217,56 @@ class DecodedLogger:
             if spec.frame_id not in frames:
                 frames.append(spec.frame_id)
 
-        for calc in self._config.calc_groups:
-            if calc.frame_id is not None:
-                frame_ids = [calc.frame_id]
-            else:
-                frame_ids = frames_by_group.get(calc.group, [])
-            if not frame_ids:
-                continue
-            for frame_id in frame_ids:
-                frame_name = self._config.frame_names.get(frame_id, f"0x{frame_id:04X}")
-                signal_name = f"{calc.group} {calc.stat}"
-                base_label = _signal_label(signal_name, calc.unit)
-                label = self._resolve_label(base_label, frame_name, frame_id, used_labels)
-                columns.append(label)
-                column_by_key[(frame_id, signal_name)] = label
+        columns: List[str] = []
+        column_by_key: Dict[Tuple[int, str], str] = {}
+        block_by_frame: Dict[int, Dict[str, str]] = {}
 
-        return columns, column_by_key
+        for frame_id in cycle_frame_ids:
+            label = self._config.frame_names.get(frame_id) or f"0x{frame_id:04X}"
+            elapsed_col = f"{label}.elapsed_ms"
+            frame_id_col = f"{label}.frame_id"
+            columns.extend([elapsed_col, frame_id_col])
+            block: Dict[str, str] = {
+                _SLOT_ELAPSED: elapsed_col,
+                _SLOT_FRAME_ID: frame_id_col,
+            }
 
-    def _resolve_label(
-        self,
-        base_label: str,
-        frame_name: str,
-        frame_id: int,
-        used_labels: set[str],
-    ) -> str:
-        if base_label not in used_labels:
-            used_labels.add(base_label)
-            return base_label
+            for spec in self._config.signals_by_frame.get(frame_id, []):
+                sig_label = _signal_label(spec.signal_name, spec.unit)
+                col = f"{label}.{sig_label}"
+                columns.append(col)
+                column_by_key[(frame_id, spec.signal_name)] = col
+                block[spec.signal_name] = col
 
-        prefix = frame_name or f"0x{frame_id:04X}"
-        label = f"{prefix}.{base_label}"
-        if base_label not in self._warned_collisions:
-            _LOG.warning(
-                "DecodedLogger duplicate column label %r; using %r for frame 0x%04X",
-                base_label,
-                label,
-                frame_id,
-            )
-            self._warned_collisions.add(base_label)
-        if label in used_labels:
-            label = f"{prefix}[0x{frame_id:04X}].{base_label}"
-        used_labels.add(label)
-        return label
-
-    def _read_existing_header(self) -> list[str]:
-        with self.path.open("r", encoding="utf-8", newline="") as fp:
-            for line in fp:
-                stripped = line.strip()
-                if not stripped or stripped.startswith("#"):
+            for calc in self._config.calc_groups:
+                if calc.frame_id is not None:
+                    if calc.frame_id != frame_id:
+                        continue
+                elif frame_id not in frames_by_group.get(calc.group, []):
                     continue
-                reader = csv.reader([line])
-                return next(reader, [])
-        return []
+                signal_name = f"{calc.group} {calc.stat}"
+                calc_label = _signal_label(signal_name, calc.unit)
+                col = f"{label}.{calc_label}"
+                columns.append(col)
+                column_by_key[(frame_id, signal_name)] = col
+                block[signal_name] = col
 
-    def _write_metadata(self) -> None:
-        if not self._metadata or self._fp is None:
-            return
-        for key in sorted(self._metadata):
-            value = str(self._metadata[key]).replace("\n", " ").strip()
-            self._fp.write(f"# {key}: {value}\n")
+            block_by_frame[frame_id] = block
+
+        return columns, column_by_key, block_by_frame, cycle_frame_ids
 
     def _handle_error(self, context: str, exc: Exception) -> None:
         if self._disabled:
             return
         self._disabled = True
-        self.close()
+        try:
+            if self._workbook is not None:
+                self._workbook.close()
+        except Exception:
+            pass
+        self._workbook = None
+        self._data_ws = None
+        self._cycle_buffer.clear()
         _LOG.error("DecodedLogger %s error", context, exc_info=True)
         if self._on_error is not None:
             self._on_error(f"Decoded log {context} error for {self.path.name}: {exc}")

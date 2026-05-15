@@ -67,8 +67,9 @@ def test_payload_too_short_marks_signal_error(config):
 def test_extra_payload_bytes_are_reported_as_warning(config):
     decoded = decode_frame(config, CANONICAL_FRAME_ID, bytes.fromhex("0FA00BB800"))
     assert decoded.error is None
-    assert any("extra payload byte" in warning for warning in decoded.warnings)
-    assert any("extra payload" in warning for warning in decoded.warnings)
+    # decoded.warnings is List[DecodeWarning]; check the .message field.
+    assert any("extra payload byte" in w.message for w in decoded.warnings)
+    assert any(w.kind == "extra_bytes" for w in decoded.warnings)
 
 
 # --- Synthetic configs to exercise int / float decoding paths ---------------

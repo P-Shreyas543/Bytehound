@@ -1,9 +1,8 @@
 from __future__ import annotations
 
-import csv
 from datetime import datetime
 
-import pytest
+from openpyxl import load_workbook
 
 from app.decoder.frame_decoder import DecodedFrame, DecodedSignal
 from app.decoder.template_io import snapshot_config
@@ -100,7 +99,7 @@ def _make_test_config(signal_b_name: str = "Pack_V") -> FrameConfig:
 
 def test_decoded_logger_writes_wide_rows(tmp_path):
     config = _make_test_config()
-    path = tmp_path / "decoded.csv"
+    path = tmp_path / "decoded.xlsx"
 
     frame_a = DecodedFrame(
         frame_id=0x0100,
@@ -158,42 +157,64 @@ def test_decoded_logger_writes_wide_rows(tmp_path):
         ],
     )
 
+    # Cycle 1: both frames arrive (FrameB is the trigger as the last in config).
+    # Cycle 2: only FrameA arrives → trigger never fires → no row emitted.
+    # Cycle 3: both frames again → second row emitted.
     with DecodedLogger(path, config) as logger:
-        logger.log_frame(frame_a, 1000, datetime(2026, 5, 4, 12, 37, 37, 125000))
-        logger.log_frame(frame_b, 1100, datetime(2026, 5, 4, 12, 37, 38, 125000))
+        logger.log_frame(frame_a, 1000)
+        logger.log_frame(frame_b, 1100)
+        logger.log_frame(frame_a, 2000)
+        logger.log_frame(frame_a, 3000)
+        logger.log_frame(frame_b, 3100)
 
-    with path.open("r", encoding="utf-8", newline="") as fp:
-        reader = csv.DictReader(fp)
-        rows = list(reader)
+    wb = load_workbook(path, read_only=True)
+    assert wb.sheetnames == [DecodedLogger.METADATA_SHEET, DecodedLogger.DATA_SHEET]
+    data_rows = list(wb[DecodedLogger.DATA_SHEET].iter_rows(values_only=True))
+    wb.close()
 
-    expected_header = [
-        "timestamp",
-        "elapsed_ms",
-        "Cell_V1 (V)",
-        "Pack_I",
-        "Pack_V (V)",
-        "Cells avg (V)",
-    ]
-    assert reader.fieldnames == expected_header
+    expected_header = (
+        "FrameA.elapsed_ms",
+        "FrameA.frame_id",
+        "FrameA.Cell_V1 (V)",
+        "FrameA.Pack_I",
+        "FrameA.Cells avg (V)",
+        "FrameB.elapsed_ms",
+        "FrameB.frame_id",
+        "FrameB.Pack_V (V)",
+    )
+    assert data_rows[0] == expected_header
+    # Only two complete cycles → two data rows.
+    assert len(data_rows) == 3
 
-    row1 = rows[0]
-    assert row1["elapsed_ms"] == "1000"
-    assert row1["Cell_V1 (V)"] == "3.85"
-    assert row1["Pack_I"] == "12.1"
-    assert row1["Pack_V (V)"] == ""
-    assert row1["Cells avg (V)"] == "3.9"
+    header = list(expected_header)
+    row1 = dict(zip(header, data_rows[1]))
+    assert row1["FrameA.elapsed_ms"] == 1000
+    assert row1["FrameA.frame_id"] == "0x0100"
+    assert row1["FrameA.Cell_V1 (V)"] == 3.85
+    assert row1["FrameA.Pack_I"] == 12.1
+    assert row1["FrameA.Cells avg (V)"] == 3.9
+    assert row1["FrameB.elapsed_ms"] == 1100
+    assert row1["FrameB.frame_id"] == "0x0200"
+    assert row1["FrameB.Pack_V (V)"] == 48.2
 
-    row2 = rows[1]
-    assert row2["elapsed_ms"] == "1100"
-    assert row2["Cell_V1 (V)"] == ""
-    assert row2["Pack_I"] == ""
-    assert row2["Pack_V (V)"] == "48.2"
-    assert row2["Cells avg (V)"] == ""
+    # Second cycle uses the LATEST FrameA seen before the trigger (elapsed=3000),
+    # not the orphaned A at elapsed=2000 — buffer always keeps the freshest values.
+    row2 = dict(zip(header, data_rows[2]))
+    assert row2["FrameA.elapsed_ms"] == 3000
+    assert row2["FrameB.elapsed_ms"] == 3100
 
 
-def test_decoded_logger_append_and_mismatch(tmp_path):
+def test_decoded_logger_writes_metadata_sheet(tmp_path):
     config = _make_test_config()
-    path = tmp_path / "decoded.csv"
+    path = tmp_path / "decoded.xlsx"
+    metadata = {
+        "app": "Bytehound",
+        "app_version": "0.2.0",
+        "baud_rate": "115200",
+        "serial_port": "COM9",
+        "logging_mode": "Raw + Decoded",
+        "session_started": "2026-05-15 11:23:52",
+    }
 
     frame = DecodedFrame(
         frame_id=0x0100,
@@ -212,18 +233,52 @@ def test_decoded_logger_append_and_mismatch(tmp_path):
         ],
     )
 
-    with DecodedLogger(path, config) as logger:
+    with DecodedLogger(path, config, metadata=metadata) as logger:
         logger.log_frame(frame, 1000, datetime(2026, 5, 4, 12, 37, 37, 125000))
+
+    wb = load_workbook(path, read_only=True)
+    meta_rows = list(wb[DecodedLogger.METADATA_SHEET].iter_rows(values_only=True))
+    wb.close()
+
+    assert meta_rows[0] == ("Key", "Value")
+    meta_pairs = dict(meta_rows[1:])
+    for key, value in metadata.items():
+        assert meta_pairs[key] == value
+
+
+def test_decoded_logger_drops_incomplete_cycles(tmp_path):
+    """Only FrameA arrives, never FrameB (the trigger). No data rows."""
+    config = _make_test_config()
+    path = tmp_path / "decoded.xlsx"
+
+    frame_a = DecodedFrame(
+        frame_id=0x0100,
+        frame_name="FrameA",
+        signals=[
+            DecodedSignal(
+                frame_id=0x0100,
+                frame_name="FrameA",
+                signal_name="Cell_V1",
+                raw_value=3850,
+                scaled_value=3.85,
+                unit="V",
+                status="ok",
+                group="Cells",
+            )
+        ],
+    )
+
     with DecodedLogger(path, config) as logger:
-        logger.log_frame(frame, 1100, datetime(2026, 5, 4, 12, 37, 38, 125000))
+        logger.log_frame(frame_a, 1000)
+        logger.log_frame(frame_a, 2000)
+        logger.log_frame(frame_a, 3000)
 
-    lines = path.read_text(encoding="utf-8").splitlines()
-    assert sum(1 for line in lines if line.startswith("timestamp,")) == 1
+    wb = load_workbook(path, read_only=True)
+    data_rows = list(wb[DecodedLogger.DATA_SHEET].iter_rows(values_only=True))
+    wb.close()
 
-    mismatched = _make_test_config(signal_b_name="Pack_V2")
-    with pytest.raises(ValueError):
-        with DecodedLogger(path, mismatched) as logger:
-            logger.open()
+    # Only the header row — no completed cycles.
+    assert len(data_rows) == 1
 
 
 def test_snapshot_config_copies_csv_templates(resources_dir, tmp_path):

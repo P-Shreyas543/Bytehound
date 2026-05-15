@@ -3,19 +3,47 @@
 from __future__ import annotations
 
 import abc
+import logging
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
 from . import crc as crc_mod
 from ..decoder.types import ProtocolConfig
 
-@dataclass
+_LOG = logging.getLogger("bytehound.protocol.parser")
+
+# Hard cap on per-parser receive buffer growth. A stream that never matches the
+# expected framing pattern (wrong baud rate, disconnected garbage, malicious
+# input) would otherwise grow the buffer without bound. When the cap is hit we
+# drop the oldest bytes and keep the most-recent tail, which preserves any
+# partial frame that may be in flight at the trim boundary.
+_MAX_BUFFER_BYTES = 1_000_000
+_BUFFER_TAIL_BYTES = 4096  # how many recent bytes to keep when trimming
+
+
+@dataclass(frozen=True)
 class ParsedPacket:
     raw: bytes
     frame_id: Optional[int]
     payload: bytes
     ok: bool
     error: Optional[str] = None
+
+
+def _trim_if_overflow(buf: bytearray, parser_name: str) -> bool:
+    """Trim ``buf`` to the most-recent tail if it has grown past the cap.
+
+    Returns True when a trim happened, so callers can rate-limit warnings.
+    """
+    if len(buf) <= _MAX_BUFFER_BYTES:
+        return False
+    dropped = len(buf) - _BUFFER_TAIL_BYTES
+    del buf[:dropped]
+    _LOG.warning(
+        "%s buffer overflow: dropped %d unmatched bytes (kept last %d)",
+        parser_name, dropped, len(buf),
+    )
+    return True
 
 
 class ParserProtocol(abc.ABC):
@@ -40,6 +68,7 @@ class FramedParser(ParserProtocol):
 
     def feed(self, data: bytes) -> None:
         self._buf.extend(data)
+        _trim_if_overflow(self._buf, "FramedParser")
 
     def extract_all(self) -> List[ParsedPacket]:
         out: List[ParsedPacket] = []
@@ -156,6 +185,7 @@ class ModbusRtuParser(ParserProtocol):
 
     def feed(self, data: bytes) -> None:
         self._buf.extend(data)
+        _trim_if_overflow(self._buf, "ModbusRtuParser")
 
     def extract_all(self) -> List[ParsedPacket]:
         out: List[ParsedPacket] = []
@@ -184,6 +214,12 @@ class ModbusRtuParser(ParserProtocol):
             if len(self._buf) < 3:
                 return None, 0
             byte_count = self._buf[2]
+            # Modbus FC3/4 byte_count counts register data bytes. Valid range
+            # is 2..250 (1..125 16-bit registers). Anything outside means we
+            # latched onto random bytes — skip 1 to resync rather than waiting
+            # for a length that will never arrive.
+            if byte_count < 2 or byte_count > 250 or byte_count % 2 != 0:
+                return None, 1
             expected_len = 5 + byte_count
         elif fc in (6, 16):
             expected_len = 8

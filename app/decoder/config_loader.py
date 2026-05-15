@@ -11,6 +11,7 @@ Compatibility schema:
 from __future__ import annotations
 
 import csv
+import difflib
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -21,9 +22,14 @@ from .types import (
     SUPPORTED_FMT_TYPES,
     BitfieldSpec,
     CalcGroupSpec,
+    CrcType,
+    DataType,
+    FmtType,
     FrameConfig,
     FrameDefinition,
+    ParserType,
     ProtocolConfig,
+    ReadWrite,
     SignalSpec,
     SerialDefaults,
     TxCommandFieldSpec,
@@ -196,6 +202,24 @@ def _normalize_table_name(name: str) -> str:
     return aliases.get(normalized, normalized)
 
 
+def _format_missing_columns(missing: set[str], available: set[str]) -> str:
+    """Render a missing-columns list with did-you-mean hints.
+
+    For each missing column, look for the closest match among the columns
+    the user actually wrote (anything with a similarity ratio above 0.6).
+    The hint catches the most common cause: a header typo like ``frame_id``
+    vs ``frame_id_hex``, or ``signalname`` vs ``signal_name``.
+    """
+    parts: List[str] = []
+    for col in sorted(missing):
+        match = difflib.get_close_matches(col, list(available), n=1, cutoff=0.6)
+        if match:
+            parts.append(f"{col!r} (did you mean {match[0]!r}?)")
+        else:
+            parts.append(repr(col))
+    return ", ".join(parts)
+
+
 def _required_table(
     tables: Dict[str, List[Dict[str, str]]], name: str, required: set[str]
 ) -> List[Dict[str, str]]:
@@ -207,16 +231,61 @@ def _required_table(
     fields = set(rows[0])
     missing = required - fields
     if missing:
-        raise ConfigError(f"{name}: missing required columns: {sorted(missing)}")
+        raise ConfigError(
+            f"{name}: missing required columns: {_format_missing_columns(missing, fields)}"
+        )
     return rows
 
 
 def _optional_columns_ok(rows: List[Dict[str, str]], required: set[str], name: str) -> None:
     if not rows:
         return
-    missing = required - set(rows[0])
+    fields = set(rows[0])
+    missing = required - fields
     if missing:
-        raise ConfigError(f"{name}: missing required columns: {sorted(missing)}")
+        raise ConfigError(
+            f"{name}: missing required columns: {_format_missing_columns(missing, fields)}"
+        )
+
+
+def _check_signal_uniqueness(
+    seen: Dict[int, set[str]], frame_id: int, signal_name: str, *, source: str
+) -> None:
+    """Reject duplicate signal names within the same frame.
+
+    Both the modern Variables loader and the legacy FrameConfig loader
+    enforce this rule. Sharing the helper means a future tweak (e.g.
+    case-insensitive uniqueness, or unicode-normalised) lands in one place.
+    """
+    frame_seen = seen.setdefault(frame_id, set())
+    if signal_name in frame_seen:
+        raise ConfigError(
+            f"{source}: duplicate signal {signal_name!r} in frame 0x{frame_id:X}"
+        )
+    frame_seen.add(signal_name)
+
+
+def _normalize_byte_order(
+    value: str,
+    *,
+    source: str,
+    column: str = "byte_order",
+    default: str = "little",
+) -> str:
+    """Return ``"big"`` or ``"little"`` for a byte-order cell, defaulting to
+    *default* when blank. Raises a clear ConfigError on any other value.
+
+    Both signal loaders (modern + legacy) and the TX-fields loader need this
+    check; centralising it avoids three slightly-different error messages.
+    ``column`` is the user-facing column name so legacy callers (which use
+    ``endianness``) get an error that names the column they actually edited.
+    """
+    normalised = (value or "").strip().lower()
+    if normalised == "":
+        return default
+    if normalised in {"big", "little"}:
+        return normalised
+    raise ConfigError(f"{source}: {column} must be 'big' or 'little' (got {value!r})")
 
 
 def _to_int(value: str, *, field_name: str) -> int:
@@ -292,12 +361,10 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         raise ConfigError("protocol: more than one enabled profile")
 
     row = enabled_rows[0]
-    crc_type = row["crc_type"].strip().lower()
-    if crc_type not in SUPPORTED_CRC_TYPES:
-        raise ConfigError(
-            f"protocol: unsupported crc_type {crc_type!r} "
-            f"(supported: {sorted(SUPPORTED_CRC_TYPES)})"
-        )
+    try:
+        crc_type = CrcType.parse(row["crc_type"]).value
+    except ValueError as exc:
+        raise ConfigError(f"protocol: {exc}") from exc
     length_byte_order_raw = (row.get("length_byte_order") or "").strip().lower()
     length_byte_order: Optional[str]
     if length_byte_order_raw == "":
@@ -313,12 +380,14 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         profile_name=row["profile_name"],
         header=_hex_to_bytes(row["header_hex"], "header_hex"),
         frame_id_size=_to_int(row["frame_id_size"], field_name="frame_id_size"),
-        frame_id_byte_order=row["frame_id_byte_order"].strip().lower(),
+        frame_id_byte_order=_normalize_byte_order(
+            row["frame_id_byte_order"], source="protocol", column="frame_id_byte_order"),
         length_size=_to_int(row["length_size"], field_name="length_size"),
         length_meaning=row["length_meaning"].strip().lower(),
         crc_type=crc_type,
         crc_size=_to_int(row["crc_size"], field_name="crc_size"),
-        crc_byte_order=row["crc_byte_order"].strip().lower(),
+        crc_byte_order=_normalize_byte_order(
+            row["crc_byte_order"], source="protocol", column="crc_byte_order"),
         # crc_coverage: only "header_to_payload" is implemented; default to it
         # so the column can be omitted from user-facing config sheets.
         crc_coverage=(row.get("crc_coverage") or "header_to_payload").strip().lower(),
@@ -328,10 +397,11 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         # raw_log_format: controls hex vs binary log output; default to "hex".
         raw_log_format=(row.get("raw_log_format") or "hex").strip().lower(),
         enabled=True,
-        parser_type=(row.get("parser_type") or "framed").strip().lower(),
+        parser_type=ParserType.parse(row.get("parser_type", "")).value,
         tx_pad_length=_to_optional_int(row.get("tx_pad_length", ""), field_name="tx_pad_length"),
         inter_frame_delay_ms=_to_int(row.get("inter_frame_delay_ms", "10"), field_name="inter_frame_delay_ms"),
         length_byte_order=length_byte_order,
+        modbus_node_address=_to_int(row.get("modbus_node_address", "1"), field_name="modbus_node_address"),
     )
     _validate_protocol(protocol)
     return protocol
@@ -394,11 +464,10 @@ def _parse_variables(
         name = row["signal_name"].strip()
         if not name:
             raise ConfigError(f"variables row {row_no}: signal_name is required")
-        fmt = row["data_type"].strip().lower()
-        if fmt not in SUPPORTED_FMT_TYPES:
-            raise ConfigError(
-                f"variables row {row_no}: fmt must be one of {sorted(SUPPORTED_FMT_TYPES)}"
-            )
+        try:
+            fmt = FmtType.parse(row["data_type"]).value
+        except ValueError as exc:
+            raise ConfigError(f"variables row {row_no}: {exc}") from exc
 
         count = _to_int(row.get("count", "1") or "1", field_name="count")
         if count < 1:
@@ -409,18 +478,11 @@ def _parse_variables(
         frame = frames[frame_id]
         group = row.get("group", "")
         unit = row.get("unit", "")
-        endian = (row.get("byte_order") or "little").strip().lower()
-        if endian not in {"big", "little"}:
-            raise ConfigError(f"variables row {row_no}: byte_order must be big or little")
+        endian = _normalize_byte_order(row.get("byte_order", ""), source=f"variables row {row_no}")
 
         for idx in range(count):
             signal_name = name if count == 1 else f"{name} {idx + 1}"
-            frame_seen = seen.setdefault(frame_id, set())
-            if signal_name in frame_seen:
-                raise ConfigError(
-                    f"variables: duplicate signal {signal_name!r} in frame/node 0x{frame_id:X}"
-                )
-            frame_seen.add(signal_name)
+            _check_signal_uniqueness(seen, frame_id, signal_name, source="variables")
             signals.append(
                 SignalSpec(
                     frame_id=frame_id,
@@ -439,7 +501,7 @@ def _parse_variables(
                     enabled=True,
                     description=row.get("description", ""),
                     register_type=row.get("register_type", "").strip().lower(),
-                    read_write=(row.get("read_write") or "R").strip().upper(),
+                    read_write=ReadWrite.parse(row.get("read_write", "")).value,
                     min_value=_to_optional_float(row.get("min_value", ""), "variables.min_value"),
                     max_value=_to_optional_float(row.get("max_value", ""), "variables.max_value"),
                 )
@@ -468,23 +530,21 @@ def _parse_legacy_frame_config(
         signal_name = row["signal_name"]
         if not signal_name:
             raise ConfigError(f"frame_config row {row_no}: signal_name is required")
-        seen = seen_per_frame.setdefault(frame_id, set())
-        if signal_name in seen:
-            raise ConfigError(f"frame_config: duplicate signal {signal_name!r} in frame 0x{frame_id:X}")
-        seen.add(signal_name)
+        _check_signal_uniqueness(seen_per_frame, frame_id, signal_name, source="frame_config")
 
-        endianness = row["endianness"].strip().lower()
-        if endianness not in {"big", "little"}:
-            raise ConfigError(f"frame_config row {row_no}: endianness must be 'big' or 'little'")
+        endianness = _normalize_byte_order(
+            row["endianness"],
+            source=f"frame_config row {row_no}",
+            column="endianness",
+        )
         byte_length = _to_int(row["byte_length"], field_name="byte_length")
         if byte_length < 1 or byte_length > 8:
             raise ConfigError(f"frame_config row {row_no}: byte_length must be 1..8")
-        data_type = row["data_type"].strip().lower()
-        if data_type not in SUPPORTED_DATA_TYPES:
-            raise ConfigError(
-                f"frame_config row {row_no}: data_type must be one of {sorted(SUPPORTED_DATA_TYPES)}"
-            )
-        if data_type == "float" and byte_length not in (4, 8):
+        try:
+            data_type = DataType.parse(row["data_type"]).value
+        except ValueError as exc:
+            raise ConfigError(f"frame_config row {row_no}: {exc}") from exc
+        if data_type == DataType.FLOAT.value and byte_length not in (4, 8):
             raise ConfigError(f"frame_config row {row_no}: float data_type requires byte_length 4 or 8")
 
         frame_name = row["frame_name"]
@@ -601,14 +661,18 @@ def _parse_tx_commands(
     _optional_columns_ok(command_rows, _TX_COMMANDS_REQUIRED, "tx_commands")
     _optional_columns_ok(field_rows, _TX_COMMAND_FIELDS_REQUIRED, "tx_command_fields")
 
+    # Field order on the wire is **row order** in the ``tx_command_fields``
+    # sheet. There is no separate ``field_order`` column; reordering the rows
+    # silently reorders the payload bytes. The regression test in
+    # ``tests/test_tx_command_builder.py::test_field_order_follows_sheet_rows``
+    # locks this behaviour so a future shuffle of the loader doesn't break it.
     fields_by_command: Dict[str, List[TxCommandFieldSpec]] = {}
     for row in field_rows:
-        fmt = row["data_type"].strip().lower()
-        if fmt not in SUPPORTED_FMT_TYPES:
-            raise ConfigError(f"tx_command_fields: unsupported fmt {fmt!r}")
-        byte_order = (row.get("byte_order") or "little").strip().lower()
-        if byte_order not in {"big", "little"}:
-            raise ConfigError("tx_command_fields: byte_order must be big or little")
+        try:
+            fmt = FmtType.parse(row["data_type"]).value
+        except ValueError as exc:
+            raise ConfigError(f"tx_command_fields: {exc}") from exc
+        byte_order = _normalize_byte_order(row.get("byte_order", ""), source="tx_command_fields")
         fields_by_command.setdefault(row["command_name"], []).append(
             TxCommandFieldSpec(
                 command_name=row["command_name"],

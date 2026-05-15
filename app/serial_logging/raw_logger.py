@@ -1,27 +1,48 @@
 """Raw packet log writer (CSV).
 
-Writes a CSV with columns ``timestamp,direction,hex``. The hex field
-keeps space-separated bytes for human readability (e.g. ``AA 55 00 10``).
+Writes a CSV with columns ``timestamp,direction,hex,delta_t_ms``. The hex
+field keeps space-separated bytes for human readability (e.g.
+``AA 55 00 10``).
 
-Buffered I/O
-------------
-``log()`` writes to the file object's in-memory buffer but only calls the
-OS-level ``flush()`` every ``FLUSH_INTERVAL`` seconds (default 0.5 s) to
-avoid per-frame syscall overhead at high baud rates. A final ``flush()`` is
-guaranteed when the logger is closed.
+Threading model
+---------------
+``log()`` is called from the UI thread on every received/transmitted
+frame. The actual disk write — including `csv.writerow` and periodic
+``flush()`` — runs on a dedicated daemon thread that drains an internal
+``queue.Queue``. This means the Qt event loop is never blocked by a slow
+disk (network share, USB stick, antivirus scan).
+
+* ``log()`` formats the timestamp (cheap) and enqueues a tuple. Returns
+  immediately even if the disk is stuck.
+* The writer thread blocks on the queue and writes rows as they arrive.
+* On ``close()`` the UI thread enqueues a sentinel and joins the writer,
+  guaranteeing all pending rows are flushed before the file is closed.
+
+Errors from the writer thread are captured into ``_pending_error`` and
+surfaced on the **next** UI-thread call to ``log()`` (or to
+``pump_errors()``), invoking the ``on_error`` callback there. The writer
+thread itself never calls the callback — that would re-enter
+``_stop_logging`` on the wrong thread and deadlock the join.
 """
 
 from __future__ import annotations
 
 import csv
 import logging
+import queue
+import threading
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Callable, Mapping, TextIO
+from typing import Callable, Mapping, Optional, TextIO
 
 _FLUSH_INTERVAL = 0.5  # seconds between explicit OS-level flushes
 _LOG = logging.getLogger("bytehound.serial_logging.raw")
+
+# Bound the handoff queue so a permanently stuck disk cannot exhaust memory.
+# At ~1 kHz frame rate this is 100 s of buffered data; well above any
+# plausible disk-stall window we care about.
+_WRITER_QUEUE_SIZE = 100_000
 
 ErrorCallback = Callable[[str], None]
 
@@ -46,6 +67,16 @@ class RawLogger:
         self._on_error = on_error
         self._disabled = False
 
+        self._queue: "queue.Queue[Optional[tuple]]" = queue.Queue(maxsize=_WRITER_QUEUE_SIZE)
+        self._writer_thread: Optional[threading.Thread] = None
+        self._stop_event = threading.Event()
+
+        # Set by the writer thread, read+cleared by the UI thread on its next
+        # log() call. Surfaces I/O errors to on_error on the right thread.
+        self._error_lock = threading.Lock()
+        self._pending_error: Optional[str] = None
+        self._dropped_count = 0  # rows dropped because the queue was full
+
     def __enter__(self) -> "RawLogger":
         self.open()
         return self
@@ -55,6 +86,8 @@ class RawLogger:
 
     def open(self) -> None:
         if self._disabled:
+            return
+        if self._writer_thread is not None:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
         new_file = not self.path.exists() or self.path.stat().st_size == 0
@@ -78,11 +111,35 @@ class RawLogger:
         if new_file:
             self._write_metadata()
             self._writer.writerow(self.COLUMNS)
+            # Pre-flush header so a crash before the first frame still leaves
+            # a recognisable file behind.
+            try:
+                self._fp.flush()
+            except Exception:
+                pass
+
+        self._stop_event.clear()
+        self._writer_thread = threading.Thread(
+            target=self._writer_loop,
+            name=f"RawLoggerWriter[{self.path.name}]",
+            daemon=True,
+        )
+        self._writer_thread.start()
 
     def close(self) -> None:
+        # Signal the writer thread to finish, then wait for it to drain the
+        # queue and exit before we close the file.
+        if self._writer_thread is not None:
+            self._stop_event.set()
+            try:
+                self._queue.put_nowait(None)
+            except queue.Full:
+                pass
+            self._writer_thread.join(timeout=5.0)
+            self._writer_thread = None
         if self._fp is not None:
             try:
-                self._fp.flush()  # guaranteed final flush before close
+                self._fp.flush()
             except Exception:
                 pass
             try:
@@ -102,22 +159,115 @@ class RawLogger:
         self._flush_interval = interval
 
     def log(self, direction: str, raw: bytes, timestamp: datetime | None = None, delta_t_ms: float = 0.0) -> None:
+        # Surface any error the writer thread captured since the last call,
+        # so on_error fires on the correct (UI) thread.
+        self._pump_pending_error()
         if self._disabled:
             return
         try:
-            if self._writer is None:
+            if self._writer_thread is None:
                 self.open()
-            if self._writer is None or self._fp is None:
+            if self._writer_thread is None:
                 return
             ts = (timestamp or datetime.now()).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-            self._writer.writerow([ts, direction.upper(), raw.hex(" ").upper(), f"{delta_t_ms:.1f}"])
-            # Periodic flush — avoids an OS syscall on every single frame.
-            now = time.monotonic()
-            if self._flush_interval <= 0 or now - self._last_flush >= self._flush_interval:
-                self._fp.flush()
-                self._last_flush = now
+            try:
+                self._queue.put_nowait((ts, direction.upper(), raw, delta_t_ms))
+            except queue.Full:
+                # Disk is stuck; drop the row rather than block the UI. Count
+                # how many we dropped so the writer thread can log a warning
+                # when it next gets to run.
+                self._dropped_count += 1
         except Exception as exc:
             self._handle_error("write", exc)
+
+    # ------------------------------------------------------------------
+    # Writer thread
+    # ------------------------------------------------------------------
+
+    def _writer_loop(self) -> None:
+        """Drain the queue and write rows to disk until stopped.
+
+        Errors are captured into ``_pending_error`` for the UI thread to
+        surface; we never call ``on_error`` from here because that callback
+        invokes ``_stop_logging`` which in turn calls ``close()`` — joining
+        ourselves would deadlock.
+        """
+        try:
+            while not self._stop_event.is_set():
+                try:
+                    item = self._queue.get(timeout=0.1)
+                except queue.Empty:
+                    self._maybe_periodic_flush()
+                    continue
+                if item is None:
+                    break
+                if not self._write_one(item):
+                    return
+                self._maybe_periodic_flush()
+        finally:
+            # Drain anything enqueued between the stop signal and the join.
+            while True:
+                try:
+                    item = self._queue.get_nowait()
+                except queue.Empty:
+                    break
+                if item is None:
+                    continue
+                if not self._write_one(item):
+                    return
+            try:
+                if self._fp is not None:
+                    self._fp.flush()
+            except Exception as exc:
+                self._record_error("flush", exc)
+
+    def _write_one(self, item: tuple) -> bool:
+        if self._writer is None or self._fp is None:
+            return False
+        try:
+            ts, direction, raw, delta_t_ms = item
+            self._writer.writerow([ts, direction, raw.hex(" ").upper(), f"{delta_t_ms:.1f}"])
+            return True
+        except Exception as exc:
+            self._record_error("write", exc)
+            return False
+
+    def _maybe_periodic_flush(self) -> None:
+        if self._fp is None:
+            return
+        if self._flush_interval <= 0:
+            try:
+                self._fp.flush()
+                self._last_flush = time.monotonic()
+            except Exception as exc:
+                self._record_error("flush", exc)
+            return
+        now = time.monotonic()
+        if now - self._last_flush >= self._flush_interval:
+            try:
+                self._fp.flush()
+                self._last_flush = now
+            except Exception as exc:
+                self._record_error("flush", exc)
+
+    def _record_error(self, context: str, exc: Exception) -> None:
+        _LOG.error("RawLogger %s error (writer thread)", context, exc_info=True)
+        with self._error_lock:
+            if self._pending_error is None:
+                self._pending_error = f"Raw log {context} error for {self.path.name}: {exc}"
+
+    def _pump_pending_error(self) -> None:
+        with self._error_lock:
+            err = self._pending_error
+            self._pending_error = None
+        if err is not None:
+            self._disabled = True
+            if self._on_error is not None:
+                self._on_error(err)
+
+    # ------------------------------------------------------------------
+    # Helpers used by both threads
+    # ------------------------------------------------------------------
 
     def _read_existing_header(self) -> list[str]:
         with self.path.open("r", encoding="utf-8") as fp:
@@ -136,6 +286,10 @@ class RawLogger:
             self._fp.write(f"# {key}: {value}\n")
 
     def _handle_error(self, context: str, exc: Exception) -> None:
+        """UI-thread synchronous error path (used when ``log()`` itself
+        raises before enqueueing). Background-thread errors go through
+        ``_record_error`` + ``_pump_pending_error`` instead.
+        """
         if self._disabled:
             return
         self._disabled = True

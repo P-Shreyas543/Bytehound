@@ -37,7 +37,7 @@ python -m app.main
 - **Right Dock — Analysis & Controls**: tabs for Live Plot, Bitfields, Enums, TX Commands.
 - **Bottom Dock — Raw Console**: hex RX/TX log.
 
-Any closed dock can be re-opened from the **View** menu. View → Reset Window Layout restores the default arrangement; View → Auto-Range Plot re-fits the live plot.
+Any closed dock can be re-opened from the **View** menu. View → Reset Window Layout restores the default arrangement.
 
 ---
 
@@ -87,7 +87,7 @@ Updates in real time. Array variables expand into per-index rows. Use the search
 ### Live Plot
 - Tick variables in the **Select Variables to Plot** list (clicking a row toggles the checkbox).
 - Choose a rolling time **Window**.
-- **Auto-Range Plot** (View menu, Ctrl+R) re-fits axes.
+- **⏸ Pause / ▶ Live** (Space) freezes or resumes the rolling view; clicking ▶ Live also re-fits the Y axis and snaps X back to `0 → now`.
 - **Export** writes the visible series to CSV.
 
 ### Bitfields & Enums
@@ -101,7 +101,7 @@ Tabs showing live ON/OFF state per named bit and the active enum label per varia
 1. **File → Start Logging** and choose a base filename.
 2. Three artifacts are produced alongside the chosen filename:
    - `<name>.txt` — raw timestamped hex log.
-   - `<name>_decoded.csv` — fully decoded tabular log.
+   - `<name>_decoded.xlsx` — Excel workbook with a `Metadata` sheet (app, port, baud, config path, session start, etc.) and a `Data` sheet (decoded signals, one row per frame). Finalised on Stop Logging.
    - `<name>_session/` — snapshot of the active configuration.
 3. **File → Stop Logging** to finalize.
 

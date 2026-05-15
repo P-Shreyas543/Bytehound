@@ -25,7 +25,7 @@ from __future__ import annotations
 import queue
 import threading
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, replace as dataclass_replace
 from typing import Iterable, List, Optional
 
 import serial
@@ -89,7 +89,7 @@ class PollingWorker(QThread):
         self.protocol = protocol
 
         self._schedules = [
-            {"spec": s, "next_run": time.time(), "enabled": s.enabled}
+            {"spec": s, "next_run": time.monotonic(), "enabled": s.enabled}
             for s in schedules
         ]
         # Round-robin cursor into _schedules. The polling loop scans starting
@@ -118,11 +118,14 @@ class PollingWorker(QThread):
         self._batch: List[ParsedPacket] = []
         self._last_emit_time: float = 0.0
 
-        # Watchdog state
-        self._last_rx_time: float = time.time()
+        # Watchdog state. Monotonic clock — immune to system-clock jumps
+        # (NTP step, DST, manual change). If we used time.time() here a
+        # backward jump would make the watchdog fire spuriously and a
+        # forward jump would make device_timeout fire late or never.
+        self._last_rx_time: float = time.monotonic()
         self._watchdog_fired = False  # debounce: only emit once per silence window
         # Set in open() — used by the polling-boot-grace gate in _run_loop.
-        self._open_time: float = time.time()
+        self._open_time: float = time.monotonic()
 
         # metrics_updated emission throttle. Without this the signal fires on
         # every read iteration; at 115200 baud with continuous data that
@@ -156,10 +159,10 @@ class PollingWorker(QThread):
             write_timeout=self.settings.timeout_ms / 1000.0,
         )
         self._stop_event.clear()
-        self._last_rx_time = time.time()
-        self._last_emit_time = time.time()
+        self._last_rx_time = time.monotonic()
+        self._last_emit_time = time.monotonic()
         # Used by the polling gate in _run_loop — see POLLING_BOOT_GRACE.
-        self._open_time = time.time()
+        self._open_time = time.monotonic()
         self.start()
 
 
@@ -208,7 +211,7 @@ class PollingWorker(QThread):
             self._rx_bytes = 0
         # Push the cleared values out immediately so the UI doesn't have to
         # wait for the next packet before reflecting the reset.
-        self.metrics_updated.emit(0, 0, 0)
+        self._emit_metrics_throttled(force=True)
 
     def toggle_schedule(self, target_id: int, enabled: bool) -> None:
         with QMutexLocker(self._mutex):
@@ -227,7 +230,7 @@ class PollingWorker(QThread):
                         # __init__, which made re-enable fire immediately —
                         # surprising behaviour, especially right after a pause.
                         if not was_enabled:
-                            s["next_run"] = time.time() + (s["spec"].interval_ms / 1000.0)
+                            s["next_run"] = time.monotonic() + (s["spec"].interval_ms / 1000.0)
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -256,12 +259,12 @@ class PollingWorker(QThread):
         if self._batch:
             self.packets_received.emit(list(self._batch))
             self._batch.clear()
-        self._last_emit_time = time.time()
+        self._last_emit_time = time.monotonic()
 
     def _should_flush(self) -> bool:
         return (
             len(self._batch) >= _BATCH_SIZE
-            or (time.time() - self._last_emit_time) >= _BATCH_INTERVAL
+            or (time.monotonic() - self._last_emit_time) >= _BATCH_INTERVAL
         )
 
     def _accumulate(self, packets: Iterable[ParsedPacket]) -> None:
@@ -275,7 +278,7 @@ class PollingWorker(QThread):
 
     def _check_watchdog(self) -> None:
         """Emit device_timeout if no data received within WATCHDOG_TIMEOUT."""
-        silence = time.time() - self._last_rx_time
+        silence = time.monotonic() - self._last_rx_time
         if silence > WATCHDOG_TIMEOUT:
             if not self._watchdog_fired:
                 self.device_timeout.emit()
@@ -283,14 +286,18 @@ class PollingWorker(QThread):
         else:
             self._watchdog_fired = False  # reset once data flows again
 
-    def _emit_metrics_throttled(self) -> None:
+    def _emit_metrics_throttled(self, *, force: bool = False) -> None:
         """Emit metrics_updated at most once per ``_METRICS_INTERVAL``.
 
         Called from hot paths (every loop iteration that has RX) so the
         signal queue doesn't fill with redundant updates at high baud rates.
+
+        ``force=True`` bypasses the throttle but still updates the cooldown
+        so the next throttled call sees a fresh timestamp. Used by callers
+        like ``reset_metrics`` that need the UI updated immediately.
         """
-        now = time.time()
-        if (now - self._last_metrics_emit) >= self._METRICS_INTERVAL:
+        now = time.monotonic()
+        if force or (now - self._last_metrics_emit) >= self._METRICS_INTERVAL:
             self.metrics_updated.emit(self._timeouts, self._crc_errors, self._rx_bytes)
             self._last_metrics_emit = now
 
@@ -299,7 +306,7 @@ class PollingWorker(QThread):
     # ------------------------------------------------------------------
 
     def run(self) -> None:
-        self._last_emit_time = time.time()
+        self._last_emit_time = time.monotonic()
         try:
             self._run_loop()
         finally:
@@ -332,9 +339,9 @@ class PollingWorker(QThread):
                 # only still get polled). Hammering polls during an Arduino
                 # bootloader window leaves the link stuck — the device cannot
                 # answer, timeouts accumulate, and we never get out.
-                grace_expired = (time.time() - self._open_time) > POLLING_BOOT_GRACE
+                grace_expired = (time.monotonic() - self._open_time) > POLLING_BOOT_GRACE
                 if polling_enabled and (self._rx_bytes > 0 or grace_expired):
-                    now = time.time()
+                    now = time.monotonic()
                     n = len(self._schedules)
                     # Round-robin: start scanning at _sched_cursor and wrap.
                     # Each successful poll advances the cursor by one, so the
@@ -347,7 +354,7 @@ class PollingWorker(QThread):
                         sched = self._schedules[idx]
                         if sched["enabled"] and now >= sched["next_run"]:
                             self._do_poll(sched)
-                            sched["next_run"] = time.time() + (sched["spec"].interval_ms / 1000.0)
+                            sched["next_run"] = time.monotonic() + (sched["spec"].interval_ms / 1000.0)
                             self._sched_cursor = (idx + 1) % n
                             polled = True
                             break
@@ -358,7 +365,7 @@ class PollingWorker(QThread):
                     if w > 0:
                         data = self._serial.read(w)
                         self._rx_bytes += len(data)
-                        self._last_rx_time = time.time()
+                        self._last_rx_time = time.monotonic()
                         self._watchdog_fired = False
                         self._parser.feed(data)
                         self._accumulate(self._parser.extract_all())
@@ -377,7 +384,24 @@ class PollingWorker(QThread):
                 if self._should_flush():
                     self._flush_batch()
 
-                time.sleep(0.005)
+                # Adaptive idle sleep. The default 5 ms keeps continuous-stream
+                # byte draining responsive. When we did no poll this iteration
+                # AND the next schedule deadline is more than 20 ms away, doze
+                # longer to cut idle wakeups by ~4x. 20 ms is well below the
+                # kernel RX buffer fill time even at 115 200 baud (~230 bytes
+                # of RX in that window vs. multi-KB buffers), so byte-drain
+                # latency is not at risk.
+                sleep_s = 0.005
+                if not polled and self._schedules:
+                    next_due_iter = (
+                        s["next_run"] for s in self._schedules if s["enabled"]
+                    )
+                    next_due = min(next_due_iter, default=None)
+                    if next_due is not None:
+                        until_due = next_due - time.monotonic()
+                        if until_due > 0.02:
+                            sleep_s = 0.02
+                time.sleep(sleep_s)
 
             except serial.SerialException as exc:
                 if self._is_disconnect_error(exc):
@@ -502,11 +526,11 @@ class PollingWorker(QThread):
         * Poll latency is reported on a dedicated signal so the UI can
           surface it (e.g. "avg poll latency 12 ms").
         """
-        tx_time = time.time()
+        tx_time = time.monotonic()
         end_time = tx_time + (timeout_ms / 1000.0)
         packet_found = False
 
-        while time.time() < end_time and not self._stop_event.is_set():
+        while time.monotonic() < end_time and not self._stop_event.is_set():
             # Pump priority TX during the wait window. We only send ONE
             # priority frame per iteration so we don't starve the response
             # we're nominally waiting for. The UI rate is human-driven, so
@@ -523,17 +547,21 @@ class PollingWorker(QThread):
             if w > 0:
                 data = self._serial.read(w)
                 self._rx_bytes += len(data)
-                self._last_rx_time = time.time()
+                self._last_rx_time = time.monotonic()
                 self._watchdog_fired = False
                 self._parser.feed(data)
                 extracted = self._parser.extract_all()
                 # Patch Modbus responses whose parser returns frame_id=1
                 # (a quirk of the current parser implementation) so the
                 # match predicate below can use a uniform comparison.
+                # ParsedPacket is frozen; rebuild via dataclasses.replace so
+                # nothing else in flight sees a half-updated object.
                 if self.protocol.parser_type == "modbus_rtu" and target_id is not None:
-                    for p in extracted:
-                        if p.ok and p.frame_id == 1:
-                            p.frame_id = target_id
+                    extracted = [
+                        dataclass_replace(p, frame_id=target_id)
+                        if p.ok and p.frame_id == 1 else p
+                        for p in extracted
+                    ]
                 if extracted:
                     # Emit every frame (matching or not) through batching —
                     # unrelated continuous-stream packets are still real
@@ -553,12 +581,17 @@ class PollingWorker(QThread):
             self._timeouts += 1
         else:
             # Latency = round-trip time from TX to the matching response.
-            latency_ms = (time.time() - tx_time) * 1000.0
+            latency_ms = (time.monotonic() - tx_time) * 1000.0
             try:
                 self.poll_latency.emit(target_id if target_id is not None else -1, latency_ms)
             except Exception:
                 pass
-        self.metrics_updated.emit(self._timeouts, self._crc_errors, self._rx_bytes)
+        # Route through the throttle so this tail emit doesn't bypass the
+        # rate-limit that the rest of the worker honours. Forcing on timeout
+        # would defeat the throttle on protocols where every poll times out
+        # transiently. At ~poll-interval cadence the throttle is naturally
+        # satisfied on the happy path.
+        self._emit_metrics_throttled()
 
 
 def available_ports() -> Iterable[tuple[str, str]]:

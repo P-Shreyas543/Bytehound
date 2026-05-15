@@ -12,8 +12,10 @@
 
 #define MyAppName      "Bytehound"
 #define MyAppSlug      "Bytehound"
-#define MyAppVersion   "0.1.0"
-#define MyDeveloper    "Shreyas P"
+; MyAppVersion and MyDeveloper come from version.json via the auto-generated
+; installer_version.iss. Run `python build.py` (any flags) to refresh it.
+; The file is .gitignored — single source of truth lives in version.json.
+#include "installer_version.iss"
 #define MyAppExe       "Bytehound.exe"
 #define MyAppIcon      "branding\logo_sq.ico"
 #define MyDistDir      "dist\Bytehound"

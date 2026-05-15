@@ -19,6 +19,9 @@ installer_output/
 *.spec.bak
 *.egg-info/
 
+# Auto-generated from version.json by build.py (single source of truth)
+installer_version.iss
+
 # Test / coverage
 .pytest_cache/
 .coverage

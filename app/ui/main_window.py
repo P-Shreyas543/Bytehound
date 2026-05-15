@@ -168,6 +168,26 @@ _PLOT_PALETTE = (
 )
 
 
+def _contrast_text_color(bg_hex: str) -> str:
+    """Pick black or white text for the given background hex colour.
+
+    Uses ITU-R BT.601 relative luminance — close enough for picking pill
+    chip text. Yellow-ish backgrounds like ``#bcbd22`` and pastels like
+    ``#98df8a`` were previously rendered with white text against white-ish
+    fill, which was almost unreadable. This makes the swap automatic.
+    """
+    h = bg_hex.lstrip("#")
+    try:
+        r = int(h[0:2], 16) / 255.0
+        g = int(h[2:4], 16) / 255.0
+        b = int(h[4:6], 16) / 255.0
+    except (ValueError, IndexError):
+        return "#fff"
+    # BT.601 weighting; cheap and accurate enough for chip text.
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#000" if luminance > 0.55 else "#fff"
+
+
 def _pad_dock_content(dock: "QDockWidget", margin: int = 12) -> None:
     """Apply uniform internal margins to a dock's content widget.
 
@@ -323,9 +343,29 @@ class _StatusBadgeDelegate(QStyledItemDelegate):
     Colors mirror the LED status palette for visual consistency.
     """
 
-    _GREEN = QColor("#10B981")   # Tailwind emerald-500
-    _RED = QColor("#EF4444")     # Tailwind rose-500
-    _ORANGE = QColor("#F59E0B")  # Tailwind amber-500
+    # Light/dark colour pairs. Tailwind 500-shades work on white backgrounds
+    # (light theme). On the Slate-900 dark theme they're a touch desaturated;
+    # the 400-shades pop more without losing meaning.
+    _LIGHT_GREEN = QColor("#10B981")   # emerald-500
+    _LIGHT_RED = QColor("#EF4444")     # rose-500
+    _LIGHT_ORANGE = QColor("#F59E0B")  # amber-500
+    _DARK_GREEN = QColor("#34D399")    # emerald-400
+    _DARK_RED = QColor("#F87171")      # rose-400
+    _DARK_ORANGE = QColor("#FBBF24")   # amber-400
+
+    def __init__(self, parent=None, *, settings: Optional[QSettings] = None) -> None:
+        super().__init__(parent)
+        self._settings = settings
+
+    def _palette(self) -> tuple[QColor, QColor, QColor]:
+        # Resolve the current theme on every paint; cheap, and avoids needing
+        # a separate "theme changed" signal wired into the delegate.
+        theme = "dark"
+        if self._settings is not None:
+            theme = str(self._settings.value("ui/theme", "dark"))
+        if theme == "light":
+            return self._LIGHT_GREEN, self._LIGHT_RED, self._LIGHT_ORANGE
+        return self._DARK_GREEN, self._DARK_RED, self._DARK_ORANGE
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index) -> None:
         text = str(index.data(Qt.ItemDataRole.DisplayRole) or "").strip()
@@ -337,13 +377,14 @@ class _StatusBadgeDelegate(QStyledItemDelegate):
         if option.state & QStyle.StateFlag.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
 
+        green, red, orange = self._palette()
         lower = text.lower()
         if "ok" in lower and "error" not in lower:
-            color = self._GREEN
+            color = green
         elif "error" in lower or "fail" in lower:
-            color = self._RED
+            color = red
         else:
-            color = self._ORANGE
+            color = orange
 
         rect = option.rect.adjusted(6, 4, -6, -4)
 
@@ -409,6 +450,7 @@ def _format_serial_open_error(port: str, exc: BaseException) -> str:
 
 from .updater import UpdateChecker, UpdateDownloader, launch_installer
 from .telemetry_model import TelemetryTableModel, COLUMNS as _MODEL_COLUMNS
+from .dialogs import ConnectionDialog, LoggingSettingsDialog, PollingConfigDialog
 from ..commands.tx_command_builder import CommandBuildError, build_tx_command
 from ..decoder.config_loader import ConfigError, load_config
 from ..decoder.frame_decoder import DecodedFrame, DecodedSignal, decode_frame
@@ -799,281 +841,6 @@ class PlotPanel:
 # Configuration dialogs
 # ---------------------------------------------------------------------------
 
-class ConnectionDialog(QDialog):
-    """Modal dialog for configuring and opening a serial connection.
-
-    Pre-populates all fields from ``QSettings`` so the user's last-used
-    port/baud/etc. are remembered between sessions.  On Accept the chosen
-    values are persisted back to ``QSettings`` and exposed via
-    ``get_settings()``.
-    """
-
-    def __init__(self, settings: QSettings, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Serial Connection Settings")
-        self.setMinimumWidth(360)
-        self._settings = settings
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(12)
-
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
-        # Port row with inline Refresh button
-        port_row = QWidget(self)
-        port_hl = QHBoxLayout(port_row)
-        port_hl.setContentsMargins(0, 0, 0, 0)
-        self._port_combo = QComboBox(port_row)
-        self._port_combo.setMinimumWidth(180)
-        refresh_btn = QPushButton("⟳", port_row)
-        refresh_btn.setFixedWidth(28)
-        refresh_btn.setToolTip("Refresh port list")
-        refresh_btn.clicked.connect(self._refresh_ports)
-        port_hl.addWidget(self._port_combo, 1)
-        port_hl.addWidget(refresh_btn)
-
-        self._baud_combo = QComboBox(self)
-        self._baud_combo.addItems(["9600", "19200", "38400", "57600", "115200",
-                                    "230400", "460800", "921600"])
-
-        self._data_bits_combo = QComboBox(self)
-        self._data_bits_combo.addItems(["8", "7"])
-
-        self._stop_bits_combo = QComboBox(self)
-        self._stop_bits_combo.addItems(["1", "1.5", "2"])
-
-        self._parity_combo = QComboBox(self)
-        self._parity_combo.addItems(["N", "E", "O"])
-
-        self._timeout_combo = QComboBox(self)
-        self._timeout_combo.addItems(["20", "50", "100", "250", "500", "1000"])
-
-        form.addRow("Port", port_row)
-        form.addRow("Baud rate", self._baud_combo)
-        form.addRow("Data bits", self._data_bits_combo)
-        form.addRow("Stop bits", self._stop_bits_combo)
-        form.addRow("Parity", self._parity_combo)
-        form.addRow("Timeout (ms)", self._timeout_combo)
-        layout.addLayout(form)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            self,
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Connect")
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self._refresh_ports()
-        self._restore_from_settings()
-
-    # ------------------------------------------------------------------
-    def _refresh_ports(self) -> None:
-        current = self._port_combo.currentData(Qt.ItemDataRole.UserRole) or ""
-        ports = list(available_ports())
-        self._port_combo.clear()
-        if ports:
-            for device, description in ports:
-                label = description if device in description else f"{device} \u2013 {description}"
-                self._port_combo.addItem(label, userData=device)
-            for i in range(self._port_combo.count()):
-                if self._port_combo.itemData(i, Qt.ItemDataRole.UserRole) == current:
-                    self._port_combo.setCurrentIndex(i)
-                    break
-        else:
-            self._port_combo.addItem("No ports found", userData="")
-
-    def _restore_from_settings(self) -> None:
-        s = self._settings
-        saved_port = s.value("conn/port", "")
-        for i in range(self._port_combo.count()):
-            if self._port_combo.itemData(i, Qt.ItemDataRole.UserRole) == saved_port:
-                self._port_combo.setCurrentIndex(i)
-                break
-        self._baud_combo.setCurrentText(str(s.value("conn/baud", "115200")))
-        self._data_bits_combo.setCurrentText(str(s.value("conn/data_bits", "8")))
-        self._stop_bits_combo.setCurrentText(str(s.value("conn/stop_bits", "1")))
-        self._parity_combo.setCurrentText(str(s.value("conn/parity", "N")))
-        self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", "50")))
-
-    def _on_accept(self) -> None:
-        s = self._settings
-        s.setValue("conn/port",       self._port_combo.currentData(Qt.ItemDataRole.UserRole) or "")
-        s.setValue("conn/baud",       self._baud_combo.currentText())
-        s.setValue("conn/data_bits",  self._data_bits_combo.currentText())
-        s.setValue("conn/stop_bits",  self._stop_bits_combo.currentText())
-        s.setValue("conn/parity",     self._parity_combo.currentText())
-        s.setValue("conn/timeout_ms", self._timeout_combo.currentText())
-        self.accept()
-
-    def get_settings(self) -> "SerialSettings":
-        return SerialSettings(
-            port=self._port_combo.currentData(Qt.ItemDataRole.UserRole) or self._port_combo.currentText(),
-            baud_rate=int(self._baud_combo.currentText()),
-            data_bits=int(self._data_bits_combo.currentText()),
-            stop_bits=float(self._stop_bits_combo.currentText()),
-            parity=self._parity_combo.currentText(),
-            timeout_ms=int(self._timeout_combo.currentText()),
-        )
-
-
-class PollingConfigDialog(QDialog):
-    """Modal dialog for selecting which polling targets are active.
-
-    Each target from the loaded ``FrameConfig.polling_schedules`` is shown
-    as a labelled checkbox.  Selections are persisted per ``target_id`` in
-    ``QSettings`` so they survive between sessions.
-    """
-
-    def __init__(self, schedules, settings: QSettings, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Configure Poll Schedule")
-        self.setMinimumWidth(320)
-        self._settings = settings
-        self._schedules = schedules
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-
-        header = QLabel("Select which targets to poll automatically:", self)
-        header.setWordWrap(True)
-        layout.addWidget(header)
-
-        self._list = QListWidget(self)
-        for sched in schedules:
-            key = f"poll/enabled/0x{sched.target_id:04X}"
-            # Default to whatever the config says, but QSettings overrides it.
-            default_checked = sched.enabled
-            checked = settings.value(key, default_checked, type=bool)
-            label = f"0x{sched.target_id:04X}  —  every {sched.interval_ms} ms"
-            item = QListWidgetItem(label)
-            item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
-            item.setCheckState(Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked)
-            item.setData(Qt.ItemDataRole.UserRole, sched.target_id)
-            self._list.addItem(item)
-        layout.addWidget(self._list)
-
-        # Select-all / none shortcuts
-        btn_row = QHBoxLayout()
-        all_btn = QPushButton("Select All", self)
-        all_btn.clicked.connect(lambda: self._set_all(True))
-        none_btn = QPushButton("Select None", self)
-        none_btn.clicked.connect(lambda: self._set_all(False))
-        btn_row.addWidget(all_btn)
-        btn_row.addWidget(none_btn)
-        layout.addLayout(btn_row)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            self,
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Start Polling")
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def _set_all(self, checked: bool) -> None:
-        state = Qt.CheckState.Checked if checked else Qt.CheckState.Unchecked
-        for i in range(self._list.count()):
-            self._list.item(i).setCheckState(state)
-
-    def _on_accept(self) -> None:
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            target_id = item.data(Qt.ItemDataRole.UserRole)
-            key = f"poll/enabled/0x{target_id:04X}"
-            self._settings.setValue(key, item.checkState() == Qt.CheckState.Checked)
-        self.accept()
-
-    def get_enabled_ids(self) -> set:
-        """Return the set of target_ids whose checkbox is checked."""
-        result = set()
-        for i in range(self._list.count()):
-            item = self._list.item(i)
-            if item.checkState() == Qt.CheckState.Checked:
-                result.add(item.data(Qt.ItemDataRole.UserRole))
-        return result
-
-
-class LoggingSettingsDialog(QDialog):
-    """Modal dialog for configuring logging level and CSV flush interval."""
-
-    _LEVELS = ("DEBUG", "INFO", "WARNING", "ERROR")
-
-    def __init__(self, settings: QSettings, parent=None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Logging Settings")
-        self.setMinimumWidth(320)
-        self._settings = settings
-
-        layout = QVBoxLayout(self)
-        layout.setSpacing(10)
-
-        header = QLabel("Configure application logging output:", self)
-        header.setWordWrap(True)
-        layout.addWidget(header)
-
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-
-        self._level_combo = QComboBox(self)
-        self._level_combo.addItems(list(self._LEVELS))
-
-        self._flush_spin = QDoubleSpinBox(self)
-        self._flush_spin.setRange(0.0, 10.0)
-        self._flush_spin.setDecimals(2)
-        self._flush_spin.setSingleStep(0.1)
-        self._flush_spin.setSuffix(" s")
-        self._flush_spin.setToolTip("0.0 = flush every write")
-
-        form.addRow("Log level", self._level_combo)
-        form.addRow("Flush interval", self._flush_spin)
-        layout.addLayout(form)
-
-        note = QLabel(
-            "Flush interval applies to raw/decoded CSV loggers. 0.0 flushes every write.",
-            self,
-        )
-        note.setWordWrap(True)
-        layout.addWidget(note)
-
-        buttons = QDialogButtonBox(
-            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
-            self,
-        )
-        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
-        buttons.accepted.connect(self._on_accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-        self._restore_from_settings()
-
-    def _restore_from_settings(self) -> None:
-        level = str(self._settings.value("logging/level", "INFO")).upper()
-        if level not in self._LEVELS:
-            level = "INFO"
-        self._level_combo.setCurrentText(level)
-
-        raw_interval = self._settings.value("logging/flush_interval_s", 0.5)
-        try:
-            interval = float(raw_interval)
-        except (TypeError, ValueError):
-            interval = 0.5
-        if interval < 0:
-            interval = 0.0
-        self._flush_spin.setValue(interval)
-
-    def _on_accept(self) -> None:
-        self._settings.setValue("logging/level", self._level_combo.currentText())
-        self._settings.setValue("logging/flush_interval_s", self._flush_spin.value())
-        self.accept()
-
-    def get_values(self) -> Tuple[str, float]:
-        return self._level_combo.currentText(), float(self._flush_spin.value())
-
-
 class MainWindow(QMainWindow):
     def _make_history_buffer(self) -> Tuple[Deque[float], Deque[float]]:
         """Factory for the parallel-deque entries in ``self._plot_history``.
@@ -1139,6 +906,15 @@ class MainWindow(QMainWindow):
         self._plot_keys: List[Tuple[int, str]] = []  # union of all panel keys
         self._curve_icon_cache: Dict[Tuple[int, str, str], QIcon] = {}
         self._session_started = datetime.now()
+        # Logging session start — distinct from _session_started, which tracks
+        # the app/config session. Set when Start Logging is pressed and used as
+        # the t=0 reference for decoded log elapsed_ms and the metadata sheet.
+        # We keep two: _log_started (wall clock, used only for the Metadata
+        # sheet's "session_started" string) and _log_started_perf (monotonic,
+        # used for elapsed_ms math). Mixing the two avoids backward jumps when
+        # the system clock is corrected by NTP mid-session.
+        self._log_started: Optional[datetime] = None
+        self._log_started_perf: Optional[float] = None
         # Plot view mode: True = Live (auto-expand 0→now), False = Explore (user panned)
         self._plot_live: bool = True
         self._plot_range_changing: bool = False   # re-entrancy guard for setXRange calls
@@ -1231,12 +1007,18 @@ class MainWindow(QMainWindow):
         _saved_theme = str(self._settings.value("ui/theme", "dark"))
         _ic = "#F8FAFC" if _saved_theme == "dark" else "#1F2937"
 
+        # Keyboard shortcuts are passed to setShortcut() so Qt automatically
+        # renders them in the menu text (right-aligned) — users learn them by
+        # opening the menu once. We avoid Ctrl+R because earlier builds bound
+        # it to "Auto-Range Plot"; some users still hit it out of habit.
         self._connect_action = QAction(_icon("mdi6.usb-port", _ic), "Connect", self)
+        self._connect_action.setShortcut(QKeySequence("F9"))
         self._connect_action.triggered.connect(self._on_toggle_connect)
 
         self._polling_action = QAction(_icon("mdi6.play-circle-outline", _ic), "Start Auto-Fetch", self)
         self._polling_action.setCheckable(True)
         self._polling_action.setChecked(False)
+        self._polling_action.setShortcut(QKeySequence("F10"))
         self._polling_action.triggered.connect(self._on_toggle_polling)
 
         self._logging_action = QAction(_icon("mdi6.record-rec", _ic), "Start Logging", self)
@@ -1244,15 +1026,19 @@ class MainWindow(QMainWindow):
         self._logging_action.triggered.connect(self._on_toggle_logging)
 
         self._load_config_action = QAction(_icon("mdi6.folder-upload-outline", _ic), "Import Config", self)
+        self._load_config_action.setShortcut(QKeySequence("Ctrl+O"))
         self._load_config_action.triggered.connect(self._on_load_config)
 
         self._export_template_action = QAction(_icon("mdi6.file-export-outline", _ic), "Export Template", self)
+        self._export_template_action.setShortcut(QKeySequence("Ctrl+E"))
         self._export_template_action.triggered.connect(self._on_export_template)
 
         self._load_log_action = QAction(_icon("mdi6.history", _ic), "Load Raw Log", self)
+        self._load_log_action.setShortcut(QKeySequence("Ctrl+Shift+O"))
         self._load_log_action.triggered.connect(self._on_load_log)
 
         self._clear_action = QAction(_icon("mdi6.broom", _ic), "Clear Console / Log", self)
+        self._clear_action.setShortcut(QKeySequence("Ctrl+K"))
         self._clear_action.triggered.connect(self._on_clear)
 
         self._copy_value_action = QAction(_icon("mdi6.content-copy", _ic), "Copy Value", self)
@@ -1260,12 +1046,14 @@ class MainWindow(QMainWindow):
         self._copy_value_action.triggered.connect(self._on_copy_value)
 
         self._exit_action = QAction(_icon("mdi6.exit-to-app", _ic), "Exit", self)
+        self._exit_action.setShortcut(QKeySequence("Ctrl+Q"))
         self._exit_action.triggered.connect(self.close)
 
         self._info_action = QAction(_icon("mdi6.information-outline", _ic), "About Bytehound", self)
         self._info_action.triggered.connect(self._on_info)
 
         self._docs_action = QAction(_icon("mdi6.book-open-page-variant-outline", _ic), "View Documentation", self)
+        self._docs_action.setShortcut(QKeySequence("F1"))
         self._docs_action.triggered.connect(self._on_view_docs)
 
         self._update_action = QAction(_icon("mdi6.cloud-download-outline", _ic), "Check for Updates", self)
@@ -1275,6 +1063,7 @@ class MainWindow(QMainWindow):
         # overlays many recordings) from the Live Plot panel which uses
         # plain chart-line.
         self._analysis_action = QAction(_icon("mdi6.chart-multiple", _ic), "Analysis Suite", self)
+        self._analysis_action.setShortcut(QKeySequence("Ctrl+T"))
         self._analysis_action.triggered.connect(self._on_analysis_suite)
 
         self._logging_settings_action = QAction(_icon("mdi6.tune-vertical", _ic), "Logging Settings...", self)
@@ -1361,7 +1150,17 @@ class MainWindow(QMainWindow):
     def _download_update(self, url: str, sha256: str) -> None:
         self._progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
         self._progress.setWindowTitle("Updater")
-        self._progress.setWindowModality(Qt.WindowModality.WindowModal)
+        # Non-modal so the user can keep working while the download runs.
+        # A 50 MB download on a slow connection used to freeze the main
+        # window for minutes; now the dialog floats but the rest of the
+        # app stays responsive. Suppress auto-close on reaching maximum so
+        # the user can read the final state before the download-finished
+        # handler explicitly closes it.
+        self._progress.setWindowModality(Qt.WindowModality.NonModal)
+        self._progress.setAutoClose(False)
+        self._progress.setAutoReset(False)
+        # Keep the dialog above its parent without grabbing focus.
+        self._progress.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self._progress.show()
 
         dest_path = str(Path(os.environ.get("TEMP", ".")) / f"{APP_NAME}_Update.exe")
@@ -1443,7 +1242,6 @@ class MainWindow(QMainWindow):
     def _on_show_config_info(self) -> None:
         """View → Config Info… — shows current config, protocol and logging state."""
         self._log_activity("[ACTION] Open Config Info dialog")
-        from PySide6.QtWidgets import QDialog, QVBoxLayout, QFormLayout, QDialogButtonBox, QPushButton
         dlg = QDialog(self)
         dlg.setWindowTitle("Config Info")
         dlg.setMinimumWidth(420)
@@ -1539,8 +1337,6 @@ class MainWindow(QMainWindow):
         self._logo_button = QPushButton()
         self._logo_button.setIcon(QIcon(str(Path(__file__).resolve().parents[2] / "logo_rec.png")))
         self._logo_button.setFlat(True)
-        self._logo_button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._logo_button.clicked.connect(lambda: None)  # no external URL
         toolbar.addWidget(self._logo_button)
 
         self.addToolBar(toolbar)
@@ -1596,7 +1392,7 @@ class MainWindow(QMainWindow):
         self._table.setFont(QFont("Consolas", 10))
         self._table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self._table.customContextMenuRequested.connect(self._on_table_context_menu)
-        self._status_delegate = _StatusBadgeDelegate(self._table)
+        self._status_delegate = _StatusBadgeDelegate(self._table, settings=self._settings)
         self._table.setItemDelegateForColumn(8, self._status_delegate)
         for index, (_, width) in enumerate(_MODEL_COLUMNS):
             self._table.setColumnWidth(index, width)
@@ -1754,6 +1550,14 @@ class MainWindow(QMainWindow):
             action.setIcon(_icon(dock_icon, ic))
             panels_menu.addAction(action)
 
+        # Reset Window Layout sits directly under Panels — that's where users
+        # look when they've accidentally dragged a dock and want to recover.
+        # Ctrl+Shift+R shortcut surfaces in the menu text automatically.
+        reset_layout_action = QAction(_icon("mdi6.view-grid-outline", ic), "Reset Window Layout", self)
+        reset_layout_action.setShortcut(QKeySequence("Ctrl+Shift+R"))
+        reset_layout_action.triggered.connect(self._reset_window_layout)
+        menu.addAction(reset_layout_action)
+
         menu.addSeparator()
         # Use file-cog so this is visually distinct from "About Bytehound"
         # which uses information-outline.
@@ -1776,17 +1580,6 @@ class MainWindow(QMainWindow):
             action.triggered.connect(lambda _checked=False, k=key: self._apply_theme(k))
             self._theme_group.addAction(action)
             theme_menu.addAction(action)
-
-        reset_layout_action = QAction(_icon("mdi6.view-grid-outline", ic), "Reset Window Layout", self)
-        reset_layout_action.triggered.connect(self._reset_window_layout)
-        menu.addAction(reset_layout_action)
-
-        menu.addSeparator()
-
-        reset_plot_action = QAction(_icon("mdi6.image-auto-adjust", ic), "Auto-Range Plot", self)
-        reset_plot_action.setShortcut("Ctrl+R")
-        reset_plot_action.triggered.connect(self._reset_plot_view)
-        menu.addAction(reset_plot_action)
 
     def _apply_theme(self, theme: str) -> None:
         if qdarktheme is None:
@@ -1822,7 +1615,20 @@ class MainWindow(QMainWindow):
         dark = (theme == "dark")
         for w in QApplication.topLevelWidgets():
             QTimer.singleShot(0, lambda _w=w, _d=dark: _apply_windows_dark_titlebar(_w, _d))
+        # Status-badge colours come from a custom delegate that reads the
+        # current theme on every paint. Force a repaint of the table viewport
+        # so the badges pick up the new colour pair immediately, without
+        # waiting for the next data tick.
+        if hasattr(self, "_table") and self._table is not None:
+            self._table.viewport().update()
         self._set_status(f"Theme: {theme}")
+        # Invalidate the cached toast so it picks up new theme colours.
+        if hasattr(self, "_toast_label") and self._toast_label is not None:
+            self._toast_label.deleteLater()
+            self._toast_label = None
+        # Theme switches were previously a status-bar update only — almost
+        # invisible. The toast confirms the switch landed.
+        self._toast(f"Theme: {theme.title()}")
         self._log_activity(f"[ACTION] Theme changed to {theme}")
 
     def _apply_plot_theme(self, theme: str) -> None:
@@ -1913,42 +1719,6 @@ class MainWindow(QMainWindow):
         self._tx_dock.raise_()
         self._activity_dock.raise_()
 
-    def _reset_plot_view(self) -> None:
-        """Reset View / Ctrl+R: snap back to Live mode (0 → current time).
-
-        Pan/zoom interactions silently disable BOTH axes' auto-range in
-        pyqtgraph. We must explicitly re-enable Y auto-range on every panel
-        that wants it; otherwise the x-axis scrolls correctly but Y stays
-        locked at whatever zoom level the user left it at, which reads as
-        "reset isn't working" because the data appears off-screen.
-        """
-        if pg is None or not self._plot_panels:
-            return
-        self._plot_live = True
-        self._plot_mode_label.setText("📊 Live")
-        # Mirror the Pause button to "Pause" (unchecked) so the UI stays
-        # consistent — both Reset and the button itself can drive this state.
-        if hasattr(self, "_pause_btn"):
-            self._pause_btn.blockSignals(True)
-            self._pause_btn.setChecked(False)
-            self._restyle_pause_btn(False)
-            self._pause_btn.blockSignals(False)
-        # Re-enable Y auto-range on each panel that has it on. We also call
-        # autoRange() once so pyqtgraph immediately recomputes the y bounds
-        # from current data instead of waiting for the next data tick.
-        self._plot_range_changing = True
-        try:
-            for panel in self._plot_panels:
-                vb = panel.plot_item.getViewBox()
-                if vb is None:
-                    continue
-                if panel.auto_fit_y:
-                    vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
-        finally:
-            self._plot_range_changing = False
-        self._redraw_plot()   # will call setXRange(0, current_t) immediately
-        self._log_activity("[ACTION] Reset plot view (Live mode)")
-
     def _reset_window_layout(self) -> None:
         self._log_activity("[ACTION] Reset window layout")
         self.restoreGeometry(self._default_geometry)
@@ -1964,6 +1734,7 @@ class MainWindow(QMainWindow):
         ):
             dock.setVisible(True)
         self._toolbar.setVisible(True)
+        self._toast("Window layout reset")
 
     def _save_window_state(self) -> None:
         self._settings.setValue("window/geometry", self.saveGeometry())
@@ -2025,7 +1796,7 @@ class MainWindow(QMainWindow):
         controls = QHBoxLayout()
         controls.setSpacing(8)
 
-        hint = QLabel("Right-click a row → Add to Plot   ·   Space = Pause/Live   ·   Ctrl+R = Reset")
+        hint = QLabel("Right-click a row → Add to Plot   ·   Space = Pause/Live")
         hint.setEnabled(False)
         hint.setStyleSheet("font-size: 11px;")
         controls.addWidget(hint)
@@ -2039,6 +1810,7 @@ class MainWindow(QMainWindow):
             "color: palette(text); padding: 0 6px;"
         )
         self._hover_label.setMinimumWidth(280)
+        self._hover_label.setMaximumWidth(420)
         self._hover_label.setToolTip("Time and signal values under the mouse cursor.")
         controls.addWidget(self._hover_label)
 
@@ -2051,7 +1823,8 @@ class MainWindow(QMainWindow):
         controls.addWidget(self._layout_combo)
 
         # Pause / Live toggle — checkable, color-coded so users see the
-        # current mode at a glance and don't have to remember Ctrl+R.
+        # current mode at a glance. Clicking Live also re-fits Y auto-range
+        # and snaps X back to (0, now), so it doubles as a reset.
         self._pause_btn = QPushButton("⏸ Pause", outer)
         self._pause_btn.setCheckable(True)
         self._pause_btn.setToolTip(
@@ -2063,33 +1836,34 @@ class MainWindow(QMainWindow):
         self._restyle_pause_btn(False)
         controls.addWidget(self._pause_btn)
 
-        reset_btn = QPushButton("⟳ Reset View", outer)
-        reset_btn.setToolTip("Snap all subplots back to rolling Live mode (Ctrl+R)")
-        reset_btn.clicked.connect(self._reset_plot_view)
-        controls.addWidget(reset_btn)
-
         self._plot_mode_label = QLabel("📊 Live", outer)
         self._plot_mode_label.setToolTip(
             "Live: X-axis always shows the full session from t=0 to now.\n"
             "Explore: You panned or zoomed — view is frozen.\n"
-            "Click  ⟳ Reset View  (or Ctrl+R) to return to Live."
+            "Click  ▶ Live  (or press Space) to return to Live."
         )
         controls.addWidget(self._plot_mode_label)
 
         # Session clock — updates every second via _flush_ui
         self._session_clock_label = QLabel("⏱ 0:00:00", outer)
         self._session_clock_label.setToolTip("Elapsed time since session start (or last config load).")
-        # palette(mid) is a muted role that adapts to both themes: a dim grey
-        # on dark, a darker grey on light. The hard-coded slate-400 we used
-        # before became almost invisible on the light-theme background.
-        self._session_clock_label.setStyleSheet("font-size:11px; color: palette(mid); padding-left:8px;")
+        # palette(placeholderText) sits between palette(text) and palette(mid):
+        # it's designed as readable-but-secondary text in both Qt-supplied and
+        # qdarktheme palettes. palette(mid) was nearly invisible on some light
+        # themes, palette(text) reads as primary content. This strikes the
+        # right "auxiliary readout" weight on dark AND light.
+        self._session_clock_label.setStyleSheet(
+            "font-size:11px; color: palette(placeholderText); padding-left:8px;"
+        )
+        self._session_clock_label.setMinimumWidth(70)
         controls.addWidget(self._session_clock_label)
 
         # Update-rate readout — packets/sec coming in. Computed by _flush_ui.
         self._rate_label = QLabel("0 Hz", outer)
         self._rate_label.setStyleSheet(
-            "font-size:11px; color: palette(mid); padding-left:8px;"
+            "font-size:11px; color: palette(placeholderText); padding-left:8px;"
         )
+        self._rate_label.setMinimumWidth(50)
         self._rate_label.setToolTip("Incoming packet rate (averaged over the last second).")
         controls.addWidget(self._rate_label)
 
@@ -2317,11 +2091,12 @@ class MainWindow(QMainWindow):
         color_offset = sum(len(self._plot_panels[i].assigned_keys) for i in range(panel_idx))
         for local_idx, key in enumerate(panel.assigned_keys):
             color = _PLOT_PALETTE[(color_offset + local_idx) % len(_PLOT_PALETTE)]
+            text_color = _contrast_text_color(color)
             chip = QPushButton(f"● {key[1]}  ✕")
             chip.setFixedHeight(22)
             chip.setStyleSheet(
                 f"font-size:10px; padding:0 5px; border-radius:4px;"
-                f"background:{color}; color:#fff; border:none;"
+                f"background:{color}; color:{text_color}; border:none;"
             )
             chip.clicked.connect(lambda _, i=panel_idx, k=key: self._remove_signal_from_panel(i, k))
             layout.addWidget(chip)
@@ -2345,25 +2120,95 @@ class MainWindow(QMainWindow):
         self._log_activity(f"[ACTION] Plot layout changed to {label} ({rows}x{cols})")
 
     def _on_panel_add_signal(self, panel_idx: int) -> None:
-        """Open a dialog to pick a signal to assign to panel *panel_idx*."""
+        """Open a searchable dialog to pick a signal to assign to panel *panel_idx*.
+
+        QInputDialog.getItem renders a scrollable list with no filter — fine
+        for 10 signals, miserable for 100+. The custom dialog adds a live
+        filter box, marks signals already on a panel, and accepts Enter /
+        double-click to commit so power users keep their hands on the
+        keyboard.
+        """
         if self._config is None:
             self._popup_warning("Add Signal", "Load a configuration first.")
             return
         all_keys = [(sig.frame_id, sig.signal_name) for sig in self._config.all_signals]
-        already: Set[Tuple[int, str]] = {k for p in self._plot_panels for k in p.assigned_keys}
-        choices = [f"0x{fid:04X}  {nm}" for fid, nm in all_keys]
-        if not choices:
+        if not all_keys:
             self._popup_information("Add Signal", "No signals available in the loaded config.")
             return
-        text, ok = QInputDialog.getItem(
-            self, f"Add signal to Panel {panel_idx + 1}",
-            "Choose a signal:", choices, 0, False
+        already: Set[Tuple[int, str]] = {k for p in self._plot_panels for k in p.assigned_keys}
+
+        key = self._prompt_signal_pick(
+            title=f"Add signal to Panel {panel_idx + 1}",
+            all_keys=all_keys,
+            already_assigned=already,
         )
-        if not ok:
+        if key is None:
             return
-        chosen_idx = choices.index(text)
-        key = all_keys[chosen_idx]
         self._add_signal_to_panel(panel_idx, key)
+
+    def _prompt_signal_pick(
+        self,
+        *,
+        title: str,
+        all_keys: List[Tuple[int, str]],
+        already_assigned: Set[Tuple[int, str]],
+    ) -> Optional[Tuple[int, str]]:
+        """Show a search-as-you-type dialog and return the picked key, or None."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle(title)
+        dlg.resize(420, 460)
+
+        layout = QVBoxLayout(dlg)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        filt = QLineEdit(dlg)
+        filt.setPlaceholderText("Type to filter (substring match on frame id or name)…")
+        layout.addWidget(filt)
+
+        listw = QListWidget(dlg)
+        listw.setAlternatingRowColors(True)
+        layout.addWidget(listw, 1)
+
+        hint = QLabel("• already assigned to a panel", dlg)
+        hint.setStyleSheet("font-size:11px; color: palette(placeholderText);")
+        layout.addWidget(hint)
+
+        btns = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, dlg
+        )
+        btns.accepted.connect(dlg.accept)
+        btns.rejected.connect(dlg.reject)
+        layout.addWidget(btns)
+
+        def _populate(query: str) -> None:
+            listw.clear()
+            q = query.strip().lower()
+            for fid, nm in all_keys:
+                label = f"0x{fid:04X}  {nm}"
+                if q and q not in label.lower():
+                    continue
+                item = QListWidgetItem(
+                    f"{'• ' if (fid, nm) in already_assigned else '  '}{label}"
+                )
+                item.setData(Qt.ItemDataRole.UserRole, (fid, nm))
+                listw.addItem(item)
+            if listw.count() > 0:
+                listw.setCurrentRow(0)
+
+        _populate("")
+        filt.textChanged.connect(_populate)
+        # Enter inside the filter box should commit the highlighted item.
+        filt.returnPressed.connect(dlg.accept)
+        listw.itemDoubleClicked.connect(lambda _it: dlg.accept())
+        filt.setFocus()
+
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return None
+        item = listw.currentItem()
+        if item is None:
+            return None
+        return item.data(Qt.ItemDataRole.UserRole)
 
     def _add_signal_to_panel(self, panel_idx: int, key: Tuple[int, str]) -> None:
         if panel_idx >= len(self._plot_panels):
@@ -2436,6 +2281,12 @@ class MainWindow(QMainWindow):
         self._bitfield_table.setHorizontalHeaderLabels(["Frame", "Variable", "Bit", "State"])
         self._bitfield_table.verticalHeader().setVisible(False)
         self._bitfield_table.horizontalHeader().setStretchLastSection(True)
+        # Side index: key_text -> row, kept in sync with the table by
+        # _upsert_detail_row and reset alongside _bitfield_table.setRowCount(0)
+        # in _on_clear. Turns the previous O(rows) linear scan per signal
+        # into O(1) — matters at high frame rates where every decoded packet
+        # may touch the same bitfield rows.
+        self._bitfield_row_index: Dict[str, int] = {}
         return self._bitfield_table
 
     def _build_enum_tab(self) -> QWidget:
@@ -2443,6 +2294,8 @@ class MainWindow(QMainWindow):
         self._enum_table.setHorizontalHeaderLabels(["Frame", "Variable", "Raw", "Label"])
         self._enum_table.verticalHeader().setVisible(False)
         self._enum_table.horizontalHeader().setStretchLastSection(True)
+        # See _bitfield_row_index — same pattern for the enum table.
+        self._enum_row_index: Dict[str, int] = {}
         return self._enum_table
 
     
@@ -2603,8 +2456,8 @@ class MainWindow(QMainWindow):
             for curve in panel.curves.values():
                 panel.plot_item.removeItem(curve)
             panel.curves.clear()
-            self._rebuild_panel_strips()
             self._update_panel_ylabel(i)
+        self._rebuild_panel_strips()   # once after the loop, not N times
         self._persist_panel_assignments()
         self._populate_tx_commands()
         self._update_poll_status_sidebar()
@@ -2680,38 +2533,79 @@ class MainWindow(QMainWindow):
             return
 
         rows, errors = parse_log_file(path_str)
+        # Mirror every parse error into the Activity Log so the user can
+        # review them after dismissing the popup. The popup truncates at
+        # 5 lines for readability; the log keeps the full list.
         if errors:
+            self._log_activity(
+                f"[REPLAY] {len(errors)} log line(s) failed to parse in {Path(path_str).name}"
+            )
+            for line_err in errors:
+                self._log_activity(f"  [REPLAY-PARSE] {line_err}")
             self._popup_warning(
                 "Log parse warnings",
-                f"{len(errors)} line(s) skipped:\n" + "\n".join(errors[:5]),
+                f"{len(errors)} line(s) skipped (full list in Activity Log):\n"
+                + "\n".join(errors[:5])
+                + ("\n…" if len(errors) > 5 else ""),
             )
         self._seen_decode_warnings.clear()
+        replay_bad_packets = 0
         for chunk in replay_bytes(rows):
             self._rx_bytes += len(chunk)
             self._parser.feed(chunk)
             for pkt in self._parser.extract_all():
+                if not pkt.ok:
+                    replay_bad_packets += 1
+                    fid = f"0x{pkt.frame_id:04X}" if pkt.frame_id is not None else "?"
+                    self._log_activity(
+                        f"  [REPLAY-FRAME] {fid}: {pkt.error or 'unknown error'}"
+                    )
                 self._handle_packet(pkt)
+        if replay_bad_packets:
+            self._log_activity(
+                f"[REPLAY] {replay_bad_packets} frame(s) failed CRC or framing during replay"
+            )
+        # _handle_packet no longer touches the status-bar counts (the live
+        # path refreshes once per UI flush). Replay has no UI timer, so do
+        # a single refresh here after the whole file is consumed.
+        self._refresh_counts_label()
         self._set_status(f"Replayed {len(rows)} log row(s) from {Path(path_str).name}")
-        self._log_activity(f"[ACTION] Replayed log file ({len(rows)} rows): {path_str}")
+        self._log_activity(
+            f"[ACTION] Replayed log file ({len(rows)} rows, {replay_bad_packets} bad frames): {path_str}"
+        )
 
 
+
+    def _disconnect(self, *, reason: str = "Disconnected") -> None:
+        """Single shutdown path for every disconnect scenario.
+
+        Guarantees the safe sequence:
+          1. Stop the 60 Hz UI flush timer
+          2. Stop logging (flushes final data while worker may still be alive)
+          3. Stop the worker thread and wait for it to exit
+          4. Null the reference
+          5. Update the UI chrome
+
+        Idempotent — safe to call even when already disconnected.
+        """
+        self._ui_timer.stop()
+        if self._logging:
+            self._stop_logging()
+            self._log_activity("[INFO] Logging auto-stopped on disconnect")
+        if self._serial is not None:
+            self._serial.close()   # calls stop() + wait(2000) + port.close()
+            self._serial = None
+        self._set_connection_ui(False)
+        self._set_status(reason)
 
     def _on_toggle_connect(self) -> None:
         self._log_activity(
             "[ACTION] Connect toggle requested "
-            f"({'disconnect' if (self._serial is not None and self._serial.is_open) else 'connect'})"
+            f"{'disconnect' if (self._serial is not None and self._serial.is_open) else 'connect'}"
         )
         # --- Already connected: disconnect immediately -----------------------
         if self._serial is not None and self._serial.is_open:
-            self._ui_timer.stop()
-            # Auto-stop logging before releasing the port
-            if self._logging:
-                self._stop_logging()
-                self._log_activity("[INFO] Logging auto-stopped on disconnect")
-            self._serial.close()
-            self._serial = None
-            self._set_connection_ui(False)
-            self._set_status("Disconnected")
+            self._disconnect(reason="Disconnected")
             self._log_activity("Disconnected")
             return
 
@@ -2754,15 +2648,7 @@ class MainWindow(QMainWindow):
 
     def _on_serial_error(self, err: str) -> None:
         self._log_activity(f"Serial Error: {err}")
-        self._set_status(f"Error: {err}")
-        self._ui_timer.stop()
-        if self._logging:
-            self._stop_logging()
-            self._log_activity("[INFO] Logging auto-stopped on serial error")
-        if self._serial:
-            self._serial.close()
-            self._serial = None
-        self._set_connection_ui(False)
+        self._disconnect(reason=f"Error: {err}")
 
     def _on_packets_received(self, batch: list) -> None:
         """Slot called by the worker's batch signal. Queues for the 60Hz UI timer.
@@ -2773,30 +2659,51 @@ class MainWindow(QMainWindow):
         self._pending_packets.extend(batch)
 
     def _flush_ui(self) -> None:
-        """Drain the pending packet queue and refresh the UI at 60 Hz."""
-        if not self._pending_packets:
-            return
-        # Swap atomically: take all pending packets, reset the deque.
-        packets = list(self._pending_packets)
-        self._pending_packets.clear()
-        for packet in packets:
-            self._handle_packet(packet)
-        # Commit all staged model cell updates in ONE dataChanged per row.
-        self._table_model.commit_staged()
-        # Redraw the plot once for the entire batch.
-        self._redraw_plot()
-        # Update the session elapsed clock in the plot toolbar (cheap string op).
+        """Drain the pending packet queue and refresh the UI at 60 Hz.
+
+        The session clock and rate label are updated on EVERY tick (even when
+        no packets arrived) so the clock doesn't freeze during device timeouts.
+        """
+        # Update the session elapsed clock unconditionally (cheap string op).
         if self._session_started is not None and hasattr(self, '_session_clock_label'):
             elapsed = int((datetime.now() - self._session_started).total_seconds())
             h, rem = divmod(elapsed, 3600)
             m, s = divmod(rem, 60)
             self._session_clock_label.setText(f"\u23f1 {h}:{m:02d}:{s:02d}")
 
-        # Packet rate readout in the plot toolbar \u2014 refreshed at most ~4 Hz
+        # --- Drain packet queue ---
+        # Atomic swap: replace the shared deque with a fresh one so the worker
+        # thread's extend() never races with our iteration.  CPython's GIL
+        # makes a single attribute assignment atomic.
+        pending = self._pending_packets
+        self._pending_packets = deque(maxlen=10_000)
+        if not pending:
+            return
+
+        packets = list(pending)
+        # Buffer all per-packet console rows so we can emit ONE
+        # appendPlainText per flush instead of one per packet. At 1 kHz RX
+        # this drops the Qt block-layout cost by ~50x.
+        self._console_buffer: List[str] = []
+        for packet in packets:
+            self._handle_packet(packet)
+        if self._console_buffer:
+            self._console.appendPlainText("\n".join(self._console_buffer))
+            self._console_buffer.clear()
+        # Counts label is rebuilt once per flush — the worker pushes the
+        # authoritative wire-level counters via metrics_updated at ~10 Hz,
+        # and _handle_packet only mutates the UI-side _packet_count. One
+        # refresh per flush is plenty and saves ~50 string rebuilds/batch.
+        self._refresh_counts_label()
+        # Commit all staged model cell updates in ONE dataChanged per row.
+        self._table_model.commit_staged()
+        # Redraw the plot once for the entire batch.
+        self._redraw_plot()
+
+        # Packet rate readout in the plot toolbar — refreshed at most ~4 Hz
         # so the label doesn't flicker. Uses a 1-second sliding-sum window.
         if hasattr(self, "_rate_label"):
-            import time as _t
-            now = _t.monotonic()
+            now = time.monotonic()
             if not hasattr(self, "_rate_window"):
                 self._rate_window: Deque[Tuple[float, int]] = deque()
                 self._rate_last_redraw = now
@@ -2812,14 +2719,7 @@ class MainWindow(QMainWindow):
 
     def _on_connection_lost(self) -> None:
         """Called when the worker detects a physical USB unplug."""
-        self._ui_timer.stop()
-        # Auto-stop logging so files are flushed and the button resets.
-        if self._logging:
-            self._stop_logging()
-            self._log_activity("[INFO] Logging auto-stopped on USB disconnect")
-        self._serial = None  # worker already cleaned up the port
-        self._set_connection_ui(False)
-        self._set_status("USB device disconnected")
+        self._disconnect(reason="USB device disconnected")
         self._log_activity("[WARN] Connection lost — USB device was disconnected")
 
     def _on_device_timeout(self) -> None:
@@ -2903,7 +2803,7 @@ class MainWindow(QMainWindow):
             self,
             "Select log file",
             str(default_file),
-            "CSV files (*.csv);;All files (*)",
+            "Log files (*.csv *.xlsx);;All files (*)",
         )
         if not target:
             return
@@ -2919,12 +2819,19 @@ class MainWindow(QMainWindow):
         decoded_path: Optional[Path] = None
         if log_raw and log_decoded:
             raw_path = base.with_name(f"{base_stem}_raw.csv")
-            decoded_path = base.with_name(f"{base_stem}_decoded.csv")
+            decoded_path = base.with_name(f"{base_stem}_decoded.xlsx")
         elif log_raw:
             raw_path = base.with_name(f"{base_stem}.csv")
         else:
-            decoded_path = base.with_name(f"{base_stem}.csv")
+            decoded_path = base.with_name(f"{base_stem}.xlsx")
 
+        # Set the logging t=0 BEFORE building metadata so the timestamp written
+        # to the Metadata sheet matches the elapsed_ms baseline used in Data.
+        # _log_started_perf is the monotonic baseline that elapsed_ms is
+        # actually computed against; _log_started is the wall-clock string
+        # for the Metadata sheet.
+        self._log_started = datetime.now()
+        self._log_started_perf = time.perf_counter()
         flush_interval = self._log_flush_interval()
         metadata = self._build_log_metadata(choice, raw_path, decoded_path)
         self._raw_logger = (
@@ -3011,7 +2918,7 @@ class MainWindow(QMainWindow):
         metadata: Dict[str, str] = {
             "app": APP_NAME,
             "app_version": _read_version(),
-            "session_started": self._session_started.strftime("%Y-%m-%d %H:%M:%S"),
+            "session_started": (self._log_started or self._session_started).strftime("%Y-%m-%d %H:%M:%S"),
             "logging_mode": choice,
         }
         if raw_path is not None:
@@ -3042,6 +2949,8 @@ class MainWindow(QMainWindow):
         self._raw_logger = None
         self._decoded_logger = None
         self._logging = False
+        self._log_started = None
+        self._log_started_perf = None
         self._logging_action.setText("Start Logging")
         self._style_action_btn(self._logging_action, _BTN_YELLOW)   # back to yellow
         self._logging_label.setText("Logging: stopped")
@@ -3073,6 +2982,11 @@ class MainWindow(QMainWindow):
         self._plot_history.clear()
         self._bitfield_table.setRowCount(0)
         self._enum_table.setRowCount(0)
+        # Side indexes must drop their mappings alongside the table reset,
+        # otherwise the next decode would try to write into a row that no
+        # longer exists.
+        self._bitfield_row_index.clear()
+        self._enum_row_index.clear()
         self._table_model.clear_live_columns()
         self._seen_decode_warnings.clear()
         self._redraw_plot()
@@ -3160,7 +3074,15 @@ class MainWindow(QMainWindow):
         if self._last_packet_perf is not None:
             self._delta_t_ms = (now - self._last_packet_perf) * 1000.0
         self._last_packet_perf = now
-        self._console.appendPlainText(self._format_console_row(packet))
+        # Buffer the console line. _flush_ui appends them all in one shot.
+        # Falling back to direct append keeps replay (which calls
+        # _handle_packet outside the batch path) behaving as before.
+        line = self._format_console_row(packet)
+        buf = getattr(self, "_console_buffer", None)
+        if buf is None:
+            self._console.appendPlainText(line)
+        else:
+            buf.append(line)
         if self._raw_logger:
             self._raw_logger.log("RX", packet.raw, delta_t_ms=self._delta_t_ms)
         if not packet.ok:
@@ -3171,7 +3093,6 @@ class MainWindow(QMainWindow):
             # do the bookkeeping ourselves.
             if self._serial is None:
                 self._error_count += 1
-            self._update_counts()
             return
 
         # Reset LED to green when data is flowing again after a timeout.
@@ -3186,9 +3107,17 @@ class MainWindow(QMainWindow):
         decoded = decode_frame(self._config, packet.frame_id, packet.payload)
         self._apply_decoded(decoded)
         if self._decoded_logger:
-            elapsed_ms = int((datetime.now() - self._session_started).total_seconds() * 1000)
+            # Use the monotonic clock for elapsed_ms — wall-clock arithmetic
+            # would skip or go backward if the system clock is corrected by
+            # NTP during the session. Fall back to a freshly-sampled baseline
+            # only if logging started before _log_started_perf was captured
+            # (defensive — should not happen with the current Start path).
+            if self._log_started_perf is not None:
+                elapsed_ms = int((time.perf_counter() - self._log_started_perf) * 1000)
+            else:
+                t0 = self._log_started or self._session_started
+                elapsed_ms = int((datetime.now() - t0).total_seconds() * 1000)
             self._decoded_logger.log_frame(decoded, elapsed_ms)
-        self._update_counts()
 
     # ------------------------------------------------------------------
     # Table, tabs, and plot maintenance
@@ -3284,6 +3213,11 @@ class MainWindow(QMainWindow):
 
     def _populate_editor_table(self) -> None:
         self._editor_table.setRowCount(0)
+        # Index: signal_name -> list of value-cell QTableWidgetItem refs.
+        # _apply_decoded looks rows up by name on every decoded signal of
+        # every packet; a linear scan over rowCount() was O(rows * packets *
+        # signals_per_packet) per UI flush. A dict turns that into O(1).
+        self._editor_value_items: Dict[str, List[QTableWidgetItem]] = {}
         if not self._config:
             return
         rw_signals = [s for s in self._config.all_signals if s.read_write in ("W", "RW")]
@@ -3305,6 +3239,7 @@ class MainWindow(QMainWindow):
             curr_val = QTableWidgetItem("-")
             curr_val.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             self._editor_table.setItem(row, 2, curr_val)
+            self._editor_value_items.setdefault(s.signal_name, []).append(curr_val)
 
             widget = QWidget()
             layout = QHBoxLayout(widget)
@@ -3494,15 +3429,13 @@ class MainWindow(QMainWindow):
                 updated=timestamp,
             )
             self._update_detail_tabs(signal)
-            # Update editor table current-value column. Skip placeholder rows
-            # (e.g. the "no writable signals" notice) where col 1 has no item.
-            for erow in range(self._editor_table.rowCount()):
-                name_item = self._editor_table.item(erow, 1)
-                if name_item is None or name_item.text() != signal.signal_name:
-                    continue
-                val_item = self._editor_table.item(erow, 2)
-                if val_item is not None:
-                    val_item.setText(signal.display_value or value_text)
+            # O(1) editor-row lookup via the index built in
+            # _populate_editor_table. setdefault on a missing config keeps
+            # this branch a no-op when the editor table isn't initialised.
+            for val_item in getattr(self, "_editor_value_items", {}).get(
+                signal.signal_name, ()
+            ):
+                val_item.setText(signal.display_value or value_text)
 
             if signal.scaled_value is not None and signal.status == "ok":
                 xs, ys = self._plot_history[key]
@@ -3528,12 +3461,14 @@ class MainWindow(QMainWindow):
             for bit_name, active in signal.bit_values.items():
                 self._upsert_detail_row(
                     self._bitfield_table,
+                    self._bitfield_row_index,
                     (f"0x{signal.frame_id:04X}", signal.signal_name, bit_name),
                     [f"0x{signal.frame_id:04X}", signal.signal_name, bit_name, "ON" if active else "OFF"],
                 )
         if signal.enum_label:
             self._upsert_detail_row(
                 self._enum_table,
+                self._enum_row_index,
                 (f"0x{signal.frame_id:04X}", signal.signal_name),
                 [
                     f"0x{signal.frame_id:04X}",
@@ -3543,20 +3478,32 @@ class MainWindow(QMainWindow):
                 ],
             )
 
-    def _upsert_detail_row(self, table: QTableWidget, key: tuple[str, ...], values: list[str]) -> None:
+    def _upsert_detail_row(
+        self,
+        table: QTableWidget,
+        row_index: Dict[str, int],
+        key: tuple[str, ...],
+        values: list[str],
+    ) -> None:
+        """Insert-or-update a row in *table*, looked up via *row_index* in O(1).
+
+        *row_index* maps the joined-key string to the table row number. The
+        caller is responsible for clearing it whenever ``table.setRowCount(0)``
+        runs (see :meth:`_on_clear`).
+        """
         key_text = "\x1f".join(key)
-        for row in range(table.rowCount()):
-            item = table.item(row, 0)
-            if item and item.data(Qt.ItemDataRole.UserRole) == key_text:
-                for col, value in enumerate(values):
-                    table.setItem(row, col, QTableWidgetItem(value))
-                table.item(row, 0).setData(Qt.ItemDataRole.UserRole, key_text)
-                return
+        row = row_index.get(key_text)
+        if row is not None and row < table.rowCount():
+            for col, value in enumerate(values):
+                table.setItem(row, col, QTableWidgetItem(value))
+            table.item(row, 0).setData(Qt.ItemDataRole.UserRole, key_text)
+            return
         row = table.rowCount()
         table.insertRow(row)
         for col, value in enumerate(values):
             table.setItem(row, col, QTableWidgetItem(value))
         table.item(row, 0).setData(Qt.ItemDataRole.UserRole, key_text)
+        row_index[key_text] = row
 
     def _populate_group_selector(self) -> None:
         assert self._config is not None
@@ -3569,23 +3516,30 @@ class MainWindow(QMainWindow):
         if hasattr(self, "_search_input"):
             search_text = self._search_input.text().lower()
 
+        show_calcs = self._show_calcs_check.isChecked()
         n = self._table_model.row_count()
-        for row in range(n):
-            row_group   = self._table_model.group_for_row(row)
-            row_name    = self._table_model.signal_name_for_row(row).lower()
-            is_calculated = self._table_model.is_calculated_row(row)
+        # Suppress per-row repaints — a single update at the end is 50x cheaper
+        # for tables with 500+ signals.
+        self._table.setUpdatesEnabled(False)
+        try:
+            for row in range(n):
+                row_group   = self._table_model.group_for_row(row)
+                row_name    = self._table_model.signal_name_for_row(row).lower()
+                is_calculated = self._table_model.is_calculated_row(row)
 
-            # Empty selected_groups means "All"
-            if selected_groups:
-                visible = row_group in selected_groups
-            else:
-                visible = True
-            if is_calculated and not self._show_calcs_check.isChecked():
-                visible = False
-            if search_text and search_text not in row_name:
-                visible = False
+                # Empty selected_groups means "All"
+                if selected_groups:
+                    visible = row_group in selected_groups
+                else:
+                    visible = True
+                if is_calculated and not show_calcs:
+                    visible = False
+                if search_text and search_text not in row_name:
+                    visible = False
 
-            self._table.setRowHidden(row, not visible)
+                self._table.setRowHidden(row, not visible)
+        finally:
+            self._table.setUpdatesEnabled(True)
 
 
 
@@ -3598,20 +3552,37 @@ class MainWindow(QMainWindow):
         if self._plot_range_changing:
             return
         if self._plot_live:
-            self._plot_live = False
-            self._plot_mode_label.setText("🔍 Explore  (⟳ Reset View = Live)")
-            # Keep the prominent Pause button in sync — user pan/zoom is
-            # functionally the same as Pausing, so reflect that visually.
-            if hasattr(self, "_pause_btn"):
-                self._pause_btn.blockSignals(True)
-                self._pause_btn.setChecked(True)
-                self._restyle_pause_btn(True)
-                self._pause_btn.blockSignals(False)
+            # User pan/zoom is functionally the same as Pausing.
+            self._set_plot_live(False, source="pan")
             self._log_activity("[ACTION] Plot switched to Explore mode (user pan/zoom)")
 
     # ------------------------------------------------------------------
     # Pause / Live toggle button
     # ------------------------------------------------------------------
+    def _set_plot_live(self, live: bool, *, source: str = "") -> None:
+        """Single source of truth for ``_plot_live`` + Pause button + mode label.
+
+        Every code path that wants to flip the plot between Live and
+        Explore/Pause goes through here so the three pieces of UI state
+        cannot drift. ``source`` is "pan" when the change was triggered by a
+        user pan/zoom (so the mode label can mention how to get back); any
+        other value renders as plain Paused.
+        """
+        self._plot_live = live
+        paused = not live
+        if hasattr(self, "_pause_btn"):
+            self._pause_btn.blockSignals(True)
+            self._pause_btn.setChecked(paused)
+            self._pause_btn.blockSignals(False)
+            self._restyle_pause_btn(paused)
+        if hasattr(self, "_plot_mode_label"):
+            if live:
+                self._plot_mode_label.setText("📊 Live")
+            elif source == "pan":
+                self._plot_mode_label.setText("🔍 Explore  (▶ Live to resume)")
+            else:
+                self._plot_mode_label.setText("⏸ Paused")
+
     def _restyle_pause_btn(self, paused: bool) -> None:
         """Recolour the toggle so the current mode reads at a glance."""
         if paused:
@@ -3629,18 +3600,11 @@ class MainWindow(QMainWindow):
 
     def _on_pause_toggled(self, checked: bool) -> None:
         """Space-bar / button toggle: Pause = freeze view, Live = resume scroll."""
-        self._restyle_pause_btn(checked)
-        if checked:
-            # User asked to pause → freeze at current x view (same as Explore).
-            self._plot_live = False
-            self._plot_mode_label.setText("⏸ Paused")
-            self._log_activity("[ACTION] Plot Paused")
-        else:
-            # Resume Live mode — re-enable Y auto-range first (pan/zoom that
-            # got us into Pause disabled it), then let _redraw_plot snap X
-            # back to (0, now).
-            self._plot_live = True
-            self._plot_mode_label.setText("📊 Live")
+        going_live = not checked
+        self._set_plot_live(going_live)
+        if going_live:
+            # Re-enable Y auto-range first (pan/zoom that got us into Pause
+            # disabled it), then let _redraw_plot snap X back to (0, now).
             if pg is not None:
                 self._plot_range_changing = True
                 try:
@@ -3652,6 +3616,8 @@ class MainWindow(QMainWindow):
                     self._plot_range_changing = False
             self._log_activity("[ACTION] Plot resumed Live")
             self._redraw_plot()
+        else:
+            self._log_activity("[ACTION] Plot Paused")
 
     # ------------------------------------------------------------------
     # Hover crosshair + value readout
@@ -3837,8 +3803,13 @@ class MainWindow(QMainWindow):
 
                 if key not in panel.curves:
                     panel.curves[key] = pi.plot(name=label, pen=pg.mkPen(color, width=2))
-                else:
+                    # Cache the colour on the curve itself so we can skip the
+                    # setPen + mkPen allocation on every subsequent redraw —
+                    # the colour only changes when the assignment shifts.
+                    panel.curves[key].__bh_color = color  # type: ignore[attr-defined]
+                elif getattr(panel.curves[key], "__bh_color", None) != color:
                     panel.curves[key].setPen(pg.mkPen(color, width=2))
+                    panel.curves[key].__bh_color = color  # type: ignore[attr-defined]
 
                 panel.curves[key].setData(
                     x_values, y_values,
@@ -3924,6 +3895,56 @@ class MainWindow(QMainWindow):
     def _set_status(self, text: str) -> None:
         self._status_label.setText(text)
 
+    def _toast(self, text: str, timeout_ms: int = 2500) -> None:
+        """Show a non-modal transient notification in the bottom-right corner.
+
+        Use for low-stakes confirmations like "Theme changed" or "Layout
+        reset" — anything that previously begged for a popup but doesn't
+        actually need acknowledgement. ``QMessageBox`` is still right for
+        anything the user must read before continuing.
+        """
+        toast = getattr(self, "_toast_label", None)
+        if toast is None:
+            toast = QLabel(self)
+            toast.setObjectName("bytehoundToast")
+            toast.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            # Theme-adaptive colours: dark toast on light bg, lighter toast on dark bg.
+            theme = str(self._settings.value("ui/theme", "dark"))
+            if theme == "light":
+                bg_rgba = "rgba(30, 41, 59, 235)"   # Slate-800 @ 92%
+                fg = "#F8FAFC"                       # Slate-50
+            else:
+                bg_rgba = "rgba(241, 245, 249, 230)"  # Slate-100 @ 90%
+                fg = "#0F172A"                         # Slate-900
+            toast.setStyleSheet(
+                f"QLabel#bytehoundToast {{"
+                f"  background: {bg_rgba};"
+                f"  color: {fg};"
+                f"  padding: 8px 14px;"
+                f"  border-radius: 6px;"
+                f"  font-size: 12px;"
+                f"}}"
+            )
+            toast.hide()
+            self._toast_label = toast
+            self._toast_timer = QTimer(self)
+            self._toast_timer.setSingleShot(True)
+            self._toast_timer.timeout.connect(toast.hide)
+
+        toast.setText(text)
+        toast.adjustSize()
+        # Anchor near the bottom-right of the main window, above the status
+        # bar. Re-position on every show so the toast still appears in the
+        # right place after a window resize.
+        margin = 16
+        sb_height = self.statusBar().height() if self.statusBar() else 0
+        x = self.width() - toast.width() - margin
+        y = self.height() - toast.height() - sb_height - margin
+        toast.move(max(margin, x), max(margin, y))
+        toast.raise_()
+        toast.show()
+        self._toast_timer.start(max(500, int(timeout_ms)))
+
     def _log_activity(self, text: str) -> None:
         if not hasattr(self, "_activity_log") or self._activity_log is None:
             return
@@ -4002,19 +4023,8 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-        # Stop the 60 Hz UI flush timer first.
-        self._ui_timer.stop()
-        # Signal the worker thread to exit and wait up to 2 s for the COM
-        # port to be released cleanly (avoids zombie processes on Windows).
-        if self._serial:
-            self._serial.stop()
-            self._serial.wait(2000)
-            try:
-                self._serial.close()
-            except Exception:
-                pass
-        if self._logging:
-            self._stop_logging()  # flushes final buffered log data
+        # _disconnect() guarantees: stop timer → flush logs → stop worker → null.
+        self._disconnect(reason="Application closed")
         self._save_window_state()
         super().closeEvent(event)
 

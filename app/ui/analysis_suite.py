@@ -198,7 +198,8 @@ def _test_name_from_path(path: str) -> str:
 # Background loader thread
 # ═══════════════════════════════════════════════════════════════════════
 class LogLoaderThread(QThread):
-    """Loads one .xlsx or _decoded.csv log file in a background thread."""
+    """Loads one .xlsx (Bytehound decoded or Dyno) or _decoded.csv log in a
+    background thread."""
     log_loaded = Signal(str, str, object)   # (log_id, path, LogEntry or None)
     error = Signal(str, str)                # (path, error_message)
 
@@ -219,7 +220,7 @@ class LogLoaderThread(QThread):
             self.error.emit(self._path, str(exc))
 
     def _load_csv(self):
-        """Parse a _decoded.csv file produced by DecodedLogger."""
+        """Parse a legacy _decoded.csv file (pre-xlsx Bytehound versions)."""
         with open(self._path, newline='', encoding='utf-8') as f:
             def _iter_rows():
                 for line in f:
@@ -311,11 +312,22 @@ class LogLoaderThread(QThread):
         self.log_loaded.emit(self._log_id, self._path, entry)
 
     def _load_xlsx(self):
-        """Parse a .xlsx file (Dyno or exported Excel log)."""
+        """Parse a .xlsx file. Supports three schemas:
+
+        * **Bytehound decoded (cycle-buffered)** — sheet ``Data`` with
+          per-frame blocks like ``<frame>.elapsed_ms``, ``<frame>.frame_id``,
+          ``<frame>.<signal>``. The trigger frame's elapsed_ms (the LAST
+          ``*.elapsed_ms`` column) is used as the time axis.
+        * **Bytehound decoded (legacy flat)** — sheet ``Data`` with a single
+          ``elapsed_ms`` column.
+        * **Dyno test rig** — sheet ``Record`` (or active), column
+          ``Elapsed (s)`` then signals.
+        """
         from openpyxl import load_workbook
         wb = load_workbook(self._path, read_only=True, data_only=True)
-        # Prefer 'Record' sheet (new format), fall back to active
-        if 'Record' in wb.sheetnames:
+        if 'Data' in wb.sheetnames:
+            ws = wb['Data']
+        elif 'Record' in wb.sheetnames:
             ws = wb['Record']
         else:
             ws = wb.active
@@ -328,20 +340,42 @@ class LogLoaderThread(QThread):
         headers = [str(c) if c else "" for c in rows[0]]
         data_rows = rows[1:]
 
-        # Find elapsed-time column
+        # Pick the elapsed-time column.
+        #   Dyno      → "Elapsed (s)"             (seconds)
+        #   Bytehound → "<frame>.elapsed_ms"      (ms, prefer the trigger
+        #                                          frame = LAST occurrence)
+        #              or legacy flat "elapsed_ms"
         elapsed_idx = -1
+        elapsed_scale = 1.0
+        frame_block_elapsed_indices: set[int] = set()
+        frame_block_id_indices: set[int] = set()
         for i, h in enumerate(headers):
-            if h == "Elapsed (s)":
-                elapsed_idx = i
-                break
+            if h.endswith(".elapsed_ms"):
+                frame_block_elapsed_indices.add(i)
+                elapsed_idx = i  # keep updating → LAST one wins (trigger frame)
+                elapsed_scale = 1e-3
+            elif h.endswith(".frame_id"):
+                frame_block_id_indices.add(i)
+        if elapsed_idx < 0:
+            for i, h in enumerate(headers):
+                if h == "Elapsed (s)":
+                    elapsed_idx = i
+                    elapsed_scale = 1.0
+                    break
+                if h == "elapsed_ms":
+                    elapsed_idx = i
+                    elapsed_scale = 1e-3
+                    break
 
         n = len(data_rows)
         elapsed = np.zeros(n)
         columns: dict[str, np.ndarray] = {}
 
-        # Identify numeric data columns (skip axis/time-like fields)
+        skip_indices = frame_block_elapsed_indices | frame_block_id_indices | {elapsed_idx}
         col_map: dict[int, str] = {}
         for i, h in enumerate(headers):
+            if i in skip_indices:
+                continue
             if not _is_time_like_param(h):
                 col_map[i] = h
                 columns[h] = np.full(n, np.nan)
@@ -349,7 +383,7 @@ class LogLoaderThread(QThread):
         for r, row in enumerate(data_rows):
             if elapsed_idx >= 0 and elapsed_idx < len(row):
                 try:
-                    elapsed[r] = float(row[elapsed_idx])
+                    elapsed[r] = float(row[elapsed_idx]) * elapsed_scale
                 except (ValueError, TypeError):
                     elapsed[r] = elapsed[r - 1] if r > 0 else 0.0
             for ci, param in col_map.items():

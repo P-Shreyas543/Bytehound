@@ -52,6 +52,39 @@ def read_version() -> str:
         return "0.0.0"
 
 
+def read_version_manifest() -> dict:
+    """Load the full version.json manifest (version, Developer, etc.)."""
+    try:
+        with (ROOT / "version.json").open("r", encoding="utf-8") as fp:
+            return json.load(fp)
+    except Exception:
+        return {}
+
+
+def write_installer_version_iss() -> Path:
+    """Mirror version.json into installer_version.iss for Inno Setup.
+
+    version.json is the single source of truth. The Inno Setup .iss script
+    can't parse JSON on its own, so we generate a tiny include file with
+    `#define`s before invoking ISCC. The file is gitignored — re-run
+    `python build.py` (or just import-and-call this) after any version.json
+    edit and the installer picks up the change.
+    """
+    manifest = read_version_manifest()
+    version = str(manifest.get("version", "0.0.0"))
+    developer = str(manifest.get("Developer", "")).replace('"', '\\"')
+    out = ROOT / "installer_version.iss"
+    out.write_text(
+        "; Auto-generated from version.json by build.py - DO NOT EDIT.\n"
+        "; Edit version.json, then re-run: python build.py\n"
+        f'#define MyAppVersion "{version}"\n'
+        f'#define MyDeveloper  "{developer}"\n',
+        encoding="ascii",
+    )
+    print(f"[build] wrote {out.name} (version={version}, developer={developer!r})")
+    return out
+
+
 def write_sha256(exe: Path) -> str:
     """Compute SHA-256 of the built exe and write it into version.json."""
     print(f"[build] computing SHA-256 for {exe.name} ...")
@@ -163,6 +196,10 @@ def run_inno_setup() -> tuple[int, Path | None]:
         print("[build] installer.iss not found; skipping installer step")
         return 0, None
 
+    # Regenerate installer_version.iss from version.json so the .iss file
+    # picks up any version/developer change without a manual edit.
+    write_installer_version_iss()
+
     # Common Inno Setup install locations
     iscc_candidates = [
         Path(r"C:\Program Files (x86)\Inno Setup 6\ISCC.exe"),
@@ -226,6 +263,11 @@ def main() -> int:
     if not SPEC.exists():
         print(f"[build] ERROR: spec file not found at {SPEC}", file=sys.stderr)
         return 1
+
+    # Sync installer_version.iss from version.json on every build, even when
+    # --no-installer is set. Keeps the include file fresh for users who want
+    # to compile installer.iss directly from the Inno Setup IDE later.
+    write_installer_version_iss()
 
     if not args.no_clean:
         clean()

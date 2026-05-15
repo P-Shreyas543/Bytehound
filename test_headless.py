@@ -147,7 +147,7 @@ def main() -> int:
 
     Path("scratch").mkdir(exist_ok=True)
     raw_path = Path("scratch/test_raw.csv")
-    dec_path = Path("scratch/test_decoded.csv")
+    dec_path = Path("scratch/test_decoded.xlsx")
     raw_logger = RawLogger(raw_path)
     decoded_logger = DecodedLogger(dec_path, config)
     log_start = time.perf_counter()

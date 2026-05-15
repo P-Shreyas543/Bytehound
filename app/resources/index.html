@@ -120,7 +120,7 @@
     <h1>Bytehound: Comprehensive User Manual</h1>
     
     <p style="font-size: 18px; text-align: center; color: #7f8c8d;">
-        This manual is your complete guide to every feature, panel, and configuration option in the application. Whether you are connecting a simple Arduino or analyzing complex Model-Based Design firmware, this guide will show you how to visualize, control, and analyze your hardware telemetry.
+        This manual is your complete guide to Bytehound's panels, workflows, and configuration sheets. Whether you are connecting a simple Arduino or validating complex Model-Based Design firmware, it shows you how to decode, visualize, log, control, and analyze serial hardware telemetry.
     </p>
 
     <!-- Table of Contents -->
@@ -182,15 +182,15 @@
     <h2 id="section-1">1. Introduction &amp; Getting Started</h2>
 
     <h3 id="what-is-it">What is the Bytehound?</h3>
-    <p>The Bytehound is a powerful, hardware-agnostic telemetry and control dashboard. It reads raw byte streams over a serial connection (UART/USB), parses them using a custom dictionary that you define, and displays the data in live tables and high-speed graphs — all without writing any Python code.</p>
+    <p>Bytehound is a hardware-agnostic telemetry and control dashboard for serial devices. It reads framed UART/USB byte streams or Modbus RTU traffic, decodes the payload using a workbook or CSV configuration that you define, and displays the results in live tables, plots, logs, and command panels — all without writing Python code.</p>
 
     <h3 id="connecting">Connecting Your Hardware</h3>
     <p>To get your hardware (NXP, STM32, Arduino, etc.) talking to the app:</p>
     <ol>
         <li>Connect your hardware to your computer using a USB cable or Serial adapter.</li>
-        <li>Ensure your firmware outputs bytes in the standard packet format: <code>[Header] + [ID] + [Length] + [Data] + [CRC]</code>. (See <a href="#section-5">Section 5</a> for protocol details).</li>
-        <li>Open the <strong>Bytehound</strong>.</li>
-        <li>Click <strong>Connect</strong> in the toolbar. A <strong>Connection</strong> dialog will appear:
+        <li>Make sure your loaded config matches the bytes your device sends. For a framed protocol that usually means <code>[Header] + [ID] + [Length] + [Data] + [CRC]</code>; for Modbus RTU, set <code>parser_type = modbus_rtu</code>. See <a href="#section-5">Section 5</a> for protocol details.</li>
+        <li>Launch <strong>Bytehound</strong>. A bundled example config loads automatically; use <strong>Import Config</strong> if you want to load your own Excel workbook or CSV config folder.</li>
+        <li>Click <strong>Connect</strong> in the toolbar. A <strong>Serial Connection Settings</strong> dialog will appear:
             <ul>
                 <li>Select your hardware's COM port (e.g. <strong>COM7</strong>). Click <em>Refresh</em> if it isn't listed.</li>
                 <li>Set the Baud Rate to match your hardware (e.g., <strong>115200</strong>).</li>
@@ -198,34 +198,34 @@
                 <li>Click <strong>Connect</strong> to open the port.</li>
             </ul>
         </li>
-        <li>The status LED in the bottom-left turns <span style="color:#4CAF50"><strong>green</strong></span> and the toolbar button turns <span style="color:#e91e8c"><strong>pink</strong></span> when connected.</li>
+        <li>The status LED turns <span style="color:#4CAF50"><strong>green</strong></span> and the toolbar button changes to <strong>Disconnect</strong> with a <span style="color:#e91e8c"><strong>pink</strong></span> background when connected.</li>
     </ol>
 
     <div class="note">
-        If the device is unplugged while monitoring, the app automatically stops logging and returns the Connect button to its ready state. No manual action is needed.
+        If the device is unplugged while monitoring, Bytehound automatically stops logging, closes the worker, and returns the Connect button to its ready state. If the port stays open but no data arrives for several seconds, the LED turns amber and the status reads <em>Connected (No Data)</em>.
     </div>
 
     <h3 id="active-polling">Active Polling (Auto-Fetch)</h3>
-    <p>If your hardware only sends data when <em>asked</em> (request/response protocol), use the <strong>Start Auto-Fetch</strong> toolbar button. A dialog will appear to confirm the polling schedule. The background engine will then continuously send data requests based on your config's <code>polling_schedule</code> sheet.</p>
-    <p>When auto-fetch is active, the button turns <span style="color:#e91e8c"><strong>pink</strong></span>. Click it again to stop.</p>
+    <p>If your hardware only sends data when <em>asked</em> (request/response protocol), connect first, then use the <strong>Start Auto-Fetch</strong> toolbar button. A dialog lets you choose which configured targets are active. The background worker then sends requests based on your config's <code>polling_schedule</code> sheet.</p>
+    <p>When Auto-Fetch is active, the button text changes to <strong>Stop Auto-Fetch</strong> and turns <span style="color:#e91e8c"><strong>pink</strong></span>. Click it again to stop. If your device streams data on its own, leave Auto-Fetch off.</p>
 
     <!-- Section 2 -->
     <h2 id="section-2">2. Core UI Panels &amp; Features</h2>
-    <p>The application is heavily modular. You can drag, drop, stack, and resize any of the panels to build your perfect workspace. Panel visibility is controlled under <strong>View → Panels</strong>.</p>
+    <p>The application is modular. The central Data Table stays in the middle, while dock panels such as Live Plot, Bitfields, Enums, Raw Console, and Activity Log can be dragged, stacked, resized, or hidden. Panel visibility is controlled under <strong>View → Panels</strong>, and <strong>View → Reset Window Layout</strong> restores the default arrangement.</p>
 
     <h3 id="main-table">The Main Data Table</h3>
-    <p>Located in the center of the screen, this table displays all your decoded numeric variables (like Voltage, Current, or Temperature) in real-time. Columns include:</p>
+    <p>Located in the center of the screen, this read-only table displays all decoded variables in real time. The search box filters by text, the Group selector filters by configured signal group, and <strong>Show calculations</strong> controls whether calculated CalcGroups rows are visible. Columns include:</p>
     <table>
         <tr><th>Column</th><th>Description</th></tr>
         <tr><td>Frame</td><td>Frame ID in hex (e.g. <code>0x0010</code>)</td></tr>
-        <tr><td>Group</td><td>Signal group (from config)</td></tr>
+        <tr><td>Group</td><td>Signal group from config, or the calculated group for CalcGroups rows</td></tr>
         <tr><td>Variable</td><td>Signal name</td></tr>
         <tr><td>Start B.</td><td>Start byte offset within the frame payload</td></tr>
         <tr><td>Data Type</td><td>Decoded data type (e.g. <code>uint16</code>, <code>float32</code>)</td></tr>
         <tr><td>Raw</td><td>Raw integer or float value before scaling</td></tr>
-        <tr><td>Value</td><td>Scaled engineering value</td></tr>
+        <tr><td>Value</td><td>Scaled engineering value, enum label, bitfield summary, or calculated value</td></tr>
         <tr><td>Unit</td><td>Engineering unit (e.g. V, A, °C)</td></tr>
-        <tr><td>Status</td><td>Color-coded pill: green=OK, red=Error, amber=Warning</td></tr>
+        <tr><td>Status</td><td>Color-coded pill: OK, warnings, decode errors, enum labels, or active bitfield names</td></tr>
         <tr><td>Updated</td><td>Timestamp of last received packet for this signal</td></tr>
     </table>
     <p><strong>Right-click</strong> any row to add that signal to the Live Plot or copy its value to clipboard.</p>
@@ -240,8 +240,11 @@
         <tr><td>1×1</td><td>1</td><td>Focus on a single signal group</td></tr>
         <tr><td>2×1</td><td>2 (stacked)</td><td>Compare two independent signal groups</td></tr>
         <tr><td>1×2</td><td>2 (side by side)</td><td>Wide-screen dual view</td></tr>
+        <tr><td>1×3</td><td>3 (side by side)</td><td>Triple-wide comparisons</td></tr>
+        <tr><td>3×1</td><td>3 (stacked)</td><td>Vertical trend comparison</td></tr>
         <tr><td>2×2</td><td>4</td><td>Full dashboard view</td></tr>
         <tr><td>2×4</td><td>8</td><td>High-density telemetry overview</td></tr>
+        <tr><td>4×2</td><td>8</td><td>Tall, multi-lane overview</td></tr>
     </table>
     <p>All panels share the same X-axis (time) — panning or zooming one panel moves all of them simultaneously.</p>
 
@@ -250,6 +253,7 @@
     <ul>
         <li>Click <strong>+ Add</strong> next to a panel label to pick a signal from your loaded config.</li>
         <li>Each assigned signal appears as a coloured chip button (e.g. <code>● VoltageA  ✕</code>). Click the chip to remove it.</li>
+        <li>Use the <strong>Auto Y</strong> checkbox on each panel to keep its Y-axis fitted to visible data. Uncheck it when you want to manually lock the Y range.</li>
         <li>Alternatively, <strong>right-click</strong> any row in the Data Table → <em>Add to Live Plot</em> → choose the panel number from the sub-menu.</li>
     </ul>
     <p>Panel assignments and layout are automatically saved and restored between sessions.</p>
@@ -258,28 +262,28 @@
     <table>
         <tr><th>Mode</th><th>Indicator</th><th>Behaviour</th></tr>
         <tr><td>📊 Live</td><td>Default</td><td>X-axis always shows t=0 → current time. The view expands automatically as data accumulates.</td></tr>
-        <tr><td>🔍 Explore</td><td>After any pan/zoom</td><td>View is frozen. New data still plots but the window doesn't move. Hint shows: <em>⟳ Reset View = Live</em>.</td></tr>
+        <tr><td>🔍 Explore</td><td>After any pan/zoom</td><td>View is frozen. New data still plots but the window doesn't move. Hint shows: <em>▶ Live to resume</em>.</td></tr>
     </table>
 
     <h4>Controls</h4>
     <ul>
-        <li><strong>⟳ Reset View</strong> button (or <kbd>Ctrl+R</kbd>): Snaps back to Live mode instantly.</li>
+        <li><strong>⏸ Pause / ▶ Live</strong> button (or <kbd>Space</kbd>): Toggles freeze/scroll. Clicking <strong>▶ Live</strong> re-fits the Y axis and snaps X back to <code>0 → now</code>.</li>
         <li><strong>Scroll wheel</strong>: Zoom in/out on time axis → enters Explore mode.</li>
         <li><strong>Click + drag</strong>: Pan the view → enters Explore mode.</li>
     </ul>
 
     <div class="note">
-        The X-axis always starts at <strong>0 seconds</strong> (session start). There is no rolling window — you always see the complete session history at a glance.
+        In Live mode the X-axis is anchored at <strong>0 seconds</strong> (session start) and expands to the current elapsed time. Plot samples are kept in a bounded in-memory history (default 6,000 points per signal), so very long sessions may show older time ranges with sparse or no plotted points even though the axis still starts at zero.
     </div>
 
     <h3 id="bitfields">Bitfields Panel</h3>
-    <p>If your hardware packs multiple Boolean (True/False) flags into a single byte (like Fault states, Relay statuses, or Switch inputs), the <strong>Bitfields</strong> panel breaks them out into individual, readable ON/OFF indicators.</p>
+    <p>If your hardware packs multiple Boolean flags into a single integer signal (like Fault states, Relay statuses, or Switch inputs), the <strong>Bitfields</strong> panel breaks them out into individual ON/OFF rows. The table columns are <strong>Frame</strong>, <strong>Variable</strong>, <strong>Bit</strong>, and <strong>State</strong>.</p>
 
     <h3 id="enums">Enums Panel</h3>
-    <p>Sometimes hardware sends state integers (e.g. <code>0</code> = OFF, <code>1</code> = PRECHARGE, <code>2</code> = RUN). The <strong>Enums</strong> panel translates these raw numbers into clear, readable text labels so you don't have to memorize state codes.</p>
+    <p>Sometimes hardware sends state integers (e.g. <code>0</code> = OFF, <code>1</code> = PRECHARGE, <code>2</code> = RUN). The <strong>Enums</strong> panel shows the latest mapping for each configured enum signal with <strong>Frame</strong>, <strong>Variable</strong>, <strong>Raw</strong>, and <strong>Label</strong> columns.</p>
 
     <h3 id="raw-console">Raw Console</h3>
-    <p>The <strong>Raw Console</strong> shows the exact Hexadecimal bytes flowing into and out of the application in real-time. Use this to debug communication errors or verify packet structures. RX frames are shown in one color, TX frames in another.</p>
+    <p>The <strong>Raw Console</strong> shows timestamped hexadecimal bytes flowing into and out of the application in real time. Lines are tagged as <code>RX</code>, <code>TX</code>, or <code>ERR</code>, and decode problems appear as <code>[decode]</code> or <code>[decode warning]</code> messages. Use it to debug communication errors or verify packet structures.</p>
 
     <h3 id="activity-log">Activity Log</h3>
     <p>The <strong>Activity Log</strong> tracks major application events: configurations loaded, connections established or lost, logging start/stop, and any error popups. Useful for post-mortem analysis of a test session.</p>
@@ -296,12 +300,12 @@
         </tr>
         <tr>
             <td><strong>Errors</strong></td>
-            <td>Wire-level CRC failures. The frame had the right header, length, and footer, but the checksum did not match the bytes received — meaning the bytes were corrupted in transit.</td>
+            <td>Wire-level parse failures such as CRC mismatch (including Modbus CRC) or footer mismatch. The frame had the right header/length framing, but the integrity check failed.</td>
             <td>Should stay at 0 on a healthy link. A slowly climbing number suggests electrical noise, a bad cable, or a baud-rate mismatch. A fast climb almost always means the protocol settings (CRC type, byte order, header) in your config don't match the device.</td>
         </tr>
         <tr>
             <td><strong>Timeouts</strong></td>
-            <td>Poll requests that did not get a response within the configured <code>timeout_ms</code>. Only relevant when <strong>Auto-Fetch</strong> is on.</td>
+            <td>Poll requests that did not get a response within the configured <code>timeout_ms</code>. Primarily relevant when <strong>Auto-Fetch</strong> is on; Modbus manual sends also wait for a response and can increment this counter.</td>
             <td>0 on a request/response device that is keeping up. A few timeouts on first connect are normal (the device may still be booting). A continuously rising count means the device is missing requests — try a longer <code>timeout_ms</code> or a slower <code>interval_ms</code>.</td>
         </tr>
         <tr>
@@ -329,14 +333,17 @@
     <p>The app isn't just for reading data — you can actively command your hardware over the same serial connection.</p>
 
     <h3 id="tx-commands">TX Commands</h3>
-    <p>The <strong>TX Commands</strong> panel provides custom push-buttons (defined in your Excel configuration) that instantly send predefined hex payloads to your hardware. This is perfect for triggering Resets, clearing faults, or toggling modes.</p>
-    <p>Commands with input fields (defined in <code>tx_command_fields</code>) show an inline form where you enter numeric values before sending. The app validates the range, scales your input, and builds the full packet automatically.</p>
+    <p>The <strong>TX Commands</strong> panel provides config-defined commands for sending predefined packets to your hardware. Choose a command from the selector, review the generated <strong>Packet Preview</strong>, then click <strong>Send</strong>. This is useful for triggering resets, clearing faults, or toggling modes.</p>
+    <p>Commands with input fields (defined in <code>tx_command_fields</code>) show an inline numeric form. The app validates ranges, applies scale/offset in reverse, appends the encoded field bytes after any static <code>payload_hex</code>, and builds the full packet automatically. Click <strong>Build</strong> to refresh the preview without transmitting.</p>
+    <div class="note">
+        <strong>Send requires a connection.</strong> Packet preview works from the loaded config even before a serial port is open, but <strong>Send</strong> will refuse to transmit until you connect.
+    </div>
 
     <h3 id="parameter-editing">Parameter Editor</h3>
     <p>The <strong>Parameter Editor</strong> panel shows all signals in your config that are marked as writable (<code>read_write = RW</code> or <code>W</code>). For each signal you can:</p>
     <ul>
         <li>See the <strong>Live Value</strong> column update in real-time as packets arrive.</li>
-        <li>Type a new value (in engineering units, e.g. <code>12.5</code> for 12.5 V) in the <strong>Write</strong> column's input field. Hover over the input to see the valid range.</li>
+        <li>Type a new value (in engineering units, e.g. <code>12.5</code> for 12.5 V) in the <strong>Write</strong> column's input field. Hover over the input to see the numeric range inferred from <code>min_value</code>, <code>max_value</code>, and the signal type.</li>
         <li>Press <kbd>Enter</kbd> or click the <strong>Write</strong> button. The app validates the range, reverses the scale/offset, encodes the raw bytes, appends the correct checksum, and transmits the packet immediately as a priority TX.</li>
     </ul>
 
@@ -353,15 +360,15 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         </tr>
         <tr>
             <td><strong>Modbus RTU</strong></td>
-            <td>An FC 06 (single register) or FC 16 (multi-register) write request is built, with the raw value encoded using the signal's <code>scale</code> and <code>offset</code>. CRC16/Modbus is appended automatically.</td>
+            <td>An FC 06 (single-register) request is built when the encoded payload is 2 bytes; FC 16 (multi-register) is used for longer payloads. The raw value is encoded using the signal's <code>scale</code>, <code>offset</code>, and byte order, and CRC16/Modbus is appended automatically.</td>
         </tr>
     </table>
 
     <div class="warning">
-        The <strong>Write</strong> button is only active when connected. If no signals appear in the editor, all signals in your config are set to <code>read_write = R</code> (read-only). Update your Excel config to mark the appropriate signals as <code>RW</code> or <code>W</code>.
+        Writes require an active serial connection. If no signals appear in the editor, all signals in your config are set to <code>read_write = R</code> (read-only). Update your Excel config to mark the appropriate signals as <code>RW</code> or <code>W</code>.
     </div>
     <div class="note">
-        The transmitted packet is logged in the <strong>Activity Log</strong> with the signal name, engineering value, unit, and the full raw hex of the packet sent — useful for verifying correct encoding.
+        Parameter Editor writes are recorded in the <strong>Activity Log</strong> with the signal name, engineering value, unit, and full raw hex. TX Command sends are also echoed in the Raw Console as <code>TX</code> lines.
     </div>
 
 
@@ -372,32 +379,35 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <p>To save your telemetry session for later review:</p>
     <ol>
         <li>Ensure you are connected and receiving data.</li>
-        <li>Click <strong>Device → Start Logging</strong> (or use the toolbar). The button turns <span style="color:#e91e8c"><strong>pink</strong></span> while logging is active.</li>
-        <li>The app records all incoming traffic to two files under <code>~/Documents/Bytehound/</code>:
+        <li>Click <strong>Device → Start Logging</strong> (or use the toolbar). Choose <strong>Raw + Decoded</strong>, <strong>Raw only</strong>, or <strong>Decoded only</strong>, then pick the base filename. The button turns <span style="color:#e91e8c"><strong>pink</strong></span> while logging is active.</li>
+        <li>The default folder is <code>~/Documents/Bytehound/</code>. Depending on the selected mode, the app writes:
             <ul>
-                <li><code>*_raw.csv</code> — timestamped hex frames (byte-perfect replay source)</li>
-                <li><code>*_decoded.csv</code> — one row per signal per frame (for Excel/Python analysis)</li>
+                <li><code>*_raw.csv</code> — timestamped RX/TX hex frames with <code>timestamp</code>, <code>direction</code>, <code>hex</code>, and <code>delta_t_ms</code> columns. This is the byte-level replay source.</li>
+                <li><code>*_decoded.xlsx</code> — Excel workbook with two sheets: <code>Metadata</code> (app, version, port, baud, config path, session start, logging mode, etc.) and <code>Data</code> (one wide row per complete poll cycle, with a per-frame block of <code>elapsed_ms</code> + <code>frame_id</code> + signals).</li>
             </ul>
         </li>
-        <li>When finished, click <strong>Device → Stop Logging</strong>.</li>
+        <li>When finished, click <strong>Device → Stop Logging</strong>. This finalises the decoded workbook.</li>
     </ol>
     <div class="note">
-        If the device disconnects while logging is active, logging stops automatically. The log files are always flushed after every frame so no data is lost on unexpected disconnection.
+        The raw CSV is flushed periodically (default 0.5 s, configurable under <strong>Tools → Logging Settings</strong>) and once more on close. The decoded <code>.xlsx</code> is buffered in memory and saved on <strong>Stop Logging</strong> — if the app crashes before Stop, the decoded workbook is lost. A session config snapshot is saved beside the log, so the raw CSV can be replayed later with the matching decoder.
     </div>
 
     <h3 id="replaying">Replaying a Test</h3>
-    <p>To replay a previously recorded session exactly as it happened:</p>
+    <p>To replay a previously recorded raw stream through the currently loaded config:</p>
     <ol>
         <li>Click <strong>File → Load Raw Log</strong> and select your <code>*_raw.csv</code> file.</li>
-        <li>The app replays the test stream through all panels (table, plot, bitfields, enums) as if live.</li>
+        <li>The app reads the log, skips malformed lines with a warning, and replays RX rows through all panels (table, plot, bitfields, enums) as if live.</li>
         <li>No serial port connection is needed during replay.</li>
     </ol>
+    <div class="warning">
+        Replays use whatever config is currently loaded. For accurate decoded values, load the same config or session snapshot that was used when the raw log was captured.
+    </div>
 
     <h3 id="analysis-suite">The Analysis Suite</h3>
-    <p>For deep-diving into external test data (Excel logs from the field):</p>
+    <p>For deep-diving into saved test data and comparing multiple runs:</p>
     <ol>
         <li>Go to <strong>Tools → Analysis Suite</strong>.</li>
-        <li>Click <strong>Load Logs</strong> and select your Excel <code>.xlsx</code> test files (typically the <code>*_decoded.csv</code> re-saved as <code>.xlsx</code>).</li>
+        <li>Click <strong>Load Logs</strong> and select one or more files. The loader accepts Bytehound decoded <code>.xlsx</code> logs, legacy decoded <code>.csv</code> logs, and external Dyno-style <code>.xlsx</code> exports.</li>
         <li>Overlay multiple parameters, place draggable time-cursors to measure deltas, and use the <strong>Scatter → X-Y Plotter</strong> to graph parameters against each other.</li>
     </ol>
 
@@ -430,8 +440,15 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         <tr><td><code>footer_hex</code></td><td>hex bytes</td><td><em>(leave blank)</em></td><td>Optional end-of-frame marker. Leave blank if your protocol has no footer. <em>Ignored for modbus_rtu.</em></td></tr>
         <tr><td><code>inter_frame_delay_ms</code></td><td>integer</td><td><code>10</code></td><td>Minimum gap (ms) between consecutive TX requests. Default 10 ms.</td></tr>
         <tr><td><code>tx_pad_length</code></td><td>integer</td><td><code>16</code> <em>(or blank)</em></td><td>Forces every outgoing TX packet to be exactly this many bytes on the wire. Short commands are zero-padded between payload and CRC; CRC is computed <em>over</em> the padding so the receiver's check still passes. Leave blank to send variable-length packets. <em>Framed only — see <a href="#tx-pad-length">Fixed-length TX</a> below.</em></td></tr>
+        <tr><td><code>length_byte_order</code></td><td>enum <em>(blank / <code>big</code> / <code>little</code>)</em></td><td><em>(leave blank)</em></td><td>Byte order for the length field. Leave blank to inherit <code>frame_id_byte_order</code> — that covers almost every protocol. Only set this explicitly if your protocol uses multi-byte lengths in a different endianness from the frame ID.</td></tr>
+        <tr><td><code>crc_coverage</code></td><td>enum</td><td><em>(leave blank)</em></td><td>Which part of the frame the CRC covers. Only <code>header_to_payload</code> is currently supported; leaving this blank picks the right value automatically. Reserved for future protocol variants.</td></tr>
+        <tr><td><code>escape_mode</code></td><td>enum</td><td><em>(leave blank)</em></td><td>Byte-escaping scheme (e.g. for protocols that escape header/footer bytes inside the payload). Only <code>none</code> is currently supported. Reserved for future protocol variants.</td></tr>
+        <tr><td><code>raw_log_format</code></td><td>enum</td><td><em>(leave blank)</em></td><td>How the raw-log writer renders each frame. Only <code>hex</code> is currently supported; defaults to <code>hex</code> if blank.</td></tr>
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Only one row may be <code>TRUE</code>. The app uses that row and ignores all others.</td></tr>
     </table>
+    <div class="note">
+        The last three columns (<code>crc_coverage</code>, <code>escape_mode</code>, <code>raw_log_format</code>) are advanced fields with a single supported value today. The bundled config templates leave them blank, which is the recommended setting. They are listed for completeness so power users editing the raw CSV templates know what each column means.
+    </div>
     <div class="success">
         <strong>Wire format (framed):</strong> &nbsp;<code>[ header ] [ frame_id ] [ length ] [ payload ] [ CRC ] [ footer? ]</code><br>
         <strong>Wire format (modbus_rtu):</strong> &nbsp;<code>[ node_addr(1) ] [ FC(1) ] [ data bytes ] [ CRC16(2) ]</code> &mdash; FC03/FC04 read, FC06/FC16 write
@@ -477,12 +494,12 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     </div>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>frame_id</code></td><td>hex</td><td><code>0x0010</code></td><td>Frame identifier as sent by hardware. Can be <code>0x10</code>, <code>10</code>, or <code>16</code> (decimal).</td></tr>
-        <tr><td><code>frame_name</code></td><td>text</td><td><code>BMS Status</code></td><td>Display name shown in the Data Table's Frame column.</td></tr>
-        <tr><td><code>payload_length</code></td><td>integer</td><td><code>8</code></td><td>Expected payload size in bytes <em>for this frame only</em>. If the received payload differs, a warning appears in the Status column. Leave blank to skip validation for this frame.</td></tr>
-        <tr><td><code>direction</code></td><td>enum</td><td><code>rx</code></td><td><code>rx</code> for frames received from hardware, <code>tx</code> for outgoing frames.</td></tr>
-        <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Set <code>FALSE</code> to completely ignore this frame.</td></tr>
-        <tr><td><code>description</code></td><td>text</td><td><code>Battery pack telemetry</code></td><td>Optional free-text note — not displayed in the app.</td></tr>
+        <tr><td><code>frame_id</code></td><td>hex <em>(required)</em></td><td><code>0x0010</code></td><td>Frame identifier as sent by hardware. Can be <code>0x10</code>, <code>10</code>, or <code>16</code> (decimal).</td></tr>
+        <tr><td><code>frame_name</code></td><td>text <em>(required)</em></td><td><code>BMS Status</code></td><td>Display name shown in the Data Table's Frame column.</td></tr>
+        <tr><td><code>payload_length</code></td><td>integer</td><td><code>8</code> <em>(blank = no validation)</em></td><td>Expected payload size in bytes <em>for this frame only</em>. If the received payload differs, a decode warning appears in the Raw Console and Activity Log. Leave blank to skip validation for this frame.</td></tr>
+        <tr><td><code>direction</code></td><td>enum</td><td><code>rx</code> <em>(default)</em></td><td>Informational tag — stored on the frame definition but <strong>not currently consulted by the decoder</strong>, so setting <code>tx</code> here will not prevent an incoming frame with this ID from being decoded. Outbound commands are configured in the <code>TxCommands</code> sheet. Reserved for future use; leave as <code>rx</code> in most cases.</td></tr>
+        <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code> <em>(default)</em></td><td>Set <code>FALSE</code> to completely ignore this frame — the row is skipped at load time and no signals from it are decoded.</td></tr>
+        <tr><td><code>description</code></td><td>text</td><td><code>Battery pack telemetry</code> <em>(blank ok)</em></td><td>Optional free-text note — not displayed in the app.</td></tr>
     </table>
     <p><strong>Example — two frames with different payload sizes:</strong></p>
     <pre>frame_id | frame_name    | payload_length | direction
@@ -496,23 +513,27 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <p>Each row defines one numeric signal extracted from an incoming frame. The app reads bytes at the computed offset, applies scale and offset, and shows the result in the Data Table.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>id_or_address</code></td><td>hex</td><td><code>0x0010</code></td><td>Frame ID (framed) or Modbus register address this signal lives in.</td></tr>
-        <tr><td><code>signal_name</code></td><td>text</td><td><code>Pack Voltage</code></td><td>Unique name shown in the Data Table. Must be unique within each frame.</td></tr>
-        <tr><td><code>data_type</code></td><td>enum</td><td><code>uint16</code></td><td>Raw data type in the payload: <code>uint8</code>, <code>int8</code>, <code>uint16</code>, <code>int16</code>, <code>uint32</code>, <code>int32</code>, <code>float32</code>, <code>float64</code>.</td></tr>
-        <tr><td><code>count</code></td><td>integer</td><td><code>12</code></td><td>Repeat count. <code>count=12</code> on a signal named <code>Cell V</code> auto-creates <code>Cell V 1</code> … <code>Cell V 12</code> at consecutive byte offsets — no copy-pasting 12 rows.</td></tr>
-        <tr><td><code>byte_order</code></td><td>enum</td><td><code>little</code></td><td><code>little</code> (LSB first, most embedded MCUs) or <code>big</code> (MSB first, network order).</td></tr>
-        <tr><td><code>scale</code></td><td>number</td><td><code>0.001</code></td><td>Multiply the raw integer by this. E.g. raw = 12500, scale = 0.001 → displayed as 12.5.</td></tr>
-        <tr><td><code>offset</code></td><td>number</td><td><code>-40</code></td><td>Added after scaling. Formula: <strong>value = raw × scale + offset</strong>. E.g. temperature sensor with scale=0.1, offset=−40 converts 850 → 45 °C.</td></tr>
-        <tr><td><code>unit</code></td><td>text</td><td><code>V</code></td><td>Engineering unit shown in the Unit column (e.g. <code>V</code>, <code>A</code>, <code>°C</code>, <code>%</code>, <code>rpm</code>).</td></tr>
-        <tr><td><code>group</code></td><td>text</td><td><code>Cell Voltages</code></td><td>Group name used by CalcGroups for min/max/avg aggregation. Leave blank if not needed.</td></tr>
-        <tr><td><code>read_write</code></td><td>enum</td><td><code>R</code></td><td><code>R</code> = read-only (default). <code>W</code> = write-only. <code>RW</code> = readable and writable. Only <code>W</code>/<code>RW</code> signals appear in the Parameter Editor.</td></tr>
-        <tr><td><code>min_value</code></td><td>number</td><td><code>0</code></td><td>Minimum valid write value. The Parameter Editor rejects inputs below this. Leave blank for no limit.</td></tr>
-        <tr><td><code>max_value</code></td><td>number</td><td><code>5.0</code></td><td>Maximum valid write value. Leave blank for no limit.</td></tr>
-        <tr><td><code>description</code></td><td>text</td><td><code>Total pack voltage</code></td><td>Optional note — not displayed in the app.</td></tr>
-        <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Set <code>FALSE</code> to hide this signal from all panels without deleting the row.</td></tr>
+        <tr><td><code>id_or_address</code></td><td>hex <em>(required)</em></td><td><code>0x0010</code></td><td>Frame ID (framed) or Modbus register address this signal lives in. If the ID is not declared in the Frames sheet, the loader auto-creates a frame named <code>Node 0x&lt;id&gt;</code> — convenient for Modbus configs that skip the Frames sheet entirely.</td></tr>
+        <tr><td><code>signal_name</code></td><td>text <em>(required)</em></td><td><code>Pack Voltage</code></td><td>Unique name shown in the Data Table. Must be unique within each frame. For <code>count &gt; 1</code> the uniqueness check is applied <em>after</em> expansion, so <code>Cell V</code> with <code>count = 12</code> becomes 12 distinct names.</td></tr>
+        <tr><td><code>data_type</code></td><td>enum <em>(required)</em></td><td><code>uint16</code></td><td>Raw data type in the payload: <code>uint8</code>, <code>int8</code>, <code>uint16</code>, <code>int16</code>, <code>uint32</code>, <code>int32</code>, <code>float32</code>, <code>float64</code>. Byte width is derived from the type and used to compute the next signal's start offset automatically.</td></tr>
+        <tr><td><code>count</code></td><td>integer</td><td><code>12</code> <em>(default: 1)</em></td><td>Repeat count. <code>count=12</code> on a signal named <code>Cell V</code> auto-creates <code>Cell V 1</code> … <code>Cell V 12</code> at consecutive byte offsets — no copy-pasting 12 rows. Must be ≥ 1.</td></tr>
+        <tr><td><code>byte_order</code></td><td>enum</td><td><code>little</code> <em>(default)</em></td><td><code>little</code> (LSB first, most embedded MCUs) or <code>big</code> (MSB first, network order). Validated at load — any other value is a hard error.</td></tr>
+        <tr><td><code>scale</code></td><td>number</td><td><code>0.001</code> <em>(default: 1.0)</em></td><td>Multiply the raw integer by this. E.g. raw = 12500, scale = 0.001 → displayed as 12.5.</td></tr>
+        <tr><td><code>offset</code></td><td>number</td><td><code>-40</code> <em>(default: 0.0)</em></td><td>Added after scaling. Formula: <strong>value = raw × scale + offset</strong>. E.g. temperature sensor with scale=0.1, offset=−40 converts 850 → 45 °C.</td></tr>
+        <tr><td><code>unit</code></td><td>text</td><td><code>V</code> <em>(blank ok)</em></td><td>Engineering unit shown in the Unit column (e.g. <code>V</code>, <code>A</code>, <code>°C</code>, <code>%</code>, <code>rpm</code>).</td></tr>
+        <tr><td><code>group</code></td><td>text</td><td><code>Cell Voltages</code> <em>(blank ok)</em></td><td>Group name used by CalcGroups for min/max/avg aggregation. Leave blank if not needed.</td></tr>
+        <tr><td><code>read_write</code></td><td>enum</td><td><code>R</code> <em>(default)</em></td><td><code>R</code> = read-only. <code>W</code> = write-only. <code>RW</code> = readable and writable. Only <code>W</code>/<code>RW</code> signals appear in the Parameter Editor. Value is upper-cased on load.</td></tr>
+        <tr><td><code>min_value</code></td><td>number</td><td><code>0</code> <em>(blank = no limit)</em></td><td>Minimum valid write value. The Parameter Editor rejects inputs below this. Leave blank for no limit.</td></tr>
+        <tr><td><code>max_value</code></td><td>number</td><td><code>5.0</code> <em>(blank = no limit)</em></td><td>Maximum valid write value. Leave blank for no limit.</td></tr>
+        <tr><td><code>description</code></td><td>text</td><td><code>Total pack voltage</code> <em>(blank ok)</em></td><td>Optional note — not displayed in the app.</td></tr>
+        <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code> <em>(default)</em></td><td>Set <code>FALSE</code> to hide this signal from all panels without deleting the row — the row is skipped entirely at load time.</td></tr>
+        <tr><td><code>register_type</code></td><td>text</td><td><em>(leave blank)</em></td><td>Reserved for Modbus register-type semantics (holding / input / coil / discrete). The loader parses and stores this on the signal, but <strong>no other code currently consults it</strong>; it is not present in the bundled <code>variables.csv</code> template. Leave blank in normal use.</td></tr>
     </table>
     <div class="note">
         <strong>Byte offsets are computed automatically.</strong> Signals within a frame are packed in the order they appear in the sheet. You do not enter a start byte — the loader calculates it from each signal's <code>data_type</code> size.
+    </div>
+    <div class="note">
+        <strong>Frame auto-creation.</strong> If <code>id_or_address</code> refers to a frame ID that does not exist in the Frames sheet, the loader silently creates one named <code>Node 0x&lt;id&gt;</code>. This is the recommended workflow for Modbus configs — declare your registers in Variables only and omit the Frames sheet altogether.
     </div>
     <p><strong>Example — 4-byte frame <code>0x0010</code> with two signals:</strong></p>
     <pre>id_or_address | signal_name  | data_type | scale | offset | unit
@@ -522,19 +543,23 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <hr>
 
     <h3 id="sheet-frameconfig">Sheet 4 — FrameConfig (Legacy)</h3>
-    <p>An older schema with explicit <code>start_byte</code> and <code>byte_length</code>. Only used when the Variables sheet is absent. <strong>Use Variables for all new configs.</strong></p>
+    <p>An older schema with explicit <code>start_byte</code> and <code>byte_length</code>. Only used when the Variables sheet is absent. <strong>Use Variables for all new configs.</strong> Every column in this schema is required — there are no optional fields, no <code>count</code> auto-expansion, no <code>enabled</code> toggle, no per-frame <code>Frames</code> sheet (each row carries its own <code>frame_name</code>).</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>frame_id</code></td><td>hex</td><td><code>0x10</code></td><td>Frame this signal belongs to.</td></tr>
-        <tr><td><code>signal_name</code></td><td>text</td><td><code>Voltage</code></td><td>Display name.</td></tr>
-        <tr><td><code>start_byte</code></td><td>integer</td><td><code>0</code></td><td>Zero-based byte offset within the payload.</td></tr>
-        <tr><td><code>byte_length</code></td><td>integer</td><td><code>2</code></td><td>Number of bytes to read.</td></tr>
-        <tr><td><code>endianness</code></td><td>enum</td><td><code>little</code></td><td><code>little</code> or <code>big</code>.</td></tr>
-        <tr><td><code>data_type</code></td><td>enum</td><td><code>uint</code></td><td><code>int</code>, <code>uint</code>, or <code>float</code>.</td></tr>
-        <tr><td><code>scale</code></td><td>number</td><td><code>0.01</code></td><td>Multiplier applied to the raw value.</td></tr>
-        <tr><td><code>offset</code></td><td>number</td><td><code>0</code></td><td>Addend applied after scaling.</td></tr>
-        <tr><td><code>unit</code></td><td>text</td><td><code>V</code></td><td>Display unit.</td></tr>
+        <tr><td><code>frame_id_hex</code></td><td>hex <em>(required)</em></td><td><code>0x10</code></td><td>Frame this signal belongs to. Accepts <code>0x10</code>, <code>10</code>, or <code>16</code> (decimal). <strong>Note:</strong> the column header is literally <code>frame_id_hex</code>, not <code>frame_id</code> — the loader will reject the sheet if this column is missing.</td></tr>
+        <tr><td><code>frame_name</code></td><td>text <em>(required)</em></td><td><code>BMS Status</code></td><td>Display name for the frame. Repeated on every row of the same <code>frame_id_hex</code>; the first occurrence is used to build the frame definition.</td></tr>
+        <tr><td><code>signal_name</code></td><td>text <em>(required)</em></td><td><code>Voltage</code></td><td>Display name. Must be non-empty and unique within each frame — duplicates are a hard error at load time.</td></tr>
+        <tr><td><code>start_byte</code></td><td>integer <em>(required)</em></td><td><code>0</code></td><td>Zero-based byte offset within the payload. Unlike the Variables sheet, offsets here are <strong>not</strong> auto-computed; you must specify every signal's exact position.</td></tr>
+        <tr><td><code>byte_length</code></td><td>integer <em>(required)</em></td><td><code>2</code></td><td>Number of bytes to read. Must be 1..8 — anything outside this range is a hard error. For <code>data_type = float</code>, must be exactly 4 or 8.</td></tr>
+        <tr><td><code>endianness</code></td><td>enum <em>(required)</em></td><td><code>little</code></td><td><code>little</code> or <code>big</code>. Validated at load — any other value is a hard error.</td></tr>
+        <tr><td><code>data_type</code></td><td>enum <em>(required)</em></td><td><code>uint</code></td><td><code>int</code>, <code>uint</code>, or <code>float</code>. Coarser than the Variables sheet's <code>uint16</code>/<code>int32</code>/etc. — width comes from <code>byte_length</code>.</td></tr>
+        <tr><td><code>scale</code></td><td>number <em>(required)</em></td><td><code>0.01</code></td><td>Multiplier applied to the raw value. Blank falls back to <code>1.0</code>; non-numeric is a hard error.</td></tr>
+        <tr><td><code>offset</code></td><td>number <em>(required)</em></td><td><code>0</code></td><td>Addend applied after scaling. Blank falls back to <code>0.0</code>; non-numeric is a hard error. Formula: <strong>value = raw × scale + offset</strong>.</td></tr>
+        <tr><td><code>unit</code></td><td>text <em>(required)</em></td><td><code>V</code></td><td>Display unit shown in the Unit column. May be an empty string but the column header itself must be present.</td></tr>
     </table>
+    <div class="warning">
+        <strong>Common pitfall:</strong> if your legacy CSV uses <code>frame_id</code> instead of <code>frame_id_hex</code> as the column header, the loader will reject the entire config with <code>missing required columns</code>. Rename the column to <code>frame_id_hex</code> or migrate to the modern Variables sheet.
+    </div>
 
     <hr>
 
@@ -542,13 +567,16 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <p>Breaks a single integer signal into named Boolean flags. Each bit appears as an ON/OFF indicator in the <strong>Bitfields</strong> panel.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>id_or_address</code></td><td>hex</td><td><code>0x0020</code></td><td>Frame ID of the parent signal.</td></tr>
-        <tr><td><code>signal_name</code></td><td>text</td><td><code>Fault Flags</code></td><td>Must exactly match a signal name in the Variables sheet.</td></tr>
-        <tr><td><code>bit_index</code></td><td>integer</td><td><code>0</code></td><td>Which bit to extract. Bit 0 = LSB of the first byte, Bit 7 = MSB of the first byte.</td></tr>
-        <tr><td><code>label</code></td><td>text</td><td><code>Overvoltage</code></td><td>Name shown in the Bitfields panel for this bit.</td></tr>
-        <tr><td><code>active_text</code></td><td>text</td><td><code>FAULT</code></td><td>Text shown when the bit is 1 (default: <code>ON</code>).</td></tr>
-        <tr><td><code>inactive_text</code></td><td>text</td><td><code>OK</code></td><td>Text shown when the bit is 0 (default: <code>OFF</code>).</td></tr>
+        <tr><td><code>id_or_address</code></td><td>hex <em>(required)</em></td><td><code>0x0020</code></td><td>Frame ID of the parent signal.</td></tr>
+        <tr><td><code>signal_name</code></td><td>text <em>(required)</em></td><td><code>Fault Flags</code></td><td>Must exactly match a signal name in the Variables sheet. If the <code>(id_or_address, signal_name)</code> pair does not exist, the loader rejects the entire config at load time with <code>unknown variable</code>.</td></tr>
+        <tr><td><code>bit_index</code></td><td>integer <em>(required)</em></td><td><code>0</code></td><td>Which bit to extract from the signal's raw integer value. Decoded as <code>raw &amp; (1 &lt;&lt; bit_index)</code>, so bit 0 is the least-significant bit, bit 7 the MSB of a <code>uint8</code>, bit 15 the MSB of a <code>uint16</code>, etc. Valid range follows the parent signal's width (0..7 for <code>uint8</code>, 0..15 for <code>uint16</code>, 0..31 for <code>uint32</code>).</td></tr>
+        <tr><td><code>label</code></td><td>text <em>(required)</em></td><td><code>Overvoltage</code></td><td>Name shown in the Bitfields panel for this bit.</td></tr>
+        <tr><td><code>active_text</code></td><td>text</td><td><code>FAULT</code> <em>(default: <code>ON</code>)</em></td><td>Text shown when the bit is 1. Blank cells also fall back to <code>ON</code>.</td></tr>
+        <tr><td><code>inactive_text</code></td><td>text</td><td><code>OK</code> <em>(default: <code>OFF</code>)</em></td><td>Text shown when the bit is 0. Blank cells also fall back to <code>OFF</code>.</td></tr>
     </table>
+    <div class="note">
+        <strong>Bit numbering recap.</strong> Bitfield rows operate on the <em>fully assembled raw integer</em> of the parent signal (after byte-order is applied), not on raw payload bytes. A <code>uint16</code> read as little-endian is reconstructed into a single 16-bit integer first; <code>bit_index = 15</code> then picks its most-significant bit regardless of which physical byte that bit came from.
+    </div>
     <p><strong>Example — 8-bit fault register:</strong></p>
     <pre>id_or_address | signal_name | bit_index | label           | active_text | inactive_text
 0x0020        | Fault Flags | 0         | Overvoltage     | FAULT       | OK
@@ -562,10 +590,10 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <p>Maps raw integer values of a signal to readable text labels. Results appear in the <strong>Enums</strong> panel and replace the raw number in the Data Table's Value column.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>id_or_address</code></td><td>hex</td><td><code>0x0010</code></td><td>Frame ID of the parent signal.</td></tr>
-        <tr><td><code>signal_name</code></td><td>text</td><td><code>State</code></td><td>Must exactly match a signal name in Variables.</td></tr>
-        <tr><td><code>value</code></td><td>integer</td><td><code>2</code></td><td>Raw integer value from the hardware.</td></tr>
-        <tr><td><code>label</code></td><td>text</td><td><code>RUN</code></td><td>Human-readable text shown when the signal equals this value.</td></tr>
+        <tr><td><code>id_or_address</code></td><td>hex <em>(required)</em></td><td><code>0x0010</code></td><td>Frame ID of the parent signal.</td></tr>
+        <tr><td><code>signal_name</code></td><td>text <em>(required)</em></td><td><code>State</code></td><td>Must exactly match a signal name in Variables. If the <code>(id_or_address, signal_name)</code> pair does not exist, the loader rejects the entire config at load time with <code>unknown variable</code>.</td></tr>
+        <tr><td><code>value</code></td><td>integer <em>(required)</em></td><td><code>2</code></td><td>Raw integer value from the hardware. Decimal (<code>2</code>) or hex with prefix (<code>0x02</code>) — both work via <code>int(value, 0)</code>.</td></tr>
+        <tr><td><code>label</code></td><td>text <em>(required)</em></td><td><code>RUN</code></td><td>Human-readable text shown when the signal equals this value. Empty labels are allowed but render as blank in the Enums panel.</td></tr>
     </table>
     <p><strong>Example — state machine signal:</strong></p>
     <pre>id_or_address | signal_name | value | label
@@ -573,19 +601,25 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
 0x0010        | State       | 1     | PRECHARGE
 0x0010        | State       | 2     | RUN
 0x0010        | State       | 3     | FAULT</pre>
+    <div class="note">
+        <strong>Duplicate values overwrite silently.</strong> Enum mappings are stored as <code>{value → label}</code> per signal, so if two rows share the same <code>(id_or_address, signal_name, value)</code> the second row's label wins. No warning is emitted — keep your <code>value</code> column unique within each signal.
+    </div>
 
     <hr>
 
     <h3 id="sheet-calcgroups">Sheet 7 — CalcGroups</h3>
-    <p>Computes aggregate statistics across all signals sharing the same <code>group</code> name. Results appear as extra rows at the bottom of the Data Table.</p>
+    <p>Computes aggregate statistics across decoded signals sharing the same <code>group</code> name. Results appear as extra rows at the bottom of the Data Table.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>group_name</code></td><td>text</td><td><code>Cell Voltages</code></td><td>Must match the <code>group</code> column in Variables for the signals you want to aggregate.</td></tr>
-        <tr><td><code>operations</code></td><td>pipe-list</td><td><code>min|max|avg|diff</code></td><td>Statistics to compute. Any combination of <code>min</code>, <code>max</code>, <code>avg</code>, <code>sum</code>, <code>diff</code> (max − min). Separate with <code>|</code>.</td></tr>
-        <tr><td><code>unit</code></td><td>text</td><td><code>V</code></td><td>Unit shown for the calculated rows.</td></tr>
-        <tr><td><code>frame_id</code></td><td>hex</td><td><em>(leave blank)</em></td><td>Restrict aggregation to one frame. Leave blank to aggregate across all frames in the group.</td></tr>
-        <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Set <code>FALSE</code> to disable without deleting.</td></tr>
+        <tr><td><code>group_name</code></td><td>text <em>(required)</em></td><td><code>Cell Voltages</code></td><td>Must exactly match a non-empty <code>group</code> value in Variables. If the group does not exist, the loader rejects the entire config at load time with <code>unknown group</code>.</td></tr>
+        <tr><td><code>operations</code></td><td>pipe-list <em>(required)</em></td><td><code>min|max|avg|diff</code></td><td>Statistics to compute. Supported values are <code>min</code>, <code>max</code>, <code>avg</code>, <code>sum</code>, and <code>diff</code> (max − min). Separate with <code>|</code>; tokens are trimmed and lowercased. Any unsupported value rejects the config.</td></tr>
+        <tr><td><code>unit</code></td><td>text</td><td><code>V</code> <em>(blank ok)</em></td><td>Unit shown for the calculated rows.</td></tr>
+        <tr><td><code>frame_id</code></td><td>integer / hex</td><td><code>0x0010</code> <em>(blank = no frame filter)</em></td><td>Optional frame filter. Set this to run the calculation only for one frame; leave blank to run it for each decoded frame that contains signals in the group.</td></tr>
+        <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code> <em>(default: <code>TRUE</code>)</em></td><td>Set <code>FALSE</code> to disable without deleting the row. Disabled rows are parsed, then skipped at load time.</td></tr>
     </table>
+    <div class="warning">
+        <strong>Frame scope pitfall.</strong> A blank <code>frame_id</code> does not combine values across multiple frames into one global statistic. It means "no frame filter": the calculation runs separately for each decoded frame that has signals in the matching group. Use a <code>0x</code> prefix for hex frame IDs here; bare values such as <code>10</code> are parsed as decimal.
+    </div>
     <p><strong>Example — min/max/avg of 12 cell voltages:</strong></p>
     <ol>
         <li>In Variables, set <code>group = Cell Voltages</code> for all 12 cell voltage signals.</li>
@@ -596,46 +630,55 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <hr>
 
     <h3 id="config-tx">Sheet 8 — TxCommands</h3>
-    <p>Each row creates one button in the <strong>TX Commands</strong> panel. Clicking the button instantly builds and sends a packet to your hardware.</p>
+    <p>Each enabled row creates one entry in the <strong>TX Commands</strong> panel. The app builds a packet from the static payload plus any matching TxCommandFields, then sends it to your hardware when you click <strong>Send</strong>.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>command_name</code></td><td>text</td><td><code>Reset Faults</code></td><td>Label shown on the button. Must be unique across all commands.</td></tr>
-        <tr><td><code>id_or_address</code></td><td>hex</td><td><code>0x0090</code></td><td>Frame ID (or Modbus register address) of the outgoing packet.</td></tr>
-        <tr><td><code>payload_hex</code></td><td>hex bytes</td><td><code>01 00</code></td><td>Static payload bytes prepended. Can be empty if all payload comes from TxCommandFields input.</td></tr>
-        <tr><td><code>description</code></td><td>text</td><td><code>Clears all active fault flags</code></td><td>Tooltip shown on hover. Optional.</td></tr>
-        <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Set <code>FALSE</code> to hide the button without deleting the row.</td></tr>
+        <tr><td><code>command_name</code></td><td>text <em>(required)</em></td><td><code>Reset Faults</code></td><td>Command label shown in the TX Commands selector. Matching rows in TxCommandFields attach user-input fields to this command.</td></tr>
+        <tr><td><code>id_or_address</code></td><td>hex <em>(required)</em></td><td><code>0x0090</code></td><td>Frame ID (or Modbus register address) of the outgoing packet. Must be non-empty; use a <code>0x</code> prefix for clarity.</td></tr>
+        <tr><td><code>payload_hex</code></td><td>hex bytes</td><td><code>01 00</code> <em>(blank ok)</em></td><td>Static payload bytes prepended before any TxCommandFields values. Leave blank if all payload bytes come from user-input fields. Invalid hex is reported when the command is previewed or sent.</td></tr>
+        <tr><td><code>description</code></td><td>text</td><td><em>(leave blank)</em></td><td>Reserved for future command notes. The loader parses and stores this, but no other code currently consults it; it is not shown as a tooltip today. Leave blank in normal use.</td></tr>
+        <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code> <em>(default: <code>TRUE</code>)</em></td><td>Set <code>FALSE</code> to hide the command without deleting the row. Disabled rows are skipped at load time.</td></tr>
     </table>
+    <div class="warning">
+        <strong>Duplicate names overwrite silently.</strong> Commands are stored by <code>command_name</code>, so if two enabled rows use the same name, the later row wins and no warning is emitted. Keep <code>command_name</code> unique.
+    </div>
 
     <hr>
 
     <h3 id="config-fields">Sheet 9 — TxCommandFields</h3>
-    <p>Adds user-input numeric fields to a TX command. When a command has fields, clicking the button shows an input form. The user enters values and the app encodes, scales, and appends them to the payload.</p>
+    <p>Adds user-input numeric fields to a TX command. When a command has fields, the TX Commands panel shows an input form. The app encodes, scales, and appends those values after the command's static payload.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>command_name</code></td><td>text</td><td><code>Set Current Limit</code></td><td>Links this field to a TxCommand. Must match a <code>command_name</code> exactly.</td></tr>
-        <tr><td><code>signal_name</code></td><td>text</td><td><code>Current Limit (A)</code></td><td>Label shown next to the input field.</td></tr>
-        <tr><td><code>data_type</code></td><td>enum</td><td><code>uint16</code></td><td>How the value is encoded in the outgoing packet. Same options as Variables.</td></tr>
-        <tr><td><code>byte_order</code></td><td>enum</td><td><code>little</code></td><td><code>little</code> or <code>big</code> endian.</td></tr>
-        <tr><td><code>scale</code></td><td>number</td><td><code>0.1</code></td><td>Encoding formula: <strong>raw = (user_value − offset) / scale</strong>. E.g. user enters 50.0 A with scale=0.1 → raw = 500.</td></tr>
-        <tr><td><code>offset</code></td><td>number</td><td><code>0</code></td><td>Subtracted from the user value before dividing by scale.</td></tr>
-        <tr><td><code>unit</code></td><td>text</td><td><code>A</code></td><td>Shown next to the input field.</td></tr>
-        <tr><td><code>min_value</code></td><td>number</td><td><code>0</code></td><td>App refuses to transmit if the entered value is below this.</td></tr>
-        <tr><td><code>max_value</code></td><td>number</td><td><code>200</code></td><td>App refuses to transmit if the entered value is above this.</td></tr>
-        <tr><td><code>default</code></td><td>number</td><td><code>100</code></td><td>Pre-filled value shown in the input box when the command form opens.</td></tr>
+        <tr><td><code>command_name</code></td><td>text <em>(required)</em></td><td><code>Set Current Limit</code></td><td>Links this field to a TxCommand. Must match an enabled TxCommands <code>command_name</code> exactly to appear in the form.</td></tr>
+        <tr><td><code>signal_name</code></td><td>text <em>(required)</em></td><td><code>Current Limit</code></td><td>Label shown next to the input field. Keep this unique within a command so each input has its own value.</td></tr>
+        <tr><td><code>data_type</code></td><td>enum <em>(required)</em></td><td><code>uint16</code></td><td>How the value is encoded in the outgoing packet: <code>uint8</code>, <code>int8</code>, <code>uint16</code>, <code>int16</code>, <code>uint32</code>, <code>int32</code>, <code>float32</code>, or <code>float64</code>. Value is lowercased on load; unsupported types reject the config.</td></tr>
+        <tr><td><code>byte_order</code></td><td>enum</td><td><code>little</code> <em>(default)</em></td><td><code>little</code> or <code>big</code> endian. Blank cells default to <code>little</code>; any other value rejects the config.</td></tr>
+        <tr><td><code>scale</code></td><td>number</td><td><code>0.1</code> <em>(default: 1.0)</em></td><td>Encoding formula: <strong>raw = (user_value − offset) / scale</strong>. E.g. user enters 50.0 A with scale=0.1 → raw = 500. A zero scale loads successfully but the command cannot be built or sent.</td></tr>
+        <tr><td><code>offset</code></td><td>number</td><td><code>0</code> <em>(default: 0.0)</em></td><td>Subtracted from the user value before dividing by scale.</td></tr>
+        <tr><td><code>unit</code></td><td>text</td><td><code>A</code> <em>(blank ok)</em></td><td>Shown next to the input field.</td></tr>
+        <tr><td><code>min_value</code></td><td>number</td><td><code>0</code> <em>(blank = no limit)</em></td><td>App refuses to transmit if the entered value is below this.</td></tr>
+        <tr><td><code>max_value</code></td><td>number</td><td><code>200</code> <em>(blank = no limit)</em></td><td>App refuses to transmit if the entered value is above this.</td></tr>
+        <tr><td><code>default</code></td><td>number</td><td><code>100</code> <em>(blank ok)</em></td><td>Pre-filled value shown in the input box when the command form opens. Leave blank to require the user to enter a value before previewing or sending.</td></tr>
     </table>
+    <div class="warning">
+        <strong>Field matching is silent.</strong> Rows whose <code>command_name</code> does not match an enabled TxCommands row are parsed but never shown. If two fields on the same command reuse the same <code>signal_name</code>, the form labels collide and the later input value is reused for that name. Keep <code>command_name</code> valid and <code>signal_name</code> unique within each command.
+    </div>
 
     <hr>
 
     <h3 id="sheet-serialdefaults">Sheet 10 — SerialDefaults</h3>
-    <p>Pre-fills the serial port settings in the Connection dialog. Only one row is used. All columns are optional — leave blank to keep the app's built-in defaults.</p>
+    <p>Reserved for future config-driven serial connection defaults. The loader parses and stores the first row, but no other code currently consults it; the Connection dialog uses saved app settings instead. Omit this sheet in normal use.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>baud_rate</code></td><td>integer</td><td><code>115200</code></td><td>Default baud rate pre-selected in the Connection dialog.</td></tr>
-        <tr><td><code>data_bits</code></td><td>integer</td><td><code>8</code></td><td>Default data bits (almost always 8).</td></tr>
-        <tr><td><code>stop_bits</code></td><td>number</td><td><code>1</code></td><td>Default stop bits: <code>1</code>, <code>1.5</code>, or <code>2</code>.</td></tr>
-        <tr><td><code>parity</code></td><td>enum</td><td><code>N</code></td><td><code>N</code> = None, <code>E</code> = Even, <code>O</code> = Odd.</td></tr>
-        <tr><td><code>timeout_ms</code></td><td>integer</td><td><code>100</code></td><td>Read timeout per polling request in milliseconds.</td></tr>
+        <tr><td><code>baud_rate</code></td><td>integer <em>(required)</em></td><td><code>115200</code></td><td>Reserved baud-rate default. Parsed and stored if the sheet has a row, but no other code currently consults it.</td></tr>
+        <tr><td><code>data_bits</code></td><td>integer <em>(required)</em></td><td><code>8</code></td><td>Reserved data-bits default. Parsed and stored if the sheet has a row, but no other code currently consults it.</td></tr>
+        <tr><td><code>stop_bits</code></td><td>number <em>(required)</em></td><td><code>1</code> <em>(blank: <code>1.0</code>)</em></td><td>Reserved stop-bits default. Blank cells fall back to <code>1.0</code>, but no other code currently consults the stored value.</td></tr>
+        <tr><td><code>parity</code></td><td>text <em>(required)</em></td><td><code>N</code> <em>(blank: <code>N</code>)</em></td><td>Reserved parity default. Blank cells fall back to <code>N</code> and non-blank values are uppercased; the loader does not validate the value, and no other code currently consults it.</td></tr>
+        <tr><td><code>timeout_ms</code></td><td>integer <em>(required)</em></td><td><code>100</code></td><td>Reserved read-timeout default. Parsed and stored if the sheet has a row, but no other code currently consults it.</td></tr>
     </table>
+    <div class="warning">
+        <strong>Do not add a partially blank row.</strong> If this sheet is absent or empty, the loader uses internal defaults. If the sheet contains a row, all five column headers are required; <code>baud_rate</code>, <code>data_bits</code>, and <code>timeout_ms</code> must contain valid integers.
+    </div>
 
     <hr>
 
@@ -643,11 +686,14 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <p>Only needed if your hardware uses a <strong>request / response</strong> model — i.e. it only sends data when asked. Each row tells the app to periodically send a request packet and wait for a response.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>id_or_address</code></td><td>hex</td><td><code>0x0010</code></td><td>Frame ID (or Modbus register address) to request.</td></tr>
-        <tr><td><code>interval_ms</code></td><td>integer</td><td><code>100</code></td><td>How often to send the request, in milliseconds.</td></tr>
-        <tr><td><code>timeout_ms</code></td><td>integer</td><td><code>50</code></td><td>How long to wait for a response before marking the request as timed out.</td></tr>
-        <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Set <code>FALSE</code> to pause polling for this frame without deleting the row.</td></tr>
+        <tr><td><code>id_or_address</code></td><td>hex <em>(required)</em></td><td><code>0x0010</code></td><td>Frame ID (or Modbus register address) to request. Must be non-empty; bare values such as <code>0010</code> are treated as hex, so use a <code>0x</code> prefix for clarity.</td></tr>
+        <tr><td><code>interval_ms</code></td><td>integer <em>(required)</em></td><td><code>100</code></td><td>How often to send the request, in milliseconds. Parsed as an integer and used to schedule the next poll after each request completes.</td></tr>
+        <tr><td><code>timeout_ms</code></td><td>integer <em>(required)</em></td><td><code>50</code></td><td>How long to wait for the matching response before marking the request as timed out. Parsed as an integer; the current loader reads this column directly, so the header and value must be present.</td></tr>
+        <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code> <em>(default: <code>TRUE</code>)</em></td><td>Set <code>FALSE</code> to pause polling for this frame without deleting the row. Disabled rows are skipped at load time.</td></tr>
     </table>
+    <div class="note">
+        Polling starts only when <strong>Auto-Fetch</strong> is enabled. Requests are sent round-robin across enabled targets; if a request cannot be built for the configured protocol, that target is disabled and reported once.
+    </div>
     <div class="warning">
         If your hardware <strong>streams data automatically</strong> without being asked (e.g. sends packets every 50 ms on its own), leave this sheet <strong>empty</strong> and do <strong>not</strong> use Auto-Fetch. Polling an already-streaming device sends unnecessary requests and may corrupt the data stream.
     </div>
@@ -660,21 +706,25 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <ul>
         <li><strong>Dark</strong> — slate background with light text. Best for long monitoring sessions and dim labs.</li>
         <li><strong>Light</strong> — white background with dark text. Best for outdoor / brightly lit environments and screenshots in reports.</li>
-        <li><strong>System</strong> — follows the Windows light/dark setting automatically.</li>
+        <li><strong>System</strong> — asks Qt to follow the operating system's light/dark preference.</li>
     </ul>
-    <p>The theme switch is instant — every panel, menu, table cell, plot canvas, toolbar icon, and even the Windows title bar re-tints in place. Your choice is remembered between launches.</p>
+    <p>The theme switch is instant. The app reapplies its window styling, rebuilds toolbar/menu icons, retints the live plot canvas, updates the Analysis Suite if it is open, and remembers your choice between launches.</p>
     <div class="note">
         Toolbar and menu icons are theme-aware. In light theme they are drawn with a dark glyph so they remain readable on the white menu background; in dark theme they switch to a light glyph automatically. No restart needed.
+    </div>
+    <div class="warning">
+        <strong>System theme caveat.</strong> The base Qt palette follows the OS setting, but Bytehound's custom plot, icon, and Windows title-bar tinting are tuned for the explicit <strong>Dark</strong> and <strong>Light</strong> choices. If anything looks inconsistent in <strong>System</strong>, choose Dark or Light directly.
     </div>
 
     <h3 id="check-for-updates">Check for Updates</h3>
     <p>Open <strong>Help → Check for Updates</strong>. The app will:</p>
     <ol>
-        <li>Contact the update manifest over HTTPS and compare the published version against your installed version.</li>
-        <li>If you are already on the latest build, show a brief <em>Up to date</em> confirmation.</li>
+        <li>Read the local <code>version.json</code>, contact its configured update manifest over HTTPS, and compare the published version against your installed version.</li>
+        <li>If you are already on the latest build, show a brief <em>You are on the latest version</em> confirmation.</li>
         <li>If a newer version is available, show the version number and release notes and ask whether you want to install it.</li>
-        <li>On confirmation, the new installer is downloaded to your system temp folder and its <strong>SHA-256 checksum</strong> is verified against the manifest before launching. If the digest does not match, the partial download is deleted and the install is refused — this protects you from a corrupted or tampered binary.</li>
-        <li>The verified installer launches in silent mode and the app exits so the new version can replace the running executable. When the installer finishes, just relaunch the Bytehound.</li>
+        <li>On confirmation, download the installer to your system temp folder with a progress dialog. You can cancel while the download is running.</li>
+        <li>Verify the installer <strong>SHA-256 checksum</strong> against the manifest before launching. If the digest does not match, or if the manifest does not provide a checksum, the install is refused; mismatched downloads are deleted.</li>
+        <li>After the download is verified, ask one more time before launching the installer in silent mode. The app then exits so the installer can replace the running executable. When the installer finishes, relaunch Bytehound manually.</li>
     </ol>
     <div class="note">
         Update checks are entirely on-demand. The app never contacts the network on its own — nothing is downloaded or installed without your explicit click.
@@ -687,4 +737,3 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
 
 </body>
 </html>
-
