@@ -1817,7 +1817,7 @@ class MainWindow(QMainWindow):
         controls.addWidget(QLabel("Layout:"))
         self._layout_combo = QComboBox(outer)
         self._layout_combo.addItems(list(GRID_LAYOUTS.keys()))
-        saved_layout = str(self._settings.value("plot/layout", "2×1"))
+        saved_layout = str(self._settings.value("plot/layout", "2×1")).lower().replace("x", "×")
         self._layout_combo.setCurrentText(saved_layout if saved_layout in GRID_LAYOUTS else "2×1")
         self._layout_combo.currentTextChanged.connect(self._on_layout_changed)
         controls.addWidget(self._layout_combo)

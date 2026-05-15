@@ -70,7 +70,7 @@ _LEGACY_FRAME_CONFIG_REQUIRED = {
 
 _FRAMES_REQUIRED = {"frame_id", "frame_name"}
 _VARIABLES_REQUIRED = {"id_or_address", "signal_name", "data_type"}
-_POLLING_SCHEDULE_REQUIRED = {"id_or_address", "interval_ms"}
+_POLLING_SCHEDULE_REQUIRED = {"id_or_address", "interval_ms", "timeout_ms"}
 _BITFIELDS_REQUIRED = {"id_or_address", "signal_name", "bit_index", "label"}
 _ENUMS_REQUIRED = {"id_or_address", "signal_name", "value", "label"}
 _CALC_GROUPS_REQUIRED = {"group_name", "operations"}
