@@ -2699,6 +2699,9 @@ class MainWindow(QMainWindow):
         self._table_model.commit_staged()
         # Redraw the plot once for the entire batch.
         self._redraw_plot()
+        # Invalidate the hover crosshair cache now that plot_history has changed
+        if hasattr(self, "_hover_cache"):
+            self._hover_cache.clear()
 
         # Packet rate readout in the plot toolbar — refreshed at most ~4 Hz
         # so the label doesn't flicker. Uses a 1-second sliding-sum window.
@@ -3661,16 +3664,22 @@ class MainWindow(QMainWindow):
             if not xs_deque:
                 continue
             try:
+                if not hasattr(self, "_hover_cache"):
+                    self._hover_cache = {}
+                cached_lists = self._hover_cache.get(key)
+                if cached_lists is None:
+                    cached_lists = (list(xs_deque), list(ys_deque))
+                    self._hover_cache[key] = cached_lists
+                xs_list, ys_list = cached_lists
+
                 import bisect
-                xs_list = list(xs_deque)   # bisect needs a sequence
                 idx = bisect.bisect_left(xs_list, t)
                 if idx >= len(xs_list):
                     idx = len(xs_list) - 1
                 elif idx > 0 and (t - xs_list[idx - 1]) < (xs_list[idx] - t):
                     idx -= 1
-                # ys_deque supports __getitem__ in O(n) worst case but is
-                # bounded by maxlen, so it stays fast.
-                parts.append(f"{key[1]}={ys_deque[idx]:.2f}")
+                # The cached list stays fast for indexing
+                parts.append(f"{key[1]}={ys_list[idx]:.2f}")
             except Exception:
                 continue
         if hasattr(self, "_hover_label"):
