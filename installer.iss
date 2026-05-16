@@ -165,6 +165,48 @@ begin
 end;
 
 // ---------------------------------------------------------------------------
+// Auto-uninstall previous version before installing the new one. The
+// auto-updater runs the new installer with /SILENT, so without this hook
+// users end up with stale files from the old install sitting alongside the
+// new ones inside {app}. We look up the previous install's UninstallString
+// from the registry (HKLM for admin installs, HKCU for per-user) and run it
+// silently before our [Files] section copies anything.
+// ---------------------------------------------------------------------------
+function GetUninstallString(): String;
+var
+  RegPath: String;
+  Value: String;
+begin
+  RegPath := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupSetting("AppId")}_is1';
+  Value := '';
+  if not RegQueryStringValue(HKLM, RegPath, 'UninstallString', Value) then
+    RegQueryStringValue(HKCU, RegPath, 'UninstallString', Value);
+  Result := Value;
+end;
+
+procedure UninstallPreviousVersion();
+var
+  CmdLine: String;
+  Params: String;
+  ResultCode: Integer;
+begin
+  CmdLine := GetUninstallString();
+  if CmdLine = '' then
+    Exit;
+  // UninstallString is typically a quoted path; strip quotes so Exec can find
+  // the binary, then pass the silent flags via the parameters argument.
+  CmdLine := RemoveQuotes(CmdLine);
+  Params  := '/SILENT /NORESTART /SUPPRESSMSGBOXES';
+  Exec(CmdLine, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssInstall then
+    UninstallPreviousVersion();
+end;
+
+// ---------------------------------------------------------------------------
 // Uninstall: remove desktop shortcuts created by previous versions
 // ---------------------------------------------------------------------------
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

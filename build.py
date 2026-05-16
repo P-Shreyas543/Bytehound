@@ -85,8 +85,13 @@ def write_installer_version_iss() -> Path:
     return out
 
 
-def write_sha256(exe: Path) -> str:
-    """Compute SHA-256 of the built exe and write it into version.json."""
+def write_sha256(exe: Path) -> tuple[str, bool]:
+    """Compute SHA-256 of the built exe and write it into version.json.
+
+    Returns (digest, changed) where `changed` indicates whether version.json
+    now differs from its previous on-disk content. Callers use that to decide
+    whether an auto-commit of version.json is worth doing.
+    """
     print(f"[build] computing SHA-256 for {exe.name} ...")
     h = hashlib.sha256()
     with exe.open("rb") as fh:
@@ -95,16 +100,63 @@ def write_sha256(exe: Path) -> str:
     digest = h.hexdigest()
 
     vpath = ROOT / "version.json"
+    changed = False
     try:
         with vpath.open("r", encoding="utf-8") as fp:
             data = json.load(fp)
-        data["sha256"] = digest
-        with vpath.open("w", encoding="utf-8") as fp:
-            json.dump(data, fp, indent=4)
-        print(f"[build] sha256 written to version.json: {digest}")
+        previous = data.get("sha256", "")
+        if previous != digest:
+            data["sha256"] = digest
+            with vpath.open("w", encoding="utf-8") as fp:
+                json.dump(data, fp, indent=4)
+            changed = True
+            print(f"[build] sha256 written to version.json: {digest}")
+        else:
+            print(f"[build] sha256 unchanged in version.json: {digest}")
     except Exception as exc:
         print(f"[build] WARNING: could not update version.json sha256: {exc}")
-    return digest
+    return digest, changed
+
+
+def auto_commit_version_manifest(version: str) -> None:
+    """Stage and commit version.json only.
+
+    Triggered after write_sha256 reports a changed digest so the manifest
+    that's about to be published carries the hash of the installer just
+    built. We intentionally do NOT push — the user opted for local commit
+    only, so the push remains a deliberate manual step (see release
+    checklist).
+
+    Failures here are non-fatal: the build artifacts are already on disk and
+    the developer can finish the commit by hand if something goes wrong
+    (e.g. no git repo, detached HEAD, hooks rejecting).
+    """
+    vpath = ROOT / "version.json"
+    try:
+        # Is there anything to commit for just this file?
+        status = subprocess.run(
+            ["git", "status", "--porcelain", "--", str(vpath)],
+            cwd=ROOT, capture_output=True, text=True, check=True,
+        )
+        if not status.stdout.strip():
+            print("[build] version.json already matches HEAD; skipping auto-commit.")
+            return
+
+        rc = subprocess.call(["git", "add", "--", str(vpath)], cwd=ROOT)
+        if rc != 0:
+            print(f"[build] WARNING: 'git add version.json' failed (rc={rc}); skipping auto-commit.")
+            return
+
+        message = f"build: update sha256 in version.json for v{version}"
+        rc = subprocess.call(["git", "commit", "-m", message, "--", str(vpath)], cwd=ROOT)
+        if rc != 0:
+            print(f"[build] WARNING: 'git commit' failed (rc={rc}); commit version.json manually.")
+            return
+        print(f"[build] committed version.json locally (run 'git push' to publish).")
+    except FileNotFoundError:
+        print("[build] WARNING: git not on PATH; skipping auto-commit of version.json.")
+    except subprocess.CalledProcessError as exc:
+        print(f"[build] WARNING: git status check failed: {exc}; skipping auto-commit.")
 
 
 def copy_branding() -> int:
@@ -258,6 +310,7 @@ def main() -> int:
     parser.add_argument("--no-clean",     action="store_true", help="skip wiping build/ and dist/")
     parser.add_argument("--no-zip",       action="store_true", help="skip the zip step")
     parser.add_argument("--no-installer", action="store_true", help="skip Inno Setup installer step")
+    parser.add_argument("--no-commit",    action="store_true", help="skip auto-commit of version.json when sha256 changes")
     args, passthrough = parser.parse_known_args()
 
     if not SPEC.exists():
@@ -301,7 +354,13 @@ def main() -> int:
         _rc, installer_path = run_inno_setup()
 
     if installer_path is not None:
-        write_sha256(installer_path)
+        _digest, sha_changed = write_sha256(installer_path)
+        # Only auto-commit when we hashed the real installer — hashing the
+        # inner exe as a fallback would produce a sha256 that doesn't match
+        # the binary served at installer_url, which is worse than leaving
+        # version.json untouched.
+        if sha_changed and not args.no_commit:
+            auto_commit_version_manifest(read_version())
     else:
         print("[build] WARNING: no installer produced; hashing inner exe as fallback.")
         print("[build]   Auto-updater integrity verification will be inaccurate until")
@@ -320,13 +379,12 @@ def main() -> int:
     # doesn't choke on box-drawing characters during printing.
     print(f"""
 [build] --- Release checklist ---------------------------------------
-  1. Commit & push version.json  (sha256 auto-updated above)
+  1. git push origin master      (version.json sha256 auto-committed above)
   2. git tag v{version} && git push origin v{version}
   3. Create GitHub Release v{version} and upload:
        installer_output/Bytehound_Setup_{version}.exe
        dist/{APP_NAME}_{version}.zip
-  4. Update installer_url in version.json to the release asset URL
-  5. Commit & push version.json again
+  4. If installer_url in version.json needs updating, edit + commit + push
 ---------------------------------------------------------------------
 """)
     return 0
