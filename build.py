@@ -278,11 +278,19 @@ def run_inno_setup() -> tuple[int, Path | None]:
             # contains spaces — the nested quoting confuses ISCC's parser into
             # seeing extra positional args. The shim path has no spaces so the
             # /Ssigntool= value stays simple.
+            # Two timestamp authorities for resilience: if DigiCert's TSA is
+            # down at release time (it has happened), signtool exits non-zero
+            # AND leaves the binary unsigned. Retrying with Sectigo lets the
+            # build finish instead of failing the whole release.
             runner = ROOT / "tools" / "sign-runner.cmd"
             runner.write_text(
                 "@echo off\r\n"
                 f'"{signtool}" sign /f "%SIGN_PFX%" /p "%SIGN_PASSWORD%" '
-                "/fd sha256 /tr http://timestamp.digicert.com /td sha256 %1\r\n",
+                "/fd sha256 /tr http://timestamp.digicert.com /td sha256 %1\r\n"
+                "if not errorlevel 1 exit /b 0\r\n"
+                "echo [sign-runner] DigiCert TSA failed, retrying with Sectigo...\r\n"
+                f'"{signtool}" sign /f "%SIGN_PFX%" /p "%SIGN_PASSWORD%" '
+                "/fd sha256 /tr http://timestamp.sectigo.com /td sha256 %1\r\n",
                 encoding="ascii",
             )
             cmd += ["/dSIGN", f"/Ssigntool=signtool={runner} $f"]

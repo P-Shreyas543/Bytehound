@@ -16,6 +16,9 @@
 ; installer_version.iss. Run `python build.py` (any flags) to refresh it.
 ; The file is .gitignored — single source of truth lives in version.json.
 #include "installer_version.iss"
+#ifndef MyAppVersion
+  #error MyAppVersion not defined. Run `python build.py` to regenerate installer_version.iss before compiling installer.iss directly.
+#endif
 #define MyAppExe       "Bytehound.exe"
 #define MyAppIcon      "branding\logo_sq.ico"
 #define MyDistDir      "dist\Bytehound"
@@ -66,6 +69,8 @@ VersionInfoProductVersion = {#MyAppVersion}
 
 ; ── Misc ────────────────────────────────────────────────────────────────────
 ArchitecturesInstallIn64BitMode = x64compatible
+; Win10+ only. Win7/8/8.1 are out of Microsoft support and we don't test there.
+MinVersion                = 10.0
 CloseApplications         = yes
 RestartApplications       = no
 ChangesAssociations       = no
@@ -87,17 +92,13 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon";   Description: "Create a &desktop shortcut";  GroupDescription: "Shortcuts:"
 Name: "startmenu";     Description: "Create a &Start Menu entry";   GroupDescription: "Shortcuts:"
 
-[Dirs]
-; Pre-create the default logs directory so the app finds it on first launch
-Name: "{userdocs}\{#MyAppSlug}"; Flags: uninsneveruninstall
-
 [Files]
 ; ── Entire PyInstaller output (fully offline, all deps bundled) ──────────────
 ; Excludes trim known Qt bloat that ships unused: opengl32sw.dll is the ~20 MB
 ; software-rasterizer fallback, Qt translations add up fast, and we never use
 ; QtWebEngine. Adjust if any of those become needed.
 Source: "{#MyDistDir}\*";        DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; \
-                                 Excludes: "opengl32sw.dll,translations\*,*WebEngine*"
+                                 Excludes: "opengl32sw.dll,translations\*,*WebEngine*,*.pdb,*.pyi,*\__pycache__\*,*\tests\*"
 
 ; ── Branding assets at exe root ──────────────────────────────────────────────
 Source: "branding\logo_sq.ico";  DestDir: "{app}"; Flags: ignoreversion
@@ -137,6 +138,77 @@ Type: filesandordirs; Name: "{app}"
 
 [Code]
 // ---------------------------------------------------------------------------
+// Downgrade guard. CompareStr does a lexicographic compare which is wrong for
+// semver ("0.10.0" < "0.9.0" lexically), so we parse "major.minor.patch" into
+// integers. Anything unparseable falls back to allowing the install — better
+// to let an edge-case version pattern through than to brick the upgrade flow.
+// Silent installs (auto-updater) always proceed without prompting, otherwise
+// a downgrade triggered by the updater would deadlock waiting for a click.
+// ---------------------------------------------------------------------------
+function VersionTuple(const V: String; var Major, Minor, Patch: Integer): Boolean;
+var
+  Parts: TArrayOfString;
+  Tmp: String;
+  P: Integer;
+begin
+  Result := False;
+  Major := 0; Minor := 0; Patch := 0;
+  Tmp := V;
+  // Split on '.'
+  SetArrayLength(Parts, 0);
+  while True do
+  begin
+    P := Pos('.', Tmp);
+    SetArrayLength(Parts, GetArrayLength(Parts) + 1);
+    if P = 0 then
+    begin
+      Parts[GetArrayLength(Parts) - 1] := Tmp;
+      Break;
+    end;
+    Parts[GetArrayLength(Parts) - 1] := Copy(Tmp, 1, P - 1);
+    Tmp := Copy(Tmp, P + 1, Length(Tmp));
+  end;
+  if GetArrayLength(Parts) < 1 then Exit;
+  Major := StrToIntDef(Parts[0], -1);
+  if GetArrayLength(Parts) >= 2 then Minor := StrToIntDef(Parts[1], -1);
+  if GetArrayLength(Parts) >= 3 then Patch := StrToIntDef(Parts[2], -1);
+  Result := (Major >= 0) and (Minor >= 0) and (Patch >= 0);
+end;
+
+function IsDowngrade(const Installed, Candidate: String): Boolean;
+var
+  IM, IN_, IP, CM, CN, CP: Integer;
+begin
+  Result := False;
+  if not VersionTuple(Installed, IM, IN_, IP) then Exit;
+  if not VersionTuple(Candidate, CM, CN, CP) then Exit;
+  if IM <> CM then Result := IM > CM
+  else if IN_ <> CN then Result := IN_ > CN
+  else Result := IP > CP;
+end;
+
+function InitializeSetup(): Boolean;
+var
+  RegPath: String;
+  Installed: String;
+begin
+  Result := True;
+  RegPath := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupSetting("AppId")}_is1';
+  Installed := '';
+  if not RegQueryStringValue(HKLM64, RegPath, 'DisplayVersion', Installed) then
+    if not RegQueryStringValue(HKLM32, RegPath, 'DisplayVersion', Installed) then
+      RegQueryStringValue(HKCU, RegPath, 'DisplayVersion', Installed);
+  if Installed = '' then Exit;
+  if not IsDowngrade(Installed, '{#MyAppVersion}') then Exit;
+  if WizardSilent() then Exit; // never block the auto-updater
+  Result := MsgBox(
+    'A newer version of {#MyAppName} (' + Installed + ') is already installed.' + #13#10 +
+    'You are about to install an older version ({#MyAppVersion}).' + #13#10 + #13#10 +
+    'Continue anyway?',
+    mbConfirmation, MB_YESNO) = IDYES;
+end;
+
+// ---------------------------------------------------------------------------
 // Auto-uninstall the previous version before laying down new files. The
 // auto-updater invokes us with /SILENT, and the new exe needs a clean {app}
 // to avoid stale files mixing with the new bundle.
@@ -154,8 +226,13 @@ var
 begin
   RegPath := 'Software\Microsoft\Windows\CurrentVersion\Uninstall\{#SetupSetting("AppId")}_is1';
   Value := '';
-  if not RegQueryStringValue(HKLM, RegPath, 'UninstallString', Value) then
-    RegQueryStringValue(HKCU, RegPath, 'UninstallString', Value);
+  // Explicit hive order: 64-bit HKLM (admin install on 64-bit OS) -> 32-bit
+  // HKLM (legacy / non-x64 installs) -> HKCU (per-user install). Spelling out
+  // HKLM64/HKLM32 instead of the implicit HKLM means the lookup keeps working
+  // even if ArchitecturesInstallIn64BitMode is changed later.
+  if not RegQueryStringValue(HKLM64, RegPath, 'UninstallString', Value) then
+    if not RegQueryStringValue(HKLM32, RegPath, 'UninstallString', Value) then
+      RegQueryStringValue(HKCU, RegPath, 'UninstallString', Value);
   Result := Value;
 end;
 
@@ -172,7 +249,13 @@ begin
   // /_?= must be last and must point at the uninstaller's directory so the
   // uninstaller runs in-place and Exec() blocks until it truly finishes.
   Params := '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /_?=' + ExtractFilePath(CmdLine);
-  Exec(CmdLine, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
+  // We never abort on failure here — a partial upgrade is better than a hard
+  // stop in the middle of an auto-update. Log so the failure shows up in the
+  // Inno Setup log (find it under %TEMP%\Setup Log*.txt).
+  if not Exec(CmdLine, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+    Log('UninstallPreviousVersion: failed to launch old uninstaller at ' + CmdLine)
+  else if ResultCode <> 0 then
+    Log('UninstallPreviousVersion: old uninstaller exited with code ' + IntToStr(ResultCode));
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);

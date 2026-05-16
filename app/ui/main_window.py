@@ -167,6 +167,11 @@ _PLOT_PALETTE = (
     "#ff9896", "#98df8a", "#c5b0d5", "#393b79",
 )
 
+# Width of the live plot's X view before any data has arrived AND the minimum
+# width once data exists. Keeps the curve from looking glued to the left edge
+# in the first ~10 s of a session.
+_PLOT_INITIAL_WINDOW_S = 10.0
+
 
 def _contrast_text_color(bg_hex: str) -> str:
     """Pick black or white text for the given background hex colour.
@@ -2031,6 +2036,17 @@ class MainWindow(QMainWindow):
                 strip = self._make_panel_strip(idx)
                 self._panel_strip_layout.addWidget(strip, 1)
 
+        # Anchor X to start at 0 immediately, before any data arrives. Without
+        # this, pyqtgraph's default auto-range shows roughly [-0.5, 0.5] until
+        # the first packet, then snaps. The guard suppresses the sigXRangeChanged
+        # callback that would otherwise flip us out of Live mode.
+        if self._plot_panels:
+            self._plot_range_changing = True
+            try:
+                self._plot_panels[0].plot_item.setXRange(0.0, _PLOT_INITIAL_WINDOW_S, padding=0)
+            finally:
+                self._plot_range_changing = False
+
         # Update aggregate _plot_keys
         self._sync_plot_keys()
         # Persist new layout
@@ -3782,7 +3798,6 @@ class MainWindow(QMainWindow):
 
         current_t = (datetime.now() - self._session_started).total_seconds()
 
-        has_any_data = False
         color_offset = 0
 
         for panel in self._plot_panels:
@@ -3825,19 +3840,21 @@ class MainWindow(QMainWindow):
                     autoDownsample=True,
                     clipToView=True,
                 )
-                if x_values:
-                    has_any_data = True
 
             color_offset += len(panel.assigned_keys)
 
         # Live mode: always show the full session from t=0 to current_t.
+        # Runs even when has_any_data is False so the axis stays anchored at 0
+        # while waiting for the first packet. max(...) keeps the window from
+        # collapsing to a sliver in the first few hundred ms of a session.
         # The re-entrancy guard stops sigXRangeChanged from flipping us to Explore.
-        if self._plot_live and has_any_data and self._plot_panels:
+        if self._plot_live and self._plot_panels:
             self._plot_range_changing = True
             try:
                 first_pi = self._plot_panels[0].plot_item
                 # Small right padding (5%) so the newest point isn't flush against the edge.
-                first_pi.setXRange(0.0, current_t * 1.05 if current_t > 0 else 10.0, padding=0)
+                x_max = max(current_t, _PLOT_INITIAL_WINDOW_S) * 1.05
+                first_pi.setXRange(0.0, x_max, padding=0)
             finally:
                 self._plot_range_changing = False
 
