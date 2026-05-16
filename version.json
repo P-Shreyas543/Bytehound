@@ -8,5 +8,5 @@
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
     "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.2.0/Bytehound_Setup_0.2.0.exe",
     "release_notes": "Performance and stability pass: monotonic-clock worker timing (immune to system-clock jumps), throttled metrics emit on poll response, O(1) editor-table lookup, batched console output, and reduced per-packet UI work.",
-    "sha256": "7596144926b2f90f4f7ff0904402919f7318848cfbe092d89f9ea3c6648bc66e"
+    "sha256": "ae945c02a66e48720182e1dbc2e3126440b7e701e7b84665447bce99a3fd9463"
 }
