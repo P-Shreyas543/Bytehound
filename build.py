@@ -310,7 +310,11 @@ def main() -> int:
     parser.add_argument("--no-clean",     action="store_true", help="skip wiping build/ and dist/")
     parser.add_argument("--no-zip",       action="store_true", help="skip the zip step")
     parser.add_argument("--no-installer", action="store_true", help="skip Inno Setup installer step")
-    parser.add_argument("--no-commit",    action="store_true", help="skip auto-commit of version.json when sha256 changes")
+    # Auto-commit is gated behind --release so local dev builds never mutate
+    # version.json's sha256 in git. A developer poking at the build would
+    # otherwise overwrite the hash of the CI-published installer with one
+    # tied to their local PE timestamps, breaking the updater integrity check.
+    parser.add_argument("--release",      action="store_true", help="treat this as a release build (auto-commit version.json sha256 when it changes)")
     args, passthrough = parser.parse_known_args()
 
     if not SPEC.exists():
@@ -359,8 +363,10 @@ def main() -> int:
         # inner exe as a fallback would produce a sha256 that doesn't match
         # the binary served at installer_url, which is worse than leaving
         # version.json untouched.
-        if sha_changed and not args.no_commit:
+        if sha_changed and args.release:
             auto_commit_version_manifest(read_version())
+        elif sha_changed:
+            print("[build] sha256 changed but --release not set; leaving version.json uncommitted.")
     else:
         print("[build] WARNING: no installer produced; hashing inner exe as fallback.")
         print("[build]   Auto-updater integrity verification will be inaccurate until")

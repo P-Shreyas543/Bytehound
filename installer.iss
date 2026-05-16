@@ -93,7 +93,11 @@ Name: "{userdocs}\{#MyAppSlug}"; Flags: uninsneveruninstall
 
 [Files]
 ; ── Entire PyInstaller output (fully offline, all deps bundled) ──────────────
-Source: "{#MyDistDir}\*";        DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+; Excludes trim known Qt bloat that ships unused: opengl32sw.dll is the ~20 MB
+; software-rasterizer fallback, Qt translations add up fast, and we never use
+; QtWebEngine. Adjust if any of those become needed.
+Source: "{#MyDistDir}\*";        DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; \
+                                 Excludes: "opengl32sw.dll,translations\*,*WebEngine*"
 
 ; ── Branding assets at exe root ──────────────────────────────────────────────
 Source: "branding\logo_sq.ico";  DestDir: "{app}"; Flags: ignoreversion
@@ -104,8 +108,9 @@ Source: "branding\logo_rec.png"; DestDir: "{app}"; Flags: ignoreversion
 Source: "version.json";          DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-; Desktop shortcut – name includes version number
-Name: "{autodesktop}\{#MyAppName} v{#MyAppVersion}"; \
+; Desktop shortcut – name is static (no version) so Windows Taskbar/Start pins
+; survive auto-updates. Renaming the shortcut on every release breaks pins.
+Name: "{autodesktop}\{#MyAppName}"; \
       Filename: "{app}\{#MyAppExe}"; \
       IconFilename: "{app}\logo_sq.ico"; \
       Tasks: desktopicon
@@ -132,45 +137,15 @@ Type: filesandordirs; Name: "{app}"
 
 [Code]
 // ---------------------------------------------------------------------------
-// Pre-install: detect if app is already running and warn user
-// ---------------------------------------------------------------------------
-function IsAppRunning(const ExeName: String): Boolean;
-var
-  WbemLocator, WbemService, WbemObjectSet: Variant;
-begin
-  Result := False;
-  try
-    WbemLocator   := CreateOleObject('WbemScripting.SWbemLocator');
-    WbemService   := WbemLocator.ConnectServer('.', 'root\cimv2', '', '');
-    WbemObjectSet := WbemService.ExecQuery(
-      'SELECT Name FROM Win32_Process WHERE Name="' + ExeName + '"');
-    Result := not VarIsNull(WbemObjectSet) and (WbemObjectSet.Count > 0);
-  except
-    Result := False;
-  end;
-end;
-
-function InitializeSetup(): Boolean;
-begin
-  if IsAppRunning('{#MyAppExe}') then
-  begin
-    MsgBox(
-      '{#MyAppName} is currently running.' + #13#10 +
-      'Please close it before continuing installation.',
-      mbError, MB_OK);
-    Result := False;
-  end
-  else
-    Result := True;
-end;
-
-// ---------------------------------------------------------------------------
-// Auto-uninstall previous version before installing the new one. The
-// auto-updater runs the new installer with /SILENT, so without this hook
-// users end up with stale files from the old install sitting alongside the
-// new ones inside {app}. We look up the previous install's UninstallString
-// from the registry (HKLM for admin installs, HKCU for per-user) and run it
-// silently before our [Files] section copies anything.
+// Auto-uninstall the previous version before laying down new files. The
+// auto-updater invokes us with /SILENT, and the new exe needs a clean {app}
+// to avoid stale files mixing with the new bundle.
+//
+// Inno Setup's uninstaller normally copies itself to %TEMP% and forks — the
+// original process exits immediately and our Exec() call returns long before
+// the uninstall finishes, racing the [Files] copy. The undocumented `/_?=`
+// parameter forces the uninstaller to run in place (no temp copy, no fork),
+// so ewWaitUntilTerminated actually waits.
 // ---------------------------------------------------------------------------
 function GetUninstallString(): String;
 var
@@ -193,30 +168,18 @@ begin
   CmdLine := GetUninstallString();
   if CmdLine = '' then
     Exit;
-  // UninstallString is typically a quoted path; strip quotes so Exec can find
-  // the binary, then pass the silent flags via the parameters argument.
   CmdLine := RemoveQuotes(CmdLine);
-  Params  := '/SILENT /NORESTART /SUPPRESSMSGBOXES';
+  // /_?= must be last and must point at the uninstaller's directory so the
+  // uninstaller runs in-place and Exec() blocks until it truly finishes.
+  Params := '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /_?=' + ExtractFilePath(CmdLine);
   Exec(CmdLine, Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode);
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssInstall then
-    UninstallPreviousVersion();
-end;
-
-// ---------------------------------------------------------------------------
-// Uninstall: remove desktop shortcuts created by previous versions
-// ---------------------------------------------------------------------------
-procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
-var
-  OldShortcut: String;
-begin
-  if CurUninstallStep = usPostUninstall then
   begin
-    // Clean up any versioned desktop shortcuts from older installs
-    OldShortcut := ExpandConstant('{autodesktop}\{#MyAppName}*.lnk');
-    DelTree(OldShortcut, False, True, False);
+    WizardForm.StatusLabel.Caption := 'Removing previous version...';
+    UninstallPreviousVersion();
   end;
 end;
