@@ -1,0 +1,188 @@
+# Bytehound Performance Notes
+
+## Harness
+
+`scripts/perf_harness.py` exercises the headless RX pipeline (parser → decoder
+→ logger) against a synthetic byte stream built from
+`tests/fixtures/canonical_config`. Reports throughput, per-stage latency
+percentiles, RSS, and GC counts.
+
+Usage:
+
+```powershell
+python scripts\perf_harness.py --rate 1000 --duration 10
+python scripts\perf_harness.py --scenarios 100,500,1000 --duration 5
+python scripts\perf_harness.py --rate 1000 --no-decoded-logger
+```
+
+The harness deliberately skips the Qt half of the pipeline (`_flush_ui`,
+plot redraw). Those need a windowed run to measure honestly and are tracked
+manually for now.
+
+## Baseline — pre-optimisation (master @ 4c02f58, Windows, Python 3.10)
+
+All numbers from `python scripts\perf_harness.py --scenarios 100,500,1000
+--duration 5` (loggers ON, both decoded.xlsx and raw.csv).
+
+| Rate    | Stage  | Throughput | mean µs | p95 µs | p99 µs |
+|---------|--------|------------|---------|--------|--------|
+| 100 Hz  | parse  | 9268/s     | 107.90  | 214.32 | 214.32 |
+| 100 Hz  | decode | 7865/s     | 123.71  | 276.20 | 421.90 |
+| 100 Hz  | logger | 2317/s     | 411.57  | 1101.6 | 1668.5 |
+| 500 Hz  | parse  | 11984/s    | 86.93   | 219.87 | 351.50 |
+| 500 Hz  | decode | 9227/s     | 105.75  | 223.50 | 371.30 |
+| 500 Hz  | logger | 2613/s     | 373.80  | 979.40 | 1365.9 |
+| 1000 Hz | parse  | 16673/s    | 58.01   | 131.90 | 240.32 |
+| 1000 Hz | decode | 11457/s    | 85.47   | 166.10 | 317.00 |
+| 1000 Hz | logger | 3036/s     | 320.27  | 814.30 | 1196.0 |
+
+Logger-isolation runs at 1 kHz:
+
+| Config              | logger mean | logger p95 | logger p99 |
+|---------------------|------------:|-----------:|-----------:|
+| decoded + raw       |     320 µs  |     814 µs |    1196 µs |
+| decoded only        |     416 µs  |    1232 µs |    1978 µs |
+| raw only            |      53 µs  |     136 µs |     346 µs |
+| neither             |       –     |       –    |       –    |
+
+Top-line per-packet budget at 1 kHz (decoded + raw on):
+`58 + 85 + 320 ≈ 463 µs/packet` mean → ~46% of one core just on the synchronous
+RX pipeline. Tail latencies (p99) push >1 ms which is enough to stall the
+worker thread between iterations.
+
+## Findings
+
+1. **DecodedLogger dominates.** `decoded` alone at 1 kHz costs **~416 µs mean
+   / ~2 ms p99 per packet** — 5–8× the cost of decode itself. openpyxl
+   write-only mode still allocates `Cell` objects per value on every
+   `ws.append`. With the per-frame block layout we just introduced, each
+   cycle row has frame-count × (elapsed + frame_id + signals) cells, all
+   built on the GUI thread (in the real app the call happens inside
+   `_handle_packet`).
+
+2. **RawLogger is fine.** It's already async (daemon writer thread); the
+   synchronous cost per `log()` is just timestamp formatting + `put_nowait`.
+
+3. **Decode itself is reasonable.** ~90 µs mean per frame for the canonical
+   config (which has bitfields + enums + calc groups exercised). Allocation
+   of `DecodedSignal` dataclasses dominates here but it's an order of
+   magnitude below the logger.
+
+4. **GC pressure is visible but not catastrophic** — gen-0 deltas of ±400
+   over a 5 s run. The decoded-logger row construction is the obvious
+   churn source.
+
+## Optimization plan (highest-impact first)
+
+1. **DecodedLogger off the synchronous decode path. ✅ LANDED.**
+   The openpyxl `Workbook` is now owned exclusively by a daemon writer
+   thread spawned in `open()`. `log_frame` still does the cycle-buffer
+   manipulation synchronously, but the trigger-frame emit now just
+   `queue.put_nowait(row)`s the assembled row list — the expensive
+   `ws.append` runs on the writer. `close()` signals stop and joins; the
+   writer saves+closes the workbook before exiting so callers (tests,
+   "Stop Logging" UI) still get a finalised file by the time `close()`
+   returns. Errors from the writer thread are surfaced via the same
+   `_pending_error` / `_pump_pending_error` pattern as `RawLogger`.
+
+   **Measured delta (1 kHz, decoded-only, 5 s harness run):**
+
+   | metric         | before | after | speedup |
+   |----------------|-------:|------:|--------:|
+   | logger mean    | 416 µs |  34 µs |  ~12x  |
+   | logger p95     |1232 µs |  80 µs |  ~15x  |
+   | logger p99     |1978 µs | 144 µs |  ~14x  |
+
+   Combined parse + decode + logger budget at 1 kHz dropped from
+   ~463 µs/packet to ~224 µs/packet — roughly **2x more RX headroom on
+   the GUI/decoder thread**.
+
+2. **Plot redraw audit** — `_redraw_plot` runs `np.fromiter` over every
+   curve every tick even when no new sample arrived. Worth measuring against
+   a real session; cheap to skip if the deque length hasn't changed since
+   last redraw. (deferred to next pass)
+
+3. **decode_frame allocation reduction** — pre-built status strings, skip
+   per-signal `DecodedSignal(...)` for unchanged signals. Diminishing
+   returns until #1 lands. (deferred)
+
+4. **`_apply_decoded` calls `datetime.now()` twice per frame.** Cheap fix
+   but only ~µs of savings. (deferred until needed)
+
+5. **xlsx → streaming CSV with optional xlsx export on Stop.** Bigger
+   refactor, biggest win, breaks the "decoded.xlsx" file expectation.
+   Defer — #1 already brought the synchronous cost below decode itself.
+
+## After-optimization sweep (loggers ON, both decoded + raw)
+
+| Rate    | Stage  | Throughput | mean µs | p95 µs | p99 µs |
+|---------|--------|------------|---------|--------|--------|
+| 100 Hz  | parse  |  8465/s    |  95.11  | 164.35 | 164.35 |
+| 100 Hz  | decode |  7787/s    | 114.87  | 200.50 | 523.40 |
+| 100 Hz  | logger |  6632/s    |  95.25  | 184.50 | 207.70 |
+| 500 Hz  | parse  | 12962/s    |  80.70  | 168.78 | 298.12 |
+| 500 Hz  | decode | 10517/s    |  97.32  | 188.50 | 549.40 |
+| 500 Hz  | logger | 11863/s    |  86.23  | 195.80 | 692.70 |
+| 1000 Hz | parse  | 15185/s    |  65.07  | 150.60 | 235.23 |
+| 1000 Hz | decode | 11244/s    |  86.08  | 168.00 | 289.70 |
+| 1000 Hz | logger | 13572/s    |  72.91  | 158.90 | 334.10 |
+
+Logger is no longer the hot stage — it's roughly tied with parse, which
+means future wins must come from decode itself or from the Qt/plot half
+of the pipeline (out of scope for this harness).
+
+## Still slow / next-up
+
+* **Plot redraw under many curves** — needs a Qt-integrated measurement
+  pass before any change. Likely wins: short-circuit when the curve's
+  deque hasn't grown since the last redraw, and cache the numpy arrays
+  rather than `np.fromiter`'ing on every tick.
+* **Decode tail latency (p99 ~550 µs at 500 Hz)** — driven by per-signal
+  `DecodedSignal` allocation and the calc-group list-comp. Worth a
+  cProfile pass on `decode_frame` against a 5+ signal frame.
+* **Hide-aware updates** — when the live-plot dock is collapsed or the
+  Analysis Suite is fronted, skip pushing samples into invisible panels.
+  Cheap to wire (the dock already exposes `.isVisible()`); benefit scales
+  with how often the user keeps the plot hidden.
+* **Console QTextEdit cost** — the raw console batches per-flush, but
+  appendPlainText on a 100k+ block document is still slow. Consider a
+  hard cap on retained lines (e.g. 5k) with truncation, OR clearing on
+  every "Start Logging" press.
+
+## Polling test coverage (this pass)
+
+Added 9 new tests to `tests/test_polling_worker.py` for a total of 10:
+
+| Test                                                       | Verifies |
+|------------------------------------------------------------|----------|
+| `test_priority_tx_preempts_polling`                        | Priority TX runs before any poll |
+| `test_round_robin_cursor_visits_every_schedule`            | Cursor fairness when all due at once |
+| `test_disabled_schedule_is_skipped`                        | toggle(False) entries are skipped without losing cursor position |
+| `test_toggle_reenable_resets_next_run_to_full_interval`    | Re-enable waits a full interval (regression guard) |
+| `test_disable_failed_schedule_marks_disabled_and_emits_once` | Build-time ValueError disables + reports exactly once |
+| `test_boot_grace_suppresses_polling_until_first_rx_or_timeout` | No poll fires during boot-grace pre-RX |
+| `test_first_rx_byte_clears_boot_grace_immediately`         | Boot grace lifts as soon as device proves alive |
+| `test_stop_event_exits_run_loop_promptly`                  | run() exits in <0.5 s after stop() |
+| `test_reset_metrics_zeroes_counters`                       | reset_metrics() clears and emits |
+| `test_enqueue_priority_tx_emits_error_on_full_queue`       | 256-entry queue refuses overflow rather than growing |
+
+Suite is 116 green (was 107). Runtime ~47 s.
+
+## What was NOT covered in this pass
+
+The original brief asked for several items that are deferred:
+
+* **Qt-integrated UI flush / plot harness.** Needs a windowed run and a
+  fake `QSerialPort` driver; the headless harness here only proves the
+  RX pipeline. Hand-test the app at 1 kHz with a stress source before
+  the next release.
+* **Decoded-logger streaming-CSV variant.** Optimization #1 brought
+  synchronous cost below decode itself, so the xlsx-vs-CSV refactor
+  isn't load-bearing yet. Revisit if a >1 kHz device shows up.
+* **`_apply_decoded` allocation reduction, console-cap, hide-aware
+  redraw.** All low-µs wins on their own; bundle them when there's a
+  motivating workload.
+* **Polling cadence-drift integration test against a fake transport.**
+  The new tests cover correctness; long-run drift measurement needs a
+  fake serial that fakes RX in response to TX. Worth doing if the perf
+  pass continues.

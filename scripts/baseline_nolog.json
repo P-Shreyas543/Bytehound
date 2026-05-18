@@ -1,0 +1,134 @@
+[
+  {
+    "rate_hz": 100,
+    "duration_s": 5.015,
+    "packets_planned": 500,
+    "packets_processed": 500,
+    "decoded_logger_enabled": false,
+    "raw_logger_enabled": false,
+    "rss_start_mb": null,
+    "rss_end_mb": null,
+    "gc_count_delta": [
+      -533,
+      1,
+      0
+    ],
+    "stages": [
+      {
+        "label": "parse",
+        "n": 500,
+        "total_s": 0.0529,
+        "throughput_per_s": 9450.4,
+        "mean_us": 103.68,
+        "p50_us": 88.88,
+        "p95_us": 232.12,
+        "p99_us": 232.12,
+        "max_us": 232.12
+      },
+      {
+        "label": "decode",
+        "n": 500,
+        "total_s": 0.0544,
+        "throughput_per_s": 9187.1,
+        "mean_us": 110.77,
+        "p50_us": 89.6,
+        "p95_us": 268.8,
+        "p99_us": 625.4,
+        "max_us": 625.4
+      },
+      {
+        "label": "logger",
+        "n": 0,
+        "total_s": 0.0
+      }
+    ]
+  },
+  {
+    "rate_hz": 500,
+    "duration_s": 5.006,
+    "packets_planned": 2500,
+    "packets_processed": 2500,
+    "decoded_logger_enabled": false,
+    "raw_logger_enabled": false,
+    "rss_start_mb": null,
+    "rss_end_mb": null,
+    "gc_count_delta": [
+      43,
+      0,
+      0
+    ],
+    "stages": [
+      {
+        "label": "parse",
+        "n": 2500,
+        "total_s": 0.2264,
+        "throughput_per_s": 11041.5,
+        "mean_us": 104.34,
+        "p50_us": 82.1,
+        "p95_us": 242.8,
+        "p99_us": 358.7,
+        "max_us": 358.7
+      },
+      {
+        "label": "decode",
+        "n": 2500,
+        "total_s": 0.2683,
+        "throughput_per_s": 9317.5,
+        "mean_us": 113.54,
+        "p50_us": 98.4,
+        "p95_us": 245.4,
+        "p99_us": 468.8,
+        "max_us": 569.6
+      },
+      {
+        "label": "logger",
+        "n": 0,
+        "total_s": 0.0
+      }
+    ]
+  },
+  {
+    "rate_hz": 1000,
+    "duration_s": 5.0,
+    "packets_planned": 5000,
+    "packets_processed": 5000,
+    "decoded_logger_enabled": false,
+    "raw_logger_enabled": false,
+    "rss_start_mb": null,
+    "rss_end_mb": null,
+    "gc_count_delta": [
+      42,
+      0,
+      0
+    ],
+    "stages": [
+      {
+        "label": "parse",
+        "n": 5000,
+        "total_s": 0.3504,
+        "throughput_per_s": 14269.1,
+        "mean_us": 67.36,
+        "p50_us": 48.95,
+        "p95_us": 168.65,
+        "p99_us": 183.1,
+        "max_us": 183.78
+      },
+      {
+        "label": "decode",
+        "n": 5000,
+        "total_s": 0.4518,
+        "throughput_per_s": 11067.8,
+        "mean_us": 91.13,
+        "p50_us": 71.0,
+        "p95_us": 200.7,
+        "p99_us": 331.8,
+        "max_us": 2227.3
+      },
+      {
+        "label": "logger",
+        "n": 0,
+        "total_s": 0.0
+      }
+    ]
+  }
+]

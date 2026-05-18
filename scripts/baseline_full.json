@@ -1,0 +1,152 @@
+[
+  {
+    "rate_hz": 100,
+    "duration_s": 5.008,
+    "packets_planned": 500,
+    "packets_processed": 500,
+    "decoded_logger_enabled": true,
+    "raw_logger_enabled": true,
+    "rss_start_mb": null,
+    "rss_end_mb": null,
+    "gc_count_delta": [
+      -463,
+      1,
+      0
+    ],
+    "stages": [
+      {
+        "label": "parse",
+        "n": 500,
+        "total_s": 0.0539,
+        "throughput_per_s": 9268.5,
+        "mean_us": 107.9,
+        "p50_us": 102.0,
+        "p95_us": 214.32,
+        "p99_us": 214.32,
+        "max_us": 214.32
+      },
+      {
+        "label": "decode",
+        "n": 500,
+        "total_s": 0.0636,
+        "throughput_per_s": 7864.9,
+        "mean_us": 123.71,
+        "p50_us": 106.8,
+        "p95_us": 276.2,
+        "p99_us": 421.9,
+        "max_us": 421.9
+      },
+      {
+        "label": "logger",
+        "n": 500,
+        "total_s": 0.2158,
+        "throughput_per_s": 2317.4,
+        "mean_us": 411.57,
+        "p50_us": 347.7,
+        "p95_us": 1101.6,
+        "p99_us": 1668.5,
+        "max_us": 1668.5
+      }
+    ]
+  },
+  {
+    "rate_hz": 500,
+    "duration_s": 5.011,
+    "packets_planned": 2500,
+    "packets_processed": 2500,
+    "decoded_logger_enabled": true,
+    "raw_logger_enabled": true,
+    "rss_start_mb": null,
+    "rss_end_mb": null,
+    "gc_count_delta": [
+      134,
+      0,
+      0
+    ],
+    "stages": [
+      {
+        "label": "parse",
+        "n": 2500,
+        "total_s": 0.2086,
+        "throughput_per_s": 11983.6,
+        "mean_us": 86.93,
+        "p50_us": 74.12,
+        "p95_us": 219.87,
+        "p99_us": 351.5,
+        "max_us": 351.5
+      },
+      {
+        "label": "decode",
+        "n": 2500,
+        "total_s": 0.2709,
+        "throughput_per_s": 9226.9,
+        "mean_us": 105.75,
+        "p50_us": 85.5,
+        "p95_us": 223.5,
+        "p99_us": 371.3,
+        "max_us": 401.6
+      },
+      {
+        "label": "logger",
+        "n": 2500,
+        "total_s": 0.9566,
+        "throughput_per_s": 2613.4,
+        "mean_us": 373.8,
+        "p50_us": 330.5,
+        "p95_us": 979.4,
+        "p99_us": 1365.9,
+        "max_us": 1392.8
+      }
+    ]
+  },
+  {
+    "rate_hz": 1000,
+    "duration_s": 5.002,
+    "packets_planned": 5000,
+    "packets_processed": 5000,
+    "decoded_logger_enabled": true,
+    "raw_logger_enabled": true,
+    "rss_start_mb": null,
+    "rss_end_mb": null,
+    "gc_count_delta": [
+      142,
+      0,
+      0
+    ],
+    "stages": [
+      {
+        "label": "parse",
+        "n": 5000,
+        "total_s": 0.2999,
+        "throughput_per_s": 16672.7,
+        "mean_us": 58.01,
+        "p50_us": 41.03,
+        "p95_us": 131.9,
+        "p99_us": 240.32,
+        "max_us": 262.28
+      },
+      {
+        "label": "decode",
+        "n": 5000,
+        "total_s": 0.4364,
+        "throughput_per_s": 11457.3,
+        "mean_us": 85.47,
+        "p50_us": 72.6,
+        "p95_us": 166.1,
+        "p99_us": 317.0,
+        "max_us": 444.5
+      },
+      {
+        "label": "logger",
+        "n": 5000,
+        "total_s": 1.6472,
+        "throughput_per_s": 3035.5,
+        "mean_us": 320.27,
+        "p50_us": 320.2,
+        "p95_us": 814.3,
+        "p99_us": 1196.0,
+        "max_us": 1619.4
+      }
+    ]
+  }
+]
