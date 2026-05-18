@@ -3863,16 +3863,19 @@ class MainWindow(QMainWindow):
             self._console.appendPlainText(f"[decode warning] {w.message}")
 
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        # Skip the plot-history append work when the Live Plot dock is hidden.
-        # _redraw_plot already short-circuits on a hidden dock, so the appends
-        # were the only remaining per-packet cost the plot was contributing.
-        # The deque cap is bounded (_plot_history_maxlen), so re-opening after
-        # a hidden period fills back in from re-open time — matching the
-        # "if I hid it I don't care about the gap" UX. Both the visibility
-        # check and the elapsed computation skip together so the datetime.now
-        # call is also avoided when hidden.
+        # Skip per-signal work whose target dock is hidden. Each visibility
+        # check is a single Qt property read; doing them ONCE up here lets
+        # the inner loop branch directly on cached bools.
         plot_dock = getattr(self, "_plot_dock", None)
         plot_visible = plot_dock is None or plot_dock.isVisible()
+        bf_dock = getattr(self, "_bitfields_dock", None)
+        en_dock = getattr(self, "_enums_dock", None)
+        bf_visible = bf_dock is None or bf_dock.isVisible()
+        en_visible = en_dock is None or en_dock.isVisible()
+        # When both detail docks are hidden, _update_detail_tabs is pure
+        # waste: it allocates QTableWidgetItems that no one will see.
+        # Configs with many bitfields paid this every packet.
+        detail_tabs_visible = bf_visible or en_visible
         elapsed = (
             (datetime.now() - self._session_started).total_seconds()
             if plot_visible
@@ -3910,7 +3913,8 @@ class MainWindow(QMainWindow):
                 status=self._status_text(signal),
                 updated=timestamp,
             )
-            self._update_detail_tabs(signal)
+            if detail_tabs_visible:
+                self._update_detail_tabs(signal, bf_visible=bf_visible, en_visible=en_visible)
             # O(1) editor-row lookup via the index built in
             # _populate_editor_table. setdefault on a missing config keeps
             # this branch a no-op when the editor table isn't initialised.
@@ -3936,14 +3940,28 @@ class MainWindow(QMainWindow):
             return f"{signal.status}: {', '.join(active) if active else 'None'}"
         return signal.status
 
-    def _update_detail_tabs(self, signal: DecodedSignal) -> None:
-        group = self._signal_group_map.get((signal.frame_id, signal.signal_name), "")
-        if signal.bit_values:
+    def _update_detail_tabs(
+        self,
+        signal: DecodedSignal,
+        *,
+        bf_visible: bool = True,
+        en_visible: bool = True,
+    ) -> None:
+        """Refresh the Bitfields / Enums dock rows for *signal*.
+
+        Each branch is gated on the caller-supplied visibility flag so a
+        hidden dock pays no QTableWidgetItem allocations. The caller
+        (``_apply_decoded``) reads the flags once per packet and forwards
+        them; that keeps the visibility check off the inner loop's hot
+        per-signal path even when the call IS made.
+        """
+        if bf_visible and signal.bit_values:
+            group = self._signal_group_map.get((signal.frame_id, signal.signal_name), "")
             bf_selected = (
                 self._bitfield_group_combo.selected_groups()
                 if hasattr(self, "_bitfield_group_combo") else set()
             )
-            bf_visible = self._row_visible_for_group(bf_selected, group)
+            bf_row_visible = self._row_visible_for_group(bf_selected, group)
             for bit_name, active in signal.bit_values.items():
                 key = (f"0x{signal.frame_id:04X}", signal.signal_name, bit_name)
                 self._upsert_detail_row(
@@ -3954,13 +3972,14 @@ class MainWindow(QMainWindow):
                 )
                 row = self._bitfield_row_index.get("\x1f".join(key))
                 if row is not None:
-                    self._bitfield_table.setRowHidden(row, not bf_visible)
-        if signal.enum_label:
+                    self._bitfield_table.setRowHidden(row, not bf_row_visible)
+        if en_visible and signal.enum_label:
+            group = self._signal_group_map.get((signal.frame_id, signal.signal_name), "")
             en_selected = (
                 self._enum_group_combo.selected_groups()
                 if hasattr(self, "_enum_group_combo") else set()
             )
-            en_visible = self._row_visible_for_group(en_selected, group)
+            en_row_visible = self._row_visible_for_group(en_selected, group)
             key = (f"0x{signal.frame_id:04X}", signal.signal_name)
             self._upsert_detail_row(
                 self._enum_table,
@@ -3975,7 +3994,7 @@ class MainWindow(QMainWindow):
             )
             row = self._enum_row_index.get("\x1f".join(key))
             if row is not None:
-                self._enum_table.setRowHidden(row, not en_visible)
+                self._enum_table.setRowHidden(row, not en_row_visible)
 
     def _upsert_detail_row(
         self,
