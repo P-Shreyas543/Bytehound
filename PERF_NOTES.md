@@ -131,12 +131,40 @@ Logger is no longer the hot stage — it's roughly tied with parse, which
 means future wins must come from decode itself or from the Qt/plot half
 of the pipeline (out of scope for this harness).
 
+## Round 2 — plot redraw skip-when-unchanged. ✅ LANDED.
+
+`_redraw_plot` previously rebuilt numpy arrays via `np.fromiter` and called
+`setData` on every curve on every 60 Hz tick, even when no new sample had
+arrived for that signal since the last redraw. With many curves and a
+sparse mix of fast + slow signals, that's the dominant cost of the redraw.
+
+Each curve now caches a `(len, last_x)` signature on the curve object
+itself. On the next redraw, if the signature is unchanged we skip both
+`np.fromiter` allocations AND the `setData` call. The bounded-deque ring
+buffer makes a pure-length check unreliable (length pins at maxlen=1500
+once saturated even as new samples push old ones off), so we combine
+length with the rightmost timestamp — which increases monotonically with
+every appended sample.
+
+`oldest_x` (used for the live X-range anchor) is now computed from
+`buf[0][0]` directly instead of by reading `x_values[0]` after
+`np.fromiter`; this means the anchor still updates correctly when the
+data is skipped, with no array allocation.
+
+Cannot benchmark via the headless harness (plot is Qt-only). Logic
+verification: the skip is conservative — output is identical to the
+old code in every case where the cached signature mismatches, and where
+it matches there's by construction no new sample to render. Theme
+changes touch the pen via `setPen` (a separate path) and don't require
+a `setData`, so the skip is safe across theme switches too.
+
 ## Still slow / next-up
 
-* **Plot redraw under many curves** — needs a Qt-integrated measurement
-  pass before any change. Likely wins: short-circuit when the curve's
-  deque hasn't grown since the last redraw, and cache the numpy arrays
-  rather than `np.fromiter`'ing on every tick.
+* **Plot redraw: deque → numpy array.** The `np.fromiter` allocations
+  still fire when a curve does grow. A ring-buffer numpy array per
+  signal (pre-allocated, write-pointer wrap-around, sliced view passed
+  to `setData`) would eliminate the per-tick allocation entirely. Bigger
+  refactor; do once the skip guard is no longer enough.
 * **Decode tail latency (p99 ~550 µs at 500 Hz)** — driven by per-signal
   `DecodedSignal` allocation and the calc-group list-comp. Worth a
   cProfile pass on `decode_frame` against a 5+ signal frame.
@@ -144,10 +172,9 @@ of the pipeline (out of scope for this harness).
   Analysis Suite is fronted, skip pushing samples into invisible panels.
   Cheap to wire (the dock already exposes `.isVisible()`); benefit scales
   with how often the user keeps the plot hidden.
-* **Console QTextEdit cost** — the raw console batches per-flush, but
-  appendPlainText on a 100k+ block document is still slow. Consider a
-  hard cap on retained lines (e.g. 5k) with truncation, OR clearing on
-  every "Start Logging" press.
+* **Console retention is already capped** at 3000 lines for the raw
+  console and 5000 for the activity log via `setMaximumBlockCount`. No
+  action needed there.
 
 ## Polling test coverage (this pass)
 

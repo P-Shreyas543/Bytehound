@@ -4278,37 +4278,51 @@ class MainWindow(QMainWindow):
 
             for local_idx, key in enumerate(panel.assigned_keys):
                 buf = self._plot_history.get(key)
-                if buf is None:
-                    x_values = np.array([], dtype=float)
-                    y_values = np.array([], dtype=float)
-                else:
-                    xs, ys = buf
-                    # np.fromiter does a single pass over each deque — no
-                    # zip-unpack pass, no tuple churn.
-                    if xs:
-                        x_values = np.fromiter(xs, dtype=float, count=len(xs))
-                        y_values = np.fromiter(ys, dtype=float, count=len(ys))
-                        first_x = float(x_values[0])
-                        if oldest_x is None or first_x < oldest_x:
-                            oldest_x = first_x
-                    else:
-                        x_values = np.array([], dtype=float)
-                        y_values = np.array([], dtype=float)
+                xs_len = len(buf[0]) if buf is not None else 0
+                # Compute oldest_x from the cheap deque[0] read — no need to
+                # build the numpy array just for the live X-range anchor.
+                if buf is not None and xs_len:
+                    first_x = buf[0][0]
+                    if oldest_x is None or first_x < oldest_x:
+                        oldest_x = first_x
 
                 color = palette[(color_offset + local_idx) % len(palette)]
                 label = f"0x{key[0]:04X} {key[1]}"
 
-                if key not in panel.curves:
-                    panel.curves[key] = pi.plot(name=label, pen=pg.mkPen(color, width=1.8))
+                curve = panel.curves.get(key)
+                if curve is None:
+                    curve = pi.plot(name=label, pen=pg.mkPen(color, width=1.8))
+                    panel.curves[key] = curve
                     # Cache the colour on the curve itself so we can skip the
                     # setPen + mkPen allocation on every subsequent redraw —
                     # the colour only changes when the assignment shifts.
-                    panel.curves[key].__bh_color = color  # type: ignore[attr-defined]
-                elif getattr(panel.curves[key], "__bh_color", None) != color:
-                    panel.curves[key].setPen(pg.mkPen(color, width=1.8))
-                    panel.curves[key].__bh_color = color  # type: ignore[attr-defined]
+                    curve.__bh_color = color  # type: ignore[attr-defined]
+                elif getattr(curve, "__bh_color", None) != color:
+                    curve.setPen(pg.mkPen(color, width=1.8))
+                    curve.__bh_color = color  # type: ignore[attr-defined]
 
-                panel.curves[key].setData(
+                # Skip the np.fromiter + setData call when this curve's deque
+                # hasn't changed since the last redraw. The ring buffer is
+                # bounded (maxlen=1500) so len alone goes stale once it's
+                # full — combine length with the right-most timestamp, which
+                # increases monotonically with every appended sample. At 60 Hz
+                # over many curves this dominates the redraw cost when only a
+                # few signals are actively producing data.
+                last_x = buf[0][-1] if (buf is not None and xs_len) else None
+                signature = (xs_len, last_x)
+                if getattr(curve, "__bh_last_sig", None) == signature:
+                    continue
+                curve.__bh_last_sig = signature  # type: ignore[attr-defined]
+
+                if buf is None or xs_len == 0:
+                    x_values = np.array([], dtype=float)
+                    y_values = np.array([], dtype=float)
+                else:
+                    xs, ys = buf
+                    x_values = np.fromiter(xs, dtype=float, count=xs_len)
+                    y_values = np.fromiter(ys, dtype=float, count=xs_len)
+
+                curve.setData(
                     x_values, y_values,
                     autoDownsample=True,
                     clipToView=True,
