@@ -1704,6 +1704,17 @@ class MainWindow(QMainWindow):
         # Repaint the pyqtgraph canvas — it is not a QWidget child so it does
         # not pick up the QPalette change automatically.
         self._apply_plot_theme(theme)
+        # Stylesheets that reference `palette(...)` are resolved once when
+        # setStyleSheet is called and the cached colour stays put after a
+        # theme swap. Force a re-polish on the auxiliary readouts so the
+        # Hz/session-clock text re-resolves against the new palette.
+        for lbl_name in ("_session_clock_label", "_rate_label"):
+            lbl = getattr(self, lbl_name, None)
+            if lbl is None:
+                continue
+            lbl.style().unpolish(lbl)
+            lbl.style().polish(lbl)
+            lbl.update()
         # Forward theme change to the Analysis Suite if it's open — it's a
         # separate top-level window so QSS doesn't cascade into it.
         analysis = getattr(self, "_analysis_window", None)
