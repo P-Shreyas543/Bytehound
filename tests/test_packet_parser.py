@@ -172,3 +172,93 @@ def test_modbus_accepts_valid_byte_count():
     assert packets[0].ok
     assert packets[0].frame_id == 0x01
     assert packets[0].payload == bytes([0x12, 0x34])
+
+
+# ─── Hardening: oversized length field cannot stall the parser ──────────────
+
+
+def test_framed_parser_skips_impossible_length():
+    """A spurious header followed by a payload_len > _MAX_BUFFER_BYTES must
+    not wedge the parser.
+
+    Before the fix, a stream of garbage that happened to contain ``AA 55``
+    plus a length field decoding to e.g. 0xFFFFFFFF made _try_parse_one
+    return ``(None, 0)`` ("wait for more bytes") forever. Recovery only
+    happened once _trim_if_overflow rotated past the false header, which
+    requires ~1 MB of subsequent traffic — at low data rates that's a
+    multi-minute outage. The fix drops the spurious header byte the moment
+    we see an impossible length, so the next real frame parses on time.
+    """
+    # length_size=4 so a single field can encode 0xFFFFFFFF (>> 1 MB cap).
+    proto = dummy_protocol_config(header=b"\xAA\x55", length_size=4)
+    parser = FramedParser(proto)
+    # Header + frame_id (2 bytes per dummy config) + length=0xFFFFFFFF + tail.
+    parser.feed(b"\xAA\x55\x00\x10\xFF\xFF\xFF\xFF" + b"\x00" * 20)
+    parser.extract_all()
+    # Parser must have made progress past the spurious header. Without the
+    # fix the full 28 bytes would still be buffered waiting for ~4 GB more.
+    assert parser.buffered_bytes < 4
+
+
+def test_framed_parser_recovers_real_frame_after_impossible_length(config):
+    """After the spurious-header byte is dropped, the next valid frame parses."""
+    # Use the canonical 1-byte-length config; spike the length to a value
+    # that still exceeds the buffer cap by feeding a header where the
+    # length byte alone is fine (max 255), so this scenario only triggers
+    # on the 4-byte-length protocol. Reuse the dummy config for that.
+    proto = dummy_protocol_config(header=b"\xAA\x55", length_size=4)
+    parser = FramedParser(proto)
+    parser.feed(b"\xAA\x55\x00\x10\xFF\xFF\xFF\xFF")
+    parser.extract_all()  # consumes the spurious header byte
+    # Build a real frame for this 4-byte-length protocol:
+    #   header AA 55 | frame_id 00 10 | length 00 00 00 04 | payload 0F A0 0B B8 | CRC
+    from app.protocol import crc as crc_mod
+    body = b"\xAA\x55\x00\x10\x00\x00\x00\x04\x0F\xA0\x0B\xB8"
+    real_crc = crc_mod.compute("crc16_modbus", body)
+    parser.feed(body + real_crc.to_bytes(2, "little"))
+    packets = parser.extract_all()
+    assert any(p.ok and p.frame_id == 0x0010 for p in packets), \
+        "Real frame must parse after the parser resyncs past the bogus length"
+
+
+# ─── Hardening: CRC-mismatch resync consumes the whole frame ────────────────
+
+
+def test_framed_crc_mismatch_emits_one_error_per_frame(config):
+    """N back-to-back CRC-failed frames must yield exactly N error packets.
+
+    Before the fix, a CRC mismatch consumed only 1 byte to "resync". That
+    let the parser re-latch on overlapping bytes and (especially for
+    Modbus, but also for framed when the noise contained multiple AA 55
+    sequences) emit many error packets per real corrupted frame, flooding
+    the Qt event loop. The fix consumes the full frame, so one bad frame
+    produces exactly one error event.
+    """
+    # Canonical layout with a deliberately wrong CRC. Same 10-byte length as
+    # the real frame, so consuming total_size on failure cleanly aligns the
+    # next frame.
+    bad = hex_to_bytes("AA55 0010 04 0FA00BB8 0000")
+    parser = create_parser(config.protocol)
+    parser.feed(bad * 5)
+    packets = parser.extract_all()
+    error_packets = [p for p in packets if not p.ok]
+    assert len(error_packets) == 5, (
+        f"Expected exactly 5 CRC errors for 5 bad frames, got {len(error_packets)}"
+    )
+    assert all("CRC" in (p.error or "") for p in error_packets)
+
+
+def test_modbus_crc_mismatch_emits_one_error_per_frame():
+    """Same one-error-per-frame guarantee for ModbusRtuParser."""
+    parser = ModbusRtuParser(dummy_protocol_config(parser_type="modbus_rtu"))
+    # Build a valid FC3 response, then corrupt only the CRC byte.
+    real = _modbus_frame(0x01, 0x03, bytes([0x02, 0x12, 0x34]))
+    # real has correct CRC at [-2:]; XOR the last byte to break it.
+    bad = real[:-1] + bytes([real[-1] ^ 0xFF])
+    parser.feed(bad * 5)
+    packets = parser.extract_all()
+    error_packets = [p for p in packets if not p.ok]
+    assert len(error_packets) == 5, (
+        f"Expected exactly 5 CRC errors for 5 bad frames, got {len(error_packets)}"
+    )
+    assert all("CRC" in (p.error or "") for p in error_packets)

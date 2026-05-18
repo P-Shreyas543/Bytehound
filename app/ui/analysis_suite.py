@@ -3487,6 +3487,12 @@ class AnalysisSuiteWindow(QMainWindow):
         except Exception:
             pass
         for t in self._loader_threads:
+            try:
+                t.log_loaded.disconnect()
+                t.error.disconnect()
+                t.finished.disconnect()
+            except Exception:
+                pass
             t.quit()
             t.wait(500)
         self._loader_threads.clear()

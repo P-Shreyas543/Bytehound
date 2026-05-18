@@ -116,6 +116,11 @@ class FramedParser(ParserProtocol):
         payload_len = int.from_bytes(length_bytes, length_endian)
 
         total_size = fixed_size + payload_len
+        # If total_size is larger than we could ever buffer, this frame is
+        # impossible. Consume the header byte to resync and prevent deadlock.
+        if total_size > _MAX_BUFFER_BYTES:
+            return None, 1
+
         if len(self._buf) < total_size:
             return None, 0
 
@@ -151,7 +156,7 @@ class FramedParser(ParserProtocol):
                         ok=False,
                         error=f"CRC mismatch on frame 0x{frame_id:X}: got 0x{received_crc:X}, expected 0x{expected:X}"
                     ),
-                    1,
+                    total_size,
                 )
 
         if pc.footer and footer_bytes != pc.footer:
@@ -161,7 +166,7 @@ class FramedParser(ParserProtocol):
                     ok=False,
                     error=f"Footer mismatch on frame 0x{frame_id:X}",
                 ),
-                1,
+                total_size,
             )
 
         return (
@@ -246,7 +251,7 @@ class ModbusRtuParser(ParserProtocol):
                     ok=False,
                     error=f"Modbus CRC mismatch: got 0x{received_crc:04X}, expected 0x{expected_crc:04X}"
                 ),
-                1
+                expected_len
             )
 
         return (
