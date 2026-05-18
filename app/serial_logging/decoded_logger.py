@@ -4,11 +4,12 @@ Output workbook
 ---------------
 * ``Metadata`` – key/value rows describing the session (app, port, baud,
   config path, file names, start time, etc.).
-* ``Data`` – one wide row per **complete poll cycle**. The row begins with
-  one ``<0xNNNN>.elapsed_ms`` column per cycle frame (hex frame id as
-  the prefix), followed by signal columns named by *variable* only — no
-  frame prefix. Frames contribute their signals in the order they appear
-  in ``FrameConfig.frames``.
+* ``Data`` – one wide row per **complete poll cycle**. Columns are grouped
+  per frame in ``FrameConfig.frames`` order. Each frame block starts with
+  ``<FrameName>.elapsed_ms`` and ``<FrameName>.frame_id`` (the latter
+  carries the ``0xNNNN`` literal so the frame is identifiable even after
+  a column rename), followed by that frame's signal columns prefixed
+  with ``<FrameName>.``. The next frame's block follows, and so on.
 
   Bitfield signals expand into one ``0``/``1`` column per defined bit
   (``<signal>.<bit_name>``) — no raw integer column.
@@ -54,10 +55,11 @@ _LOG = logging.getLogger("bytehound.serial_logging.decoded")
 
 ErrorCallback = Callable[[str], None]
 
-# Internal slot key for the per-frame buffer entry. Stored alongside the
-# real column names so we can look up each frame's elapsed_ms position
-# without re-formatting the prefix each time.
+# Internal slot keys for the per-frame buffer entry. Stored alongside the
+# real column names so we can look up each frame's housekeeping column
+# positions without re-formatting the prefix each time.
 _SLOT_ELAPSED = "__elapsed_ms__"
+_SLOT_FRAME_ID = "__frame_id__"
 
 
 def _format_number(value: float | int) -> float | int:
@@ -195,9 +197,11 @@ class DecodedLogger:
                 return
 
             slot = self._cycle_buffer.setdefault(decoded.frame_id, {})
-            # Each frame has its own elapsed_ms column keyed by frame id.
+            # Each frame has its own elapsed_ms and frame_id columns.
             if _SLOT_ELAPSED in block:
                 slot[block[_SLOT_ELAPSED]] = elapsed_ms
+            if _SLOT_FRAME_ID in block:
+                slot[block[_SLOT_FRAME_ID]] = f"0x{decoded.frame_id:04X}"
             for signal in [*decoded.signals, *decoded.calculations]:
                 key = (signal.frame_id, signal.signal_name)
 
@@ -280,10 +284,10 @@ class DecodedLogger:
             if spec.frame_id not in frames:
                 frames.append(spec.frame_id)
 
-        # Signal/bit/enum column headers are bare variable names (no frame
-        # prefix); each frame gets its own `<0xNNNN>.elapsed_ms` housekeeping
-        # column up front. Slots are keyed by column POSITION so duplicate
-        # header text from cross-frame name collisions still maps to
+        # Every column in a frame's block carries a `<FrameName>.` prefix.
+        # The block starts with elapsed_ms + frame_id housekeeping, then
+        # signal/bit/enum columns. Slots are keyed by column POSITION so
+        # duplicate header text from cross-frame collisions still maps to
         # independent cells.
         columns: List[str] = []
         column_by_key: Dict[Tuple[int, str], int] = {}
@@ -291,14 +295,22 @@ class DecodedLogger:
         enum_label_col_by_key: Dict[Tuple[int, str], int] = {}
         block_by_frame: Dict[int, Dict[str, int]] = {}
 
-        # Per-frame elapsed_ms at the front, in cycle order.
-        elapsed_pos_by_frame: Dict[int, int] = {}
         for frame_id in cycle_frame_ids:
-            elapsed_pos_by_frame[frame_id] = len(columns)
-            columns.append(f"0x{frame_id:04X}.elapsed_ms")
+            frame_name = (
+                self._config.frame_names.get(frame_id)
+                or (self._config.frames[frame_id].frame_name if frame_id in self._config.frames else "")
+                or f"0x{frame_id:04X}"
+            )
+            prefix = f"{frame_name}."
 
-        for frame_id in cycle_frame_ids:
-            block: Dict[str, int] = {_SLOT_ELAPSED: elapsed_pos_by_frame[frame_id]}
+            elapsed_pos = len(columns)
+            columns.append(f"{prefix}elapsed_ms")
+            frame_id_pos = len(columns)
+            columns.append(f"{prefix}frame_id")
+            block: Dict[str, int] = {
+                _SLOT_ELAPSED: elapsed_pos,
+                _SLOT_FRAME_ID: frame_id_pos,
+            }
 
             for spec in self._config.signals_by_frame.get(frame_id, []):
                 bit_specs = _bitfield_specs_for(self._config, spec)
@@ -307,12 +319,12 @@ class DecodedLogger:
                     bit_cols: Dict[str, int] = {}
                     for bit in bit_specs:
                         pos = len(columns)
-                        columns.append(f"{spec.signal_name}.{bit.bit_name}")
+                        columns.append(f"{prefix}{spec.signal_name}.{bit.bit_name}")
                         bit_cols[bit.bit_name] = pos
                     bit_columns_by_key[(frame_id, spec.signal_name)] = bit_cols
                     continue
 
-                sig_label = _signal_label(spec.signal_name, spec.unit)
+                sig_label = f"{prefix}{_signal_label(spec.signal_name, spec.unit)}"
                 pos = len(columns)
                 columns.append(sig_label)
                 column_by_key[(frame_id, spec.signal_name)] = pos
@@ -321,7 +333,7 @@ class DecodedLogger:
                 if _is_enum_signal(self._config, spec):
                     # Enum: add a sibling `.label` column next to the raw value.
                     label_pos = len(columns)
-                    columns.append(f"{spec.signal_name}.label")
+                    columns.append(f"{prefix}{spec.signal_name}.label")
                     enum_label_col_by_key[(frame_id, spec.signal_name)] = label_pos
 
             for calc in self._config.calc_groups:
@@ -331,7 +343,7 @@ class DecodedLogger:
                 elif frame_id not in frames_by_group.get(calc.group, []):
                     continue
                 signal_name = f"{calc.group} {calc.stat}"
-                calc_label = _signal_label(signal_name, calc.unit)
+                calc_label = f"{prefix}{_signal_label(signal_name, calc.unit)}"
                 pos = len(columns)
                 columns.append(calc_label)
                 column_by_key[(frame_id, signal_name)] = pos

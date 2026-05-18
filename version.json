@@ -6,7 +6,7 @@
     "homepage": "https://github.com/P-Shreyas543/Bytehound",
     "issue_url": "https://github.com/P-Shreyas543/Bytehound/issues",
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
-    "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.2.0/Bytehound_Setup_0.2.0.exe",
+    "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.2.1/Bytehound_Setup_0.2.1.exe",
     "release_notes": "Performance and stability pass: monotonic-clock worker timing (immune to system-clock jumps), throttled metrics emit on poll response, O(1) editor-table lookup, batched console output, and reduced per-packet UI work.",
     "sha256": "eb8df0879f0a00cf09cdb470c50e07b1c96341c290940a383aca6dc0e91dd2e3"
 }
