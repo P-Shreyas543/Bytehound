@@ -352,6 +352,50 @@ Harness flags added for future measurement work:
 
 Tests still 124 green.
 
+## Round 8 — struct.unpack_from + cached Struct for `_decode_raw`. ✅ LANDED.
+
+`_decode_raw` previously did `payload[spec.start_byte : spec.end_byte]`
+followed by `int.from_bytes(chunk, ...)` (for ints) or
+`struct.unpack(fmt, chunk)` (for floats). The per-signal bytes slice is
+a small allocation but fires for every int signal in every packet.
+
+Replaced with `struct.unpack_from(payload, offset)` reading directly
+from the original bytes, plus a module-level cache keyed by
+`(endianness, byte_length, data_type)` → compiled `struct.Struct`.
+First call for each unique signal shape compiles and caches; every
+subsequent call is a single dict lookup + `Struct.unpack_from` call.
+Odd byte lengths (3 / 5 / 6 / 7) have no native struct format code and
+fall back to the original `int.from_bytes` path; that "no struct"
+verdict is cached as `None` so the fallback path is also a single
+dict lookup.
+
+**Microbench (uint16, the canonical config's hot case):**
+
+| operation                                | ns/op  |
+|------------------------------------------|-------:|
+| cached `Struct.unpack_from`              |   210  |
+| `int.from_bytes(payload[start:end], ...)` |  374   |
+
+~1.9× speedup at the per-operation level for fixed-width ints.
+
+**Harness caveat.** Real-world headline gains depend on the config:
+
+* Canonical (uint8 + uint16 only): per-call overhead in the wrapper
+  (cache_key tuple alloc + dict.get) eats ~70 ns of the 160 ns saved
+  per signal. Net savings: ~100–200 µs/s at 1 kHz, well below the
+  harness's run-to-run variance (~10 µs/packet × ~10–20% variance
+  swamp this).
+* Configs with `float32` / `int32` / `int64` / `float64` signals see
+  larger speedups: `struct.unpack_from` is 2–3× faster than
+  `int.from_bytes` at those sizes, AND every float signal previously
+  paid the slice + struct.unpack format-parse — now both are
+  eliminated.
+
+Also reduces GC pressure: at 1 kHz with ~5 signals/packet that's
+5000 fewer bytes objects allocated/sec.
+
+Tests still 124 green.
+
 ## Cumulative round-by-round summary (1 kHz harness, end-to-end with loggers on)
 
 | Round | parse | decode | logger | total |
