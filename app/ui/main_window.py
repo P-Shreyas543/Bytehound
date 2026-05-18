@@ -857,6 +857,93 @@ class PlotPanel:
     index:         int = 0
 
 
+# Reused for empty-buffer reads so we don't allocate a fresh np.array on
+# every redraw when a curve has no samples yet.
+_EMPTY_F64 = np.array([], dtype=float)
+
+
+class _RingBuffer:
+    """Fixed-capacity ring buffer over two parallel float arrays.
+
+    Replaces the previous ``(deque, deque)`` pair that backed each entry of
+    ``_plot_history``. The deque version required ``np.fromiter`` over the
+    deque on every redraw — a Python-level loop whose cost grew with the
+    buffer length. The ring buffer stores samples in pre-allocated numpy
+    arrays and exposes ordered numpy slices via :meth:`arrays` so the
+    redraw path can hand them straight to ``setData`` with zero per-tick
+    allocation while the buffer is still filling, and a single
+    ``np.concatenate`` once it wraps.
+
+    Interface kept narrow on purpose — only the surface the live-plot
+    pipeline actually needs (append, clear, len, first/last x, arrays).
+    """
+
+    __slots__ = ("_xs", "_ys", "_capacity", "_write", "_count")
+
+    def __init__(self, capacity: int) -> None:
+        self._xs = np.empty(capacity, dtype=float)
+        self._ys = np.empty(capacity, dtype=float)
+        self._capacity = capacity
+        self._write = 0
+        self._count = 0
+
+    def __len__(self) -> int:
+        return self._count
+
+    def __bool__(self) -> bool:
+        return self._count > 0
+
+    def append(self, x: float, y: float) -> None:
+        w = self._write
+        self._xs[w] = x
+        self._ys[w] = y
+        w += 1
+        if w >= self._capacity:
+            w = 0
+        self._write = w
+        if self._count < self._capacity:
+            self._count += 1
+
+    def clear(self) -> None:
+        self._write = 0
+        self._count = 0
+
+    def first_x(self) -> Optional[float]:
+        """Oldest x sample, or ``None`` when empty."""
+        if self._count == 0:
+            return None
+        if self._count < self._capacity:
+            return float(self._xs[0])
+        return float(self._xs[self._write])  # next-write slot == oldest
+
+    def last_x(self) -> Optional[float]:
+        """Most recently appended x sample, or ``None`` when empty."""
+        if self._count == 0:
+            return None
+        idx = self._write - 1
+        if idx < 0:
+            idx = self._capacity - 1
+        return float(self._xs[idx])
+
+    def arrays(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Return (xs, ys) ordered oldest → newest.
+
+        Zero-copy slice when the buffer has not yet wrapped, single
+        ``np.concatenate`` once it has. Callers MUST NOT mutate the
+        returned arrays — slicing returns a view into the underlying
+        storage.
+        """
+        if self._count == 0:
+            return _EMPTY_F64, _EMPTY_F64
+        if self._count < self._capacity:
+            return self._xs[: self._count], self._ys[: self._count]
+        w = self._write
+        return (
+            np.concatenate((self._xs[w:], self._xs[:w])),
+            np.concatenate((self._ys[w:], self._ys[:w])),
+        )
+
+
 def _format_elapsed_time(seconds: float, spacing: Optional[float] = None) -> str:
     if not math.isfinite(seconds):
         return ""
@@ -934,16 +1021,16 @@ else:
 # ---------------------------------------------------------------------------
 
 class MainWindow(QMainWindow):
-    def _make_history_buffer(self) -> Tuple[Deque[float], Deque[float]]:
-        """Factory for the parallel-deque entries in ``self._plot_history``.
+    def _make_history_buffer(self) -> "_RingBuffer":
+        """Factory for the ring-buffer entries in ``self._plot_history``.
 
-        Two bounded deques: one for x (timestamps), one for y (values).
-        ``maxlen`` is read from ``self._plot_history_maxlen`` so it can be
-        changed at runtime; existing buffers keep their original cap until
-        a new signal is first plotted.
+        Fixed-capacity numpy-backed ring buffer keyed by signal. Capacity is
+        read from ``self._plot_history_maxlen`` so it can be changed at
+        runtime; existing buffers keep their original capacity until a new
+        signal is first plotted.
         """
         n = getattr(self, "_plot_history_maxlen", 6_000)
-        return (deque(maxlen=n), deque(maxlen=n))
+        return _RingBuffer(n)
 
 
     def __init__(self) -> None:
@@ -981,14 +1068,14 @@ class MainWindow(QMainWindow):
 
         # Timer removed; using PollingWorker QThread
 
-        # Live-plot history. Two parallel bounded deques per signal (one for
-        # x, one for y) instead of a single deque of (x, y) tuples: this lets
-        # _redraw_plot pass arrays straight to setData without the expensive
-        # zip(*values) unpack pass — a meaningful win at 60 Hz with 5+ curves
-        # and a long history.
+        # Live-plot history. One _RingBuffer per signal — pre-allocated
+        # numpy storage that exposes ordered slices for setData with zero
+        # per-tick fromiter loops. Was previously two bounded deques per
+        # signal; the deque version paid a Python-level loop on every
+        # redraw to convert to numpy.
         self._plot_history_maxlen: int = int(
             self._settings.value("plot/history_maxlen", 6_000))
-        self._plot_history: Dict[Tuple[int, str], Tuple[Deque[float], Deque[float]]] = (
+        self._plot_history: Dict[Tuple[int, str], _RingBuffer] = (
             defaultdict(self._make_history_buffer))
         # Multi-grid plot state
         self._plot_panels: List[PlotPanel] = []   # one entry per subplot cell
@@ -1915,11 +2002,12 @@ class MainWindow(QMainWindow):
         span = None
         for key in panel.assigned_keys:
             buf = self._plot_history.get(key)
-            if not buf:
+            if not buf or len(buf) <= 1:
                 continue
-            xs = buf[0]
-            if len(xs) > 1:
-                key_span = float(xs[-1]) - float(xs[0])
+            last = buf.last_x()
+            first = buf.first_x()
+            if last is not None and first is not None:
+                key_span = last - first
                 if span is None or key_span > span:
                     span = key_span
         if span is not None and span > 30.0:
@@ -1935,8 +2023,7 @@ class MainWindow(QMainWindow):
         for key in panel.assigned_keys:
             buf = self._plot_history.get(key)
             if buf:
-                buf[0].clear()
-                buf[1].clear()
+                buf.clear()
         if hasattr(self, "_hover_cache"):
             self._hover_cache.clear()
         self._redraw_plot()
@@ -3833,9 +3920,7 @@ class MainWindow(QMainWindow):
                 val_item.setText(signal.display_value or value_text)
 
             if plot_visible and signal.scaled_value is not None and signal.status == "ok":
-                xs, ys = self._plot_history[key]
-                xs.append(elapsed)
-                ys.append(signal.scaled_value)
+                self._plot_history[key].append(elapsed, signal.scaled_value)
             # Per-signal decode failures (e.g. "Payload too short") are visible
             # via the row's status pill; we deliberately do NOT increment the
             # status-bar Errors counter for them — that field is reserved for
@@ -4143,28 +4228,33 @@ class MainWindow(QMainWindow):
             buf = self._plot_history.get(key)
             if not buf:
                 continue
-            xs_deque, ys_deque = buf
-            if not xs_deque:
-                continue
             try:
                 if not hasattr(self, "_hover_cache"):
                     self._hover_cache = {}
-                cached_lists = self._hover_cache.get(key)
-                if cached_lists is None:
-                    cached_lists = (list(xs_deque), list(ys_deque))
-                    self._hover_cache[key] = cached_lists
-                xs_list, ys_list = cached_lists
+                cached_arrays = self._hover_cache.get(key)
+                if cached_arrays is None:
+                    xs_view, ys_view = buf.arrays()
+                    # Copy so a later ring-buffer wrap can't mutate storage
+                    # behind the cached arrays — the pre-wrap arrays() path
+                    # returns views into the underlying numpy storage. The
+                    # cache is cleared every redraw flush, so copies don't
+                    # accumulate.
+                    cached_arrays = (xs_view.copy(), ys_view.copy())
+                    self._hover_cache[key] = cached_arrays
+                xs_arr, ys_arr = cached_arrays
+                if len(xs_arr) == 0:
+                    continue
 
-                import bisect
-                idx = bisect.bisect_left(xs_list, t)
-                if idx >= len(xs_list):
-                    idx = len(xs_list) - 1
-                elif idx > 0 and (t - xs_list[idx - 1]) < (xs_list[idx] - t):
+                # np.searchsorted is C-level and works directly on the
+                # ring-buffer slice. No bisect / list() conversion needed.
+                idx = int(np.searchsorted(xs_arr, t))
+                if idx >= len(xs_arr):
+                    idx = len(xs_arr) - 1
+                elif idx > 0 and (t - xs_arr[idx - 1]) < (xs_arr[idx] - t):
                     idx -= 1
-                # The cached list stays fast for indexing
                 unit = self._signal_unit_map.get(key, "")
                 suffix = f" {unit}" if unit else ""
-                parts.append(f"{key[1]}={ys_list[idx]:.2f}{suffix}")
+                parts.append(f"{key[1]}={float(ys_arr[idx]):.2f}{suffix}")
             except Exception:
                 continue
         if hasattr(self, "_hover_label"):
@@ -4292,12 +4382,13 @@ class MainWindow(QMainWindow):
 
             for local_idx, key in enumerate(panel.assigned_keys):
                 buf = self._plot_history.get(key)
-                xs_len = len(buf[0]) if buf is not None else 0
-                # Compute oldest_x from the cheap deque[0] read — no need to
-                # build the numpy array just for the live X-range anchor.
+                xs_len = len(buf) if buf is not None else 0
+                # Compute oldest_x from the cheap ring-buffer accessor — no
+                # need to build the numpy array just for the live X-range
+                # anchor.
                 if buf is not None and xs_len:
-                    first_x = buf[0][0]
-                    if oldest_x is None or first_x < oldest_x:
+                    first_x = buf.first_x()
+                    if first_x is not None and (oldest_x is None or first_x < oldest_x):
                         oldest_x = first_x
 
                 color = palette[(color_offset + local_idx) % len(palette)]
@@ -4315,26 +4406,25 @@ class MainWindow(QMainWindow):
                     curve.setPen(pg.mkPen(color, width=1.8))
                     curve.__bh_color = color  # type: ignore[attr-defined]
 
-                # Skip the np.fromiter + setData call when this curve's deque
-                # hasn't changed since the last redraw. The ring buffer is
-                # bounded (maxlen=1500) so len alone goes stale once it's
-                # full — combine length with the right-most timestamp, which
-                # increases monotonically with every appended sample. At 60 Hz
-                # over many curves this dominates the redraw cost when only a
-                # few signals are actively producing data.
-                last_x = buf[0][-1] if (buf is not None and xs_len) else None
+                # Skip setData when this curve's ring buffer hasn't changed
+                # since the last redraw. The buffer is bounded, so len alone
+                # goes stale once it saturates — combine length with the
+                # right-most timestamp, which increases monotonically with
+                # every appended sample. At 60 Hz over many curves this
+                # dominates the redraw cost when only a few signals are
+                # actively producing data.
+                last_x = buf.last_x() if (buf is not None and xs_len) else None
                 signature = (xs_len, last_x)
                 if getattr(curve, "__bh_last_sig", None) == signature:
                     continue
                 curve.__bh_last_sig = signature  # type: ignore[attr-defined]
 
                 if buf is None or xs_len == 0:
-                    x_values = np.array([], dtype=float)
-                    y_values = np.array([], dtype=float)
+                    x_values, y_values = _EMPTY_F64, _EMPTY_F64
                 else:
-                    xs, ys = buf
-                    x_values = np.fromiter(xs, dtype=float, count=xs_len)
-                    y_values = np.fromiter(ys, dtype=float, count=xs_len)
+                    # Ring buffer returns ordered numpy slices/copies; no
+                    # Python-level fromiter loop required.
+                    x_values, y_values = buf.arrays()
 
                 curve.setData(
                     x_values, y_values,

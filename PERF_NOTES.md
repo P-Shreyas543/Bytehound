@@ -208,6 +208,50 @@ End-to-end at 1 kHz (parse + decode + logger, all on) is now
 ~218 µs/packet — down from ~463 µs at the start of this perf pass.
 That's **>2x more headroom** on the synchronous RX path overall.
 
+## Round 4 — ring-buffer numpy arrays for plot history. ✅ LANDED.
+
+`_plot_history` was previously a `defaultdict` of `(deque, deque)` pairs;
+on every redraw the deques were converted to numpy via `np.fromiter`,
+a Python-level loop whose cost grows linearly with buffer length.
+Replaced with a `_RingBuffer` class (see `app/ui/main_window.py`) that
+stores samples in pre-allocated numpy arrays:
+
+* `append(x, y)`: writes to `_xs[write] / _ys[write]`, advances + wraps.
+* `arrays()`: zero-copy slice while filling; single `np.concatenate`
+  once wrapped.
+
+Updated four consumer sites: `_apply_decoded` (single `.append(x, y)`
+call), `_clear_panel_history` (uses `first_x()` / `last_x()`),
+`_redraw_plot` (drops the `np.fromiter` loop), and the hover handler
+(switched from `bisect.bisect_left` on `list(deque)` to
+`np.searchsorted` on the ring's arrays, with a defensive `.copy()` in
+the hover cache so a later wrap can't mutate cached storage).
+
+**Microbenchmark** (`scripts/bench_ring_buffer.py`, capacity=6000):
+
+| operation                          | deque pair | _RingBuffer | speedup |
+|------------------------------------|-----------:|------------:|--------:|
+| retrieve full buffer (→ numpy)     |    305 µs  |     5.9 µs  |   ~52x  |
+| retrieve half-full buffer          |    142 µs  |     0.55 µs |  ~258x  |
+| mixed: 60 redraw ticks on full buf |  30.9 ms   |     3.4 ms  |    ~9x  |
+
+Append got slower (~3.6× per sample: 150 ns → 550 ns), but signal-rate
+× redraw-rate arithmetic shows the retrieve win swamps it. At 1 kHz
+RX with 5 active curves and 60 Hz redraws on a full ring:
+
+* deque path: 0.15 µs × 1000 (appends) + 305 µs × 60 × 5 (retrieves)
+  ≈ 91.7 ms/s
+* ring path:  0.55 µs × 1000 (appends) +   6 µs × 60 × 5 (retrieves)
+  ≈  2.4 ms/s
+
+~38× less plot-pipeline CPU per second of telemetry. The
+skip-when-unchanged guard from round 2 still applies on top, so the
+realized savings are larger for sparse curves that don't grow every
+tick.
+
+Tests: +8 `_RingBuffer` unit tests (wrap order, view vs copy, clear,
+edge cases). Suite 116 → 124 green.
+
 ## Cumulative round-by-round summary (1 kHz harness, end-to-end with loggers on)
 
 | Round | parse | decode | logger | total |
