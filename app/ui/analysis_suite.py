@@ -20,9 +20,14 @@ from typing import Optional
 # additional channel so terminal users and crash reports see context.
 _log = logging.getLogger("bytehound.analysis_suite")
 
+import datetime as _dt
+
 import numpy as np
 import pyqtgraph as pg
 from openpyxl import load_workbook
+
+# ── Global pyqtgraph config (must run before any PlotWidget is created) ──
+pg.setConfigOptions(antialias=True, useOpenGL=True)
 from PySide6.QtCore import QThread, Qt, Signal, QPointF, QObject, QSettings, QTimer
 from PySide6.QtGui import (
     QAction, QColor, QFont, QKeySequence, QPainter, QPen,
@@ -62,12 +67,16 @@ _DARK_PLOT_COLORS = {
     'plot_fg': '#CBD5E1',
     'crosshair': '#94A3B8',
     'cursor_label_bg': '#0F172A',
+    'border': '#334155',
+    'legend_bg': (0, 0, 0, 100),
 }
 _LIGHT_PLOT_COLORS = {
     'plot_bg': '#FFFFFF',
     'plot_fg': '#475569',
     'crosshair': '#64748B',
     'cursor_label_bg': '#F3F4F6',
+    'border': '#E5E7EB',
+    'legend_bg': (255, 255, 255, 160),
 }
 
 class _AppTheme(QObject):
@@ -81,7 +90,7 @@ class _AppTheme(QObject):
         return palette.get(key, '#FFFFFF')
 
     def plot_grid_alpha(self) -> float:
-        return 0.3
+        return 0.15
 
 THEME = _AppTheme()
 
@@ -106,6 +115,61 @@ SESSION_VERSION = 4
 MIN_PLOT_HEIGHT = 80
 MAX_PLOT_HEIGHT = 600
 DEFAULT_PLOT_HEIGHT = 200
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Custom time-axis — renders ticks as mm:ss or H:MM:SS
+# ─────────────────────────────────────────────────────────────────────
+class TimeAxisItem(pg.AxisItem):
+    """X-axis that renders elapsed seconds as mm:ss or H:MM:SS.
+
+    Set *epoch_offset* to a POSIX timestamp to switch to wall-clock
+    mode (HH:MM:SS).  Reset to ``None`` to return to elapsed mode.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._epoch_offset: float | None = None
+
+    @property
+    def epoch_offset(self) -> float | None:
+        return self._epoch_offset
+
+    @epoch_offset.setter
+    def epoch_offset(self, value: float | None):
+        self._epoch_offset = value
+        # Force label refresh
+        self.picture = None
+        self.update()
+
+    # -- formatting helpers --------------------------------------------------
+    @staticmethod
+    def _fmt_elapsed(seconds: float) -> str:
+        """Format elapsed seconds as mm:ss or H:MM:SS."""
+        neg = seconds < 0
+        s = abs(seconds)
+        h = int(s // 3600)
+        m = int((s % 3600) // 60)
+        sec = int(s % 60)
+        if h > 0:
+            txt = f"{h}:{m:02d}:{sec:02d}"
+        else:
+            txt = f"{m}:{sec:02d}"
+        return f"-{txt}" if neg else txt
+
+    @staticmethod
+    def _fmt_wallclock(posix: float) -> str:
+        """Format a POSIX timestamp as HH:MM:SS."""
+        try:
+            dt = _dt.datetime.fromtimestamp(posix)
+            return dt.strftime("%H:%M:%S")
+        except (OSError, OverflowError, ValueError):
+            return "?"
+
+    def tickStrings(self, values, scale, spacing):
+        if self._epoch_offset is not None:
+            return [self._fmt_wallclock(v + self._epoch_offset) for v in values]
+        return [self._fmt_elapsed(v) for v in values]
 
 # ─────────────────────────────────────────────────────────────────────
 # Multi-param subplot visual encoding
@@ -167,6 +231,7 @@ class LogEntry:
     color: str = "#1f77b4"
     visible: bool = True
     time_offset: float = 0.0
+    start_timestamp: Optional[float] = None  # POSIX epoch of first sample
     elapsed: np.ndarray = field(default_factory=lambda: np.zeros(0))
     columns: dict[str, np.ndarray] = field(default_factory=dict)
 
@@ -192,6 +257,22 @@ def _test_name_from_path(path: str) -> str:
     base = re.sub(r'^DynoLog_', '', base)
     base = re.sub(r'_\d{8}_\d{6}$', '', base)
     return base or os.path.basename(path)
+
+
+def _parse_unit(param_name: str) -> str | None:
+    """Extract unit string from a column header.
+
+    Recognises both parenthesised and bracketed conventions:
+        ``Voltage [V]``  → ``V``
+        ``Speed (Kmph)`` → ``Kmph``
+        ``Temperature``  → None
+    """
+    m = re.search(r'[\[\(]([^\]\)]+)[\]\)]\s*$', param_name)
+    return m.group(1).strip() if m else None
+
+
+# File-path → LogEntry cache so re-toggling a parameter does not re-read disk.
+_CSV_CACHE: dict[str, LogEntry] = {}
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -249,6 +330,7 @@ class LogLoaderThread(QThread):
 
         import datetime as dt
         first_ts = None
+        first_ts_posix: float | None = None  # for start_timestamp
         col_data: dict[str, list[tuple[float, float]]] = {name: [] for name in data_columns}
 
         for row in rows:
@@ -271,6 +353,10 @@ class LogLoaderThread(QThread):
                         ts = None
                 if first_ts is None and ts is not None:
                     first_ts = ts
+                    try:
+                        first_ts_posix = first_ts.timestamp()
+                    except Exception:
+                        pass
                 elapsed_s = (ts - first_ts).total_seconds() if (ts and first_ts) else 0.0
 
             for label in data_columns:
@@ -306,9 +392,11 @@ class LogLoaderThread(QThread):
             path=self._path,
             name=_test_name_from_path(self._path),
             color=self._color,
+            start_timestamp=first_ts_posix,
             elapsed=elapsed_arr,
             columns=columns,
         )
+        _CSV_CACHE[self._path] = entry
         self.log_loaded.emit(self._log_id, self._path, entry)
 
     def _load_xlsx(self):
@@ -401,6 +489,7 @@ class LogLoaderThread(QThread):
             elapsed=elapsed,
             columns=columns,
         )
+        _CSV_CACHE[self._path] = entry
         self.log_loaded.emit(self._log_id, self._path, entry)
 
 
@@ -411,8 +500,15 @@ class LogLoaderThread(QThread):
 class CursorReadoutPanel(QGroupBox):
     """Displays interpolated values at vertical cursor positions.
 
-    Each parameter value is on its own line for readability.
+    Features:
+    - Monospace numbers, right-aligned for scan-ability.
+    - Colored swatch ● next to each log name.
+    - ΔX / ΔY readouts when two cursors are active.
     """
+
+    _MONO = QFont("Consolas", 9)
+    _MONO_BOLD = QFont("Consolas", 9, QFont.Bold)
+    _LABEL_FONT = QFont("PT Sans", 8, QFont.Bold)
 
     def __init__(self, parent=None):
         super().__init__("Cursor Readout", parent)
@@ -433,13 +529,41 @@ class CursorReadoutPanel(QGroupBox):
         outer.addWidget(self._scroll)
 
         self._delta_label = QLabel("")
-        self._delta_label.setFont(QFont("PT Sans", 9, QFont.Bold))
+        self._delta_label.setFont(self._MONO_BOLD)
         self._layout.addWidget(self._delta_label)
         self._info_label = QLabel("Add cursors with V / Shift+V / H keys.")
         self._info_label.setFont(QFont("PT Sans", 8))
         self._info_label.setWordWrap(True)
         self._layout.addWidget(self._info_label)
         self._layout.addStretch()
+
+    # -- helpers -------------------------------------------------------------
+    @staticmethod
+    def _fmt_val(v: float) -> str:
+        """Format a value with 3 significant figures."""
+        if not np.isfinite(v):
+            return "\u2014"
+        if v == 0:
+            return "0"
+        return f"{v:.4g}"
+
+    def _make_row(self, left: str, right: str, *,
+                  color: str = "", bold: bool = False) -> QWidget:
+        """Build a compact horizontal row: left-aligned label + right-aligned value."""
+        row = QWidget()
+        hl = QHBoxLayout(row)
+        hl.setContentsMargins(0, 0, 0, 0)
+        hl.setSpacing(4)
+        ll = QLabel(left)
+        ll.setFont(self._MONO_BOLD if bold else self._MONO)
+        if color:
+            ll.setStyleSheet(f"color: {color};")
+        rl = QLabel(right)
+        rl.setFont(self._MONO)
+        rl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        hl.addWidget(ll, 1)
+        hl.addWidget(rl)
+        return row
 
     def update_readout(self, cursors: list[dict],
                        logs: list['LogEntry'],
@@ -461,22 +585,31 @@ class CursorReadoutPanel(QGroupBox):
             return
 
         self._info_label.setText("")
-        if len(cursors) >= 2:
-            dt = abs(cursors[1]['time'] - cursors[0]['time'])
-            self._delta_label.setText(f"\u0394t = {dt:.3f} s")
-        else:
-            self._delta_label.setText(f"t = {cursors[0]['time']:.3f} s")
 
-        for cursor in cursors:
+        # ΔX header when two cursors active
+        if len(cursors) >= 2:
+            dt_val = abs(cursors[1]['time'] - cursors[0]['time'])
+            self._delta_label.setText(
+                f"\u0394X = {TimeAxisItem._fmt_elapsed(dt_val)}  ({dt_val:.3f} s)")
+        else:
+            t0 = cursors[0]['time']
+            self._delta_label.setText(
+                f"t = {TimeAxisItem._fmt_elapsed(t0)}  ({t0:.3f} s)")
+
+        # Per-cursor readout
+        # Collect values for ΔY computation (cursor_idx -> {(log_id,param): value})
+        cursor_vals: list[dict[tuple[str, str], float]] = []
+
+        for ci, cursor in enumerate(cursors):
             t = cursor['time']
             label_num = cursor.get('label', 0)
             scope = cursor.get('scope', 'all')
             plot_param = cursor.get('plot_param')
-            hdr_txt = f"C{label_num}  t = {t:.3f} s"
+            hdr_txt = f"C{label_num}  {TimeAxisItem._fmt_elapsed(t)}"
             if scope == 'plot' and plot_param:
                 hdr_txt += f"  [{plot_param}]"
             hdr = QLabel(hdr_txt)
-            hdr.setFont(QFont("PT Sans", 8, QFont.Bold))
+            hdr.setFont(self._LABEL_FONT)
             self._layout.insertWidget(self._layout.count() - 1, hdr)
 
             if scope == 'plot' and plot_param:
@@ -484,31 +617,48 @@ class CursorReadoutPanel(QGroupBox):
             else:
                 params_for_cursor = active_params
 
+            vals: dict[tuple[str, str], float] = {}
             for log in logs:
                 if not log.visible or len(log.elapsed) == 0:
                     continue
                 x = log.elapsed + log.time_offset
-                name_lbl = QLabel(f"  {log.name}:")
-                name_lbl.setFont(QFont("PT Sans", 8, QFont.Bold))
-                name_lbl.setStyleSheet(f"color: {log.color};")
-                self._layout.insertWidget(self._layout.count() - 1, name_lbl)
+                # Swatch + log name
+                row_w = self._make_row(f"\u25cf {log.name}", "",
+                                       color=log.color, bold=True)
+                self._layout.insertWidget(self._layout.count() - 1, row_w)
                 for param in params_for_cursor:
                     if param not in log.columns:
                         continue
                     idx = int(np.clip(np.searchsorted(x, t), 0, len(x) - 1))
                     v = log.columns[param][idx]
-                    short = param.split('(')[0].strip()
-                    unit = ""
-                    m = re.search(r'\(([^)]+)\)', param)
-                    if m:
-                        unit = m.group(1)
-                    if not np.isnan(v):
-                        val_txt = f"    {short}: {v:.2f} {unit}"
+                    short = re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', param).strip()
+                    unit = _parse_unit(param) or ""
+                    if np.isfinite(v):
+                        val_str = f"{self._fmt_val(v)} {unit}".strip()
+                        vals[(log.id, param)] = v
                     else:
-                        val_txt = f"    {short}: \u2014"
-                    lbl = QLabel(val_txt)
-                    lbl.setFont(QFont("PT Sans", 8))
-                    self._layout.insertWidget(self._layout.count() - 1, lbl)
+                        val_str = "\u2014"
+                    row_w = self._make_row(f"  {short}", val_str)
+                    self._layout.insertWidget(self._layout.count() - 1, row_w)
+            cursor_vals.append(vals)
+
+        # ΔY readout between two cursors
+        if len(cursor_vals) >= 2:
+            sep = QLabel("\u2500\u2500 \u0394Y \u2500\u2500")
+            sep.setFont(self._LABEL_FONT)
+            self._layout.insertWidget(self._layout.count() - 1, sep)
+            keys = set(cursor_vals[0].keys()) & set(cursor_vals[1].keys())
+            for key in sorted(keys, key=lambda k: k[1]):
+                v0 = cursor_vals[0][key]
+                v1 = cursor_vals[1][key]
+                delta = v1 - v0
+                _, param = key
+                short = re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', param).strip()
+                unit = _parse_unit(param) or ""
+                row_w = self._make_row(
+                    f"  {short}",
+                    f"\u0394 {self._fmt_val(delta)} {unit}".strip())
+                self._layout.insertWidget(self._layout.count() - 1, row_w)
 
         vbar.setValue(min(old_scroll, vbar.maximum()))
 
@@ -531,14 +681,14 @@ _XY_SYMBOLS = [
 # Statistics panel — visible-range descriptive stats per curve
 # ═══════════════════════════════════════════════════════════════════════
 class StatisticsPanel(QWidget):
-    """Per-curve descriptive statistics (min/max/mean/median/std) computed
-    over the currently visible x-range of each subplot.
+    """Per-curve descriptive statistics (min/max/mean/median/std/percentiles)
+    computed over the currently visible x-range of each subplot.
 
     Updates are debounced so panning/zooming doesn't trigger continuous
     recomputation on large logs.
     """
 
-    STATS_COLUMNS = ["Curve", "Min", "Max", "Mean", "Median", "Std", "n"]
+    STATS_COLUMNS = ["Curve", "Min", "P5", "Mean", "Median", "P95", "Max", "Std", "n"]
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -584,27 +734,23 @@ class StatisticsPanel(QWidget):
             return None
         return {
             "min":    float(np.min(yv)),
+            "p5":     float(np.percentile(yv, 5)),
             "max":    float(np.max(yv)),
             "mean":   float(np.mean(yv)),
             "median": float(np.median(yv)),
+            "p95":    float(np.percentile(yv, 95)),
             "std":    float(np.std(yv)),
             "n":      int(yv.size),
         }
 
     @staticmethod
     def _fmt(v: float) -> str:
-        """Compact numeric formatting — engineering scientific for very
-        large / very small magnitudes, fixed-point otherwise."""
+        """Format with 3 significant figures."""
         if not np.isfinite(v):
-            return "—"
-        a = abs(v)
-        if a == 0:
+            return "\u2014"
+        if v == 0:
             return "0"
-        if a >= 1e6 or a < 1e-3:
-            return f"{v:.3e}"
-        if a >= 100:
-            return f"{v:.1f}"
-        return f"{v:.3f}"
+        return f"{v:.3g}"
 
     def update_stats(self, rows: list[dict]):
         """``rows`` is a list of {curve, log_id, param, color, x, y, x_range}.
@@ -613,7 +759,7 @@ class StatisticsPanel(QWidget):
         if not rows:
             self._info.setText("No visible curves. Check parameters to populate.")
             return
-        self._info.setText(f"Stats over visible x-range  ·  {len(rows)} curve(s)")
+        self._info.setText(f"Stats over visible x-range  \u00b7  {len(rows)} curve(s)")
         self._table.setRowCount(len(rows))
         for r, info in enumerate(rows):
             stats = self.compute_stats(info["x"], info["y"], info.get("x_range"))
@@ -626,14 +772,14 @@ class StatisticsPanel(QWidget):
             self._table.setItem(r, 0, name_item)
 
             if stats is None:
-                placeholders = ["—", "—", "—", "—", "—", "0"]
+                placeholders = ["\u2014"] * (len(self.STATS_COLUMNS) - 2) + ["0"]
                 for c, txt in enumerate(placeholders, start=1):
                     cell = QTableWidgetItem(txt)
                     cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                     self._table.setItem(r, c, cell)
                 continue
 
-            for c, key in enumerate(["min", "max", "mean", "median", "std", "n"], start=1):
+            for c, key in enumerate(["min", "p5", "mean", "median", "p95", "max", "std", "n"], start=1):
                 if key == "n":
                     txt = str(stats[key])
                 else:
@@ -691,9 +837,21 @@ class XYPlotWindow(QDialog):
         ctrl.addWidget(self._size_spin)
         ctrl.addSpacing(12)
 
+        # ── Regression checkbox ──────────────────────────────────
+        self._regress_cb = QCheckBox("Regression")
+        self._regress_cb.setToolTip("Show linear regression line with R²")
+        ctrl.addWidget(self._regress_cb)
+        ctrl.addSpacing(8)
+
         btn_plot = QPushButton("Plot")
         btn_plot.clicked.connect(self._do_plot)
         ctrl.addWidget(btn_plot)
+
+        btn_swap = QPushButton("⇄ Swap")
+        btn_swap.setToolTip("Swap X and Y axis parameters")
+        btn_swap.clicked.connect(self._swap_axes)
+        ctrl.addWidget(btn_swap)
+
         btn_clear = QPushButton("Clear")
         btn_clear.clicked.connect(self._clear_plot)
         ctrl.addWidget(btn_clear)
@@ -817,9 +975,14 @@ class AnalysisSuiteWindow(QMainWindow):
         self._cursor_dots: dict[str, list] = {}   # cursor_id → [{'pw', 'item'}]
         self._v_cursor_counter: int = 0          # ever-increasing label counter
         self._xy_window = None                   # keep reference to non-modal XY window
-        self._plot_height = DEFAULT_PLOT_HEIGHT
+        self._plot_height = int(
+            self._qsettings.value("analysis/plot_height", DEFAULT_PLOT_HEIGHT))
         self._last_mouse_pw: Optional[pg.PlotWidget] = None
         self._last_mouse_pos: Optional[QPointF] = None
+        self._wall_clock_mode: bool = False       # X-axis: elapsed vs wall-clock
+        self._persisted_x_range = self._qsettings.value("analysis/x_range")
+        self._persisted_cursors = self._qsettings.value(
+            "analysis/cursor_positions", [])
 
         # Log sidebar UI elements
         self._log_entries_ui: dict[str, dict] = {}  # log_id → {checkbox, spin, container, ...}
@@ -922,8 +1085,13 @@ class AnalysisSuiteWindow(QMainWindow):
         height_row.addWidget(QLabel("Plot Height:"))
         self._height_slider = QSlider(Qt.Horizontal)
         self._height_slider.setRange(MIN_PLOT_HEIGHT, MAX_PLOT_HEIGHT)
-        self._height_slider.setValue(DEFAULT_PLOT_HEIGHT)
+        self._height_slider.setValue(self._plot_height)
         self._height_slider.valueChanged.connect(self._on_plot_height_changed)
+        self._height_slider.mouseDoubleClickEvent = lambda e: (
+            self._height_slider.setValue(DEFAULT_PLOT_HEIGHT))
+        self._height_slider.setToolTip(
+            f"Drag to resize subplots ({MIN_PLOT_HEIGHT}–{MAX_PLOT_HEIGHT}px).\n"
+            f"Double-click to reset to {DEFAULT_PLOT_HEIGHT}px.")
         height_row.addWidget(self._height_slider)
         self._height_label = QLabel(f"{DEFAULT_PLOT_HEIGHT}px")
         self._height_label.setMinimumWidth(40)
@@ -1102,6 +1270,15 @@ class AnalysisSuiteWindow(QMainWindow):
         view_menu.addSeparator()
         view_menu.addAction("Smoothing Window…",
                             self._prompt_smoothing_window)
+        view_menu.addSeparator()
+        self._wallclock_action = QAction("Wall Clock Time (X-Axis)", self)
+        self._wallclock_action.setCheckable(True)
+        self._wallclock_action.setToolTip(
+            "Display X-axis as wall-clock time (HH:MM:SS) using the log's "
+            "start timestamp.  Uncheck to revert to elapsed mm:ss."
+        )
+        self._wallclock_action.toggled.connect(self._on_wallclock_toggled)
+        view_menu.addAction(self._wallclock_action)
 
         # ── Layout ───────────────────────────────────────────────────
         # The grouping operations are first-class: keyboard shortcuts make
@@ -1163,7 +1340,7 @@ class AnalysisSuiteWindow(QMainWindow):
         bg = THEME.c('plot_bg')
         fg = THEME.c('plot_fg')
         alpha = THEME.plot_grid_alpha()
-        border_color = "#E5E7EB" if THEME.theme() == "light" else "#334155"
+        border_color = THEME.c('border')
 
         for pw in self._plot_widgets:
             pw.setBackground(bg)
@@ -1174,6 +1351,18 @@ class AnalysisSuiteWindow(QMainWindow):
                 ax.setPen(pen)
                 ax.setTextPen(pen)
             pw.showGrid(x=True, y=True, alpha=alpha)
+            # Update legend styling
+            try:
+                legend = pw.getPlotItem().legend
+                if legend is not None:
+                    legend.setLabelTextColor(fg)
+                    legend_bg = THEME.c('legend_bg')
+                    if isinstance(legend_bg, tuple):
+                        legend.setBrush(pg.mkBrush(*legend_bg))
+                    else:
+                        legend.setBrush(pg.mkBrush(legend_bg))
+            except Exception:
+                pass
 
     # ──────────────────────────────────────────────────────────────────
     # Log loading
@@ -1285,7 +1474,12 @@ class AnalysisSuiteWindow(QMainWindow):
         self._remove_log(last_id)
 
     def _remove_log(self, log_id: str):
-        self._logs.pop(log_id, None)
+        entry = self._logs.pop(log_id, None)
+        # Free cached parsed data so memory is released
+        if entry is not None:
+            _CSV_CACHE.pop(entry.path, None)
+            entry.elapsed = np.zeros(0)
+            entry.columns.clear()
         ui = self._log_entries_ui.pop(log_id, None)
         if ui:
             ui['container'].deleteLater()
@@ -2175,7 +2369,8 @@ class AnalysisSuiteWindow(QMainWindow):
 
         first_pw = None
         for gi, group in enumerate(groups):
-            pw = pg.PlotWidget()
+            pw = pg.PlotWidget(
+                axisItems={'bottom': TimeAxisItem(orientation='bottom')})
             pw.setBackground(bg)
             pw.showGrid(x=True, y=True, alpha=alpha)
             normalized = self._is_subplot_normalized(group)
@@ -2186,9 +2381,17 @@ class AnalysisSuiteWindow(QMainWindow):
             #               live in the legend; rotated long titles
             #               otherwise overshoot the plot's vertical extent.
             if len(group) == 1:
-                axis_title = group[0]
+                p = group[0]
+                unit = _parse_unit(p)
+                short = re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', p).strip()
+                axis_title = f"{short} ({unit})" if unit else p
             else:
+                # Multi-param: show unit only if all params share one
+                units = [_parse_unit(p) for p in group]
+                shared_unit = units[0] if units and all(u == units[0] for u in units) and units[0] else None
                 axis_title = self._axis_title_for_group(group)
+                if shared_unit:
+                    axis_title = f"{axis_title} ({shared_unit})"
             if normalized:
                 axis_title = f"{axis_title}  (normalized 0–1)"
             if smoothed:
@@ -2201,7 +2404,7 @@ class AnalysisSuiteWindow(QMainWindow):
             # Visible card-style border around each subplot so the boundary
             # is unambiguous, and internal padding so axis tick labels never
             # collide with the border or the next subplot.
-            border_color = "#E5E7EB" if THEME.theme() == "light" else "#334155"
+            border_color = THEME.c('border')
             pw.setStyleSheet(
                 f"border: 1px solid {border_color}; border-radius: 4px;"
             )
@@ -2225,6 +2428,9 @@ class AnalysisSuiteWindow(QMainWindow):
             pw.setClipToView(True)
             pw.setDownsampling(auto=True, mode='peak')
 
+            # Y-axis padding so curves don't touch the frame
+            pw.getPlotItem().vb.setDefaultPadding(0.05)
+
             for axis_name in ('left', 'bottom'):
                 ax = pw.getAxis(axis_name)
                 pen = pg.mkPen(fg)
@@ -2232,9 +2438,15 @@ class AnalysisSuiteWindow(QMainWindow):
                 ax.setTextPen(pen)
 
             if gi == len(groups) - 1:
-                pw.setLabel('bottom', 'Elapsed Time (s)')
+                pw.setLabel('bottom', 'Elapsed time (mm:ss)')
             else:
                 pw.setLabel('bottom', '')
+
+            # Apply wall-clock mode if active
+            time_axis = pw.getAxis('bottom')
+            if isinstance(time_axis, TimeAxisItem) and self._wall_clock_mode:
+                epoch = self._best_epoch_offset()
+                time_axis.epoch_offset = epoch
 
             if first_pw is not None:
                 pw.setXLink(first_pw)
@@ -2242,7 +2454,13 @@ class AnalysisSuiteWindow(QMainWindow):
                 first_pw = pw
 
             legend = pw.addLegend(offset=(10, 10))
-            legend.setLabelTextSize('8pt')
+            legend.setLabelTextSize('7pt')
+            legend_bg = THEME.c('legend_bg')
+            if isinstance(legend_bg, tuple):
+                legend.setBrush(pg.mkBrush(*legend_bg))
+            else:
+                legend.setBrush(pg.mkBrush(legend_bg))
+            legend.setLabelTextColor(fg)
 
             multi = len(group) > 1
             log_list = list(self._logs.values())
@@ -2260,7 +2478,7 @@ class AnalysisSuiteWindow(QMainWindow):
                     # Multi-param: color = parameter, style = log.
                     # Single-param: color = log, style = solid.
                     curve_color, style = _curve_visuals(group, param, li, entry.color)
-                    pen = pg.mkPen(color=curve_color, width=2, style=style)
+                    pen = pg.mkPen(color=curve_color, width=1.6, style=style)
                     legend_name = f"{entry.name} · {param}" if multi else entry.name
                     curve = pw.plot(x[mask], y[mask], pen=pen, name=legend_name)
                     curve.setVisible(entry.visible)
@@ -2293,12 +2511,144 @@ class AnalysisSuiteWindow(QMainWindow):
             self._plot_groups.append(list(group))
             self._plot_layout.addWidget(pw)
 
+            # Per-subplot context menu
+            pw.setContextMenuPolicy(Qt.CustomContextMenu)
+            pw.customContextMenuRequested.connect(
+                lambda pos, _pw=pw: self._on_subplot_context_menu(pos, _pw))
+
         self._plot_layout.addStretch()
         self._restore_v_cursors()
         self._update_cursor_dots()
         # Trigger an initial stats compute on the freshly rendered subplots.
         self._stats_timer.start()
         # (wait cursor released by _rebuild_plots wrapper)
+
+    # ------------------------------------------------------------------
+    # Wall-clock / elapsed time toggle
+    # ------------------------------------------------------------------
+    def _best_epoch_offset(self) -> float | None:
+        """Return the earliest start_timestamp among all loaded logs."""
+        ts = [e.start_timestamp for e in self._logs.values()
+              if e.start_timestamp is not None]
+        return min(ts) if ts else None
+
+    def _on_wallclock_toggled(self, on: bool):
+        self._wall_clock_mode = bool(on)
+        epoch = self._best_epoch_offset() if on else None
+        for pw in self._plot_widgets:
+            time_axis = pw.getAxis('bottom')
+            if isinstance(time_axis, TimeAxisItem):
+                time_axis.epoch_offset = epoch
+        if self._plot_widgets:
+            last_pw = self._plot_widgets[-1]
+            if on and epoch is not None:
+                last_pw.setLabel('bottom', 'Wall clock (HH:MM:SS)')
+            else:
+                last_pw.setLabel('bottom', 'Elapsed time (mm:ss)')
+
+    # ------------------------------------------------------------------
+    # Per-subplot context menu
+    # ------------------------------------------------------------------
+    def _on_subplot_context_menu(self, pos, pw: pg.PlotWidget):
+        menu = QMenu(self)
+        act_csv = menu.addAction("Export visible range as CSV\u2026")
+        act_csv.triggered.connect(lambda: self._export_subplot_csv(pw))
+        act_img = menu.addAction("Copy plot as image")
+        act_img.triggered.connect(lambda: self._copy_subplot_image(pw))
+        menu.exec(pw.mapToGlobal(pos))
+
+    def _export_subplot_csv(self, pw: pg.PlotWidget):
+        """Export this subplot's visible curves to CSV."""
+        pi = self._plot_widgets.index(pw) if pw in self._plot_widgets else -1
+        if pi < 0:
+            return
+        group = self._plot_groups[pi]
+        try:
+            x_range = tuple(pw.getPlotItem().vb.viewRange()[0])
+        except Exception:
+            x_range = None
+        rows = []
+        for param in group:
+            for entry in self._logs.values():
+                if param not in entry.columns or not entry.visible:
+                    continue
+                rows.append({
+                    "curve": f"{entry.name} \u00b7 {param}",
+                    "log_name": entry.name,
+                    "param": param,
+                    "x": entry.elapsed + entry.time_offset,
+                    "y": entry.columns[param],
+                    "x_range": x_range,
+                })
+        if not rows:
+            self._popup_information("Nothing to Export",
+                                    "No visible curves on this subplot.")
+            return
+        # Build CSV (same wide-format logic as _export_visible_csv)
+        masters = []
+        for r in rows:
+            x = r["x"]
+            if x_range is not None:
+                mask = (x >= x_range[0]) & (x <= x_range[1])
+                masters.append(x[mask])
+            else:
+                masters.append(x)
+        merged = np.unique(np.concatenate(masters))
+        if merged.size == 0:
+            self._popup_information("Nothing to Export", "No samples in range.")
+            return
+        headers = ["time"]
+        data_cols = []
+        for r in rows:
+            x, y = r["x"], r["y"]
+            order = np.argsort(x)
+            interp = np.interp(merged, x[order], y[order], left=np.nan, right=np.nan)
+            headers.append(r["curve"])
+            data_cols.append(interp)
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Subplot Data", get_analysis_dir(), "CSV Files (*.csv)")
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        try:
+            with open(path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(headers)
+                for i in range(merged.size):
+                    row = [f"{merged[i]:.6f}"]
+                    for col in data_cols:
+                        v = col[i]
+                        row.append("" if not np.isfinite(v) else f"{v:.6g}")
+                    w.writerow(row)
+            self._status.showMessage(
+                f"Exported subplot to {os.path.basename(path)}", 5000)
+        except Exception as exc:
+            self._popup_warning("Export Failed", str(exc))
+
+    def _copy_subplot_image(self, pw: pg.PlotWidget):
+        """Render the subplot to a QImage and copy to clipboard."""
+        try:
+            from pyqtgraph.exporters import ImageExporter
+            exporter = ImageExporter(pw.getPlotItem())
+            img = exporter.export(toBytes=True)
+            from PySide6.QtGui import QPixmap
+            QApplication.clipboard().setPixmap(QPixmap.fromImage(img))
+            self._status.showMessage("Plot image copied to clipboard.", 4000)
+        except Exception as exc:
+            self._popup_warning("Copy Failed", str(exc))
+
+    # ------------------------------------------------------------------
+    # Checked parameters helper
+    # ------------------------------------------------------------------
+    def _get_checked_params(self) -> list[str]:
+        """Return a flat list of all currently checked parameter names."""
+        params = []
+        for grp in self._iter_tree_groups():
+            for p, checked in grp:
+                if checked:
+                    params.append(p)
+        return params
 
     # ------------------------------------------------------------------
     # Statistics + view-range hooks
@@ -2640,7 +2990,8 @@ class AnalysisSuiteWindow(QMainWindow):
                     # param subplots.
                     dot_color, _style = _curve_visuals(group, param, li, entry.color)
                     dot_item = pg.ScatterPlotItem(
-                        [t], [yv], size=8, pen=pg.mkPen('w', width=1),
+                        [t], [yv], size=8,
+                        pen=pg.mkPen(THEME.c('plot_bg'), width=1),
                         brush=pg.mkBrush(dot_color))
                     pw.addItem(dot_item, ignoreBounds=True)
                     dots.append({'pw': pw, 'item': dot_item})
@@ -3121,9 +3472,20 @@ class AnalysisSuiteWindow(QMainWindow):
             self._popup_warning("Export Error", str(exc))
 
     # ──────────────────────────────────────────────────────────────────
-    # Cleanup
+    # Cleanup & persistence
     # ──────────────────────────────────────────────────────────────────
     def closeEvent(self, event):
+        # Persist UI state
+        try:
+            qs = self._qsettings
+            qs.setValue("analysis/plot_height", self._plot_height)
+            if self._plot_widgets:
+                x_range = self._plot_widgets[0].getPlotItem().vb.viewRange()[0]
+                qs.setValue("analysis/x_range", x_range)
+            cursor_times = [c['time'] for c in self._v_cursors]
+            qs.setValue("analysis/cursor_positions", cursor_times)
+        except Exception:
+            pass
         for t in self._loader_threads:
             t.quit()
             t.wait(500)

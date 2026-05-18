@@ -3,12 +3,13 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import sys
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, Tuple
 
@@ -71,6 +72,12 @@ try:
     import pyqtgraph as pg
 except ImportError:  # pragma: no cover - exercised only when optional dep missing
     pg = None
+
+import numpy as np
+
+if pg is not None:
+    # Global, intentional: keeps rendering consistent across Live Plot and Analysis Suite.
+    pg.setConfigOptions(antialias=True)
 
 try:
     import qdarktheme
@@ -161,10 +168,15 @@ def _apply_windows_dark_titlebar(widget, dark: bool) -> None:
         pass
 
 
-_PLOT_PALETTE = (
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd",
-    "#8c564b", "#e377c2", "#7f7f7f", "#17becf", "#bcbd22",
-    "#ff9896", "#98df8a", "#c5b0d5", "#393b79",
+_PLOT_PALETTE_DARK = (
+    "#60A5FA", "#F87171", "#34D399", "#FBBF24", "#C4B5FD",
+    "#38BDF8", "#F472B6", "#A3E635", "#FDBA74", "#FCA5A5",
+    "#22D3EE", "#E879F9",
+)
+_PLOT_PALETTE_LIGHT = (
+    "#1D4ED8", "#DC2626", "#059669", "#D97706", "#7C3AED",
+    "#0284C7", "#BE185D", "#16A34A", "#9333EA", "#C2410C",
+    "#0F766E", "#7C2D12",
 )
 
 # Width of the live plot's X view before any data has arrived AND the minimum
@@ -840,6 +852,81 @@ class PlotPanel:
     assigned_keys: List[Tuple[int, str]] = field(default_factory=list)
     curves:        Dict[Tuple[int, str], object] = field(default_factory=dict)
     auto_fit_y:    bool = True
+    legend:        Optional[object] = None
+    time_axis:     Optional[object] = None
+    index:         int = 0
+
+
+def _format_elapsed_time(seconds: float, spacing: Optional[float] = None) -> str:
+    if not math.isfinite(seconds):
+        return ""
+    spacing = spacing if spacing is not None else 1.0
+    abs_s = abs(seconds)
+    if abs_s >= 60 or spacing >= 10:
+        sign = "-" if seconds < 0 else ""
+        minutes, secs = divmod(abs_s, 60)
+        return f"{sign}{int(minutes)}:{int(secs):02d}"
+    if spacing < 1:
+        return f"{seconds:.1f}s"
+    return f"{seconds:.0f}s"
+
+
+if pg is not None:
+    class _TimeAxisItem(pg.AxisItem):
+        def __init__(
+            self,
+            *,
+            mode: str = "elapsed",
+            session_start: Optional[datetime] = None,
+            min_label_px: int = 80,
+        ) -> None:
+            super().__init__(orientation="bottom")
+            self._mode = mode
+            self._session_start = session_start or datetime.now()
+            self._min_label_px = min_label_px
+
+        def set_mode(self, mode: str) -> None:
+            self._mode = mode
+
+        def set_session_start(self, session_start: datetime) -> None:
+            self._session_start = session_start
+
+        @staticmethod
+        def _nice_step(span: float, target_ticks: int) -> float:
+            raw = span / max(target_ticks, 1)
+            if raw <= 0 or not math.isfinite(raw):
+                return 1.0
+            power = 10 ** math.floor(math.log10(raw))
+            for mult in (1, 2, 5, 10):
+                step = mult * power
+                if step >= raw:
+                    return step
+            return 10 * power
+
+        def tickValues(self, minVal: float, maxVal: float, size: float):  # noqa: N802
+            if not (math.isfinite(minVal) and math.isfinite(maxVal)):
+                return []
+            span = maxVal - minVal
+            if span <= 0 or size <= 0:
+                return []
+            target = max(2, int(size / self._min_label_px))
+            step = self._nice_step(span, target)
+            first = math.floor(minVal / step) * step
+            count = int(math.ceil((maxVal - first) / step)) + 1
+            ticks = [first + i * step for i in range(count)]
+            return [(step, ticks)]
+
+        def tickStrings(self, values, scale, spacing):  # noqa: N802
+            if self._mode == "clock":
+                base = self._session_start
+                return [
+                    (base + timedelta(seconds=float(v))).strftime("%H:%M:%S")
+                    if math.isfinite(float(v)) else ""
+                    for v in values
+                ]
+            return [_format_elapsed_time(float(v), spacing) for v in values]
+else:
+    _TimeAxisItem = object  # type: ignore[misc,assignment]
 
 
 # ---------------------------------------------------------------------------
@@ -911,6 +998,15 @@ class MainWindow(QMainWindow):
         self._plot_keys: List[Tuple[int, str]] = []  # union of all panel keys
         self._curve_icon_cache: Dict[Tuple[int, str, str], QIcon] = {}
         self._session_started = datetime.now()
+        self._plot_time_mode = str(self._settings.value("plot/time_mode", "elapsed"))
+        if self._plot_time_mode not in ("elapsed", "clock"):
+            self._plot_time_mode = "elapsed"
+        self._plot_palette = _PLOT_PALETTE_DARK
+        self._plot_redraw_interval_s = 1.0 / 30.0
+        self._plot_last_redraw = 0.0
+        self._signal_unit_map: Dict[Tuple[int, str], str] = {}
+        self._plot_y_range_pending: Dict[int, Tuple[float, float]] = {}
+        self._plot_y_range_timers: Dict[int, QTimer] = {}
         # Logging session start — distinct from _session_started, which tracks
         # the app/config session. Set when Start Logging is pressed and used as
         # the t=0 reference for decoded log elapsed_ms and the metadata sheet.
@@ -1643,10 +1739,13 @@ class MainWindow(QMainWindow):
         if theme == "dark":
             bg = "#1E293B"          # match QDockWidget body — same Slate
             axis = "#CBD5E1"        # high-contrast on dark
+            self._plot_palette = _PLOT_PALETTE_DARK
         else:
             bg = "#FFFFFF"
             axis = "#475569"        # readable on light
+            self._plot_palette = _PLOT_PALETTE_LIGHT
         self._gl_widget.setBackground(pg.mkColor(bg))
+        crosshair_pen = self._plot_crosshair_pen(theme)
         # Repaint the axis lines + tick labels on every existing PlotItem.
         for panel in getattr(self, "_plot_panels", []):
             plot = getattr(panel, "plot_item", None)
@@ -1657,6 +1756,178 @@ class MainWindow(QMainWindow):
                 if ax is not None:
                     ax.setPen(pg.mkPen(axis))
                     ax.setTextPen(pg.mkPen(axis))
+            if getattr(panel, "legend", None) is not None:
+                self._style_plot_legend(panel.legend, theme)
+            if getattr(panel, "vline", None) is not None:
+                panel.vline.setPen(crosshair_pen)
+            if getattr(panel, "hline", None) is not None:
+                panel.hline.setPen(crosshair_pen)
+        if hasattr(self, "_panel_strip_layout") and self._panel_strip_layout is not None:
+            self._rebuild_panel_strips()
+        self._redraw_plot()
+
+    def _current_plot_palette(self) -> Tuple[str, ...]:
+        return getattr(self, "_plot_palette", _PLOT_PALETTE_DARK)
+
+    def _plot_time_axis_label(self) -> str:
+        if self._plot_time_mode == "clock":
+            return "Time (HH:MM:SS)"
+        return "Time (s, since connect)"
+
+    def _format_plot_time(self, seconds: float) -> str:
+        if self._plot_time_mode == "clock":
+            base = self._session_started or datetime.now()
+            if not math.isfinite(seconds):
+                return ""
+            return (base + timedelta(seconds=seconds)).strftime("%H:%M:%S")
+        return _format_elapsed_time(seconds)
+
+    def _plot_crosshair_pen(self, theme: str):
+        if pg is None:
+            return QPen()
+        color = "#94A3B8" if theme == "dark" else "#64748B"
+        return pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine)
+
+    def _style_plot_legend(self, legend, theme: str) -> None:
+        if pg is None or legend is None:
+            return
+        if theme == "dark":
+            bg = QColor(15, 23, 42, 160)
+            border = "#475569"
+        else:
+            bg = QColor(255, 255, 255, 180)
+            border = "#CBD5E1"
+        legend.setBrush(pg.mkBrush(bg))
+        legend.setPen(pg.mkPen(border, width=1))
+
+    def _on_plot_time_mode_changed(self, idx: int) -> None:
+        mode = "elapsed" if idx == 0 else "clock"
+        self._apply_plot_time_mode(mode, persist=True)
+
+    def _apply_plot_time_mode(self, mode: str, *, persist: bool = True) -> None:
+        if mode not in ("elapsed", "clock"):
+            mode = "elapsed"
+        self._plot_time_mode = mode
+        if persist:
+            self._settings.setValue("plot/time_mode", mode)
+        label = self._plot_time_axis_label()
+        for panel in getattr(self, "_plot_panels", []):
+            axis = getattr(panel, "time_axis", None) or panel.plot_item.getAxis("bottom")
+            if hasattr(axis, "set_mode"):
+                axis.set_mode(mode)
+            if hasattr(axis, "set_session_start"):
+                axis.set_session_start(self._session_started)
+            panel.plot_item.setLabel("bottom", label)
+        self._redraw_plot()
+
+    def _on_plot_mode_clicked(self) -> None:
+        if not self._plot_live:
+            self._set_plot_live(True, source="button")
+            self._redraw_plot()
+
+    def _on_plot_y_range_changed(self, panel_idx: int, y_range) -> None:
+        if panel_idx >= len(self._plot_panels):
+            return
+        panel = self._plot_panels[panel_idx]
+        if panel.auto_fit_y:
+            return
+        if not y_range or len(y_range) != 2:
+            return
+        try:
+            y0, y1 = float(y_range[0]), float(y_range[1])
+        except (TypeError, ValueError):
+            return
+        self._plot_y_range_pending[panel_idx] = (y0, y1)
+        timer = self._plot_y_range_timers.get(panel_idx)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.timeout.connect(lambda i=panel_idx: self._persist_plot_y_range(i))
+            self._plot_y_range_timers[panel_idx] = timer
+        timer.start(500)
+
+    def _persist_plot_y_range(self, panel_idx: int) -> None:
+        if panel_idx >= len(self._plot_panels):
+            return
+        panel = self._plot_panels[panel_idx]
+        if panel.auto_fit_y:
+            return
+        pending = self._plot_y_range_pending.get(panel_idx)
+        if pending is None:
+            return
+        self._settings.setValue(f"plot/panel/{panel_idx}/y_range", [pending[0], pending[1]])
+
+    def _read_saved_y_range(self, panel_idx: int) -> Optional[Tuple[float, float]]:
+        raw = self._settings.value(f"plot/panel/{panel_idx}/y_range", None)
+        if isinstance(raw, (list, tuple)) and len(raw) == 2:
+            try:
+                return float(raw[0]), float(raw[1])
+            except (TypeError, ValueError):
+                return None
+        return None
+
+    def _clear_saved_y_ranges(self) -> None:
+        self._settings.beginGroup("plot")
+        try:
+            for key in list(self._settings.allKeys()):
+                if key.startswith("panel/") and key.endswith("/y_range"):
+                    self._settings.remove(key)
+        finally:
+            self._settings.endGroup()
+        for timer in self._plot_y_range_timers.values():
+            timer.stop()
+        self._plot_y_range_timers.clear()
+        self._plot_y_range_pending.clear()
+
+    def _reset_panel_view(self, panel_idx: int, *, resume_live: bool = False) -> None:
+        if pg is None or panel_idx >= len(self._plot_panels):
+            return
+        panel = self._plot_panels[panel_idx]
+        vb = panel.plot_item.getViewBox()
+        if vb is None:
+            return
+        if panel.auto_fit_y:
+            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        else:
+            y_range = self._read_saved_y_range(panel_idx)
+            if y_range is not None:
+                vb.setYRange(y_range[0], y_range[1], padding=0)
+        if resume_live and not self._plot_live:
+            self._set_plot_live(True, source="reset")
+        self._redraw_plot()
+
+    def _clear_panel_history(self, panel_idx: int) -> None:
+        if panel_idx >= len(self._plot_panels):
+            return
+        panel = self._plot_panels[panel_idx]
+        span = None
+        for key in panel.assigned_keys:
+            buf = self._plot_history.get(key)
+            if not buf:
+                continue
+            xs = buf[0]
+            if len(xs) > 1:
+                key_span = float(xs[-1]) - float(xs[0])
+                if span is None or key_span > span:
+                    span = key_span
+        if span is not None and span > 30.0:
+            choice = QMessageBox.question(
+                self,
+                "Clear Plot History",
+                "This will clear more than 30 seconds of data for this panel. Continue?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return
+        for key in panel.assigned_keys:
+            buf = self._plot_history.get(key)
+            if buf:
+                buf[0].clear()
+                buf[1].clear()
+        if hasattr(self, "_hover_cache"):
+            self._hover_cache.clear()
+        self._redraw_plot()
 
     def _rebuild_action_icons(self, theme: str) -> None:
         """Re-tint all QAction icons to match the current theme.
@@ -1827,6 +2098,14 @@ class MainWindow(QMainWindow):
         self._layout_combo.currentTextChanged.connect(self._on_layout_changed)
         controls.addWidget(self._layout_combo)
 
+        controls.addWidget(QLabel("Time:"))
+        self._time_mode_combo = QComboBox(outer)
+        self._time_mode_combo.addItems(["Elapsed", "Clock"])
+        self._time_mode_combo.setCurrentIndex(0 if self._plot_time_mode == "elapsed" else 1)
+        self._time_mode_combo.setToolTip("Elapsed (mm:ss) or wall-clock (HH:MM:SS) axis labels.")
+        self._time_mode_combo.currentIndexChanged.connect(self._on_plot_time_mode_changed)
+        controls.addWidget(self._time_mode_combo)
+
         # Pause / Live toggle — checkable, color-coded so users see the
         # current mode at a glance. Clicking Live also re-fits Y auto-range
         # and snaps X back to (0, now), so it doubles as a reset.
@@ -1841,13 +2120,16 @@ class MainWindow(QMainWindow):
         self._restyle_pause_btn(False)
         controls.addWidget(self._pause_btn)
 
-        self._plot_mode_label = QLabel("📊 Live", outer)
-        self._plot_mode_label.setToolTip(
+        self._plot_mode_btn = QToolButton(outer)
+        self._plot_mode_btn.setAutoRaise(True)
+        self._plot_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._plot_mode_btn.setToolTip(
             "Live: X-axis always shows the full session from t=0 to now.\n"
             "Explore: You panned or zoomed — view is frozen.\n"
-            "Click  ▶ Live  (or press Space) to return to Live."
+            "Click to resume Live."
         )
-        controls.addWidget(self._plot_mode_label)
+        self._plot_mode_btn.clicked.connect(self._on_plot_mode_clicked)
+        controls.addWidget(self._plot_mode_btn)
 
         # Session clock — updates every second via _flush_ui
         self._session_clock_label = QLabel("⏱ 0:00:00", outer)
@@ -1900,6 +2182,7 @@ class MainWindow(QMainWindow):
         # Build the initial grid from saved (or default) layout
         rows, cols = GRID_LAYOUTS.get(self._layout_combo.currentText(), (2, 1))
         self._rebuild_plot_grid(rows, cols, restore=True)
+        self._set_plot_live(self._plot_live)
 
         return outer
 
@@ -1926,6 +2209,13 @@ class MainWindow(QMainWindow):
         # Clear graphics canvas and panel list
         self._gl_widget.clear()
         self._plot_panels.clear()
+
+        # Drop any pending y-range debounce state — panel indexes are about
+        # to be reassigned, so stale timers would fire against new panels.
+        for timer in self._plot_y_range_timers.values():
+            timer.stop()
+        self._plot_y_range_timers.clear()
+        self._plot_y_range_pending.clear()
 
         # Clear variable-strip widgets
         if hasattr(self, "_panel_strip_layout") and self._panel_strip_layout is not None:
@@ -1961,16 +2251,35 @@ class MainWindow(QMainWindow):
         border_color = "#334155" if theme == "dark" else "#CBD5E1"
         for idx in range(n):
             row_idx, col_idx = divmod(idx, cols)
-            pi = self._gl_widget.addPlot(row=row_idx, col=col_idx)
-            pi.showGrid(x=True, y=True, alpha=0.25)
+            time_axis = _TimeAxisItem(
+                mode=self._plot_time_mode,
+                session_start=self._session_started,
+            )
+            pi = self._gl_widget.addPlot(
+                row=row_idx,
+                col=col_idx,
+                axisItems={"bottom": time_axis},
+            )
+            pi.showGrid(x=True, y=True, alpha=0.15)
+            pi.setLabel("bottom", self._plot_time_axis_label())
             legend = pi.addLegend(offset=(10, 10))
-            legend.setLabelTextSize('8pt')
-            pi.getViewBox().setMouseEnabled(x=True, y=True)
-            pi.getViewBox().setDefaultPadding(0.0)   # no auto-padding; x=0 is flush left
+            legend.setLabelTextSize("8pt")
+            self._style_plot_legend(legend, theme)
+            vb = pi.getViewBox()
+            vb.setMouseEnabled(x=True, y=True)
+            vb.setDefaultPadding(0.04)   # gentle y-padding so curves don't touch the frame
+            if getattr(vb, "menu", None) is not None:
+                vb.menu.addSeparator()
+                vb.menu.addAction("Reset View", lambda i=idx: self._reset_panel_view(i))
+                vb.menu.addAction(
+                    "Reset View && Resume Live",
+                    lambda i=idx: self._reset_panel_view(i, resume_live=True),
+                )
+                vb.menu.addAction("Clear", lambda i=idx: self._clear_panel_history(i))
             # Card-style frame around each panel's view box so each subplot
             # has an unambiguous boundary on the dark/light canvas. Matches
             # the Analysis Suite's visual convention.
-            pi.getViewBox().setBorder(pg.mkPen(border_color, width=1))
+            vb.setBorder(pg.mkPen(border_color, width=1))
             # Internal padding so y-axis tick labels for big numbers and the
             # rotated y-title can't collide with the border.
             pi.layout.setContentsMargins(6, 6, 10, 6)
@@ -1984,16 +2293,19 @@ class MainWindow(QMainWindow):
 
             # Share X-axis with the first subplot (oscilloscope-style)
             if first_vb is None:
-                first_vb = pi.getViewBox()
+                first_vb = vb
             else:
-                pi.getViewBox().setXLink(first_vb)
+                vb.setXLink(first_vb)
 
             # Detect user pan/zoom → switch to Explore mode
-            pi.getViewBox().sigXRangeChanged.connect(self._on_plot_range_changed)
+            vb.sigXRangeChanged.connect(self._on_plot_range_changed)
+            if hasattr(vb, "sigYRangeChanged"):
+                vb.sigYRangeChanged.connect(
+                    lambda _vb, y_range, i=idx: self._on_plot_y_range_changed(i, y_range)
+                )
 
             # Crosshair (vline + hline) shown on hover. Hidden by default.
-            crosshair_pen = pg.mkPen("#94A3B8" if theme == "dark" else "#64748B",
-                                     width=1, style=Qt.PenStyle.DashLine)
+            crosshair_pen = self._plot_crosshair_pen(theme)
             vline = pg.InfiniteLine(angle=90, movable=False, pen=crosshair_pen)
             hline = pg.InfiniteLine(angle=0, movable=False, pen=crosshair_pen)
             vline.setVisible(False)
@@ -2008,7 +2320,13 @@ class MainWindow(QMainWindow):
                 slot=lambda evt, _pi=pi: self._on_plot_mouse_moved(evt, _pi),
             )
 
-            panel = PlotPanel(plot_item=pi, assigned_keys=list(panel_keys[idx]))
+            panel = PlotPanel(
+                plot_item=pi,
+                assigned_keys=list(panel_keys[idx]),
+                legend=legend,
+                time_axis=time_axis,
+                index=idx,
+            )
             # Stash crosshair refs on the panel via dynamic attrs — keeps
             # the dataclass narrow but lets _redraw_plot etc. find them.
             panel.vline = vline      # type: ignore[attr-defined]
@@ -2020,21 +2338,27 @@ class MainWindow(QMainWindow):
                 bool(saved_auto_y)
                 if not isinstance(saved_auto_y, str)
                 else saved_auto_y.lower() in ("true", "1", "yes"))
-            pi.getViewBox().enableAutoRange(
-                axis=pg.ViewBox.YAxis, enable=panel.auto_fit_y)
+            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=panel.auto_fit_y)
+            if not panel.auto_fit_y:
+                y_range = self._read_saved_y_range(idx)
+                if y_range is not None:
+                    vb.setYRange(y_range[0], y_range[1], padding=0)
             self._plot_panels.append(panel)
 
             # Redraw existing curves for this panel
             for key in panel.assigned_keys:
                 label = f"0x{key[0]:04X} {key[1]}"
                 color_idx = sum(len(p.assigned_keys) for p in self._plot_panels[:-1]) + len(panel.curves)
-                color = _PLOT_PALETTE[color_idx % len(_PLOT_PALETTE)]
-                panel.curves[key] = pi.plot(name=label, pen=pg.mkPen(color, width=2))
+                palette = self._current_plot_palette()
+                color = palette[color_idx % len(palette)]
+                panel.curves[key] = pi.plot(name=label, pen=pg.mkPen(color, width=1.8))
 
             # Build variable-strip widget for this panel
             if hasattr(self, "_panel_strip_layout") and self._panel_strip_layout is not None:
                 strip = self._make_panel_strip(idx)
                 self._panel_strip_layout.addWidget(strip, 1)
+
+            self._update_panel_ylabel(idx)
 
         # Anchor X to start at 0 immediately, before any data arrives. Without
         # this, pyqtgraph's default auto-range shows roughly [-0.5, 0.5] until
@@ -2095,8 +2419,15 @@ class MainWindow(QMainWindow):
             return
         panel = self._plot_panels[panel_idx]
         panel.auto_fit_y = checked
-        panel.plot_item.getViewBox().enableAutoRange(
-            axis=pg.ViewBox.YAxis, enable=checked)
+        vb = panel.plot_item.getViewBox()
+        vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=checked)
+        if not checked:
+            y_range = vb.viewRange()[1]
+            if y_range and len(y_range) == 2:
+                self._settings.setValue(
+                    f"plot/panel/{panel_idx}/y_range",
+                    [float(y_range[0]), float(y_range[1])],
+                )
         self._settings.setValue(f"plot/panel/{panel_idx}/auto_y", checked)
 
     def _refresh_panel_strip_contents(self, panel_idx: int, layout: QHBoxLayout) -> None:
@@ -2105,8 +2436,9 @@ class MainWindow(QMainWindow):
             return
         panel = self._plot_panels[panel_idx]
         color_offset = sum(len(self._plot_panels[i].assigned_keys) for i in range(panel_idx))
+        palette = self._current_plot_palette()
         for local_idx, key in enumerate(panel.assigned_keys):
-            color = _PLOT_PALETTE[(color_offset + local_idx) % len(_PLOT_PALETTE)]
+            color = palette[(color_offset + local_idx) % len(palette)]
             text_color = _contrast_text_color(color)
             chip = QPushButton(f"● {key[1]}  ✕")
             chip.setFixedHeight(22)
@@ -2131,6 +2463,7 @@ class MainWindow(QMainWindow):
 
     def _on_layout_changed(self, label: str) -> None:
         rows, cols = GRID_LAYOUTS.get(label, (2, 1))
+        self._clear_saved_y_ranges()
         self._rebuild_plot_grid(rows, cols, restore=False)
         self._redraw_plot()
         self._log_activity(f"[ACTION] Plot layout changed to {label} ({rows}x{cols})")
@@ -2274,17 +2607,14 @@ class MainWindow(QMainWindow):
             self._settings.setValue(f"plot/panel/{i}/keys", [list(k) for k in panel.assigned_keys])
 
     def _update_panel_ylabel(self, panel_idx: int) -> None:
-        """Set the Y-axis label to the distinct units of all assigned signals."""
-        if panel_idx >= len(self._plot_panels) or not self._config:
+        """Y-axis labels are suppressed — the legend already names every curve."""
+        if panel_idx >= len(self._plot_panels):
             return
         panel = self._plot_panels[panel_idx]
-        sig_map = {(s.frame_id, s.signal_name): s for s in self._config.all_signals}
-        units: list[str] = []
-        for key in panel.assigned_keys:
-            sig = sig_map.get(key)
-            if sig and getattr(sig, 'unit', None) and sig.unit not in units:
-                units.append(sig.unit)
-        panel.plot_item.setLabel("left", " / ".join(units) if units else "")
+        left_axis = panel.plot_item.getAxis("left")
+        if left_axis is not None and hasattr(left_axis, "showLabel"):
+            left_axis.showLabel(False)
+        panel.plot_item.setLabel("left", "")
 
     def _mouseMoved(self, evt):
         """Crosshair handler — disabled in multi-panel mode (panels use their own)."""
@@ -2451,6 +2781,7 @@ class MainWindow(QMainWindow):
         self._config_path = path
         self._parser = create_parser(self._config.protocol)
         self._session_started = datetime.now()
+        self._apply_plot_time_mode(self._plot_time_mode, persist=False)
         self._plot_history.clear()
         self._seen_decode_warnings.clear()
         self._packet_count = 0
@@ -2714,7 +3045,10 @@ class MainWindow(QMainWindow):
         # Commit all staged model cell updates in ONE dataChanged per row.
         self._table_model.commit_staged()
         # Redraw the plot once for the entire batch.
-        self._redraw_plot()
+        now = time.monotonic()
+        if (now - self._plot_last_redraw) >= self._plot_redraw_interval_s:
+            self._redraw_plot()
+            self._plot_last_redraw = now
         # Invalidate the hover crosshair cache now that plot_history has changed
         if hasattr(self, "_hover_cache"):
             self._hover_cache.clear()
@@ -3353,9 +3687,11 @@ class MainWindow(QMainWindow):
         assert self._config is not None
         self._row_index.clear()
         rows = []
+        self._signal_unit_map.clear()
         for frame_id, signals in self._config.signals_by_frame.items():
             for signal in signals:
                 key = (frame_id, signal.signal_name)
+                self._signal_unit_map[key] = signal.unit
                 rows.append({
                     "key": key,
                     "Frame": f"0x{frame_id:04X}",
@@ -3385,6 +3721,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Add a new row to the telemetry model (called for runtime-discovered signals)."""
         key = (frame_id, signal_name)
+        self._signal_unit_map[key] = unit
         self._table_model.add_row(
             key=key,
             frame_hex=f"0x{frame_id:04X}",
@@ -3594,13 +3931,16 @@ class MainWindow(QMainWindow):
             self._pause_btn.setChecked(paused)
             self._pause_btn.blockSignals(False)
             self._restyle_pause_btn(paused)
-        if hasattr(self, "_plot_mode_label"):
+        if hasattr(self, "_plot_mode_btn"):
             if live:
-                self._plot_mode_label.setText("📊 Live")
+                self._plot_mode_btn.setText("📊 Live")
+                self._plot_mode_btn.setEnabled(False)
             elif source == "pan":
-                self._plot_mode_label.setText("🔍 Explore  (▶ Live to resume)")
+                self._plot_mode_btn.setText("🔍 Explore")
+                self._plot_mode_btn.setEnabled(True)
             else:
-                self._plot_mode_label.setText("⏸ Paused")
+                self._plot_mode_btn.setText("⏸ Paused")
+                self._plot_mode_btn.setEnabled(True)
 
     def _restyle_pause_btn(self, paused: bool) -> None:
         """Recolour the toggle so the current mode reads at a glance."""
@@ -3670,9 +4010,13 @@ class MainWindow(QMainWindow):
             panel.hline.setPos(y)
             panel.hline.setVisible(True)
 
-        # Build the readout: t + one entry per signal on THIS panel,
+        # Build the readout: time + one entry per signal on THIS panel,
         # interpolated to the cursor's x by nearest-sample lookup.
-        parts: list[str] = [f"t={t:.2f}s"]
+        time_txt = self._format_plot_time(t)
+        if self._plot_time_mode == "clock":
+            parts: list[str] = [f"time={time_txt}"]
+        else:
+            parts = [f"t={time_txt}"]
         for key in panel.assigned_keys:
             buf = self._plot_history.get(key)
             if not buf:
@@ -3696,7 +4040,9 @@ class MainWindow(QMainWindow):
                 elif idx > 0 and (t - xs_list[idx - 1]) < (xs_list[idx] - t):
                     idx -= 1
                 # The cached list stays fast for indexing
-                parts.append(f"{key[1]}={ys_list[idx]:.2f}")
+                unit = self._signal_unit_map.get(key, "")
+                suffix = f" {unit}" if unit else ""
+                parts.append(f"{key[1]}={ys_list[idx]:.2f}{suffix}")
             except Exception:
                 continue
         if hasattr(self, "_hover_label"):
@@ -3773,8 +4119,9 @@ class MainWindow(QMainWindow):
 
     def _refresh_plot_indicators(self) -> None:
         """Update the colored dot icon in the Variable column for plotted signals."""
+        palette = self._current_plot_palette()
         key_to_color: Dict[Tuple[int, str], str] = {
-            key: _PLOT_PALETTE[idx % len(_PLOT_PALETTE)]
+            key: palette[idx % len(palette)]
             for idx, key in enumerate(self._plot_keys)
         }
         n = self._table_model.row_count()
@@ -3796,8 +4143,11 @@ class MainWindow(QMainWindow):
         self._refresh_plot_indicators()
         if pg is None or not self._plot_panels:
             return
+        if hasattr(self, "_plot_dock") and self._plot_dock is not None and not self._plot_dock.isVisible():
+            return
 
         current_t = (datetime.now() - self._session_started).total_seconds()
+        palette = self._current_plot_palette()
 
         color_offset = 0
         # Track the oldest sample still in any ring buffer. The history deques
@@ -3808,6 +4158,9 @@ class MainWindow(QMainWindow):
 
         for panel in self._plot_panels:
             pi = panel.plot_item
+            if hasattr(pi, "isVisible") and not pi.isVisible():
+                color_offset += len(panel.assigned_keys)
+                continue
             active_keys = set(panel.assigned_keys)
 
             # Remove curves for keys no longer assigned
@@ -3818,31 +4171,33 @@ class MainWindow(QMainWindow):
             for local_idx, key in enumerate(panel.assigned_keys):
                 buf = self._plot_history.get(key)
                 if buf is None:
-                    x_values: list = []
-                    y_values: list = []
+                    x_values = np.array([], dtype=float)
+                    y_values = np.array([], dtype=float)
                 else:
                     xs, ys = buf
-                    # list() is a single O(n) copy from each deque — no
-                    # zip-unpack pass, no tuple churn. Half the work of the
-                    # old deque-of-tuples shape.
-                    x_values = list(xs)
-                    y_values = list(ys)
-                    if x_values:
-                        first_x = x_values[0]
+                    # np.fromiter does a single pass over each deque — no
+                    # zip-unpack pass, no tuple churn.
+                    if xs:
+                        x_values = np.fromiter(xs, dtype=float, count=len(xs))
+                        y_values = np.fromiter(ys, dtype=float, count=len(ys))
+                        first_x = float(x_values[0])
                         if oldest_x is None or first_x < oldest_x:
                             oldest_x = first_x
+                    else:
+                        x_values = np.array([], dtype=float)
+                        y_values = np.array([], dtype=float)
 
-                color = _PLOT_PALETTE[(color_offset + local_idx) % len(_PLOT_PALETTE)]
+                color = palette[(color_offset + local_idx) % len(palette)]
                 label = f"0x{key[0]:04X} {key[1]}"
 
                 if key not in panel.curves:
-                    panel.curves[key] = pi.plot(name=label, pen=pg.mkPen(color, width=2))
+                    panel.curves[key] = pi.plot(name=label, pen=pg.mkPen(color, width=1.8))
                     # Cache the colour on the curve itself so we can skip the
                     # setPen + mkPen allocation on every subsequent redraw —
                     # the colour only changes when the assignment shifts.
                     panel.curves[key].__bh_color = color  # type: ignore[attr-defined]
                 elif getattr(panel.curves[key], "__bh_color", None) != color:
-                    panel.curves[key].setPen(pg.mkPen(color, width=2))
+                    panel.curves[key].setPen(pg.mkPen(color, width=1.8))
                     panel.curves[key].__bh_color = color  # type: ignore[attr-defined]
 
                 panel.curves[key].setData(
