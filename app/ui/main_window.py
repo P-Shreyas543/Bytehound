@@ -3622,9 +3622,10 @@ class MainWindow(QMainWindow):
         going_live = not checked
         self._set_plot_live(going_live)
         if going_live:
-            # Re-enable Y auto-range first (pan/zoom that got us into Pause
-            # disabled it), then let _redraw_plot snap X back to (0, now).
-            if pg is not None:
+            # Re-enable Y auto-range on panels that want it (pan/zoom during
+            # Pause turned it off). X is left for _redraw_plot to handle so the
+            # data-aware [oldest_x, current_t] window logic stays in one place.
+            if pg is not None and self._plot_panels:
                 self._plot_range_changing = True
                 try:
                     for panel in self._plot_panels:
@@ -3799,6 +3800,11 @@ class MainWindow(QMainWindow):
         current_t = (datetime.now() - self._session_started).total_seconds()
 
         color_offset = 0
+        # Track the oldest sample still in any ring buffer. The history deques
+        # are bounded (_plot_history_maxlen), so on long sessions xs[0] is well
+        # past zero — anchoring the live X axis at 0 then leaves most of the
+        # plot empty. Pin the left edge to the oldest sample we actually have.
+        oldest_x: Optional[float] = None
 
         for panel in self._plot_panels:
             pi = panel.plot_item
@@ -3821,6 +3827,10 @@ class MainWindow(QMainWindow):
                     # old deque-of-tuples shape.
                     x_values = list(xs)
                     y_values = list(ys)
+                    if x_values:
+                        first_x = x_values[0]
+                        if oldest_x is None or first_x < oldest_x:
+                            oldest_x = first_x
 
                 color = _PLOT_PALETTE[(color_offset + local_idx) % len(_PLOT_PALETTE)]
                 label = f"0x{key[0]:04X} {key[1]}"
@@ -3843,18 +3853,28 @@ class MainWindow(QMainWindow):
 
             color_offset += len(panel.assigned_keys)
 
-        # Live mode: always show the full session from t=0 to current_t.
-        # Runs even when has_any_data is False so the axis stays anchored at 0
-        # while waiting for the first packet. max(...) keeps the window from
-        # collapsing to a sliver in the first few hundred ms of a session.
+        # Live mode X range. Two cases:
+        #   - No data yet: anchor [0, INITIAL_WINDOW] so the axis reads 0 at
+        #     the left while waiting for the first packet.
+        #   - Data present: anchor [oldest_x, current_t * 1.05] so the curves
+        #     fill the panel instead of crowding into the right edge once the
+        #     ring buffer has dropped early samples.
         # The re-entrancy guard stops sigXRangeChanged from flipping us to Explore.
         if self._plot_live and self._plot_panels:
             self._plot_range_changing = True
             try:
                 first_pi = self._plot_panels[0].plot_item
-                # Small right padding (5%) so the newest point isn't flush against the edge.
-                x_max = max(current_t, _PLOT_INITIAL_WINDOW_S) * 1.05
-                first_pi.setXRange(0.0, x_max, padding=0)
+                if oldest_x is None:
+                    x_min = 0.0
+                    x_max = _PLOT_INITIAL_WINDOW_S
+                else:
+                    x_min = oldest_x
+                    # Small right padding (5%) so the newest point isn't flush
+                    # against the edge. Guard against a near-zero span on the
+                    # very first packet by enforcing a minimum window width.
+                    span = max(current_t - oldest_x, _PLOT_INITIAL_WINDOW_S)
+                    x_max = oldest_x + span * 1.05
+                first_pi.setXRange(x_min, x_max, padding=0)
             finally:
                 self._plot_range_changing = False
 
