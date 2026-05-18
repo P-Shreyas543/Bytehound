@@ -180,6 +180,13 @@ class DecodedLogger:
             return
         if self._workbook is not None:
             return
+        # A prior close() may have left a still-alive writer thread when its
+        # bounded join timed out. If that thread has since finished, clear
+        # the reference so we can start a fresh session.
+        if self._writer_thread is not None and not self._writer_thread.is_alive():
+            self._writer_thread = None
+        if self._writer_thread is not None:
+            return
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
         wb = Workbook(write_only=True)
@@ -223,10 +230,16 @@ class DecodedLogger:
                 pass
             self._writer_thread.join(timeout=10.0)
             writer_still_running = self._writer_thread.is_alive()
-            self._writer_thread = None
+            # KEEP the thread reference if it's still alive so callers can
+            # observe is_draining() / await_drain() and wait for true
+            # completion. Daemon threads are killed at interpreter exit;
+            # without an explicit wait, slow-disk drains lose rows.
+            if not writer_still_running:
+                self._writer_thread = None
 
-        # The writer thread already saved + closed the workbook. Drop our
-        # references so the next open() builds a fresh one.
+        # The writer thread already saved + closed the workbook (or will,
+        # if it's still draining). Drop our references so the next open()
+        # builds a fresh one.
         self._workbook = None
         self._data_ws = None
         self._cycle_buffer.clear()
@@ -254,6 +267,41 @@ class DecodedLogger:
         # Surface any writer-thread error to the on_error callback on the
         # calling thread.
         self._pump_pending_error()
+
+    # ------------------------------------------------------------------
+    # Drain observation (used by MainWindow.closeEvent to avoid losing
+    # rows when the interpreter would kill the daemon writer thread)
+    # ------------------------------------------------------------------
+
+    def is_draining(self) -> bool:
+        """True if close() returned with the writer thread still alive
+        (i.e. it didn't finish saving the workbook within the bounded
+        join). Callers that need a strong "data on disk" guarantee
+        should follow up with await_drain() before allowing the process
+        to exit.
+        """
+        return self._writer_thread is not None and self._writer_thread.is_alive()
+
+    def pending_rows(self) -> int:
+        """Approximate number of rows the writer thread still has to drain.
+        For UI status displays — exact value can change between this call
+        and the next as the writer processes items.
+        """
+        return self._queue.qsize()
+
+    def await_drain(self, timeout: float | None = None) -> bool:
+        """Block until the writer thread exits or ``timeout`` elapses.
+        Returns True if the writer completed (workbook is on disk), False
+        if the timeout expired with the writer still running.
+        """
+        t = self._writer_thread
+        if t is None:
+            return True
+        t.join(timeout=timeout)
+        finished = not t.is_alive()
+        if finished:
+            self._writer_thread = None
+        return finished
 
     def set_flush_interval(self, seconds: float) -> None:
         try:

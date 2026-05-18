@@ -87,6 +87,11 @@ class RawLogger:
     def open(self) -> None:
         if self._disabled:
             return
+        # A prior close() may have left a still-alive writer thread when its
+        # bounded join timed out (slow disk). If that thread has since
+        # finished, clear the reference so we can start a fresh session.
+        if self._writer_thread is not None and not self._writer_thread.is_alive():
+            self._writer_thread = None
         if self._writer_thread is not None:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -128,7 +133,11 @@ class RawLogger:
 
     def close(self) -> None:
         # Signal the writer thread to finish, then wait for it to drain the
-        # queue and exit before we close the file.
+        # queue and exit before we close the file. If the join times out
+        # (slow disk), KEEP the writer_thread reference so callers can
+        # observe is_draining() / call await_drain() to wait for true
+        # completion before the interpreter shuts down — daemon threads
+        # are killed mid-flush at process exit, which would lose data.
         if self._writer_thread is not None:
             self._stop_event.set()
             try:
@@ -136,9 +145,44 @@ class RawLogger:
             except queue.Full:
                 pass
             self._writer_thread.join(timeout=5.0)
-            self._writer_thread = None
+            if not self._writer_thread.is_alive():
+                self._writer_thread = None
         self._fp = None
         self._writer = None
+
+    # ------------------------------------------------------------------
+    # Drain observation (used by MainWindow.closeEvent to avoid losing
+    # rows when the interpreter would kill the daemon writer thread)
+    # ------------------------------------------------------------------
+
+    def is_draining(self) -> bool:
+        """True if close() returned with the writer thread still alive
+        (i.e. it didn't finish within the bounded join). Callers that need
+        a strong "data on disk" guarantee should follow up with
+        await_drain() before allowing the process to exit.
+        """
+        return self._writer_thread is not None and self._writer_thread.is_alive()
+
+    def pending_rows(self) -> int:
+        """Approximate number of rows the writer thread still has to drain.
+        For UI status displays — exact value can change between this call
+        and the next as the writer processes items.
+        """
+        return self._queue.qsize()
+
+    def await_drain(self, timeout: float | None = None) -> bool:
+        """Block until the writer thread exits or ``timeout`` elapses.
+        Returns True if the writer completed (data is on disk), False if
+        the timeout expired with the writer still running.
+        """
+        t = self._writer_thread
+        if t is None:
+            return True
+        t.join(timeout=timeout)
+        finished = not t.is_alive()
+        if finished:
+            self._writer_thread = None
+        return finished
 
     def set_flush_interval(self, seconds: float) -> None:
         try:

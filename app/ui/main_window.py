@@ -4663,10 +4663,94 @@ class MainWindow(QMainWindow):
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
+        # Capture logger refs BEFORE _disconnect() nulls them in
+        # _stop_logging(). After logger.close() returns, the writer thread
+        # may still be draining a slow disk — we own the only handle that
+        # lets us wait for it before the interpreter kills the daemon
+        # thread mid-flush.
+        loggers = [
+            (name, lg) for name, lg in (
+                ("raw log", self._raw_logger),
+                ("decoded log", self._decoded_logger),
+            ) if lg is not None
+        ]
         # _disconnect() guarantees: stop timer → flush logs → stop worker → null.
         self._disconnect(reason="Application closed")
+        # Block on any logger writer threads that didn't drain within their
+        # bounded close() join — without this, Python's interpreter exit
+        # kills daemon threads with rows still in the queue.
+        drainers = [(name, lg) for name, lg in loggers if lg.is_draining()]
+        if drainers:
+            self._wait_for_logger_drain(drainers)
         self._save_window_state()
         super().closeEvent(event)
+
+    # ------------------------------------------------------------------
+    # Logger drain helper — used by closeEvent to honour the data-loss
+    # guarantee on slow disks (USB sticks, network shares) where the
+    # writer-thread queue couldn't be flushed within the bounded
+    # logger.close() join.
+    # ------------------------------------------------------------------
+    _DRAIN_CAP_SECONDS = 60.0
+    _DRAIN_POLL_MS = 200
+
+    def _wait_for_logger_drain(self, drainers: list) -> None:
+        """Show a progress dialog and poll each logger until its writer
+        thread exits (data on disk), the cap elapses, or the user
+        cancels. ``drainers`` is a list of (name, logger) tuples for
+        loggers where ``is_draining()`` returned True.
+        """
+        total_rows = sum(lg.pending_rows() for _, lg in drainers)
+        dlg = QProgressDialog(
+            f"Finishing log — {total_rows} row(s) remaining…",
+            "Skip (may lose data)",
+            0,
+            max(total_rows, 1),
+            self,
+        )
+        dlg.setWindowTitle("Closing")
+        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dlg.setMinimumDuration(0)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.setValue(0)
+
+        deadline = time.monotonic() + self._DRAIN_CAP_SECONDS
+        poll_s = self._DRAIN_POLL_MS / 1000.0
+        try:
+            while time.monotonic() < deadline:
+                if dlg.wasCanceled():
+                    self._log_activity(
+                        "[SESSION] User skipped log drain; some rows may be lost"
+                    )
+                    break
+                # Re-check all drainers each iteration; remove finished ones.
+                still_draining = []
+                remaining = 0
+                for name, lg in drainers:
+                    if lg.await_drain(timeout=poll_s):
+                        continue
+                    still_draining.append((name, lg))
+                    remaining += lg.pending_rows()
+                if not still_draining:
+                    break
+                drainers = still_draining
+                written = max(0, total_rows - remaining)
+                dlg.setValue(written)
+                dlg.setLabelText(
+                    f"Finishing {', '.join(n for n, _ in drainers)} — "
+                    f"{remaining} row(s) remaining…"
+                )
+                QApplication.processEvents()
+            else:
+                # Cap reached; log which loggers gave up.
+                names = ", ".join(n for n, _ in drainers if n)
+                self._log_activity(
+                    f"[SESSION] Log drain cap ({self._DRAIN_CAP_SECONDS}s) "
+                    f"reached for {names}; some rows may be lost"
+                )
+        finally:
+            dlg.close()
 
 
 def _format_number(value) -> str:

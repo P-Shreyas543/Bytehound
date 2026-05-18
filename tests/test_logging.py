@@ -365,6 +365,90 @@ def test_raw_logger_persists_all_rows_when_close_join_times_out(tmp_path):
     assert written_hex == expected_hex
 
 
+def test_raw_logger_await_drain_blocks_until_writer_finishes(tmp_path):
+    """After close() returns with the writer still draining, await_drain()
+    must block the caller until the writer has finished and the file is
+    on disk. This is what MainWindow.closeEvent uses to honour the
+    zero-data-loss guarantee — without it, the daemon writer thread
+    would be killed at interpreter exit mid-flush.
+    """
+    path = tmp_path / "await_drain.csv"
+    rl = RawLogger(path)
+    rl.open()
+
+    # Slow writer: 50ms/row. Forced 50ms join in close() guarantees the
+    # writer is still alive when close() returns.
+    orig_write_one = rl._write_one
+    def slow_write_one(writer, item):
+        time.sleep(0.05)
+        return orig_write_one(writer, item)
+    rl._write_one = slow_write_one
+
+    N = 4
+    ts = datetime(2026, 5, 19, 12, 0, 0)
+    for i in range(N):
+        rl.log("RX", bytes([i]), ts)
+
+    writer_thread = rl._writer_thread
+    orig_join = _shorten_join(writer_thread, timeout_sec=0.05)
+    rl.close()
+
+    # close() returned but the writer is still running — observable via
+    # the new is_draining() API.
+    assert rl.is_draining(), "Writer should still be alive after timed-out close()"
+    assert rl.pending_rows() >= 0  # smoke check
+
+    # Restore the real join now that close() has used the shortened one;
+    # await_drain needs the unpatched join to actually wait for completion.
+    writer_thread.join = orig_join
+
+    # await_drain blocks until the writer truly finishes (or times out).
+    finished = rl.await_drain(timeout=5.0)
+    assert finished, "Writer thread should have completed within 5s"
+    assert not rl.is_draining(), "is_draining() must be False once writer exits"
+
+    # File on disk has every row.
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == N + 1, (
+        f"Expected {N + 1} lines on disk after await_drain, got {len(lines)}"
+    )
+
+
+def test_raw_logger_await_drain_returns_true_when_no_writer(tmp_path):
+    """await_drain() on a never-opened (or already-closed-and-finished)
+    logger must return True immediately — the contract is "writer is done"
+    not "writer existed and finished"."""
+    path = tmp_path / "noop_drain.csv"
+    rl = RawLogger(path)
+    # Never opened.
+    assert rl.await_drain(timeout=0.1) is True
+    assert rl.is_draining() is False
+
+
+def test_raw_logger_open_after_timed_out_close_reuses_dead_thread_slot(tmp_path):
+    """If a prior close() left a dead writer-thread reference (because
+    await_drain wasn't called before the thread finished naturally), the
+    next open() must clear the stale reference and start a fresh writer.
+    """
+    path = tmp_path / "reuse.csv"
+    rl = RawLogger(path)
+    rl.open()
+    rl.log("RX", b"\x01", datetime(2026, 5, 19, 12, 0, 0))
+    rl.close()  # writer finishes within the 5s join → ref cleared
+    # Simulate a leftover dead thread reference (the case open() must handle).
+    import threading
+    dead = threading.Thread(target=lambda: None, daemon=True)
+    dead.start()
+    dead.join()
+    rl._writer_thread = dead
+    # open() must notice the dead thread and reset, then start a fresh writer.
+    rl.open()
+    assert rl._writer_thread is not None
+    assert rl._writer_thread is not dead
+    assert rl._writer_thread.is_alive()
+    rl.close()
+
+
 def test_decoded_logger_persists_workbook_when_close_join_times_out(tmp_path):
     config = _make_test_config()
     path = tmp_path / "slow_drain.xlsx"
