@@ -1809,7 +1809,9 @@ class MainWindow(QMainWindow):
             try:
                 analysis.apply_theme(theme)
             except Exception:
-                pass
+                logging.getLogger("bytehound.ui").warning(
+                    "Analysis Suite apply_theme failed", exc_info=True
+                )
         from PySide6.QtWidgets import QApplication
         # Schedule title-bar update via singleShot so the native HWND is stable.
         dark = (theme == "dark")
@@ -2303,7 +2305,6 @@ class MainWindow(QMainWindow):
         old_keys: List[List[Tuple[int, str]]] = [
             list(p.assigned_keys) for p in self._plot_panels
         ]
-        flat_old: List[Tuple[int, str]] = [k for sub in old_keys for k in sub]
 
         # Clear graphics canvas and panel list
         self._gl_widget.clear()
@@ -3476,13 +3477,13 @@ class MainWindow(QMainWindow):
         command = self._config.tx_commands.get(self._tx_command_combo.currentText())
         if command is None:
             return
-        for field in command.fields:
+        for tx_field in command.fields:
             editor = QLineEdit(self._tx_fields_widget)
-            if field.default is not None:
-                editor.setText(f"{field.default:g}")
-            suffix = f" ({field.unit})" if field.unit else ""
-            self._tx_fields_form.addRow(f"{field.field_name}{suffix}", editor)
-            self._tx_field_inputs[field.field_name] = editor
+            if tx_field.default is not None:
+                editor.setText(f"{tx_field.default:g}")
+            suffix = f" ({tx_field.unit})" if tx_field.unit else ""
+            self._tx_fields_form.addRow(f"{tx_field.field_name}{suffix}", editor)
+            self._tx_field_inputs[tx_field.field_name] = editor
         self._preview_tx_command()
 
     def _tx_values(self) -> Dict[str, float]:
@@ -3573,7 +3574,7 @@ class MainWindow(QMainWindow):
             if current_tooltip == "Connected (No Data)":
                 self._led_label.setStyleSheet("color: #66BB6A;")
                 self._led_label.setToolTip("Connected")
-                self._set_status(f"Connected")
+                self._set_status("Connected")
 
         assert self._config is not None
         decoded = decode_frame(self._config, packet.frame_id, packet.payload)
@@ -4356,25 +4357,12 @@ class MainWindow(QMainWindow):
         return icon
 
     def _refresh_plot_indicators(self) -> None:
-        """Update the colored dot icon in the Variable column for plotted signals."""
-        palette = self._current_plot_palette()
-        key_to_color: Dict[Tuple[int, str], str] = {
-            key: palette[idx % len(palette)]
-            for idx, key in enumerate(self._plot_keys)
-        }
-        n = self._table_model.row_count()
-        for row in range(n):
-            key = self._table_model.key_for_row(row)
-            color = key_to_color.get(key) if key is not None else None
-            # We pass an icon via the model's DecorationRole, but the model
-            # doesn't implement DecorationRole directly — instead we set it
-            # directly on the view's persistent model index data via the
-            # QSortFilterProxyModel/selection model. The simplest approach
-            # for a QTableView is to use model.setData with DecorationRole.
-            # Since TelemetryTableModel is read-only for that role, we store
-            # the icon on a side dict and override paint via the delegate.
-            # For now: skip — the _StatusBadgeDelegate handles col 8.
-            # Plot color feedback is provided by the legend in the plot widget.
+        # Intentional no-op: plot-color feedback is provided by the plot
+        # legend, and the table-cell dot indicator was never wired up
+        # (TelemetryTableModel is read-only for DecorationRole). Kept as
+        # a named hook so a future delegate can surface plotted-signal
+        # color in the Variable column without churning the call site.
+        return
 
     def _redraw_plot(self) -> None:
         """Redraw all subplots with current data from _plot_history."""

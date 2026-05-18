@@ -123,6 +123,11 @@ def _decode_signal(config: FrameConfig, spec: SignalSpec, payload: bytes) -> Dec
 # single hot-path call. A None entry caches the "no native struct code"
 # verdict (odd byte counts) so the fallback path still avoids re-deciding
 # per call.
+#
+# Bounded by construction: keys come from a tiny finite product —
+# 2 endiannesses × 8 byte lengths (1..8) × 3 data_types ("int", "uint",
+# "float") = 48 entries max for the lifetime of the process. Not an
+# unbounded cache; no eviction needed.
 _DECODE_STRUCT_CACHE: Dict[tuple, Optional[struct.Struct]] = {}
 
 # Fixed-width integer struct format chars. Power-of-two byte counts

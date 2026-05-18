@@ -22,6 +22,7 @@ Architecture changes vs the prototype
 
 from __future__ import annotations
 
+import logging
 import queue
 import threading
 import time
@@ -34,6 +35,8 @@ from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
 
 from ..protocol.packet_parser import ParsedPacket, ParserProtocol, create_parser
 from ..decoder.types import PollingScheduleSpec, ProtocolConfig
+
+_LOG = logging.getLogger("bytehound.serial_io.worker")
 
 # ------------------------------------------------------------------
 # Tuning constants
@@ -178,7 +181,9 @@ class PollingWorker(QThread):
             try:
                 self._serial.close()
             except Exception:
-                pass
+                # Driver/handle is already gone in most cases; log so a
+                # persistent close failure is at least visible in bytehound.log.
+                _LOG.warning("Serial close failed", exc_info=True)
             self._serial = None
 
     def enqueue_priority_tx(self, data: bytes) -> None:
@@ -411,7 +416,10 @@ class PollingWorker(QThread):
                             self._serial.close()
                             self._serial = None
                     except Exception:
-                        pass
+                        _LOG.warning(
+                            "Serial close during disconnect handling failed",
+                            exc_info=True,
+                        )
                     self._flush_batch()
                     self.connection_lost.emit()
                     return  # exit the run loop gracefully
@@ -585,7 +593,9 @@ class PollingWorker(QThread):
             try:
                 self.poll_latency.emit(target_id if target_id is not None else -1, latency_ms)
             except Exception:
-                pass
+                # Signal-emit failure here is non-fatal (UI lost one latency
+                # sample), but log it so we'd notice if it became chronic.
+                _LOG.debug("poll_latency emit failed", exc_info=True)
         # Route through the throttle so this tail emit doesn't bypass the
         # rate-limit that the rest of the worker honours. Forcing on timeout
         # would defeat the throttle on protocols where every poll times out

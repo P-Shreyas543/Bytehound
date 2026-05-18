@@ -136,17 +136,11 @@ class FramedParser(ParserProtocol):
         footer_off = crc_off + pc.crc_size
         footer_bytes = bytes(self._buf[footer_off : footer_off + len(pc.footer)])
 
-        if pc.crc_coverage == "header_to_payload":
-            coverage = bytes(self._buf[: payload_off + payload_len])
-        else:
-            return (
-                ParsedPacket(
-                    raw=raw, frame_id=frame_id, payload=b"",
-                    ok=False,
-                    error=f"Unsupported crc_coverage: {pc.crc_coverage!r}",
-                ),
-                1,
-            )
+        # Only "header_to_payload" is supported; the config validator
+        # (config_loader._validate_protocol) rejects anything else, so
+        # there's no runtime branch here. If/when additional coverages
+        # are added, gate them at the validator first.
+        coverage = bytes(self._buf[: payload_off + payload_len])
 
         if pc.crc_type != "none":
             expected = crc_mod.compute(pc.crc_type, coverage)

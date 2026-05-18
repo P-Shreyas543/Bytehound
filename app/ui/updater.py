@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -9,6 +10,8 @@ import urllib.request
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QThread, Signal
+
+_LOG = logging.getLogger("bytehound.updater")
 
 
 def _project_root() -> Path:
@@ -33,6 +36,10 @@ def get_current_version() -> str:
             data = json.load(f)
             return data.get("version", "0.0.0")
     except Exception:
+        # Missing or malformed version.json — fall back to a sentinel
+        # version so the updater treats anything remote as newer. Log so
+        # the install issue is visible in bytehound.log.
+        _LOG.warning("Could not read %s; defaulting to 0.0.0", VERSION_FILE, exc_info=True)
         return "0.0.0"
 
 
@@ -59,17 +66,23 @@ class UpdateChecker(QThread):
             remote_version = remote_data.get("version", "0.0.0")
             local_version = local_data.get("version", "0.0.0")
 
-            # Simple string comparison works for X.Y.Z if zero-padded or uniform
-            # Consider using 'packaging.version' in a real environment
-            if [int(x) for x in remote_version.split('.')] > [int(x) for x in local_version.split('.')]:
-                self.update_available.emit(
-                    remote_version,
-                    remote_data.get("installer_url", ""),
-                    remote_data.get("release_notes", ""),
-                    remote_data.get("sha256", ""),
-                )
-            else:
-                self.up_to_date.emit()
+            # Use packaging.version so non-numeric components ("1.0.0-rc1",
+            # "1.0.0+dev", PEP 440 pre-releases) don't crash the parser.
+            # Fall back to "up to date" on a malformed remote so a botched
+            # manifest never blocks the user with an error dialog.
+            from packaging.version import InvalidVersion, Version
+            try:
+                if Version(remote_version) > Version(local_version):
+                    self.update_available.emit(
+                        remote_version,
+                        remote_data.get("installer_url", ""),
+                        remote_data.get("release_notes", ""),
+                        remote_data.get("sha256", ""),
+                    )
+                else:
+                    self.up_to_date.emit()
+            except InvalidVersion as exc:
+                self.error.emit(f"Could not compare versions: {exc}")
 
         except Exception as e:
             self.error.emit(str(e))
