@@ -1,0 +1,53 @@
+[
+  {
+    "rate_hz": 100,
+    "duration_s": 6.049,
+    "packets_planned": 600,
+    "packets_fed": 600,
+    "flush_count": 379,
+    "flush_mean_us": 1202.52,
+    "flush_p50_us": 1335.7,
+    "flush_p95_us": 2063.1,
+    "flush_p99_us": 2433.6,
+    "flush_max_us": 2730.4,
+    "queue_max": 4,
+    "queue_p95": 4,
+    "dropped_total": 0,
+    "panels": 4,
+    "signals_per_panel": 2
+  },
+  {
+    "rate_hz": 500,
+    "duration_s": 6.048,
+    "packets_planned": 3000,
+    "packets_fed": 3000,
+    "flush_count": 378,
+    "flush_mean_us": 2954.16,
+    "flush_p50_us": 3051.9,
+    "flush_p95_us": 6138.6,
+    "flush_p99_us": 7325.6,
+    "flush_max_us": 9012.3,
+    "queue_max": 17,
+    "queue_p95": 17,
+    "dropped_total": 0,
+    "panels": 4,
+    "signals_per_panel": 2
+  },
+  {
+    "rate_hz": 1000,
+    "duration_s": 6.038,
+    "packets_planned": 6000,
+    "packets_fed": 6000,
+    "flush_count": 378,
+    "flush_mean_us": 5984.38,
+    "flush_p50_us": 5829.8,
+    "flush_p95_us": 14590.0,
+    "flush_p99_us": 16386.2,
+    "flush_max_us": 17711.2,
+    "queue_max": 34,
+    "queue_p95": 34,
+    "dropped_total": 0,
+    "panels": 4,
+    "signals_per_panel": 2
+  }
+]

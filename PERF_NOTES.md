@@ -252,6 +252,55 @@ tick.
 Tests: +8 `_RingBuffer` unit tests (wrap order, view vs copy, clear,
 edge cases). Suite 116 → 124 green.
 
+## Round 6 — Qt-integrated harness. ✅ LANDED.
+
+`scripts/perf_harness_qt.py` spins up a real `MainWindow` under
+`QT_QPA_PLATFORM=offscreen`, loads the canonical config, builds N×M
+plot panels/curves, and drives synthetic `ParsedPacket` batches through
+`window._on_packets_received` at a configurable rate. Wraps
+`_flush_ui` to record wall time and queue depth per call. Closes the
+measurement gap that headless `perf_harness.py` couldn't reach (table
+model, console buffer, plot redraw, rate label, hover cache).
+
+**Baseline (current master, 4 panels × 2 signals, 6 s runs):**
+
+| Rate    | flush mean | p50      | p95      | p99      | queue max | drops |
+|---------|-----------:|---------:|---------:|---------:|----------:|------:|
+| 100 Hz  |    1.20 ms |  1.34 ms |  2.06 ms |  2.43 ms |         4 |     0 |
+| 500 Hz  |    2.95 ms |  3.05 ms |  6.14 ms |  7.33 ms |        17 |     0 |
+| 1000 Hz |    5.98 ms |  5.83 ms | 14.59 ms | 16.39 ms |        34 |     0 |
+
+**Key observations:**
+
+* **No dropped packets** at any rate. The bounded `_pending_packets`
+  deque (`maxlen=10_000`) sits at max 34 even at 1 kHz — the UI is
+  keeping up.
+* **Flush time scales roughly linearly with rate** (~16 packets per
+  flush at 1 kHz × ~370 µs/packet of UI overhead ≈ 6 ms). So the
+  dominant cost is per-packet `_handle_packet` work, not per-tick
+  redraw.
+* **Curve count barely matters.** 1 panel × 1 signal vs 4 × 3 signals
+  produce nearly identical flush numbers at 1 kHz (5.93 ms vs 5.86 ms
+  mean). The redraw skip-when-unchanged guard from round 2 is doing
+  what we hoped: setData only fires for curves that actually grew.
+* **p99 at 1 kHz is 16 ms** — right at the 60 Hz frame budget edge.
+  The UI is on the cusp of dropping frames at 1 kHz under this
+  workload. Likely culprits for the long tail: garbage-collection
+  pauses, occasional table model refreshes, console block-layout
+  hiccups when the line cap (3000 lines) starts rolling.
+
+**Future per-packet wins this harness will let us measure:**
+
+* `_handle_packet` per-packet console-row formatting (datetime +
+  hex) — ~µs each, but × 16 packets/flush × 60 flushes/s adds up.
+* `_apply_decoded` table_model staging — currently builds a dict of
+  cell updates per signal per packet; could be coalesced.
+* `_update_detail_tabs` per signal — invisible-tab updates could be
+  skipped via the same hide-aware pattern as the plot.
+
+None of these are touched in this commit — the harness is the
+deliverable. Future perf rounds will benchmark against this baseline.
+
 ## Cumulative round-by-round summary (1 kHz harness, end-to-end with loggers on)
 
 | Round | parse | decode | logger | total |
