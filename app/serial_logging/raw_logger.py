@@ -137,17 +137,8 @@ class RawLogger:
                 pass
             self._writer_thread.join(timeout=5.0)
             self._writer_thread = None
-        if self._fp is not None:
-            try:
-                self._fp.flush()
-            except Exception:
-                pass
-            try:
-                self._fp.close()
-            except Exception:
-                pass
-            self._fp = None
-            self._writer = None
+        self._fp = None
+        self._writer = None
 
     def set_flush_interval(self, seconds: float) -> None:
         try:
@@ -185,25 +176,21 @@ class RawLogger:
     # ------------------------------------------------------------------
 
     def _writer_loop(self) -> None:
-        """Drain the queue and write rows to disk until stopped.
-
-        Errors are captured into ``_pending_error`` for the UI thread to
-        surface; we never call ``on_error`` from here because that callback
-        invokes ``_stop_logging`` which in turn calls ``close()`` — joining
-        ourselves would deadlock.
-        """
+        """Drain the queue and write rows to disk until stopped."""
+        fp = self._fp
+        writer = self._writer
         try:
             while not self._stop_event.is_set():
                 try:
                     item = self._queue.get(timeout=0.1)
                 except queue.Empty:
-                    self._maybe_periodic_flush()
+                    self._maybe_periodic_flush(fp)
                     continue
                 if item is None:
                     break
-                if not self._write_one(item):
+                if not self._write_one(writer, item):
                     return
-                self._maybe_periodic_flush()
+                self._maybe_periodic_flush(fp)
         finally:
             # Drain anything enqueued between the stop signal and the join.
             # NB: never `return` from inside this `finally` — that would
@@ -217,31 +204,35 @@ class RawLogger:
                     break
                 if item is None:
                     continue
-                if not self._write_one(item):
+                if not self._write_one(writer, item):
                     break
-            try:
-                if self._fp is not None:
-                    self._fp.flush()
-            except Exception as exc:
-                self._record_error("flush", exc)
+            if fp is not None:
+                try:
+                    fp.flush()
+                except Exception as exc:
+                    self._record_error("flush", exc)
+                try:
+                    fp.close()
+                except Exception:
+                    pass
 
-    def _write_one(self, item: tuple) -> bool:
-        if self._writer is None or self._fp is None:
+    def _write_one(self, writer, item: tuple) -> bool:
+        if writer is None:
             return False
         try:
             ts, direction, raw, delta_t_ms = item
-            self._writer.writerow([ts, direction, raw.hex(" ").upper(), f"{delta_t_ms:.1f}"])
+            writer.writerow([ts, direction, raw.hex(" ").upper(), f"{delta_t_ms:.1f}"])
             return True
         except Exception as exc:
             self._record_error("write", exc)
             return False
 
-    def _maybe_periodic_flush(self) -> None:
-        if self._fp is None:
+    def _maybe_periodic_flush(self, fp) -> None:
+        if fp is None:
             return
         if self._flush_interval <= 0:
             try:
-                self._fp.flush()
+                fp.flush()
                 self._last_flush = time.monotonic()
             except Exception as exc:
                 self._record_error("flush", exc)
@@ -249,7 +240,7 @@ class RawLogger:
         now = time.monotonic()
         if now - self._last_flush >= self._flush_interval:
             try:
-                self._fp.flush()
+                fp.flush()
                 self._last_flush = now
             except Exception as exc:
                 self._record_error("flush", exc)

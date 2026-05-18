@@ -212,6 +212,7 @@ class DecodedLogger:
         # workbook, and exit. We join before clearing references so the file
         # is on disk by the time close() returns (callers — including the
         # tests — rely on this).
+        writer_still_running = False
         if self._writer_thread is not None:
             self._stop_event.set()
             try:
@@ -221,6 +222,7 @@ class DecodedLogger:
                 # once it has drained enough to make room.
                 pass
             self._writer_thread.join(timeout=10.0)
+            writer_still_running = self._writer_thread.is_alive()
             self._writer_thread = None
 
         # The writer thread already saved + closed the workbook. Drop our
@@ -229,14 +231,19 @@ class DecodedLogger:
         self._data_ws = None
         self._cycle_buffer.clear()
 
-        # Drain the queue of anything the writer left behind (e.g. it died
-        # before pulling the sentinel). Keeps the next open() from inheriting
-        # stale rows.
-        while True:
-            try:
-                self._queue.get_nowait()
-            except queue.Empty:
-                break
+        # Only drain the queue ourselves if the writer thread already exited
+        # (it died before pulling the sentinel, or finished cleanly). If the
+        # join above timed out and the writer is still alive, it owns the
+        # queue and will drain it in its own finally block — racing it here
+        # with get_nowait() would silently steal rows out from under the
+        # writer on slow-disk shutdowns. Caught by
+        # tests/test_logging.py::test_decoded_logger_persists_workbook_when_close_join_times_out.
+        if not writer_still_running:
+            while True:
+                try:
+                    self._queue.get_nowait()
+                except queue.Empty:
+                    break
 
         if self._dropped_count:
             _LOG.warning(
@@ -355,6 +362,8 @@ class DecodedLogger:
         Errors are recorded into ``_pending_error`` for the calling thread
         to surface via ``_pump_pending_error``.
         """
+        wb = self._workbook
+        ws = self._data_ws
         try:
             while not self._stop_event.is_set():
                 try:
@@ -363,7 +372,7 @@ class DecodedLogger:
                     continue
                 if item is _WRITER_STOP:
                     break
-                if not self._write_one(item):
+                if not self._write_one(ws, item):
                     return
             # Drain anything still buffered between the stop signal and the
             # join() — even if rows arrived after the sentinel they were
@@ -375,30 +384,30 @@ class DecodedLogger:
                     break
                 if item is _WRITER_STOP:
                     continue
-                if not self._write_one(item):
+                if not self._write_one(ws, item):
                     return
         finally:
-            self._save_and_close_workbook()
+            self._save_and_close_workbook(wb)
 
-    def _write_one(self, row: list) -> bool:
-        if self._data_ws is None:
+    def _write_one(self, ws, row: list) -> bool:
+        if ws is None:
             return False
         try:
-            self._data_ws.append(row)
+            ws.append(row)
             return True
         except Exception as exc:
             self._record_error("write", exc)
             return False
 
-    def _save_and_close_workbook(self) -> None:
-        if self._workbook is None:
+    def _save_and_close_workbook(self, wb) -> None:
+        if wb is None:
             return
         try:
-            self._workbook.save(self.path)
+            wb.save(self.path)
         except Exception as exc:
             self._record_error("save", exc)
         try:
-            self._workbook.close()
+            wb.close()
         except Exception:
             pass
 

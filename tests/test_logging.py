@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from datetime import datetime
 
 from openpyxl import load_workbook
@@ -285,3 +286,146 @@ def test_snapshot_config_copies_csv_templates(resources_dir, tmp_path):
     snapshot = snapshot_config(resources_dir / "config_template", tmp_path)
     assert snapshot.is_dir()
     assert (snapshot / "variables.csv").exists()
+
+
+# ─── Regression: writer-thread ownership transfer on slow-disk shutdown ─────
+#
+# Previously, RawLogger.close() called self._fp.close() and DecodedLogger.close()
+# set self._workbook = None right after the writer-thread join timed out. If the
+# writer was still draining a backlog (slow USB / network share), the UI-thread
+# tear-down destroyed the resources the writer was using — raw_logger raised
+# ValueError on its next writerow() and decoded_logger silently skipped wb.save(),
+# producing partial or empty files.
+#
+# The fix captures `fp` / `wb` / `ws` as locals at the top of _writer_loop so
+# the writer thread keeps its own strong references. Even if close() returns
+# after a join timeout, the writer continues, drains the queue, and persists
+# everything before exiting cleanly.
+#
+# Both tests simulate the slow-disk scenario by:
+#   1. Patching the per-row write to sleep, so the queue cannot drain in time.
+#   2. Patching the writer thread's join to use a near-zero timeout, so close()
+#      definitely times out and returns while the writer is still alive.
+#   3. After close() returns, joining the writer thread directly with a
+#      generous timeout and verifying every row landed on disk.
+
+
+def _shorten_join(thread, timeout_sec: float = 0.05):
+    """Replace thread.join with a wrapper that ignores the caller's timeout
+    and uses a near-zero one instead. Returns the original join so the test
+    can wait for the writer to truly finish.
+    """
+    orig = thread.join
+    thread.join = lambda *_, **__: orig(timeout=timeout_sec)
+    return orig
+
+
+def test_raw_logger_persists_all_rows_when_close_join_times_out(tmp_path):
+    path = tmp_path / "slow_drain.csv"
+    rl = RawLogger(path)
+    rl.open()
+
+    # Inject a per-row delay big enough that even our short forced-timeout
+    # can't drain N rows in time.
+    orig_write_one = rl._write_one
+    def slow_write_one(writer, item):
+        time.sleep(0.05)
+        return orig_write_one(writer, item)
+    rl._write_one = slow_write_one
+
+    N = 5
+    ts = datetime(2026, 5, 19, 12, 0, 0)
+    for i in range(N):
+        rl.log("RX", bytes([i & 0xFF, (i + 1) & 0xFF]), ts)
+
+    orig_join = _shorten_join(rl._writer_thread, timeout_sec=0.05)
+    writer_thread = rl._writer_thread  # save ref before close() nils it
+    rl.close()
+
+    # Without the fix: rl.close() would have closed self._fp during cleanup
+    # and the writer thread would have died with rows still in the queue.
+    # With the fix: writer thread holds local fp ref, keeps draining, then
+    # flushes + closes the file in its finally block.
+    orig_join(timeout=5.0)
+    assert not writer_thread.is_alive(), (
+        "Writer thread should have completed its drain + close cleanly"
+    )
+
+    lines = path.read_text(encoding="utf-8").splitlines()
+    # 1 header row + N data rows. Without the fix, several rows would be
+    # missing (or the file would be unreadable due to a half-written final
+    # row from a ValueError mid-writerow).
+    assert len(lines) == N + 1, (
+        f"Expected {N + 1} lines after slow-drain shutdown, got {len(lines)}"
+    )
+    # Each data row's hex column reflects one of the bytes we logged.
+    data_rows = lines[1:]
+    written_hex = {row.split(",")[2] for row in data_rows}
+    expected_hex = {f"{i & 0xFF:02X} {(i + 1) & 0xFF:02X}" for i in range(N)}
+    assert written_hex == expected_hex
+
+
+def test_decoded_logger_persists_workbook_when_close_join_times_out(tmp_path):
+    config = _make_test_config()
+    path = tmp_path / "slow_drain.xlsx"
+    dl = DecodedLogger(path, config)
+    dl.open()
+
+    # Inject a per-row delay on ws.append.
+    orig_write_one = dl._write_one
+    def slow_write_one(ws, item):
+        time.sleep(0.05)
+        return orig_write_one(ws, item)
+    dl._write_one = slow_write_one
+
+    # Build minimal frame_a + frame_b objects (frame_b is the trigger as the
+    # last frame in config). Each (a, b) pair produces one row.
+    def _frame_a(elapsed_idx: int) -> DecodedFrame:
+        return DecodedFrame(
+            frame_id=0x0100, frame_name="FrameA",
+            signals=[
+                DecodedSignal(frame_id=0x0100, frame_name="FrameA",
+                              signal_name="Cell_V1", raw_value=3850 + elapsed_idx,
+                              scaled_value=3.85 + elapsed_idx * 0.001, unit="V",
+                              status="ok", group="Cells"),
+                DecodedSignal(frame_id=0x0100, frame_name="FrameA",
+                              signal_name="Pack_I", raw_value=121, scaled_value=12.1,
+                              unit="", status="ok"),
+            ],
+        )
+
+    def _frame_b() -> DecodedFrame:
+        return DecodedFrame(
+            frame_id=0x0200, frame_name="FrameB",
+            signals=[
+                DecodedSignal(frame_id=0x0200, frame_name="FrameB",
+                              signal_name="Pack_V", raw_value=482, scaled_value=48.2,
+                              unit="V", status="ok"),
+            ],
+        )
+
+    N = 5
+    for i in range(N):
+        dl.log_frame(_frame_a(i), 1000 * (i + 1))
+        dl.log_frame(_frame_b(), 1000 * (i + 1) + 100)
+
+    orig_join = _shorten_join(dl._writer_thread, timeout_sec=0.05)
+    writer_thread = dl._writer_thread
+    dl.close()
+
+    # Without the fix: close() nullified self._workbook before the writer
+    # thread reached its finally, so _save_and_close_workbook saw None and
+    # skipped wb.save(). The .xlsx on disk would be unreadable / empty.
+    # With the fix: writer captured `wb` locally and saves cleanly.
+    orig_join(timeout=10.0)
+    assert not writer_thread.is_alive(), (
+        "DecodedLogger writer thread should have saved + closed the workbook"
+    )
+
+    wb = load_workbook(path, read_only=True)
+    data_rows = list(wb[DecodedLogger.DATA_SHEET].iter_rows(values_only=True))
+    wb.close()
+    # 1 header row + N data rows for N complete cycles.
+    assert len(data_rows) == N + 1, (
+        f"Expected {N + 1} rows on disk after slow-drain shutdown, got {len(data_rows)}"
+    )

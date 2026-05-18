@@ -205,12 +205,39 @@ begin
       RegQueryStringValue(HKCU, RegPath, 'DisplayVersion', Installed);
   if Installed = '' then Exit;
   if not IsDowngrade(Installed, '{#MyAppVersion}') then Exit;
-  if WizardSilent() then Exit; // never block the auto-updater
+  if WizardSilent() then
+  begin
+    Log('Downgrade attempted during silent install. Aborting to prevent data corruption.');
+    Result := False;
+    Exit;
+  end;
   Result := MsgBox(
     'A newer version of {#MyAppName} (' + Installed + ') is already installed.' + #13#10 +
     'You are about to install an older version ({#MyAppVersion}).' + #13#10 + #13#10 +
     'Continue anyway?',
     mbConfirmation, MB_YESNO) = IDYES;
+    
+  if Result = False then Exit;
+
+  // Prevent splitting installations when a machine-wide install exists but we lack admin rights
+  if not IsAdminInstallMode() then
+  begin
+    if RegKeyExists(HKLM64, RegPath) or RegKeyExists(HKLM32, RegPath) then
+    begin
+      if WizardSilent() then
+      begin
+        Log('Machine-wide installation exists but running in non-admin silent mode. Aborting to prevent split installations.');
+        Result := False;
+        Exit;
+      end;
+      MsgBox(
+        'A system-wide installation of {#MyAppName} exists, but you are currently running this installer without administrator privileges.' + #13#10 + #13#10 +
+        'Please restart the installer and choose "Install for all users" (which requires Administrator rights) to upgrade it.',
+        mbError, MB_OK);
+      Result := False;
+      Exit;
+    end;
+  end;
 end;
 
 // ---------------------------------------------------------------------------
@@ -253,7 +280,9 @@ begin
   CmdLine := RemoveQuotes(CmdLine);
   // /_?= must be last and must point at the uninstaller's directory so the
   // uninstaller runs in-place and Exec() blocks until it truly finishes.
-  Params := '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /_?=' + ExtractFilePath(CmdLine);
+  // The path MUST be quoted, otherwise spaces will break the uninstaller's
+  // command-line parsing, causing it to fork to %TEMP% and break the blocking wait.
+  Params := '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /_?="' + ExtractFilePath(CmdLine) + '"';
   // We never abort on failure here — a partial upgrade is better than a hard
   // stop in the middle of an auto-update. Log so the failure shows up in the
   // Inno Setup log (find it under %TEMP%\Setup Log*.txt).

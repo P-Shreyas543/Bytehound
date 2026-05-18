@@ -39,7 +39,9 @@
       "Bash(python -m pip install --upgrade \"PySide6>=6.11.1\")",
       "Bash(python -m ruff check app --fix)",
       "Bash(git commit -m ' *)",
-      "Bash(python check_doc_anchors.py)"
+      "Bash(python check_doc_anchors.py)",
+      "Bash(python -m pytest tests/test_packet_parser.py -v --tb=short)",
+      "Bash(python -m pytest tests/test_logging.py -v --tb=short)"
     ]
   }
 }

@@ -156,4 +156,12 @@ def launch_installer(installer_path: str) -> None:
     # /SILENT runs the Inno Setup installer without a wizard but shows progress
     # /VERYSILENT shows nothing
     subprocess.Popen([installer_path, "/SILENT"])
-    sys.exit(0)
+    
+    # Graceful exit allows MainWindow.closeEvent to fire, saving UI state
+    # and ensuring background logger threads drain cleanly.
+    from PySide6.QtWidgets import QApplication
+    app = QApplication.instance()
+    if app:
+        app.quit()
+    else:
+        sys.exit(0)
