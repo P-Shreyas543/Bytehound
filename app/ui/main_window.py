@@ -1005,6 +1005,7 @@ class MainWindow(QMainWindow):
         self._plot_redraw_interval_s = 1.0 / 30.0
         self._plot_last_redraw = 0.0
         self._signal_unit_map: Dict[Tuple[int, str], str] = {}
+        self._signal_group_map: Dict[Tuple[int, str], str] = {}
         self._plot_y_range_pending: Dict[int, Tuple[float, float]] = {}
         self._plot_y_range_timers: Dict[int, QTimer] = {}
         # Logging session start — distinct from _session_started, which tracks
@@ -2358,8 +2359,6 @@ class MainWindow(QMainWindow):
                 strip = self._make_panel_strip(idx)
                 self._panel_strip_layout.addWidget(strip, 1)
 
-            self._update_panel_ylabel(idx)
-
         # Anchor X to start at 0 immediately, before any data arrives. Without
         # this, pyqtgraph's default auto-range shows roughly [-0.5, 0.5] until
         # the first packet, then snaps. The guard suppresses the sigXRangeChanged
@@ -2568,7 +2567,6 @@ class MainWindow(QMainWindow):
             self._sync_plot_keys()
             self._persist_panel_assignments()
             self._rebuild_panel_strips()
-            self._update_panel_ylabel(panel_idx)
             self._redraw_plot()
             self._log_activity(
                 f"[ACTION] Added signal 0x{key[0]:04X} {key[1]} to panel {panel_idx + 1}"
@@ -2585,7 +2583,6 @@ class MainWindow(QMainWindow):
             self._sync_plot_keys()
             self._persist_panel_assignments()
             self._rebuild_panel_strips()
-            self._update_panel_ylabel(panel_idx)
             self._redraw_plot()
             self._log_activity(
                 f"[ACTION] Removed signal 0x{key[0]:04X} {key[1]} from panel {panel_idx + 1}"
@@ -2606,16 +2603,6 @@ class MainWindow(QMainWindow):
         for i, panel in enumerate(self._plot_panels):
             self._settings.setValue(f"plot/panel/{i}/keys", [list(k) for k in panel.assigned_keys])
 
-    def _update_panel_ylabel(self, panel_idx: int) -> None:
-        """Y-axis labels are suppressed — the legend already names every curve."""
-        if panel_idx >= len(self._plot_panels):
-            return
-        panel = self._plot_panels[panel_idx]
-        left_axis = panel.plot_item.getAxis("left")
-        if left_axis is not None and hasattr(left_axis, "showLabel"):
-            left_axis.showLabel(False)
-        panel.plot_item.setLabel("left", "")
-
     def _mouseMoved(self, evt):
         """Crosshair handler — disabled in multi-panel mode (panels use their own)."""
         pass
@@ -2623,7 +2610,20 @@ class MainWindow(QMainWindow):
 
 
     def _build_bitfield_tab(self) -> QWidget:
-        self._bitfield_table = QTableWidget(0, 4, self)
+        outer = QWidget(self)
+        v = QVBoxLayout(outer)
+        v.setContentsMargins(4, 4, 4, 4)
+        v.setSpacing(4)
+
+        bar = QHBoxLayout()
+        bar.setSpacing(6)
+        bar.addWidget(QLabel("Group:", outer))
+        self._bitfield_group_combo = _CheckableGroupCombo(outer)
+        self._bitfield_group_combo.selection_changed.connect(self._apply_bitfield_group_filter)
+        bar.addWidget(self._bitfield_group_combo, 1)
+        v.addLayout(bar)
+
+        self._bitfield_table = QTableWidget(0, 4, outer)
         self._bitfield_table.setHorizontalHeaderLabels(["Frame", "Variable", "Bit", "State"])
         self._bitfield_table.verticalHeader().setVisible(False)
         self._bitfield_table.horizontalHeader().setStretchLastSection(True)
@@ -2633,16 +2633,31 @@ class MainWindow(QMainWindow):
         # into O(1) — matters at high frame rates where every decoded packet
         # may touch the same bitfield rows.
         self._bitfield_row_index: Dict[str, int] = {}
-        return self._bitfield_table
+        v.addWidget(self._bitfield_table, 1)
+        return outer
 
     def _build_enum_tab(self) -> QWidget:
-        self._enum_table = QTableWidget(0, 4, self)
+        outer = QWidget(self)
+        v = QVBoxLayout(outer)
+        v.setContentsMargins(4, 4, 4, 4)
+        v.setSpacing(4)
+
+        bar = QHBoxLayout()
+        bar.setSpacing(6)
+        bar.addWidget(QLabel("Group:", outer))
+        self._enum_group_combo = _CheckableGroupCombo(outer)
+        self._enum_group_combo.selection_changed.connect(self._apply_enum_group_filter)
+        bar.addWidget(self._enum_group_combo, 1)
+        v.addLayout(bar)
+
+        self._enum_table = QTableWidget(0, 4, outer)
         self._enum_table.setHorizontalHeaderLabels(["Frame", "Variable", "Raw", "Label"])
         self._enum_table.verticalHeader().setVisible(False)
         self._enum_table.horizontalHeader().setStretchLastSection(True)
         # See _bitfield_row_index — same pattern for the enum table.
         self._enum_row_index: Dict[str, int] = {}
-        return self._enum_table
+        v.addWidget(self._enum_table, 1)
+        return outer
 
     
     def _build_editor_tab(self) -> QWidget:
@@ -2798,12 +2813,11 @@ class MainWindow(QMainWindow):
         self._populate_group_selector()
         self._plot_keys.clear()
         # Clear panel assignments — old signals may not exist in the new config
-        for i, panel in enumerate(self._plot_panels):
+        for panel in self._plot_panels:
             panel.assigned_keys.clear()
             for curve in panel.curves.values():
                 panel.plot_item.removeItem(curve)
             panel.curves.clear()
-            self._update_panel_ylabel(i)
         self._rebuild_panel_strips()   # once after the loop, not N times
         self._persist_panel_assignments()
         self._populate_tx_commands()
@@ -3813,19 +3827,35 @@ class MainWindow(QMainWindow):
         return signal.status
 
     def _update_detail_tabs(self, signal: DecodedSignal) -> None:
+        group = self._signal_group_map.get((signal.frame_id, signal.signal_name), "")
         if signal.bit_values:
+            bf_selected = (
+                self._bitfield_group_combo.selected_groups()
+                if hasattr(self, "_bitfield_group_combo") else set()
+            )
+            bf_visible = self._row_visible_for_group(bf_selected, group)
             for bit_name, active in signal.bit_values.items():
+                key = (f"0x{signal.frame_id:04X}", signal.signal_name, bit_name)
                 self._upsert_detail_row(
                     self._bitfield_table,
                     self._bitfield_row_index,
-                    (f"0x{signal.frame_id:04X}", signal.signal_name, bit_name),
+                    key,
                     [f"0x{signal.frame_id:04X}", signal.signal_name, bit_name, "ON" if active else "OFF"],
                 )
+                row = self._bitfield_row_index.get("\x1f".join(key))
+                if row is not None:
+                    self._bitfield_table.setRowHidden(row, not bf_visible)
         if signal.enum_label:
+            en_selected = (
+                self._enum_group_combo.selected_groups()
+                if hasattr(self, "_enum_group_combo") else set()
+            )
+            en_visible = self._row_visible_for_group(en_selected, group)
+            key = (f"0x{signal.frame_id:04X}", signal.signal_name)
             self._upsert_detail_row(
                 self._enum_table,
                 self._enum_row_index,
-                (f"0x{signal.frame_id:04X}", signal.signal_name),
+                key,
                 [
                     f"0x{signal.frame_id:04X}",
                     signal.signal_name,
@@ -3833,6 +3863,9 @@ class MainWindow(QMainWindow):
                     signal.enum_label,
                 ],
             )
+            row = self._enum_row_index.get("\x1f".join(key))
+            if row is not None:
+                self._enum_table.setRowHidden(row, not en_visible)
 
     def _upsert_detail_row(
         self,
@@ -3865,6 +3898,70 @@ class MainWindow(QMainWindow):
         assert self._config is not None
         groups = sorted({signal.group for signal in self._config.all_signals if signal.group})
         self._group_combo.set_groups(groups)
+        # Refresh the per-(frame,signal) → group lookup used by the dock filters.
+        self._signal_group_map = {
+            (s.frame_id, s.signal_name): (s.group or "")
+            for s in self._config.all_signals
+        }
+        # Each dock combo lists only groups whose signals actually belong to
+        # that dock — listing groups that can never produce a row is noise.
+        bitfield_keys = set(self._config.bitfields.keys())
+        enum_keys = set(self._config.enums.keys())
+        bitfield_groups = sorted({
+            s.group for s in self._config.all_signals
+            if s.group and (s.frame_id, s.signal_name) in bitfield_keys
+        })
+        enum_groups = sorted({
+            s.group for s in self._config.all_signals
+            if s.group and (s.frame_id, s.signal_name) in enum_keys
+        })
+        # Independent combos in each dock — both reset to "All" on config load.
+        # After that they behave independently of the main combo.
+        if hasattr(self, "_bitfield_group_combo"):
+            self._bitfield_group_combo.set_groups(bitfield_groups)
+        if hasattr(self, "_enum_group_combo"):
+            self._enum_group_combo.set_groups(enum_groups)
+
+    def _row_visible_for_group(self, selected: set, group: str) -> bool:
+        return (not selected) or (group in selected)
+
+    def _apply_bitfield_group_filter(self) -> None:
+        selected = self._bitfield_group_combo.selected_groups()
+        self._bitfield_table.setUpdatesEnabled(False)
+        try:
+            for key_text, row in self._bitfield_row_index.items():
+                parts = key_text.split("\x1f")
+                if len(parts) < 2:
+                    continue
+                try:
+                    frame_id = int(parts[0], 16)
+                except ValueError:
+                    continue
+                group = self._signal_group_map.get((frame_id, parts[1]), "")
+                self._bitfield_table.setRowHidden(
+                    row, not self._row_visible_for_group(selected, group)
+                )
+        finally:
+            self._bitfield_table.setUpdatesEnabled(True)
+
+    def _apply_enum_group_filter(self) -> None:
+        selected = self._enum_group_combo.selected_groups()
+        self._enum_table.setUpdatesEnabled(False)
+        try:
+            for key_text, row in self._enum_row_index.items():
+                parts = key_text.split("\x1f")
+                if len(parts) < 2:
+                    continue
+                try:
+                    frame_id = int(parts[0], 16)
+                except ValueError:
+                    continue
+                group = self._signal_group_map.get((frame_id, parts[1]), "")
+                self._enum_table.setRowHidden(
+                    row, not self._row_visible_for_group(selected, group)
+                )
+        finally:
+            self._enum_table.setUpdatesEnabled(True)
 
     def _apply_group_filter(self) -> None:
         selected_groups = self._group_combo.selected_groups()   # empty set = All

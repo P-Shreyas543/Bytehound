@@ -933,6 +933,7 @@ class AnalysisSuiteWindow(QMainWindow):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setWindowFlag(Qt.Window)
         self.setWindowTitle(f"Analysis Suite — {APP_NAME}")
         self.resize(1500, 900)
         self.setMinimumSize(900, 600)
@@ -1780,6 +1781,8 @@ class AnalysisSuiteWindow(QMainWindow):
             # leave the user's expand state alone.
             if query and subplot_has_match:
                 top.setExpanded(True)
+            if query and not subplot_has_match:
+                top.setHidden(True)
 
         if not query:
             self._param_hit_count.setText("")
