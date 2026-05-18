@@ -44,7 +44,12 @@ DisableProgramGroupPage   = yes
 OutputDir                 = installer_output
 OutputBaseFilename        = Bytehound_Setup_{#MyAppVersion}
 SetupIconFile             = {#MyAppIcon}
-UninstallDisplayIcon      = {app}\{#MyAppExe}
+; Point UninstallDisplayIcon at the standalone .ico (copied to {app} below)
+; rather than the exe. The exe also has the icon embedded via Bytehound.spec,
+; but pointing at the .ico is a belt-and-braces safeguard: if a future spec
+; change ever drops the embedded icon, the Programs & Features entry still
+; shows the right logo instead of a generic floppy/blank-app glyph.
+UninstallDisplayIcon      = {app}\logo_sq.ico
 UninstallDisplayName      = {#MyAppName} v{#MyAppVersion}
 
 ; ── Compression – everything bundled, zero internet needed ──────────────────

@@ -49,6 +49,12 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    # Embed the logo as the exe's icon resource. Without this, Windows
+    # falls back to a generic application icon everywhere the exe icon
+    # is shown — taskbar, alt-tab, file explorer, and the Programs &
+    # Features uninstall entry (which reads its icon from this exe via
+    # UninstallDisplayIcon in installer.iss).
+    icon='branding/logo_sq.ico',
 )
 coll = COLLECT(
     exe,
