@@ -116,16 +116,18 @@ def _decode_signal(config: FrameConfig, spec: SignalSpec, payload: bytes) -> Dec
     )
 
 
-# struct.Struct cache. struct.unpack(fmt, ...) does its own lookup via
-# _Struct internally, but explicit caching of (format -> compiled Struct)
-# avoids the format-string parsing step entirely and lets us reuse the
-# same Struct across the lifetime of the process. Per-call cost drops
-# from ~0.8 µs (struct.unpack_from on a fresh fmt) to ~0.4 µs.
-_STRUCT_CACHE: Dict[str, struct.Struct] = {}
+# Cache from (endianness, byte_length, data_type) → compiled struct.Struct.
+# Lazily populated on first decode of each unique signal shape. Lookups
+# are a single dict.get with a 3-tuple key; collapsing what used to be
+# two dict.gets (one for the format char, one for the Struct) into a
+# single hot-path call. A None entry caches the "no native struct code"
+# verdict (odd byte counts) so the fallback path still avoids re-deciding
+# per call.
+_DECODE_STRUCT_CACHE: Dict[tuple, Optional[struct.Struct]] = {}
 
-# Map (byte_length, signed) -> struct format character for fixed-width
-# integer types. Power-of-two sizes only — odd byte counts (3, 5, 6, 7)
-# have no native struct code and fall back to int.from_bytes + slice.
+# Fixed-width integer struct format chars. Power-of-two byte counts
+# only — 3 / 5 / 6 / 7 byte ints have no native struct code and fall
+# back to int.from_bytes on a sliced chunk.
 _INT_FMT_CHAR = {
     (1, False): "B",
     (1, True):  "b",
@@ -138,35 +140,46 @@ _INT_FMT_CHAR = {
 }
 
 
-def _get_struct(fmt: str) -> struct.Struct:
-    s = _STRUCT_CACHE.get(fmt)
-    if s is None:
-        s = struct.Struct(fmt)
-        _STRUCT_CACHE[fmt] = s
-    return s
-
-
 def _decode_raw_at(payload: bytes, spec: SignalSpec) -> Union[int, float]:
     """Decode a single raw value at ``spec.start_byte`` without slicing.
 
-    struct.unpack_from reads directly from the payload bytes object;
+    ``struct.unpack_from`` reads directly from the payload bytes object;
     avoiding the per-signal ``payload[start:end]`` slice eliminates one
-    bytes-allocation per int/float signal. For odd-byte-length ints
-    (3 / 5 / 6 / 7), struct has no matching format code and we fall
-    back to ``int.from_bytes`` on the sliced chunk.
+    bytes allocation per int/float signal and is faster than
+    ``int.from_bytes`` for every fixed-width type benchmarked
+    (microbench: ~1.9× faster for uint16). Odd-byte-length ints
+    (3 / 5 / 6 / 7) have no native struct format code and fall back to
+    the original ``int.from_bytes`` path; that "no struct" verdict is
+    also cached so the fallback decision is a single dict lookup.
     """
+    cache_key = (spec.endianness, spec.byte_length, spec.data_type)
+    s = _DECODE_STRUCT_CACHE.get(cache_key, _UNCACHED)
+    if s is _UNCACHED:
+        s = _build_struct_for(spec)
+        _DECODE_STRUCT_CACHE[cache_key] = s
+    if s is not None:
+        return s.unpack_from(payload, spec.start_byte)[0]
+    # Cached "no native struct code" — odd byte length int.
+    chunk = payload[spec.start_byte : spec.end_byte]
+    signed = spec.data_type == "int"
+    return int.from_bytes(chunk, byteorder=spec.endianness, signed=signed)
+
+
+# Sentinel that distinguishes "not yet seen this spec" from "seen and
+# concluded no native struct code applies" (cache value: None). Keeps
+# the hot path branch-free for the common case.
+_UNCACHED: object = object()
+
+
+def _build_struct_for(spec: SignalSpec) -> Optional[struct.Struct]:
     endian = "<" if spec.endianness == "little" else ">"
     if spec.data_type == "float":
-        fmt = endian + ("f" if spec.byte_length == 4 else "d")
-        return _get_struct(fmt).unpack_from(payload, spec.start_byte)[0]
-
+        return struct.Struct(endian + ("f" if spec.byte_length == 4 else "d"))
     signed = spec.data_type == "int"
     fmt_char = _INT_FMT_CHAR.get((spec.byte_length, signed))
-    if fmt_char is not None:
-        return _get_struct(endian + fmt_char).unpack_from(payload, spec.start_byte)[0]
-    # Odd byte length — no native struct code. Slicing is unavoidable.
-    chunk = payload[spec.start_byte : spec.end_byte]
-    return int.from_bytes(chunk, byteorder=spec.endianness, signed=signed)
+    if fmt_char is None:
+        return None
+    return struct.Struct(endian + fmt_char)
 
 
 def _lookup_enum(config: FrameConfig, spec: SignalSpec, raw: Union[int, float]) -> Optional[str]:
