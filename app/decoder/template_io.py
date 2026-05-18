@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import shutil
 from pathlib import Path
-from typing import Iterable
 
 
 CONFIG_CSV_FILES = (

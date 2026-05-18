@@ -10,7 +10,7 @@ Exercises every feature the user asked about:
                          AND the Arduino reflects the new value back via 0x2000
 6. Loggers + replay    - raw / decoded CSV write and round-trip cleanly
 
-Run:  python test_headless.py [--port COM7]
+Run:  python smoke_headless.py [--port COM7]
 
 Exit status is the number of failed checks (0 = all green).
 """

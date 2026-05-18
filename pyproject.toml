@@ -1,0 +1,34 @@
+# Tooling config only — Bytehound packaging is handled by PyInstaller
+# (see Bytehound.spec). pytest still uses pytest.ini.
+
+[tool.ruff]
+target-version = "py310"
+line-length = 100
+extend-exclude = ["build", "dist", "installer_output", "scratch", "Arduino_BMS_Simulator"]
+
+[tool.ruff.lint]
+# Default rules (E, F) plus targeted bugbear checks. UP/SIM rule families
+# are deliberately NOT enabled: the codebase consistently uses
+# typing.Dict/List/Optional and that's a valid style choice for Py 3.10+
+# that we don't want a linter rewriting wholesale.
+select = [
+    "E",    # pycodestyle errors
+    "F",    # pyflakes (unused imports, undefined names, real bugs)
+    "W",    # pycodestyle warnings
+    "B",    # flake8-bugbear — catches real bug patterns (mutable default
+            #   args, except-pass without re-raise, etc.)
+]
+ignore = [
+    # Many UI/main_window methods lazy-import optional Qt addons inside the
+    # method body to keep the cold-start path lean. E402 (module-import-not-
+    # at-top) flags every one of those; the pattern is intentional.
+    "E402",
+    # The codebase uses long lines for readability of QSS strings, table
+    # rows, and dataclass field docstrings. Format consistency matters less
+    # than line length here.
+    "E501",
+    # Loop variables named `l`, `i`, `O` are flagged here. The few in this
+    # codebase (e.g. matplotlib-style `l` for "line") are clearer than a
+    # rename would be.
+    "E741",
+]

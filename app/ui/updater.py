@@ -9,7 +9,7 @@ import sys
 import urllib.request
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QThread, Signal
+from PySide6.QtCore import QThread, Signal
 
 _LOG = logging.getLogger("bytehound.updater")
 

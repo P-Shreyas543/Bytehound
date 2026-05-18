@@ -27,7 +27,7 @@ from PySide6.QtCore import (
     QPersistentModelIndex,
     Qt,
 )
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtGui import QFont
 
 # Columns that are populated once from config and never change.
 _STATIC_COLS = {0, 1, 2, 3, 4, 7}
@@ -89,10 +89,14 @@ class TelemetryTableModel(QAbstractTableModel):
     # QAbstractTableModel required overrides
     # ------------------------------------------------------------------
 
-    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # type: ignore[override]
+    # B008: QModelIndex() in the default is the standard Qt-Python idiom and
+    # matches the C++ Qt method signatures (`const QModelIndex &parent = QModelIndex()`).
+    # An invalid QModelIndex is immutable for our purposes, so the "shared
+    # mutable default" concern that B008 normally catches doesn't apply.
+    def rowCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # type: ignore[override]  # noqa: B008
         return 0 if parent.isValid() else len(self._rows)
 
-    def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # type: ignore[override]
+    def columnCount(self, parent: QModelIndex | QPersistentModelIndex = QModelIndex()) -> int:  # type: ignore[override]  # noqa: B008
         return 0 if parent.isValid() else NUM_COLS
 
     def headerData(

@@ -20,7 +20,7 @@ The Arduino must be flashed with the sketch in Arduino_BMS_Simulator/.
 Exit code is the number of failed checks (0 = all green).
 
 Usage:
-    python test_stress.py [--port COM7]
+    python smoke_stress.py [--port COM7]
 """
 
 from __future__ import annotations

@@ -14,7 +14,7 @@ from ..decoder.types import ProtocolConfig
 def build_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> bytes:
     if protocol.parser_type == "modbus_rtu":
         return build_modbus_packet(protocol, frame_id, payload)
-    
+
     pc = protocol
     if pc.length_meaning != "payload_only":
         raise ValueError(f"Unsupported length_meaning: {pc.length_meaning!r}")
@@ -66,7 +66,7 @@ def build_modbus_packet(protocol: ProtocolConfig, target_id: int, payload: bytes
     If payload is not empty, we assume it's a write request (FC 06 or 16).
     """
     node_address = protocol.modbus_node_address
-    
+
     if not payload:
         # Read Holding Registers (FC 03)
         # target_id is the starting address. We'll default to reading 1 register.

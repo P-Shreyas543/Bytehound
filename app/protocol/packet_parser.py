@@ -226,7 +226,7 @@ class ModbusRtuParser(ParserProtocol):
             return None, 0
 
         frame = bytes(self._buf[:expected_len])
-        
+
         if fc in (3, 4):
             payload = frame[3:-2]
         elif fc == 6:
@@ -235,10 +235,10 @@ class ModbusRtuParser(ParserProtocol):
             payload = frame[4:6]
         else:
             payload = b""
-            
+
         received_crc = int.from_bytes(frame[-2:], "little")
         expected_crc = crc_mod.compute("crc16_modbus", frame[:-2])
-        
+
         if received_crc != expected_crc:
             return (
                 ParsedPacket(

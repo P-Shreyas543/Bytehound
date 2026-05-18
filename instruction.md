@@ -160,8 +160,9 @@ BMS-MonitorApp/
 ├── requirements.txt
 ├── Bytehound.spec              # PyInstaller spec
 ├── build.py                            # convenience wrapper around PyInstaller
-├── test_com7.py                        # optional serial decode smoke test (requires hardware)
-├── test_headless.py                    # optional headless integration smoke test (requires hardware)
+├── smoke_com7.py                       # optional serial decode smoke test (requires hardware)
+├── smoke_headless.py                   # optional headless integration smoke test (requires hardware)
+├── smoke_stress.py                     # 13-phase stress harness (requires Arduino BMS simulator)
 └── instruction.md                      # this file
 ```
 
@@ -1243,14 +1244,16 @@ pytest -q
 Three ad-hoc scripts at the repo root are useful for manual verification on a
 machine with a real device attached. They are **not** part of the pytest suite:
 
-- [test_com7.py](test_com7.py) — quick serial decode smoke test (defaults to `COM7` @ `115200`).
-- [test_headless.py](test_headless.py) — headless (no GUI) end-to-end run that exercises every protocol-layer feature against a real serial device.
-- [test_stress.py](test_stress.py) — 13-phase stress harness (CRC bursts, device-silence windows, TX flood, polling-toggle storm, reconnect cycles, watchdog timing, rapid config reload). Drives the Arduino BMS simulator via the 0x1002/0x1003/0x1004 stress hooks.
+- [smoke_com7.py](smoke_com7.py) — quick serial decode smoke test (defaults to `COM7` @ `115200`).
+- [smoke_headless.py](smoke_headless.py) — headless (no GUI) end-to-end run that exercises every protocol-layer feature against a real serial device.
+- [smoke_stress.py](smoke_stress.py) — 13-phase stress harness (CRC bursts, device-silence windows, TX flood, polling-toggle storm, reconnect cycles, watchdog timing, rapid config reload). Drives the Arduino BMS simulator via the 0x1002/0x1003/0x1004 stress hooks.
+
+These are named `smoke_*.py` (not `test_*.py`) so pytest does not auto-collect them — they open real serial ports at import time.
 
 Run:
 
 ```powershell
-python test_headless.py --port COM7 --seconds 6 --target-voltage 58.5
+python smoke_headless.py --port COM7 --seconds 6 --target-voltage 58.5
 ```
 
 The script exits with a non-zero code equal to the number of failed checks, and prints a `PASSED / FAILED` summary. It groups checks into eight sections:
@@ -1269,7 +1272,7 @@ The script exits with a non-zero code equal to the number of failed checks, and 
 
 ### Arduino BMS Simulator
 
-[Arduino_BMS_Simulator/Arduino_BMS_Simulator.ino](Arduino_BMS_Simulator/Arduino_BMS_Simulator.ino) is a single-file sketch for any Arduino with hardware Serial (e.g. Mega 2560). It is the reference fixture for `test_headless.py`. It implements:
+[Arduino_BMS_Simulator/Arduino_BMS_Simulator.ino](Arduino_BMS_Simulator/Arduino_BMS_Simulator.ino) is a single-file sketch for any Arduino with hardware Serial (e.g. Mega 2560). It is the reference fixture for `smoke_headless.py`. It implements:
 
 **TX (board → PC), continuous streams:**
 
@@ -1286,7 +1289,7 @@ The script exits with a non-zero code equal to the number of failed checks, and 
 | `0x1000 / 0x2000 / 0x3000` (length 0) | — | Empty-payload poll; replies with the corresponding telemetry frame immediately |
 | `0x1001 Reset`              | `FF FF`           | Resets `Voltage`, `Current`, `Status_Bits`, `Mode` to defaults |
 | `0x2001 Set_Voltage_Limit`  | `uint16 LE` (scale 0.1, range 40.0–60.0 V) | Updates the streamed `Voltage_Limit` and re-emits `0x2000` immediately so the round-trip is observable in one tick |
-| `0x1002 Stress_Mode`        | `uint8`           | `1` = 5× streaming cadence (every 20 ms), `0` = back to normal — used by `test_stress.py` to exercise the parser/UI under high RX rate |
+| `0x1002 Stress_Mode`        | `uint8`           | `1` = 5× streaming cadence (every 20 ms), `0` = back to normal — used by `smoke_stress.py` to exercise the parser/UI under high RX rate |
 | `0x1003 Force_CRC_Errors`   | `uint8 N`         | Send the next `N` 0x1000 frames with a deliberately wrong CRC to verify the **Errors** counter increments and the parser resyncs cleanly |
 | `0x1004 Go_Silent`          | `uint8 seconds`   | Stop streaming for `N` seconds — verifies the host watchdog (`device_timeout`) fires and the **Lat / Frames** counters stop climbing |
 

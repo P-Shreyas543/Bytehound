@@ -20,7 +20,7 @@
 //     0x2001 Set_Voltage_Limit payload uint16 LE (scale 0.1) - same effect via the
 //                                                              named TX command
 //
-//   Stress-test hooks (used only by test_stress.py):
+//   Stress-test hooks (used only by smoke_stress.py):
 //     0x1002 stress_mode       payload uint8 (1=on, 0=off) - 5x faster
 //                                                            telemetry cadence
 //     0x1003 inject_crc_errors payload uint8 N            - emit next N

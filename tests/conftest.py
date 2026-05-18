@@ -15,7 +15,7 @@ def dummy_protocol_config(parser_type="framed", **kwargs) -> ProtocolConfig:
         frame_id_byte_order="big", length_size=1, length_meaning="payload_only",
         crc_type="crc16_modbus", crc_size=2, crc_byte_order="little",
         crc_coverage="header_to_payload", footer=b"", escape_mode="none",
-        raw_log_format="hex", enabled=True, parser_type=parser_type,
+        enabled=True, parser_type=parser_type,
         tx_pad_length=None, inter_frame_delay_ms=10
     )
     d.update(kwargs)

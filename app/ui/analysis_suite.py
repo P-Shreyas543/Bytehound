@@ -30,16 +30,14 @@ from openpyxl import load_workbook
 pg.setConfigOptions(antialias=True, useOpenGL=True)
 from PySide6.QtCore import QThread, Qt, Signal, QPointF, QObject, QSettings, QTimer
 from PySide6.QtGui import (
-    QAction, QColor, QFont, QKeySequence, QPainter, QPen,
+    QAction, QColor, QFont, QKeySequence, QPainter,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox,
-    QDialog, QDialogButtonBox, QDoubleSpinBox, QFileDialog, QFrame,
-    QGridLayout, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
-    QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-    QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter,
-    QStatusBar, QTableWidget, QTableWidgetItem, QTabWidget, QToolBar,
-    QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QDialog, QDoubleSpinBox, QFileDialog, QFrame,
+    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QMainWindow, QMenu, QMessageBox,
+    QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QStatusBar, QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -411,7 +409,6 @@ class LogLoaderThread(QThread):
         * **Dyno test rig** — sheet ``Record`` (or active), column
           ``Elapsed (s)`` then signals.
         """
-        from openpyxl import load_workbook
         wb = load_workbook(self._path, read_only=True, data_only=True)
         if 'Data' in wb.sheetnames:
             ws = wb['Data']
@@ -600,7 +597,7 @@ class CursorReadoutPanel(QGroupBox):
         # Collect values for ΔY computation (cursor_idx -> {(log_id,param): value})
         cursor_vals: list[dict[tuple[str, str], float]] = []
 
-        for ci, cursor in enumerate(cursors):
+        for _ci, cursor in enumerate(cursors):
             t = cursor['time']
             label_num = cursor.get('label', 0)
             scope = cursor.get('scope', 'all')
@@ -2885,7 +2882,7 @@ class AnalysisSuiteWindow(QMainWindow):
             return
         t = moved_line.value()
         cdata['time'] = t
-        for pw, line in cdata['lines'].items():
+        for _pw, line in cdata['lines'].items():
             if line is not moved_line:
                 line.blockSignals(True)
                 line.setValue(t)
@@ -2952,7 +2949,7 @@ class AnalysisSuiteWindow(QMainWindow):
 
     def _update_cursor_dots(self):
         """Rebuild tracking dots for all cursors on all plots."""
-        for cid, dots in self._cursor_dots.items():
+        for _cid, dots in self._cursor_dots.items():
             for dot in dots:
                 dot['pw'].removeItem(dot['item'])
         self._cursor_dots.clear()
@@ -3074,7 +3071,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self._selected_v_cursor = ''
 
         # Cursor dots
-        for cid, dots in self._cursor_dots.items():
+        for _cid, dots in self._cursor_dots.items():
             for dot in dots:
                 dot['pw'].removeItem(dot['item'])
         self._cursor_dots.clear()

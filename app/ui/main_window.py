@@ -13,7 +13,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, Tuple
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, QObject, Signal, QSortFilterProxyModel, QLocale
+from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, QObject, Signal, QLocale
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
@@ -35,7 +35,6 @@ from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
     QDockWidget,
-    QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
     QHBoxLayout,
@@ -477,7 +476,7 @@ from ..serial_logging.decoded_logger import DecodedLogger
 from ..serial_logging.raw_logger import RawLogger
 from ..protocol.packet_parser import create_parser, ParserProtocol, ParsedPacket
 from ..serial_io.replay_source import parse_log_file, replay_bytes
-from ..serial_io.serial_worker import SerialSettings, PollingWorker, available_ports
+from ..serial_io.serial_worker import PollingWorker
 
 _COLUMNS = (
     ("Frame",     100),
@@ -2758,7 +2757,7 @@ class MainWindow(QMainWindow):
         v.addWidget(self._enum_table, 1)
         return outer
 
-    
+
     def _build_editor_tab(self) -> QWidget:
         outer = QWidget(self)
         vlay = QVBoxLayout(outer)
@@ -3227,7 +3226,7 @@ class MainWindow(QMainWindow):
 
     def _update_counts(self) -> None:
         self._refresh_counts_label()
-        
+
     def _on_tx_recorded(self, packet: bytes) -> None:
         self._tx_bytes += len(packet)
         if self._raw_logger:
@@ -3532,7 +3531,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Data feed
     # ------------------------------------------------------------------
-    
+
 
     def _handle_packet(self, packet: ParsedPacket) -> None:
         self._packet_count += 1
@@ -3595,7 +3594,7 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
     # Table, tabs, and plot maintenance
     # ------------------------------------------------------------------
-    
+
     def _populate_polling_list(self) -> None:
         """Deprecated shim — delegates to the new status-sidebar updater."""
         self._update_poll_status_sidebar()

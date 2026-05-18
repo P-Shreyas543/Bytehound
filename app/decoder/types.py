@@ -168,10 +168,6 @@ class ProtocolConfig:
     #: footer bytes inside the payload; the validator enforces ``"none"``
     #: until that path lands.
     escape_mode: str
-    #: How the raw-log writer renders each captured frame. Today only
-    #: ``"hex"`` is supported; the value is stored on the config object but
-    #: the actual log writer is hard-coded to space-separated hex.
-    raw_log_format: str
     enabled: bool
     parser_type: str = "framed"
     tx_pad_length: Optional[int] = None
@@ -191,13 +187,6 @@ class FrameDefinition:
     frame_id: int
     frame_name: str
     payload_length: Optional[int] = None
-    #: Stored on the frame definition for completeness with the
-    #: ``frames.csv`` schema, but **no consumer reads it** today: the
-    #: decoder doesn't filter on direction, and TX commands are configured
-    #: via the separate ``tx_commands`` sheet. Treat as informational
-    #: metadata; setting ``"tx"`` here will NOT block decoding of an
-    #: incoming frame with this ID.
-    direction: str = "rx"
     enabled: bool = True
     #: Free-text note from the ``frames.csv`` ``description`` column. Not
     #: shown anywhere in the UI today — intended for documentation that
@@ -228,12 +217,6 @@ class SignalSpec:
     source_name: str = ""
     enabled: bool = True
     description: str = ""
-    #: Reserved for Modbus register-type semantics (holding / input / coil /
-    #: discrete). The loader reads it and stores it on every SignalSpec, but
-    #: **no other code in the app consults it** today, and the bundled
-    #: ``variables.csv`` template doesn't even include the column. Leave it
-    #: empty unless you're building external tooling that wants the metadata.
-    register_type: str = ""
     read_write: str = "R"
     min_value: Optional[float] = None
     max_value: Optional[float] = None

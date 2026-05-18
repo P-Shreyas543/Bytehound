@@ -17,9 +17,6 @@ from typing import Dict, Iterable, List, Optional
 
 from .types import (
     FMT_SIZES,
-    SUPPORTED_CRC_TYPES,
-    SUPPORTED_DATA_TYPES,
-    SUPPORTED_FMT_TYPES,
     BitfieldSpec,
     CalcGroupSpec,
     CrcType,
@@ -28,6 +25,7 @@ from .types import (
     FrameConfig,
     FrameDefinition,
     ParserType,
+    PollingScheduleSpec,
     ProtocolConfig,
     ReadWrite,
     SignalSpec,
@@ -51,8 +49,8 @@ _PROTOCOL_REQUIRED = {
     "crc_type",
     "crc_size",
     "crc_byte_order",
-    # crc_coverage and raw_log_format are optional — only one value is
-    # supported for each so they default to the single valid value.
+    # crc_coverage is optional — only one value is supported so it
+    # defaults to the single valid value.
 }
 
 _LEGACY_FRAME_CONFIG_REQUIRED = {
@@ -394,8 +392,6 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         footer=_hex_to_bytes(row.get("footer_hex", ""), "footer_hex"),
         # escape_mode: only "none" is implemented; default to it.
         escape_mode=(row.get("escape_mode") or "none").strip().lower(),
-        # raw_log_format: controls hex vs binary log output; default to "hex".
-        raw_log_format=(row.get("raw_log_format") or "hex").strip().lower(),
         enabled=True,
         parser_type=ParserType.parse(row.get("parser_type", "")).value,
         tx_pad_length=_to_optional_int(row.get("tx_pad_length", ""), field_name="tx_pad_length"),
@@ -437,7 +433,6 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
             frame_id=frame_id,
             frame_name=row["frame_name"],
             payload_length=_to_optional_int(row.get("payload_length", ""), field_name="payload_length"),
-            direction=(row.get("direction") or "rx").strip().lower(),
             enabled=enabled,
             description=row.get("description", ""),
         )
@@ -447,8 +442,6 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
 def _parse_variables(
     rows: List[Dict[str, str]], frames: Dict[int, FrameDefinition]
 ) -> List[SignalSpec]:
-    from .types import SignalSpec
-
     signals: List[SignalSpec] = []
     offsets: Dict[int, int] = {}
     seen: Dict[int, set[str]] = {}
@@ -460,7 +453,7 @@ def _parse_variables(
         if frame_id not in frames:
             # Auto-create a frame definition for Modbus if not defined in frames.csv
             frames[frame_id] = FrameDefinition(frame_id=frame_id, frame_name=f"Node 0x{frame_id:X}")
-            
+
         name = row["signal_name"].strip()
         if not name:
             raise ConfigError(f"variables row {row_no}: signal_name is required")
@@ -500,7 +493,6 @@ def _parse_variables(
                     source_name=name,
                     enabled=True,
                     description=row.get("description", ""),
-                    register_type=row.get("register_type", "").strip().lower(),
                     read_write=ReadWrite.parse(row.get("read_write", "")).value,
                     min_value=_to_optional_float(row.get("min_value", ""), "variables.min_value"),
                     max_value=_to_optional_float(row.get("max_value", ""), "variables.max_value"),
@@ -640,7 +632,8 @@ def _parse_calc_groups(rows: List[Dict[str, str]], cfg: FrameConfig) -> List[Cal
             raise ConfigError(f"calc_groups row {row_no}: unknown group {group!r}")
         for stat in row["operations"].split("|"):
             stat = stat.strip().lower()
-            if not stat: continue
+            if not stat:
+                continue
             if stat not in valid_stats:
                 raise ConfigError(f"calc_groups row {row_no}: unsupported stat {stat!r}")
             out.append(
@@ -720,7 +713,6 @@ def _parse_serial_defaults(rows: List[Dict[str, str]]) -> SerialDefaults:
 
 
 def _parse_polling_schedules(rows: List[Dict[str, str]]) -> List[PollingScheduleSpec]:
-    from .types import PollingScheduleSpec
     if not rows:
         return []
     _optional_columns_ok(rows, _POLLING_SCHEDULE_REQUIRED, "polling_schedule")

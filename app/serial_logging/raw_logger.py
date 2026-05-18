@@ -206,6 +206,10 @@ class RawLogger:
                 self._maybe_periodic_flush()
         finally:
             # Drain anything enqueued between the stop signal and the join.
+            # NB: never `return` from inside this `finally` — that would
+            # silently swallow any exception escaping the main try block.
+            # `break` lets the final flush still run and any pending
+            # exception still propagate.
             while True:
                 try:
                     item = self._queue.get_nowait()
@@ -214,7 +218,7 @@ class RawLogger:
                 if item is None:
                     continue
                 if not self._write_one(item):
-                    return
+                    break
             try:
                 if self._fp is not None:
                     self._fp.flush()

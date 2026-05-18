@@ -81,7 +81,7 @@ def _protocol() -> ProtocolConfig:
         frame_id_byte_order="big", length_size=1, length_meaning="payload_only",
         crc_type="crc16_modbus", crc_size=2, crc_byte_order="little",
         crc_coverage="header_to_payload", footer=b"", escape_mode="none",
-        raw_log_format="x", enabled=True,
+        enabled=True,
     )
 
 

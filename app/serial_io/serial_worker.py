@@ -33,7 +33,7 @@ import serial
 from serial.tools import list_ports
 from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
 
-from ..protocol.packet_parser import ParsedPacket, ParserProtocol, create_parser
+from ..protocol.packet_parser import ParsedPacket, create_parser
 from ..decoder.types import PollingScheduleSpec, ProtocolConfig
 
 _LOG = logging.getLogger("bytehound.serial_io.worker")
