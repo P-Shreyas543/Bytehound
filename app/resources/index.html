@@ -443,11 +443,10 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         <tr><td><code>length_byte_order</code></td><td>enum <em>(blank / <code>big</code> / <code>little</code>)</em></td><td><em>(leave blank)</em></td><td>Byte order for the length field. Leave blank to inherit <code>frame_id_byte_order</code> — that covers almost every protocol. Only set this explicitly if your protocol uses multi-byte lengths in a different endianness from the frame ID.</td></tr>
         <tr><td><code>crc_coverage</code></td><td>enum</td><td><em>(leave blank)</em></td><td>Which part of the frame the CRC covers. Only <code>header_to_payload</code> is currently supported; leaving this blank picks the right value automatically. Reserved for future protocol variants.</td></tr>
         <tr><td><code>escape_mode</code></td><td>enum</td><td><em>(leave blank)</em></td><td>Byte-escaping scheme (e.g. for protocols that escape header/footer bytes inside the payload). Only <code>none</code> is currently supported. Reserved for future protocol variants.</td></tr>
-        <tr><td><code>raw_log_format</code></td><td>enum</td><td><em>(leave blank)</em></td><td>How the raw-log writer renders each frame. Only <code>hex</code> is currently supported; defaults to <code>hex</code> if blank.</td></tr>
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Only one row may be <code>TRUE</code>. The app uses that row and ignores all others.</td></tr>
     </table>
     <div class="note">
-        The last three columns (<code>crc_coverage</code>, <code>escape_mode</code>, <code>raw_log_format</code>) are advanced fields with a single supported value today. The bundled config templates leave them blank, which is the recommended setting. They are listed for completeness so power users editing the raw CSV templates know what each column means.
+        The two columns <code>crc_coverage</code> and <code>escape_mode</code> are advanced fields with a single supported value today. The bundled config templates leave them blank, which is the recommended setting. They are listed for completeness so power users editing the raw CSV templates know what each column means.
     </div>
     <div class="success">
         <strong>Wire format (framed):</strong> &nbsp;<code>[ header ] [ frame_id ] [ length ] [ payload ] [ CRC ] [ footer? ]</code><br>
@@ -497,15 +496,14 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         <tr><td><code>frame_id</code></td><td>hex <em>(required)</em></td><td><code>0x0010</code></td><td>Frame identifier as sent by hardware. Can be <code>0x10</code>, <code>10</code>, or <code>16</code> (decimal).</td></tr>
         <tr><td><code>frame_name</code></td><td>text <em>(required)</em></td><td><code>BMS Status</code></td><td>Display name shown in the Data Table's Frame column.</td></tr>
         <tr><td><code>payload_length</code></td><td>integer</td><td><code>8</code> <em>(blank = no validation)</em></td><td>Expected payload size in bytes <em>for this frame only</em>. If the received payload differs, a decode warning appears in the Raw Console and Activity Log. Leave blank to skip validation for this frame.</td></tr>
-        <tr><td><code>direction</code></td><td>enum</td><td><code>rx</code> <em>(default)</em></td><td>Informational tag — stored on the frame definition but <strong>not currently consulted by the decoder</strong>, so setting <code>tx</code> here will not prevent an incoming frame with this ID from being decoded. Outbound commands are configured in the <code>TxCommands</code> sheet. Reserved for future use; leave as <code>rx</code> in most cases.</td></tr>
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code> <em>(default)</em></td><td>Set <code>FALSE</code> to completely ignore this frame — the row is skipped at load time and no signals from it are decoded.</td></tr>
         <tr><td><code>description</code></td><td>text</td><td><code>Battery pack telemetry</code> <em>(blank ok)</em></td><td>Optional free-text note — not displayed in the app.</td></tr>
     </table>
     <p><strong>Example — two frames with different payload sizes:</strong></p>
-    <pre>frame_id | frame_name    | payload_length | direction
-0x0010   | BMS Status    | 8              | rx
-0x0020   | Cell Voltages | 28             | rx
-0x0030   | Fault Flags   |                | rx    ← blank = no length check</pre>
+    <pre>frame_id | frame_name    | payload_length | enabled
+0x0010   | BMS Status    | 8              | TRUE
+0x0020   | Cell Voltages | 28             | TRUE
+0x0030   | Fault Flags   |                | TRUE    ← blank length = no length check</pre>
 
     <hr>
 
@@ -527,7 +525,6 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         <tr><td><code>max_value</code></td><td>number</td><td><code>5.0</code> <em>(blank = no limit)</em></td><td>Maximum valid write value. Leave blank for no limit.</td></tr>
         <tr><td><code>description</code></td><td>text</td><td><code>Total pack voltage</code> <em>(blank ok)</em></td><td>Optional note — not displayed in the app.</td></tr>
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code> <em>(default)</em></td><td>Set <code>FALSE</code> to hide this signal from all panels without deleting the row — the row is skipped entirely at load time.</td></tr>
-        <tr><td><code>register_type</code></td><td>text</td><td><em>(leave blank)</em></td><td>Reserved for Modbus register-type semantics (holding / input / coil / discrete). The loader parses and stores this on the signal, but <strong>no other code currently consults it</strong>; it is not present in the bundled <code>variables.csv</code> template. Leave blank in normal use.</td></tr>
     </table>
     <div class="note">
         <strong>Byte offsets are computed automatically.</strong> Signals within a frame are packed in the order they appear in the sheet. You do not enter a start byte — the loader calculates it from each signal's <code>data_type</code> size.
