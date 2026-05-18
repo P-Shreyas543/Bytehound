@@ -210,10 +210,20 @@ def _print_report(r: QtRunReport) -> None:
 # ---------------------------------------------------------------------------
 
 def run(rate_hz: int, duration_s: float,
-        panels: int, signals_per_panel: int) -> QtRunReport:
+        panels: int, signals_per_panel: int,
+        hide_detail_docks: bool = False,
+        hide_plot_dock: bool = False) -> QtRunReport:
     app = QApplication.instance() or QApplication(sys.argv)
     window = MainWindow()
     window._load_config_from_path(CANONICAL_CONFIG)
+    # Optional dock hides — exercise the hide-aware skips in _apply_decoded.
+    if hide_detail_docks:
+        if hasattr(window, "_bitfields_dock"):
+            window._bitfields_dock.setVisible(False)
+        if hasattr(window, "_enums_dock"):
+            window._enums_dock.setVisible(False)
+    if hide_plot_dock and hasattr(window, "_plot_dock"):
+        window._plot_dock.setVisible(False)
 
     # Wire up enough panels to stress the redraw path. Each panel gets the
     # first N signals from the config so they all have data to draw.
