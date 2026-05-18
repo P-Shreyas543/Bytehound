@@ -3776,7 +3776,21 @@ class MainWindow(QMainWindow):
             self._console.appendPlainText(f"[decode warning] {w.message}")
 
         timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        elapsed = (datetime.now() - self._session_started).total_seconds()
+        # Skip the plot-history append work when the Live Plot dock is hidden.
+        # _redraw_plot already short-circuits on a hidden dock, so the appends
+        # were the only remaining per-packet cost the plot was contributing.
+        # The deque cap is bounded (_plot_history_maxlen), so re-opening after
+        # a hidden period fills back in from re-open time — matching the
+        # "if I hid it I don't care about the gap" UX. Both the visibility
+        # check and the elapsed computation skip together so the datetime.now
+        # call is also avoided when hidden.
+        plot_dock = getattr(self, "_plot_dock", None)
+        plot_visible = plot_dock is None or plot_dock.isVisible()
+        elapsed = (
+            (datetime.now() - self._session_started).total_seconds()
+            if plot_visible
+            else 0.0
+        )
         for signal in [*decoded.signals, *decoded.calculations]:
             key = (signal.frame_id, signal.signal_name)
             # If the key isn't in the model yet, add it (calculated / late-arriving signals)
@@ -3818,7 +3832,7 @@ class MainWindow(QMainWindow):
             ):
                 val_item.setText(signal.display_value or value_text)
 
-            if signal.scaled_value is not None and signal.status == "ok":
+            if plot_visible and signal.scaled_value is not None and signal.status == "ok":
                 xs, ys = self._plot_history[key]
                 xs.append(elapsed)
                 ys.append(signal.scaled_value)

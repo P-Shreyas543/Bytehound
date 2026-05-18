@@ -158,6 +158,28 @@ it matches there's by construction no new sample to render. Theme
 changes touch the pen via `setPen` (a separate path) and don't require
 a `setData`, so the skip is safe across theme switches too.
 
+## Round 2b — hide-aware history appends. ✅ LANDED.
+
+`_apply_decoded` previously appended every "ok" signal's sample into
+`_plot_history` on every packet, regardless of whether the Live Plot
+dock was open or hidden. `_redraw_plot` already short-circuits when the
+dock is hidden, so the appends were the only remaining per-packet cost
+the plot was contributing when invisible.
+
+Now: when `_plot_dock.isVisible()` is false, both the
+`(datetime.now() - session_started).total_seconds()` call and the
+deque appends are skipped. The deque cap is bounded
+(`_plot_history_maxlen`), so re-opening after a hidden period fills
+back in from re-open time — which matches the UX expectation that a
+hidden panel doesn't need to keep buffering data the user can't see.
+
+Savings scale with signal count: at 1 kHz with ~5 ok-status signals
+per packet, this is ~5000 deque appends/sec + one `datetime.now()`/sec
+that no longer fire while the dock is hidden. Worth it on low-spec
+hardware where users routinely collapse panels to free pixels.
+
+Tests still 116 green.
+
 ## Still slow / next-up
 
 * **Plot redraw: deque → numpy array.** The `np.fromiter` allocations
