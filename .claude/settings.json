@@ -22,7 +22,18 @@
       "PowerShell(python -c \"import build; print\\('zip ok:', build.make_zip\\(\\)\\)\")",
       "PowerShell($exe = \"dist\\\\Bytehound\\\\Bytehound.exe\"; $expected = \\(Get-Content version.json | ConvertFrom-Json\\).sha256; $actual = \\(Get-FileHash $exe -Algorithm SHA256\\).Hash.ToLower\\(\\); if \\($actual -eq $expected\\) { Write-Output \"sha256 MATCH: $actual\" } else { Write-Output \"sha256 MISMATCH\"; Write-Output \"  expected: $expected\"; Write-Output \"  actual:   $actual\" }; Write-Output \"exe size MB: $\\([math]::Round\\(\\(Get-Item $exe\\).Length/1MB,2\\)\\)\")",
       "PowerShell($proc = Start-Process -FilePath \"dist\\\\Bytehound\\\\Bytehound.exe\" -PassThru; Start-Sleep -Seconds 6; if \\($proc.HasExited\\) { Write-Output \"EXE EXITED EARLY \\(rc=$\\($proc.ExitCode\\)\\)\" } else { Write-Output \"EXE RUNNING \\(pid=$\\($proc.Id\\)\\)\"; $proc | Stop-Process -Force; Start-Sleep -Seconds 1; Write-Output \"EXE killed cleanly\" })",
-      "PowerShell(python -c \"import serial.tools.list_ports as lp; ports = list\\(lp.comports\\(\\)\\); [print\\(p.device, '|', p.description, '|', p.hwid\\) for p in ports]; print\\('total:', len\\(ports\\)\\)\")"
+      "PowerShell(python -c \"import serial.tools.list_ports as lp; ports = list\\(lp.comports\\(\\)\\); [print\\(p.device, '|', p.description, '|', p.hwid\\) for p in ports]; print\\('total:', len\\(ports\\)\\)\")",
+      "Bash(python -m pytest --collect-only -q)",
+      "Bash(python -c \"import ast,sys; tree=ast.parse\\(open\\('app/ui/main_window.py',encoding='utf-8'\\).read\\(\\)\\); funcs=[n.name for n in ast.walk\\(tree\\) if isinstance\\(n,ast.FunctionDef\\)]; print\\('functions:',len\\(funcs\\)\\); cls=[n.name for n in ast.walk\\(tree\\) if isinstance\\(n,ast.ClassDef\\)]; print\\('classes:',cls\\)\")",
+      "Bash(python -m pip list)",
+      "Bash(python -m pip list --outdated)",
+      "Bash(python -m pip show numpy)",
+      "Bash(python -m ruff check app)",
+      "Bash(python -m pyflakes app)",
+      "Bash(python -m pip install ruff)",
+      "Bash(python -m ruff check app --statistics)",
+      "Bash(python -m ruff check app --select=F821,F811,F402,F841)",
+      "Bash(python -c \"import json; m=json.load\\(open\\('version.json'\\)\\);print\\('manifest:',m['manifest_url']\\);print\\('uses http?',m['manifest_url'].startswith\\('http://'\\)\\)\")"
     ]
   }
 }
