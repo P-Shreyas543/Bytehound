@@ -10,7 +10,7 @@ from .calculations import calculate_group_value
 from .types import BitfieldSpec, CalcGroupSpec, DecodeWarning, FrameConfig, SignalSpec
 
 
-@dataclass
+@dataclass(slots=True)
 class DecodedSignal:
     frame_id: int
     frame_name: str
@@ -27,7 +27,7 @@ class DecodedSignal:
     is_calculated: bool = False
 
 
-@dataclass
+@dataclass(slots=True)
 class DecodedFrame:
     frame_id: int
     frame_name: str
@@ -97,7 +97,9 @@ def _decode_signal(config: FrameConfig, spec: SignalSpec, payload: bytes) -> Dec
 
     scaled = raw * spec.scale + spec.offset
     enum_label = _lookup_enum(config, spec, raw)
-    bit_values = _decode_bitfield(config, spec, int(raw)) if isinstance(raw, int) else {}
+    # raw is already an int here (the isinstance branch); int(raw) was a
+    # redundant no-op call that just added per-signal overhead.
+    bit_values = _decode_bitfield(config, spec, raw) if isinstance(raw, int) else {}
     display = _display_text(scaled, enum_label, bit_values)
     return DecodedSignal(
         frame_id=spec.frame_id,
@@ -127,21 +129,43 @@ def _decode_raw(chunk: bytes, spec: SignalSpec) -> Union[int, float]:
 def _lookup_enum(config: FrameConfig, spec: SignalSpec, raw: Union[int, float]) -> Optional[str]:
     if not isinstance(raw, int):
         return None
-    keys = [(spec.frame_id, spec.source_name or spec.signal_name), (spec.frame_id, spec.signal_name)]
-    for key in keys:
-        labels = config.enums.get(key)
-        if labels and raw in labels:
-            return labels[raw]
+    # Fast path: most signals are not enums. Skip the keys-list allocation by
+    # trying source_name first (when distinct from signal_name) and falling
+    # through to signal_name only on miss.
+    enums = config.enums
+    if not enums:
+        return None
+    frame_id = spec.frame_id
+    source = spec.source_name
+    name = spec.signal_name
+    if source and source != name:
+        labels = enums.get((frame_id, source))
+        if labels:
+            label = labels.get(raw)
+            if label is not None:
+                return label
+    labels = enums.get((frame_id, name))
+    if labels is not None:
+        return labels.get(raw)
     return None
 
 
 def _decode_bitfield(config: FrameConfig, spec: SignalSpec, raw: int) -> Dict[str, bool]:
-    keys = [(spec.frame_id, spec.source_name or spec.signal_name), (spec.frame_id, spec.signal_name)]
+    # Fast path: most signals are not bitfields. Skip the keys-list build
+    # entirely when the config has no bitfields, or neither key matches.
+    bitfields = config.bitfields
+    if not bitfields:
+        return {}
+    frame_id = spec.frame_id
+    source = spec.source_name
+    name = spec.signal_name
     specs: List[BitfieldSpec] = []
-    for key in keys:
-        specs = config.bitfields.get(key, [])
-        if specs:
-            break
+    if source and source != name:
+        specs = bitfields.get((frame_id, source), ())  # type: ignore[assignment]
+    if not specs:
+        specs = bitfields.get((frame_id, name), ())  # type: ignore[assignment]
+    if not specs:
+        return {}
     return {bit.bit_name: bool(raw & (1 << bit.bit_index)) for bit in specs}
 
 

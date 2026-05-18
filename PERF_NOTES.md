@@ -180,6 +180,46 @@ hardware where users routinely collapse panels to free pixels.
 
 Tests still 116 green.
 
+## Round 3 — decode_frame allocation reduction. ✅ LANDED.
+
+Three focused changes to `app/decoder/frame_decoder.py`:
+
+1. **`_lookup_enum` / `_decode_bitfield` fast paths.** Both helpers were
+   building a 2-tuple keys list per signal call regardless of whether the
+   spec was an enum/bitfield. Most signals are plain scalars, so the list
+   was pure waste. Replaced with an early `if not config.enums: return`
+   bail-out plus a try-source-first, fall-back-to-signal-name lookup that
+   only does dict.get calls — no list allocation in the common path.
+2. **`DecodedSignal` and `DecodedFrame` switched to `@dataclass(slots=True)`.**
+   Python 3.10+ supports slots-on-dataclass natively. Tighter memory layout
+   and faster instantiation; no API change.
+3. **Dropped redundant `int(raw)` cast** at the `_decode_bitfield` call
+   site (caller already gated on `isinstance(raw, int)`).
+
+**Measured (decode-isolated, 1 kHz, 6 s harness run):**
+
+| metric        | before | after | improvement |
+|---------------|-------:|------:|------------:|
+| decode mean   |  93 µs | 72 µs |        ~22% |
+| decode p95    | 194 µs |143 µs |        ~26% |
+| decode p99    | 298 µs |216 µs |        ~28% |
+
+End-to-end at 1 kHz (parse + decode + logger, all on) is now
+~218 µs/packet — down from ~463 µs at the start of this perf pass.
+That's **>2x more headroom** on the synchronous RX path overall.
+
+## Cumulative round-by-round summary (1 kHz harness, end-to-end with loggers on)
+
+| Round | parse | decode | logger | total |
+|-------|------:|-------:|-------:|------:|
+| Baseline                  | 58 µs | 86 µs | 320 µs | 463 µs |
+| #1 — DecodedLogger async  | 65 µs | 86 µs |  73 µs | 224 µs |
+| #2 — Plot redraw skip     |   —   |   —   |   —    |   —    | (Qt-only, not measured here) |
+| #2b — Hide-aware appends  |   —   |   —   |   —    |   —    | (Qt-only, not measured here) |
+| #3 — decode_frame fastpath| 66 µs | 79 µs |  73 µs | 218 µs |
+
+Tests: 116 green throughout.
+
 ## Still slow / next-up
 
 * **Plot redraw: deque → numpy array.** The `np.fromiter` allocations
