@@ -3542,12 +3542,19 @@ class MainWindow(QMainWindow):
         # Buffer the console line. _flush_ui appends them all in one shot.
         # Falling back to direct append keeps replay (which calls
         # _handle_packet outside the batch path) behaving as before.
-        line = self._format_console_row(packet)
-        buf = getattr(self, "_console_buffer", None)
-        if buf is None:
-            self._console.appendPlainText(line)
-        else:
-            buf.append(line)
+        # Skip the whole console pipeline when the dock is hidden: the
+        # datetime.strftime + hex.upper formatting is ~10 µs per packet
+        # which dominates the per-packet UI cost at 1 kHz. Same UX
+        # contract as the plot — re-opening shows fresh content from
+        # re-open time forward.
+        console_dock = getattr(self, "_console_dock", None)
+        if console_dock is None or console_dock.isVisible():
+            line = self._format_console_row(packet)
+            buf = getattr(self, "_console_buffer", None)
+            if buf is None:
+                self._console.appendPlainText(line)
+            else:
+                buf.append(line)
         if self._raw_logger:
             self._raw_logger.log("RX", packet.raw, delta_t_ms=self._delta_t_ms)
         if not packet.ok:

@@ -212,7 +212,8 @@ def _print_report(r: QtRunReport) -> None:
 def run(rate_hz: int, duration_s: float,
         panels: int, signals_per_panel: int,
         hide_detail_docks: bool = False,
-        hide_plot_dock: bool = False) -> QtRunReport:
+        hide_plot_dock: bool = False,
+        hide_console: bool = False) -> QtRunReport:
     app = QApplication.instance() or QApplication(sys.argv)
     window = MainWindow()
     window._load_config_from_path(CANONICAL_CONFIG)
@@ -224,6 +225,8 @@ def run(rate_hz: int, duration_s: float,
             window._enums_dock.setVisible(False)
     if hide_plot_dock and hasattr(window, "_plot_dock"):
         window._plot_dock.setVisible(False)
+    if hide_console and hasattr(window, "_console_dock"):
+        window._console_dock.setVisible(False)
 
     # Wire up enough panels to stress the redraw path. Each panel gets the
     # first N signals from the config so they all have data to draw.
@@ -331,6 +334,14 @@ def main() -> int:
     )
     ap.add_argument("--panels", type=int, default=4, help="plot panels (1, 2, 3, 4, 6, 8)")
     ap.add_argument("--signals-per-panel", type=int, default=2)
+    ap.add_argument("--hide-detail-docks", action="store_true",
+                    help="exercise the bitfields/enums dock-hidden skip path")
+    ap.add_argument("--hide-plot-dock", action="store_true",
+                    help="exercise the plot-dock-hidden skip path")
+    ap.add_argument("--hide-console", action="store_true",
+                    help="exercise the console-dock-hidden skip path")
+    ap.add_argument("--hide-all", action="store_true",
+                    help="shortcut: hide detail + plot + console docks")
     ap.add_argument("--json", type=Path, help="write machine-readable report to this path")
     args = ap.parse_args()
 
@@ -347,6 +358,9 @@ def main() -> int:
             duration_s=args.duration,
             panels=args.panels,
             signals_per_panel=args.signals_per_panel,
+            hide_detail_docks=args.hide_detail_docks or args.hide_all,
+            hide_plot_dock=args.hide_plot_dock or args.hide_all,
+            hide_console=args.hide_console or args.hide_all,
         )
         _print_report(report)
         reports.append(report)

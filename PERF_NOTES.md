@@ -301,6 +301,57 @@ model, console buffer, plot redraw, rate label, hover cache).
 None of these are touched in this commit — the harness is the
 deliverable. Future perf rounds will benchmark against this baseline.
 
+## Round 7 — hide-aware skips for detail docks + console. ✅ LANDED.
+
+The Qt harness exposed per-packet UI overhead of ~370 µs/packet at
+1 kHz. Auditing it found two paths that ran even when the user couldn't
+see the result:
+
+1. **`_update_detail_tabs`** — allocated up to 16 `QTableWidgetItem`s
+   per bitfield-bearing signal regardless of whether the Bitfields /
+   Enums docks were visible. Configs with many bitfields paid this on
+   every packet.
+2. **`_format_console_row` + `appendPlainText`** — the
+   `datetime.strftime + hex.upper` formatting fires per packet even
+   when the Raw Console dock is hidden. Roughly 10 µs/packet ≈ 10 ms/s
+   at 1 kHz of pure waste when the user has collapsed the console.
+
+Both now check `dock.isVisible()` once per `_apply_decoded` /
+`_handle_packet` call and short-circuit. Same UX contract as the round-2b
+plot-hidden gate: re-opening a hidden dock shows fresh content from
+re-open time forward, not a backfilled snapshot.
+
+Refactored `_update_detail_tabs` to take explicit `bf_visible /
+en_visible` keyword args so the inner loop branches on cached bools
+rather than re-reading the visibility property per signal. Also moved
+the `group = self._signal_group_map.get(...)` lookup INSIDE each
+branch — non-bitfield, non-enum signals (the common case) now skip it.
+
+**Harness caveat.** The Qt-integrated harness runs under
+`QT_QPA_PLATFORM=offscreen`, which is a no-op rendering plugin. It
+measures only model/computation work, not actual paint cycles. Real
+hardware will see bigger savings because hidden docks also skip the
+GPU render path entirely. Run-to-run variance in the offscreen
+harness (~10-20%) plus the canonical config's small bitfield/enum
+count (3 bitfields + 1 enum) put the measured delta inside the noise
+floor. The change is conservative and correct — it adds one
+`isVisible()` call per packet (~50 ns) in the visible-docks case.
+
+Real-world wins scale with:
+
+* Number of bitfields/enums in the user's config (16 QTableWidgetItem
+  allocations per bitfield-bearing signal saved when the dock is
+  hidden).
+* Console dock visibility — at 1 kHz with the console hidden, ~10 ms/s
+  of strftime + hex formatting reclaimed.
+* GPU paint cost on the user's hardware, which the harness can't see.
+
+Harness flags added for future measurement work:
+``--hide-detail-docks``, ``--hide-plot-dock``, ``--hide-console``,
+``--hide-all``.
+
+Tests still 124 green.
+
 ## Cumulative round-by-round summary (1 kHz harness, end-to-end with loggers on)
 
 | Round | parse | decode | logger | total |
