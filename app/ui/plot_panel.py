@@ -39,6 +39,32 @@ class PlotPanel:
     index:         int = 0
 
 
+# Width of the live plot's X view before any data has arrived AND the minimum
+# width once data exists. Keeps the curve from looking glued to the left edge
+# in the first ~10 s of a session.
+_PLOT_INITIAL_WINDOW_S = 10.0
+
+
+def _configure_live_curve(curve) -> None:
+    """Apply per-curve perf flags so paint time stays sublinear in buffer length.
+
+    Why: profiling at 100 Hz showed QPainter.drawPath dominating CPU (>25% of
+    runtime) because every live-plot redraw painted every sample in the ring
+    buffer, even when many samples collapsed onto the same pixel. Mirrors the
+    flags the Analysis Suite already uses on its plots.
+    """
+    if pg is None:
+        return
+    try:
+        curve.setClipToView(True)
+        curve.setDownsampling(auto=True, method='peak')
+        # Antialiasing dominates QPainter.drawPath cost at high refresh rates;
+        # disable it per-curve on the live plot only (Analysis Suite keeps AA).
+        curve.opts['antialias'] = False
+    except Exception:  # pragma: no cover - older pyqtgraph fallbacks
+        pass
+
+
 # Reused for empty-buffer reads so we don't allocate a fresh np.array on
 # every redraw when a curve has no samples yet.
 _EMPTY_F64 = np.array([], dtype=float)
