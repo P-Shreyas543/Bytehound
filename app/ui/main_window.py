@@ -78,6 +78,23 @@ if pg is not None:
     # Global, intentional: keeps rendering consistent across Live Plot and Analysis Suite.
     pg.setConfigOptions(antialias=True)
 
+
+def _configure_live_curve(curve) -> None:
+    """Apply per-curve perf flags so paint time stays sublinear in buffer length.
+
+    Why: profiling at 100 Hz showed QPainter.drawPath dominating CPU (>25% of
+    runtime) because every live-plot redraw painted every sample in the ring
+    buffer, even when many samples collapsed onto the same pixel. Mirrors the
+    flags the Analysis Suite already uses on its plots.
+    """
+    if pg is None:
+        return
+    try:
+        curve.setClipToView(True)
+        curve.setDownsampling(auto=True, method='peak')
+    except Exception:  # pragma: no cover - older pyqtgraph fallbacks
+        pass
+
 try:
     import qdarktheme
 except ImportError:  # pragma: no cover
@@ -2450,7 +2467,9 @@ class MainWindow(QMainWindow):
                 color_idx = sum(len(p.assigned_keys) for p in self._plot_panels[:-1]) + len(panel.curves)
                 palette = self._current_plot_palette()
                 color = palette[color_idx % len(palette)]
-                panel.curves[key] = pi.plot(name=label, pen=pg.mkPen(color, width=1.8))
+                curve = pi.plot(name=label, pen=pg.mkPen(color, width=1.8))
+                _configure_live_curve(curve)
+                panel.curves[key] = curve
 
             # Build variable-strip widget for this panel
             if hasattr(self, "_panel_strip_layout") and self._panel_strip_layout is not None:
@@ -4410,6 +4429,7 @@ class MainWindow(QMainWindow):
                 curve = panel.curves.get(key)
                 if curve is None:
                     curve = pi.plot(name=label, pen=pg.mkPen(color, width=1.8))
+                    _configure_live_curve(curve)
                     panel.curves[key] = curve
                     # Cache the colour on the curve itself so we can skip the
                     # setPen + mkPen allocation on every subsequent redraw —

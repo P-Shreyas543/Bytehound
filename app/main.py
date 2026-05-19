@@ -9,10 +9,14 @@ so editor "run file" buttons don't break.
 """
 
 from __future__ import annotations
+import argparse
+import cProfile
 import logging
 import multiprocessing
 import os
+import pstats
 import sys
+from datetime import datetime
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 import qdarktheme
@@ -91,8 +95,7 @@ def configure_logging(level: int = logging.INFO) -> None:
     _LOGGING_CONFIGURED = True
 
 
-def main() -> int:
-    configure_logging()
+def _run_app() -> int:
     app = QApplication(sys.argv)
 
     icon_path = _find_logo("logo_sq.ico") or _find_logo("logo_sq.png")
@@ -114,6 +117,45 @@ def main() -> int:
     window = MainWindow()
     window.show()
     return app.exec()
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(prog="bytehound", add_help=True)
+    parser.add_argument(
+        "--profile",
+        action="store_true",
+        help="Run under cProfile and dump a .prof file on exit (for diagnosing CPU usage).",
+    )
+    args, remaining = parser.parse_known_args(argv)
+    # Strip our own flags so Qt sees a clean argv.
+    sys.argv = [sys.argv[0], *remaining]
+
+    configure_logging()
+
+    if not args.profile:
+        return _run_app()
+
+    profile_dir = _PROJECT_ROOT / "logs"
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+    prof_path = profile_dir / f"bytehound-{stamp}.prof"
+
+    logging.getLogger("bytehound").info("Profiling enabled — output will be %s", prof_path)
+
+    profiler = cProfile.Profile()
+    profiler.enable()
+    try:
+        rc = _run_app()
+    finally:
+        profiler.disable()
+        profiler.dump_stats(str(prof_path))
+        stats = pstats.Stats(profiler).sort_stats("cumulative")
+        print(f"\n=== Top 30 by cumulative time ===  (full dump: {prof_path})")
+        stats.print_stats(30)
+        stats.sort_stats("tottime")
+        print("\n=== Top 30 by self (tottime) ===")
+        stats.print_stats(30)
+    return rc
 
 
 if __name__ == "__main__":

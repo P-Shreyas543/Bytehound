@@ -42,7 +42,8 @@
       "Bash(python check_doc_anchors.py)",
       "Bash(python -m pytest tests/test_packet_parser.py -v --tb=short)",
       "Bash(python -m pytest tests/test_logging.py -v --tb=short)",
-      "Bash(python -c \"import json; d = json.load\\(open\\('version.json'\\)\\); print\\('JSON valid. version:', d['version']\\); print\\('---preview of dialog text---'\\); print\\('Notes:'\\); print\\(d['release_notes']\\)\")"
+      "Bash(python -c \"import json; d = json.load\\(open\\('version.json'\\)\\); print\\('JSON valid. version:', d['version']\\); print\\('---preview of dialog text---'\\); print\\('Notes:'\\); print\\(d['release_notes']\\)\")",
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -x -q)"
     ]
   }
 }
