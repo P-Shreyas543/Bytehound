@@ -43,7 +43,10 @@
       "Bash(python -m pytest tests/test_packet_parser.py -v --tb=short)",
       "Bash(python -m pytest tests/test_logging.py -v --tb=short)",
       "Bash(python -c \"import json; d = json.load\\(open\\('version.json'\\)\\); print\\('JSON valid. version:', d['version']\\); print\\('---preview of dialog text---'\\); print\\('Notes:'\\); print\\(d['release_notes']\\)\")",
-      "Bash(.venv/Scripts/python.exe -m pytest tests/ -x -q)"
+      "Bash(.venv/Scripts/python.exe -m pytest tests/ -x -q)",
+      "Bash(python -c \"from app.ui import plot_panel; from app.ui import main_window; print\\('OK', main_window.PlotPanel, main_window._RingBuffer, main_window._TimeAxisItem\\)\")",
+      "Bash(python -c ' *)",
+      "Bash(python -c \"from app.ui import main_window; print\\('still imports OK'\\)\")"
     ]
   }
 }
