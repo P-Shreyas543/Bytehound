@@ -1137,6 +1137,15 @@ class MainWindow(QMainWindow):
         self._ui_timer.setInterval(16)  # ~60 Hz
         self._ui_timer.timeout.connect(self._flush_ui)
 
+        # 2 Hz Y-axis autofit. Y-autorange on every packet forces a full axis
+        # tick regeneration + QPicture replay (10s of profile time at 100 Hz);
+        # throttling to 500 ms is visually indistinguishable for telemetry and
+        # cuts the axis-paint cost roughly proportionally.
+        self._y_autofit_timer = QTimer(self)
+        self._y_autofit_timer.setInterval(500)
+        self._y_autofit_timer.timeout.connect(self._throttled_y_autofit)
+        self._y_autofit_timer.start()
+
         self._build_ui()
         self._load_default_config()
         self._refresh_action_state()
@@ -1966,6 +1975,57 @@ class MainWindow(QMainWindow):
             self._plot_y_range_timers[panel_idx] = timer
         timer.start(500)
 
+    def _throttled_y_autofit(self) -> None:
+        """Periodically refit Y for panels with auto_fit_y=True.
+
+        Replaces pyqtgraph's continuous auto-range (which fires on every
+        setData call → tick regeneration → QPicture replay) with a 2 Hz
+        recompute. Skips when the computed range matches the current view
+        so the axis only repaints when bounds actually changed.
+        """
+        if pg is None or not self._plot_panels:
+            return
+        if not self._plot_live:
+            return  # paused — leave the user's view alone
+        for panel in self._plot_panels:
+            if not panel.auto_fit_y:
+                continue
+            self._fit_panel_y_now(panel)
+
+    def _fit_panel_y_now(self, panel) -> None:
+        if pg is None:
+            return
+        vb = panel.plot_item.getViewBox()
+        if vb is None:
+            return
+        y_min: float | None = None
+        y_max: float | None = None
+        for key in panel.assigned_keys:
+            buf = self._plot_history.get(key)
+            if buf is None or len(buf) == 0:
+                continue
+            _, ys = buf.arrays()
+            if ys.size == 0:
+                continue
+            local_min = float(np.nanmin(ys))
+            local_max = float(np.nanmax(ys))
+            if y_min is None or local_min < y_min:
+                y_min = local_min
+            if y_max is None or local_max > y_max:
+                y_max = local_max
+        if y_min is None or y_max is None:
+            return
+        if y_min == y_max:
+            pad = max(abs(y_min) * 0.05, 1.0)
+            y_min -= pad
+            y_max += pad
+        cur_range = vb.viewRange()[1]
+        if cur_range and len(cur_range) == 2:
+            span = max(y_max - y_min, 1e-9)
+            if abs(cur_range[0] - y_min) / span < 0.01 and abs(cur_range[1] - y_max) / span < 0.01:
+                return  # bounds unchanged — skip the repaint
+        vb.setYRange(y_min, y_max, padding=0.05)
+
     def _persist_plot_y_range(self, panel_idx: int) -> None:
         if panel_idx >= len(self._plot_panels):
             return
@@ -2007,7 +2067,8 @@ class MainWindow(QMainWindow):
         if vb is None:
             return
         if panel.auto_fit_y:
-            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
+            self._fit_panel_y_now(panel)
         else:
             y_range = self._read_saved_y_range(panel_idx)
             if y_range is not None:
@@ -2457,7 +2518,9 @@ class MainWindow(QMainWindow):
                 bool(saved_auto_y)
                 if not isinstance(saved_auto_y, str)
                 else saved_auto_y.lower() in ("true", "1", "yes"))
-            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=panel.auto_fit_y)
+            # Throttled auto-Y: we run our own 2 Hz fit (see _throttled_y_autofit)
+            # so pyqtgraph's per-update auto-range stays off regardless of preference.
+            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
             if not panel.auto_fit_y:
                 y_range = self._read_saved_y_range(idx)
                 if y_range is not None:
@@ -2539,7 +2602,11 @@ class MainWindow(QMainWindow):
         panel = self._plot_panels[panel_idx]
         panel.auto_fit_y = checked
         vb = panel.plot_item.getViewBox()
-        vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=checked)
+        # Don't enable pyqtgraph's continuous auto-Y — the 2 Hz throttled
+        # fitter handles it. Just trigger an immediate fit when turning on.
+        vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
+        if checked:
+            self._fit_panel_y_now(panel)
         if not checked:
             y_range = vb.viewRange()[1]
             if y_range and len(y_range) == 2:
@@ -4226,7 +4293,9 @@ class MainWindow(QMainWindow):
                     for panel in self._plot_panels:
                         vb = panel.plot_item.getViewBox()
                         if vb is not None and panel.auto_fit_y:
-                            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+                            # Trigger an immediate one-shot fit; the 2 Hz
+                            # timer handles steady-state.
+                            self._fit_panel_y_now(panel)
                 finally:
                     self._plot_range_changing = False
             self._log_activity("[ACTION] Plot resumed Live")
