@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 from ..serial_logging.raw_logger import RawLogger
 from ..serial_logging.decoded_logger import DecodedLogger
 from .dialogs import LoggingSettingsDialog
+from .widgets import _BTN_PINK, _BTN_YELLOW
 
 
 class LoggingSessionMixin:

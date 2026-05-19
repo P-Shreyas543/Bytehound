@@ -20,6 +20,19 @@ except ImportError:  # pragma: no cover - exercised only when optional dep missi
     pg = None
 
 
+# Live Plot grid layouts — display label → (rows, cols).
+GRID_LAYOUTS: Dict[str, Tuple[int, int]] = {
+    "1×1": (1, 1),
+    "1×2": (1, 2),
+    "2×1": (2, 1),
+    "1×3": (1, 3),
+    "3×1": (3, 1),
+    "2×2": (2, 2),
+    "2×4": (2, 4),
+    "4×2": (4, 2),
+}
+
+
 @dataclass
 class PlotPanel:
     """State for one subplot cell in the multi-grid live plot.

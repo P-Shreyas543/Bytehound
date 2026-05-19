@@ -12,6 +12,8 @@ from typing import Dict, Optional
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QTableWidget, QTableWidgetItem
 
+from ..decoder.frame_decoder import DecodedSignal
+
 
 class DetailTabsMixin:
     """MainWindow mixin holding detail-tab + group-filter methods."""

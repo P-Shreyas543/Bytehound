@@ -15,6 +15,7 @@ loaded they exist.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
@@ -56,7 +57,17 @@ try:
 except ImportError:  # pragma: no cover
     qdarktheme = None
 
-from .widgets import _CheckableGroupCombo, _StatusBadgeDelegate, _icon, _pad_dock_content
+from .plot_panel import GRID_LAYOUTS
+from .telemetry_model import TelemetryTableModel, COLUMNS as _MODEL_COLUMNS
+from .widgets import (
+    _BTN_GREEN,
+    _BTN_PINK,
+    _BTN_YELLOW,
+    _CheckableGroupCombo,
+    _StatusBadgeDelegate,
+    _icon,
+    _pad_dock_content,
+)
 
 
 class UIBuildersMixin:

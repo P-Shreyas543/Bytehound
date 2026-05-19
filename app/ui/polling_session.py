@@ -6,9 +6,11 @@ sidebar, toggle on/off, open the config dialog, and refresh the status.
 
 from __future__ import annotations
 
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QDialog, QListWidgetItem
 
 from .dialogs import PollingConfigDialog
+from .widgets import _BTN_GREEN, _BTN_PINK
 
 
 class PollingSessionMixin:

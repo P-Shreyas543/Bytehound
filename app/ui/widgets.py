@@ -42,6 +42,33 @@ except ImportError:  # pragma: no cover - icons degrade to empty if missing
     qta = None
 
 
+# Primary toolbar button colour palette. Three semantic states; all buttons
+# show white (#FFFFFF) text/icons on top.
+_BTN_GREEN  = "#16A34A"   # idle / safe-to-activate  (Connect, Start Auto-Fetch)
+_BTN_YELLOW = "#D97706"   # ready but not running     (Start Logging — inactive)
+_BTN_PINK   = "#DB2777"   # currently active / danger (Disconnect, Stop Fetch/Log)
+
+
+def _contrast_text_color(bg_hex: str) -> str:
+    """Pick black or white text for the given background hex colour.
+
+    Uses ITU-R BT.601 relative luminance — close enough for picking pill
+    chip text. Yellow-ish backgrounds like ``#bcbd22`` and pastels like
+    ``#98df8a`` were previously rendered with white text against white-ish
+    fill, which was almost unreadable. This makes the swap automatic.
+    """
+    h = bg_hex.lstrip("#")
+    try:
+        r = int(h[0:2], 16) / 255.0
+        g = int(h[2:4], 16) / 255.0
+        b = int(h[4:6], 16) / 255.0
+    except (ValueError, IndexError):
+        return "#fff"
+    # BT.601 weighting; cheap and accurate enough for chip text.
+    luminance = 0.299 * r + 0.587 * g + 0.114 * b
+    return "#000" if luminance > 0.55 else "#fff"
+
+
 def _icon(name: str, color: str = "#F8FAFC") -> QIcon:
     """Return a qtawesome icon tinted with *color*, or an empty QIcon.
 

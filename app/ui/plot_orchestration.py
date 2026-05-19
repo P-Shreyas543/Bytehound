@@ -14,7 +14,7 @@ from datetime import datetime, timedelta
 from typing import List, Optional, Set, Tuple
 
 from PySide6.QtCore import QSettings, Qt, QTimer
-from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap
+from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QCheckBox, QHBoxLayout, QInputDialog, QLabel, QMessageBox,
     QPushButton, QWidget,
@@ -33,6 +33,7 @@ from .plot_panel import (
     _configure_live_curve,
     _format_elapsed_time,
 )
+from .widgets import _contrast_text_color
 
 
 class PlotOrchestrationMixin:
