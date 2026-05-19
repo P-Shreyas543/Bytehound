@@ -92,6 +92,9 @@ def _configure_live_curve(curve) -> None:
     try:
         curve.setClipToView(True)
         curve.setDownsampling(auto=True, method='peak')
+        # Antialiasing dominates QPainter.drawPath cost at high refresh rates;
+        # disable it per-curve on the live plot only (Analysis Suite keeps AA).
+        curve.opts['antialias'] = False
     except Exception:  # pragma: no cover - older pyqtgraph fallbacks
         pass
 
