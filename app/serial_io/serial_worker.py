@@ -34,7 +34,8 @@ from serial.tools import list_ports
 from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
 
 from ..protocol.packet_parser import ParsedPacket, create_parser
-from ..decoder.types import PollingScheduleSpec, ProtocolConfig
+from ..decoder.frame_decoder import DecodedFrame, decode_frame
+from ..decoder.types import FrameConfig, PollingScheduleSpec, ProtocolConfig
 
 _LOG = logging.getLogger("bytehound.serial_io.worker")
 
@@ -86,10 +87,18 @@ class PollingWorker(QThread):
         settings: SerialSettings,
         protocol: ProtocolConfig,
         schedules: List[PollingScheduleSpec],
+        decode_config: Optional[FrameConfig] = None,
     ) -> None:
         super().__init__()
         self.settings = settings
         self.protocol = protocol
+        # When supplied, packets are decoded on this worker thread before
+        # being emitted so the GUI thread never blocks on decode work.
+        # decode_frame is pure (no shared state); the FrameConfig is treated
+        # read-only for the worker's lifetime — the GUI must not mutate it
+        # while a session is live. None = pre-decoding disabled (replay path,
+        # tests).
+        self._decode_config: Optional[FrameConfig] = decode_config
 
         self._schedules = [
             {"spec": s, "next_run": time.monotonic(), "enabled": s.enabled}
@@ -117,8 +126,10 @@ class PollingWorker(QThread):
         self._crc_errors = 0
         self._rx_bytes = 0
 
-        # Batch-emission state
-        self._batch: List[ParsedPacket] = []
+        # Batch-emission state. Items are (packet, decoded_or_None) tuples.
+        # decoded is populated when _decode_config is set and packet.ok;
+        # always None for bad-CRC packets and when pre-decoding is disabled.
+        self._batch: List[tuple] = []
         self._last_emit_time: float = 0.0
 
         # Watchdog state. Monotonic clock — immune to system-clock jumps
@@ -273,11 +284,31 @@ class PollingWorker(QThread):
         )
 
     def _accumulate(self, packets: Iterable[ParsedPacket]) -> None:
-        """Add packets to the batch and flush when threshold is reached."""
+        """Add packets to the batch and flush when threshold is reached.
+
+        When ``_decode_config`` is set, decode each good-CRC packet here on
+        the worker thread so the GUI thread receives ``(packet, decoded)``
+        tuples and skips its decode call. Bad-CRC packets carry ``None``
+        for the decoded slot since the payload isn't trustworthy.
+        """
+        cfg = self._decode_config
         for p in packets:
             if not p.ok:
                 self._crc_errors += 1
-            self._batch.append(p)
+                self._batch.append((p, None))
+                continue
+            if cfg is None:
+                decoded = None
+            else:
+                try:
+                    decoded = decode_frame(cfg, p.frame_id, p.payload)
+                except Exception:  # pragma: no cover - defensive: decode bugs
+                    # Don't kill the worker on a decode error. Fall back to
+                    # letting the GUI re-decode (which will surface the error
+                    # via the existing path).
+                    _LOG.exception("decode_frame raised on frame_id=0x%04X", p.frame_id)
+                    decoded = None
+            self._batch.append((p, decoded))
         if self._should_flush():
             self._flush_batch()
 

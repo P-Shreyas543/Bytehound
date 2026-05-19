@@ -3180,7 +3180,12 @@ class MainWindow(QMainWindow):
 
         self._seen_decode_warnings.clear()
         try:
-            self._serial = PollingWorker(settings, self._config.protocol, self._config.polling_schedules)
+            self._serial = PollingWorker(
+                settings,
+                self._config.protocol,
+                self._config.polling_schedules,
+                decode_config=self._config,
+            )
             self._serial.packets_received.connect(self._on_packets_received)
             self._serial.metrics_updated.connect(self._on_metrics_updated)
             self._serial.error_occurred.connect(self._on_serial_error)
@@ -3240,8 +3245,15 @@ class MainWindow(QMainWindow):
         # appendPlainText per flush instead of one per packet. At 1 kHz RX
         # this drops the Qt block-layout cost by ~50x.
         self._console_buffer: List[str] = []
-        for packet in packets:
-            self._handle_packet(packet)
+        # Items may be either bare ParsedPacket (replay / legacy) or
+        # (ParsedPacket, DecodedFrame|None) tuples (live, post worker-side
+        # decode). Normalise here so _handle_packet doesn't branch.
+        for item in packets:
+            if isinstance(item, tuple):
+                packet, pre_decoded = item
+            else:
+                packet, pre_decoded = item, None
+            self._handle_packet(packet, pre_decoded=pre_decoded)
         if self._console_buffer:
             self._console.appendPlainText("\n".join(self._console_buffer))
             self._console_buffer.clear()
@@ -3631,7 +3643,11 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
 
-    def _handle_packet(self, packet: ParsedPacket) -> None:
+    def _handle_packet(
+        self,
+        packet: ParsedPacket,
+        pre_decoded: Optional[DecodedFrame] = None,
+    ) -> None:
         self._packet_count += 1
         now = time.perf_counter()
         if self._last_packet_perf is not None:
@@ -3674,7 +3690,12 @@ class MainWindow(QMainWindow):
                 self._set_status("Connected")
 
         assert self._config is not None
-        decoded = decode_frame(self._config, packet.frame_id, packet.payload)
+        # Live path: the worker thread already decoded for us so the GUI
+        # thread doesn't block on decode work. Replay (no worker) and the
+        # rare worker-decode-error fallback path go through decode_frame here.
+        decoded = pre_decoded if pre_decoded is not None else decode_frame(
+            self._config, packet.frame_id, packet.payload
+        )
         self._apply_decoded(decoded)
         if self._decoded_logger:
             # Use the monotonic clock for elapsed_ms — wall-clock arithmetic
