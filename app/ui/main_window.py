@@ -2822,6 +2822,10 @@ class MainWindow(QMainWindow):
         # into O(1) — matters at high frame rates where every decoded packet
         # may touch the same bitfield rows.
         self._bitfield_row_index: Dict[str, int] = {}
+        # Parallel cache: last values tuple per key. Used by _upsert_detail_row
+        # to skip the entire Qt write when the row's values haven't changed.
+        # Bitfield ON/OFF stays stable packet-to-packet for most bits.
+        self._bitfield_last_values: Dict[str, tuple[str, ...]] = {}
         v.addWidget(self._bitfield_table, 1)
         return outer
 
@@ -2845,6 +2849,7 @@ class MainWindow(QMainWindow):
         self._enum_table.horizontalHeader().setStretchLastSection(True)
         # See _bitfield_row_index — same pattern for the enum table.
         self._enum_row_index: Dict[str, int] = {}
+        self._enum_last_values: Dict[str, tuple[str, ...]] = {}
         v.addWidget(self._enum_table, 1)
         return outer
 
@@ -3543,6 +3548,8 @@ class MainWindow(QMainWindow):
         # longer exists.
         self._bitfield_row_index.clear()
         self._enum_row_index.clear()
+        self._bitfield_last_values.clear()
+        self._enum_last_values.clear()
         self._table_model.clear_live_columns()
         self._seen_decode_warnings.clear()
         self._redraw_plot()
@@ -4067,6 +4074,7 @@ class MainWindow(QMainWindow):
                     self._bitfield_row_index,
                     key,
                     [f"0x{signal.frame_id:04X}", signal.signal_name, bit_name, "ON" if active else "OFF"],
+                    last_values=self._bitfield_last_values,
                 )
                 row = self._bitfield_row_index.get("\x1f".join(key))
                 if row is not None:
@@ -4089,6 +4097,7 @@ class MainWindow(QMainWindow):
                     "" if signal.raw_value is None else str(signal.raw_value),
                     signal.enum_label,
                 ],
+                last_values=self._enum_last_values,
             )
             row = self._enum_row_index.get("\x1f".join(key))
             if row is not None:
@@ -4100,19 +4109,38 @@ class MainWindow(QMainWindow):
         row_index: Dict[str, int],
         key: tuple[str, ...],
         values: list[str],
+        last_values: Optional[Dict[str, tuple[str, ...]]] = None,
     ) -> None:
         """Insert-or-update a row in *table*, looked up via *row_index* in O(1).
 
         *row_index* maps the joined-key string to the table row number. The
         caller is responsible for clearing it whenever ``table.setRowCount(0)``
         runs (see :meth:`_on_clear`).
+
+        When *last_values* is supplied, the row's previous value tuple is
+        cached there and unchanged updates short-circuit before touching Qt —
+        critical at 100 Hz where most bitfield bits stay stable packet-to-packet.
         """
         key_text = "\x1f".join(key)
+        values_tuple = tuple(values)
+        if last_values is not None and last_values.get(key_text) == values_tuple:
+            return
         row = row_index.get(key_text)
         if row is not None and row < table.rowCount():
+            # Update existing items in place instead of allocating new
+            # QTableWidgetItems every packet. Falls back to setItem only if
+            # an item happens to be missing.
             for col, value in enumerate(values):
-                table.setItem(row, col, QTableWidgetItem(value))
-            table.item(row, 0).setData(Qt.ItemDataRole.UserRole, key_text)
+                item = table.item(row, col)
+                if item is None:
+                    table.setItem(row, col, QTableWidgetItem(value))
+                elif item.text() != value:
+                    item.setText(value)
+            first = table.item(row, 0)
+            if first is not None:
+                first.setData(Qt.ItemDataRole.UserRole, key_text)
+            if last_values is not None:
+                last_values[key_text] = values_tuple
             return
         row = table.rowCount()
         table.insertRow(row)
@@ -4120,6 +4148,8 @@ class MainWindow(QMainWindow):
             table.setItem(row, col, QTableWidgetItem(value))
         table.item(row, 0).setData(Qt.ItemDataRole.UserRole, key_text)
         row_index[key_text] = row
+        if last_values is not None:
+            last_values[key_text] = values_tuple
 
     def _populate_group_selector(self) -> None:
         assert self._config is not None
