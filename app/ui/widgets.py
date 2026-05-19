@@ -5,6 +5,8 @@ Houses small, MainWindow-independent UI components:
 * :class:`_StatusBadgeDelegate`   — pill-style Status column delegate.
 * :class:`TitleBarThemeFilter`    — application-wide native title-bar themer.
 * :func:`_apply_windows_dark_titlebar` — the underlying DWM toggle.
+* :func:`_icon`                   — qtawesome wrapper that degrades gracefully.
+* :func:`_pad_dock_content`       — applies internal margins to a QDockWidget.
 """
 
 from __future__ import annotations
@@ -16,11 +18,13 @@ from PySide6.QtCore import QEvent, QObject, QSettings, Qt, Signal
 from PySide6.QtGui import (
     QBrush,
     QColor,
+    QIcon,
     QPainter,
     QPainterPath,
     QPen,
 )
 from PySide6.QtWidgets import (
+    QDockWidget,
     QFrame,
     QListWidget,
     QListWidgetItem,
@@ -29,7 +33,47 @@ from PySide6.QtWidgets import (
     QStyledItemDelegate,
     QStyleOptionViewItem,
     QVBoxLayout,
+    QWidget,
 )
+
+try:
+    import qtawesome as qta  # type: ignore
+except ImportError:  # pragma: no cover - icons degrade to empty if missing
+    qta = None
+
+
+def _icon(name: str, color: str = "#F8FAFC") -> QIcon:
+    """Return a qtawesome icon tinted with *color*, or an empty QIcon.
+
+    Pass ``color='#1F2937'`` for light-theme icons and ``color='#F8FAFC'``
+    (default) for dark-theme icons so they contrast against their background.
+    """
+    if qta is None:
+        return QIcon()
+    try:
+        return qta.icon(name, color=color)
+    except Exception:
+        return QIcon()
+
+
+def _pad_dock_content(dock: "QDockWidget", margin: int = 12) -> None:
+    """Apply uniform internal margins to a dock's content widget.
+
+    If the inner widget already has a layout, set its contentsMargins. Otherwise
+    wrap the widget in a thin QVBoxLayout shim so the padding takes effect.
+    """
+    inner = dock.widget()
+    if inner is None:
+        return
+    layout = inner.layout()
+    if layout is not None:
+        layout.setContentsMargins(margin, margin, margin, margin)
+        return
+    shim = QWidget()
+    shim_layout = QVBoxLayout(shim)
+    shim_layout.setContentsMargins(margin, margin, margin, margin)
+    shim_layout.addWidget(inner)
+    dock.setWidget(shim)
 
 
 def _apply_windows_dark_titlebar(widget, dark: bool) -> None:
