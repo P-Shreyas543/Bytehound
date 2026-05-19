@@ -76,7 +76,9 @@ import numpy as np
 
 if pg is not None:
     # Global, intentional: keeps rendering consistent across Live Plot and Analysis Suite.
-    pg.setConfigOptions(antialias=True)
+    # useOpenGL offloads QPainter primitives to the GPU — meaningful CPU reduction
+    # at high refresh rates with multiple panels.
+    pg.setConfigOptions(antialias=True, useOpenGL=True)
 
 
 def _configure_live_curve(curve) -> None:
