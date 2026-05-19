@@ -251,7 +251,6 @@ def _format_serial_open_error(port: str, exc: BaseException) -> str:
 
     return f"{friendly}\nDetails: {raw}"
 
-from .updater import UpdateChecker, UpdateDownloader, launch_installer
 from .telemetry_model import TelemetryTableModel, COLUMNS as _MODEL_COLUMNS
 from .dialogs import ConnectionDialog, LoggingSettingsDialog, PollingConfigDialog
 from ..decoder.config_loader import ConfigError, load_config
@@ -637,9 +636,10 @@ from app.ui.plot_panel import (
 # ---------------------------------------------------------------------------
 
 from app.ui.tx_panel import TxPanelMixin
+from app.ui.updater_wiring import UpdaterWiringMixin
 
 
-class MainWindow(TxPanelMixin, QMainWindow):
+class MainWindow(TxPanelMixin, UpdaterWiringMixin, QMainWindow):
     def _make_history_buffer(self) -> "_RingBuffer":
         """Factory for the ring-buffer entries in ``self._plot_history``.
 
@@ -929,19 +929,6 @@ class MainWindow(TxPanelMixin, QMainWindow):
         help_menu.addSeparator()
         help_menu.addAction(self._info_action)
 
-    def _on_check_updates(self) -> None:
-        self._log_activity("[ACTION] Check for updates")
-        self._update_checker = UpdateChecker()
-        self._update_checker.update_available.connect(self._on_update_available)
-        self._update_checker.up_to_date.connect(
-            lambda: self._popup_information("Updater", "You are on the latest version.")
-        )
-        self._update_checker.error.connect(
-            lambda e: self._popup_warning("Updater", f"Failed to check for updates:\n{e}")
-        )
-        self._update_checker.start()
-        self._set_status("Checking for updates...")
-
     def _on_analysis_suite(self) -> None:
         self._log_activity("[ACTION] Open Analysis Suite")
         if not hasattr(self, "_analysis_window") or self._analysis_window is None:
@@ -950,59 +937,6 @@ class MainWindow(TxPanelMixin, QMainWindow):
         self._analysis_window.show()
         self._analysis_window.raise_()
         self._analysis_window.activateWindow()
-
-    def _on_update_available(self, version: str, url: str, release_notes: str, sha256: str) -> None:
-        reply = self._popup_question(
-            "Update Available",
-            (
-                f"Version {version} is available.\n\n"
-                f"Notes:\n{release_notes}\n\n"
-                "Would you like to download and install it?"
-            ),
-            buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            self._download_update(url, sha256)
-
-    def _download_update(self, url: str, sha256: str) -> None:
-        self._progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
-        self._progress.setWindowTitle("Updater")
-        # Non-modal so the user can keep working while the download runs.
-        # A 50 MB download on a slow connection used to freeze the main
-        # window for minutes; now the dialog floats but the rest of the
-        # app stays responsive. Suppress auto-close on reaching maximum so
-        # the user can read the final state before the download-finished
-        # handler explicitly closes it.
-        self._progress.setWindowModality(Qt.WindowModality.NonModal)
-        self._progress.setAutoClose(False)
-        self._progress.setAutoReset(False)
-        # Keep the dialog above its parent without grabbing focus.
-        self._progress.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        self._progress.show()
-
-        dest_path = str(Path(os.environ.get("TEMP", ".")) / f"{APP_NAME}_Update.exe")
-        self._downloader = UpdateDownloader(url, dest_path, expected_sha256=sha256)
-        self._downloader.progress.connect(self._on_download_progress)
-        self._downloader.finished.connect(self._on_download_finished)
-        self._downloader.error.connect(
-            lambda e: self._popup_critical("Updater Error", f"Download failed:\n{e}")
-        )
-        self._progress.canceled.connect(self._downloader.requestInterruption)
-        self._downloader.start()
-
-    def _on_download_progress(self, downloaded: int, total: int) -> None:
-        self._progress.setMaximum(total)
-        self._progress.setValue(downloaded)
-
-    def _on_download_finished(self, dest_path: str) -> None:
-        self._progress.close()
-        reply = self._popup_question(
-            "Update Ready",
-            "Download complete. Install now? The application will restart.",
-            buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-        )
-        if reply == QMessageBox.StandardButton.Yes:
-            launch_installer(dest_path)
 
     def _on_copy_value(self) -> None:
         indexes = self._table.selectedIndexes()
