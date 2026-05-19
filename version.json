@@ -1,12 +1,12 @@
 {
-    "version": "0.2.2",
+    "version": "0.2.3",
     "Developer": "Shreyas P",
-    "build_date": "2026-05-19",
+    "build_date": "2026-05-20",
     "license": "MIT",
     "homepage": "https://github.com/P-Shreyas543/Bytehound",
     "issue_url": "https://github.com/P-Shreyas543/Bytehound/issues",
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
-    "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.2.2/Bytehound_Setup_0.2.2.exe",
+    "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.2.3/Bytehound_Setup_0.2.3.exe",
     "release_notes": "Stability and reliability pass.\n\nReliability:\n  - Parser no longer deadlocks on impossible payload lengths\n  - CRC bursts no longer flood the UI event loop\n  - Analysis Suite no longer crashes when closing during a log load\n  - Loggers retain file-handle ownership so slow-disk shutdowns do not lose data\n  - Main window waits for log writers to flush before closing or updating\n\nInstaller:\n  - Silent downgrades are now blocked\n  - Program Files upgrades no longer race their own uninstaller\n  - App icon now shows in Programs & Features\n  - Privilege-split guard prevents parallel installs when a machine-wide install exists\n\nOther:\n  - Auto-updater uses packaging.version for safer version comparison\n  - Decoder hot-path ~1.9x faster for fixed-width ints (cached struct.unpack_from)",
-    "sha256": "1039203a3720de4c7874220190666d3987ffce7467d15d094567306b8aca29cc"
+    "sha256": "0ed5fad37298f36a9bd0227a085cc6750ccc196e3e2771244502131dc5d3e8f0"
 }
