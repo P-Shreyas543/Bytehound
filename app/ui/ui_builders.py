@@ -264,6 +264,28 @@ class UIBuildersMixin:
 
         self.addToolBar(toolbar)
 
+    def _promote_dock_to_window(self, dock, floating: bool) -> None:
+        """Give a floated QDockWidget the OS minimize/maximize controls.
+
+        Qt's default floating mode for QDockWidget paints only a thin tool
+        title bar (float-toggle + close). On Windows that hides the standard
+        ``— ▢ ✕`` control trio, so users can't maximise the popped-out plot
+        onto a second monitor or minimise it independently of the main
+        window. Promoting it to a real ``Qt.Window`` with full chrome on
+        float, and reverting on re-dock, fixes both.
+        """
+        if floating:
+            dock.setWindowFlags(
+                Qt.WindowType.Window
+                | Qt.WindowType.CustomizeWindowHint
+                | Qt.WindowType.WindowTitleHint
+                | Qt.WindowType.WindowSystemMenuHint
+                | Qt.WindowType.WindowMinMaxButtonsHint
+                | Qt.WindowType.WindowCloseButtonHint
+            )
+            # setWindowFlags hides the widget; re-show to apply the new chrome.
+            dock.show()
+
     def _build_main_layout(self) -> None:
         self.setCorner(Qt.Corner.TopLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
         self.setCorner(Qt.Corner.BottomLeftCorner, Qt.DockWidgetArea.LeftDockWidgetArea)
@@ -338,6 +360,14 @@ class UIBuildersMixin:
         )
         self._plot_dock.setWidget(self._build_plot_tab())
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._plot_dock)
+        # When the user pops the Live Plot out, promote it to a full top-level
+        # window so the OS shows Minimize / Maximize / Restore in its title
+        # bar. QDockWidget's default floating mode only paints the tool-window
+        # chrome (just float-toggle + close), which prevented operators from
+        # maximising the plot on a second monitor.
+        self._plot_dock.topLevelChanged.connect(
+            lambda floating, d=self._plot_dock: self._promote_dock_to_window(d, floating)
+        )
 
         self._bitfields_dock = QDockWidget("Bitfields", self)
         self._bitfields_dock.setObjectName("BitfieldsDock")
