@@ -1,0 +1,5 @@
+frame_id_hex,frame_name,signal_name,start_byte,byte_length,endianness,data_type,scale,offset,unit,group,description,enabled
+0x1000,BMS Status,Pack Voltage,0,2,little,uint,0.01,0,V,,Total pack voltage,TRUE
+0x1000,BMS Status,Pack Current,2,2,little,int,0.1,0,A,,Charge (+) / discharge (-) current,TRUE
+0x1000,BMS Status,Pack SOC,4,1,little,uint,1,0,%,,State of charge 0-100%,TRUE
+0x1000,BMS Status,Pack Temperature,5,2,little,int,0.1,-40,°C,,Pack temperature sensor,TRUE
