@@ -219,7 +219,7 @@ from app.ui.plot_panel import (
 
 from app.ui.config_loader import ConfigLoaderMixin
 from app.ui.detail_tabs import DetailTabsMixin
-from app.ui.logging_session import LoggingSessionMixin
+from app.ui.logging_session import LoggingSessionMixin, _format_number
 from app.ui.plot_orchestration import PlotOrchestrationMixin
 from app.ui.polling_session import PollingSessionMixin
 from app.ui.popups import PopupsMixin

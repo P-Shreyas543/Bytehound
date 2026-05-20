@@ -13,6 +13,8 @@ import math
 from datetime import datetime, timedelta
 from typing import List, Optional, Set, Tuple
 
+import numpy as np
+
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
