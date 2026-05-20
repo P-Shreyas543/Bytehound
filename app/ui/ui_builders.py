@@ -449,9 +449,9 @@ class UIBuildersMixin:
         # Hover readout — shows time + value(s) under the mouse on any subplot.
         # Fixed-width so the controls bar doesn't reflow when text changes.
         self._hover_label = QLabel("", outer)
+        self._hover_label.setObjectName("hoverReadout")
         self._hover_label.setStyleSheet(
-            "font-family: Consolas, monospace; font-size: 11px; "
-            "color: palette(text); padding: 0 6px;"
+            "font-family: Consolas, monospace; font-size: 11px; padding: 0 6px;"
         )
         self._hover_label.setMinimumWidth(280)
         self._hover_label.setMaximumWidth(420)
@@ -501,23 +501,20 @@ class UIBuildersMixin:
 
         # Session clock — updates every second via _flush_ui
         self._session_clock_label = QLabel("⏱ 0:00:00", outer)
+        self._session_clock_label.setObjectName("auxReadout")
         self._session_clock_label.setToolTip("Elapsed time since session start (or last config load).")
-        # palette(placeholderText) sits between palette(text) and palette(mid):
-        # it's designed as readable-but-secondary text in both Qt-supplied and
-        # qdarktheme palettes. palette(mid) was nearly invisible on some light
-        # themes, palette(text) reads as primary content. This strikes the
-        # right "auxiliary readout" weight on dark AND light.
-        self._session_clock_label.setStyleSheet(
-            "font-size:11px; color: palette(placeholderText); padding-left:8px;"
-        )
+        # Explicit per-theme colours come from the cascaded card QSS (QLabel#auxReadout
+        # rule in _QSS_DARK_OVERRIDES / _QSS_LIGHT_OVERRIDES) so theme switches are
+        # crisp. Previous palette(placeholderText) approach cached the resolved
+        # colour on first paint and stayed stale after a qdarktheme palette swap.
+        self._session_clock_label.setStyleSheet("font-size:11px; padding-left:8px;")
         self._session_clock_label.setMinimumWidth(70)
         controls.addWidget(self._session_clock_label)
 
         # Update-rate readout — packets/sec coming in. Computed by _flush_ui.
         self._rate_label = QLabel("0 Hz", outer)
-        self._rate_label.setStyleSheet(
-            "font-size:11px; color: palette(placeholderText); padding-left:8px;"
-        )
+        self._rate_label.setObjectName("auxReadout")
+        self._rate_label.setStyleSheet("font-size:11px; padding-left:8px;")
         self._rate_label.setMinimumWidth(50)
         self._rate_label.setToolTip("Incoming packet rate (averaged over the last second).")
         controls.addWidget(self._rate_label)
@@ -618,8 +615,9 @@ class UIBuildersMixin:
             "🔒 Only signals marked  read–write (RW) or write-only (W)  in the config "
             "appear here. Connect to write a new value."
         )
+        info.setObjectName("hintLabel")
         info.setWordWrap(True)
-        info.setStyleSheet("font-size:11px; color: palette(mid); padding-bottom:4px;")
+        info.setStyleSheet("font-size:11px; padding-bottom:4px;")
         vlay.addWidget(info)
 
         self._editor_table = QTableWidget(0, 4, outer)

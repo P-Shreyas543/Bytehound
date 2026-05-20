@@ -198,8 +198,16 @@ QHeaderView::section:hover {
     background-color: #273549;
 }
 
-/* 9. Tabbed dock bars — match the dock title surface so the tabs
-      look like an extension of the dock header, not a separate band. */
+/* 9. Theme-aware secondary text. Using explicit hex codes instead of
+      palette(...) avoids Qt's QSS palette-resolution cache (Qt resolves
+      palette(...) once at setStyleSheet time and never re-resolves on
+      app palette changes, so theme toggles left these labels stuck). */
+QLabel#hintLabel       { color: #94A3B8; }   /* Slate-400 — dim on dark slate */
+QLabel#auxReadout      { color: #CBD5E1; }   /* Slate-300 — aux readouts */
+QLabel#hoverReadout    { color: #F8FAFC; }   /* Slate-50  — primary on dark */
+
+/* 10. Tabbed dock bars — match the dock title surface so the tabs
+       look like an extension of the dock header, not a separate band. */
 QTabBar {
     background-color: #1E293B;
 }
@@ -318,7 +326,14 @@ QHeaderView::section:hover {
     background-color: #E5E7EB;
 }
 
-/* 8. Tabbed dock bars (Bitfields | Enums | TX Commands | … and the
+/* 8. Theme-aware secondary text. Mirror of the dark-override block:
+      explicit colours so theme toggles produce a visible swap, instead
+      of relying on palette(...) which Qt's QSS engine caches. */
+QLabel#hintLabel       { color: #6B7280; }   /* Gray-500 — dim on white */
+QLabel#auxReadout      { color: #4B5563; }   /* Gray-600 — aux readouts */
+QLabel#hoverReadout    { color: #1F2937; }   /* Gray-800 — primary text */
+
+/* 9. Tabbed dock bars (Bitfields | Enums | TX Commands | … and the
       Raw Console | Activity Log pair). Without these, Qt's default
       tab rendering picks up a hold-over dark colour from earlier
       stylesheets and the tab strip looks black in light mode. */
@@ -424,9 +439,17 @@ class ThemingMixin:
             seen.add(wid)
             qss = w.styleSheet()
             if qss and "palette(" in qss:
-                # Re-setting the same string forces Qt's CSS engine to re-run
-                # palette() resolution against the live QApplication palette.
+                # Three-step invalidation. Qt sometimes short-circuits
+                # ``setStyleSheet(same_string)`` as a no-op, leaving the
+                # cached resolved palette() colours untouched. Clearing
+                # first, then unpolish/polish, then re-applying the
+                # original string guarantees the QSS engine re-runs
+                # palette() resolution against the live app palette.
+                w.setStyleSheet("")
+                w.style().unpolish(w)
+                w.style().polish(w)
                 w.setStyleSheet(qss)
+                w.update()
             for child in w.findChildren(QWidget):
                 repolish(child)
 

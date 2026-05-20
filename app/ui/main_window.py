@@ -664,7 +664,8 @@ class MainWindow(
         layout.addWidget(listw, 1)
 
         hint = QLabel("• already assigned to a panel", dlg)
-        hint.setStyleSheet("font-size:11px; color: palette(placeholderText);")
+        hint.setObjectName("hintLabel")
+        hint.setStyleSheet("font-size:11px;")
         layout.addWidget(hint)
 
         btns = QDialogButtonBox(
