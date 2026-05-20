@@ -245,9 +245,18 @@ class AnalysisSuiteWindow(QMainWindow):
     # UI construction
     # ──────────────────────────────────────────────────────────────────
     def _build_ui(self):
+        # Vertical split: top row holds the param-tree sidebar + plot area
+        # (a horizontal child splitter); bottom row holds the analyst tabs
+        # (Cursors + Statistics). Previously the tabs sat in a third column
+        # on the right, which left them too narrow on smaller monitors and
+        # forced the plot area to fight for horizontal room.
+        outer = QSplitter(Qt.Vertical)
+        outer.setContentsMargins(4, 4, 4, 4)
+        self.setCentralWidget(outer)
+
         self._splitter = QSplitter(Qt.Horizontal)
-        self._splitter.setContentsMargins(4, 4, 4, 4)
-        self.setCentralWidget(self._splitter)
+        outer.addWidget(self._splitter)
+        self._outer_splitter = outer
 
         # ── Left sidebar ─────────────────────────────────────────────
         sidebar = QWidget()
@@ -398,19 +407,26 @@ class AnalysisSuiteWindow(QMainWindow):
         self._plot_layout.setSpacing(10)
         self._splitter.addWidget(self._plot_container)
 
-        # ── Right: tabbed analyst panels (cursor readout + statistics) ──
-        right_tabs = QTabWidget()
-        right_tabs.setMinimumWidth(200)
+        # ── Bottom: tabbed analyst panels (cursor readout + statistics) ──
+        # Moved out of the right column into the vertical outer splitter so
+        # they get full window width — readouts now show all values for two
+        # cursors side-by-side without horizontal scrolling.
+        bottom_tabs = QTabWidget()
+        bottom_tabs.setMinimumHeight(140)
         self._cursor_readout = CursorReadoutPanel()
-        right_tabs.addTab(self._cursor_readout, "Cursors")
+        bottom_tabs.addTab(self._cursor_readout, "Cursors")
         self._stats_panel = StatisticsPanel()
-        right_tabs.addTab(self._stats_panel, "Statistics")
-        self._right_tabs = right_tabs
-        self._splitter.addWidget(right_tabs)
-        
+        bottom_tabs.addTab(self._stats_panel, "Statistics")
+        self._right_tabs = bottom_tabs  # name retained for callers
+        self._outer_splitter.addWidget(bottom_tabs)
+
+        # Horizontal split: sidebar | plots. No third right column anymore.
         self._splitter.setStretchFactor(0, 0)
         self._splitter.setStretchFactor(1, 1)
-        self._splitter.setStretchFactor(2, 0)
+        # Vertical split: plot row takes the lion's share, bottom tabs are
+        # collapsible but default to ~25% of the window height.
+        self._outer_splitter.setStretchFactor(0, 4)
+        self._outer_splitter.setStretchFactor(1, 1)
 
         # Debounced stats refresh — sigRangeChanged fires continuously while
         # the user pans/zooms; 150ms is short enough to feel live but stops
@@ -495,11 +511,15 @@ class AnalysisSuiteWindow(QMainWindow):
                               self._add_empty_subplot, QKeySequence("Ctrl+N"))
 
         # ── Tools ────────────────────────────────────────────────────
+        # V adds a cursor that lives ONLY on the subplot under the mouse —
+        # users were confused when a cursor placed on one subplot appeared
+        # on every other subplot too. Shift+V keeps the old "all subplots"
+        # behaviour for cross-subplot timing comparisons.
         tools_menu = mb.addMenu("Tools")
-        tools_menu.addAction("Add Common Vertical Cursor At Mouse",
-                             self._add_vertical_cursor, QKeySequence("V"))
-        tools_menu.addAction("Add Plot Vertical Cursor At Mouse",
-                     self._add_plot_vertical_cursor, QKeySequence("Shift+V"))
+        tools_menu.addAction("Add Vertical Cursor (this subplot)",
+                     self._add_plot_vertical_cursor, QKeySequence("V"))
+        tools_menu.addAction("Add Vertical Cursor (all subplots)",
+                             self._add_vertical_cursor, QKeySequence("Shift+V"))
         tools_menu.addAction("Add Horizontal Cursor at Mouse",
                              self._add_horizontal_cursor_at_mouse, QKeySequence("H"))
         tools_menu.addSeparator()
@@ -2175,7 +2195,10 @@ class AnalysisSuiteWindow(QMainWindow):
     def _update_cursor_readout(self):
         visible_logs = [e for e in self._logs.values() if e.visible]
         params = self._get_checked_params()
-        self._cursor_readout.update_readout(self._v_cursors, visible_logs, params)
+        self._cursor_readout.update_readout(
+            self._v_cursors, visible_logs, params,
+            h_cursors=self._h_cursors,
+        )
 
     def _update_cursor_dots(self):
         """Rebuild tracking dots for all cursors on all plots."""
@@ -2262,14 +2285,26 @@ class AnalysisSuiteWindow(QMainWindow):
                        'fill': THEME.c('cursor_label_bg'),
                        'movable': True})
         pw.addItem(line, ignoreBounds=True)
+        # On drag: keep the label fresh, keep the cached `value` in sync
+        # with the line position, and refresh the readout so the bottom
+        # panel always reflects the displayed Y.
         line.sigPositionChanged.connect(
-            lambda l: l.label.setText(f'{l.value():.2f}'))
+            lambda l, _ci=ci: self._on_h_cursor_moved(_ci, l))
         line.sigClicked.connect(
             lambda *a, _ci=ci: self._on_h_cursor_selected(_ci))
         self._h_cursors.append({
             'line': line, 'plot_widget': pw,
             'value': val, 'color': color,
         })
+        self._update_cursor_readout()
+
+    def _on_h_cursor_moved(self, cursor_index: int, line: pg.InfiniteLine) -> None:
+        """Sync the H-cursor's cached value + label + readout after a drag."""
+        v = float(line.value())
+        line.label.setText(f'{v:.2f}')
+        if 0 <= cursor_index < len(self._h_cursors):
+            self._h_cursors[cursor_index]['value'] = v
+        self._update_cursor_readout()
 
     def _on_h_cursor_selected(self, cursor_index: int):
         """Mark h-cursor as selected (red pen), deselect others."""
@@ -2291,6 +2326,7 @@ class AnalysisSuiteWindow(QMainWindow):
             self._selected_h_cursor = -1
         elif self._selected_h_cursor > cursor_index:
             self._selected_h_cursor -= 1
+        self._update_cursor_readout()
 
     def _clear_all_cursors(self):
         # Vertical

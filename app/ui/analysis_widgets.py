@@ -164,7 +164,18 @@ class CursorReadoutPanel(QGroupBox):
 
     def update_readout(self, cursors: list[dict],
                        logs: list['LogEntry'],
-                       active_params: list[str]):
+                       active_params: list[str],
+                       h_cursors: list[dict] | None = None):
+        """Refresh the readout with the current cursors.
+
+        ``cursors`` are vertical cursors (each has ``time``, ``label``,
+        ``scope`` ∈ {"all", "plot"}, ``plot_param``, ``color``).
+        ``h_cursors`` (added later) are horizontal cursors with a fixed Y
+        value (``value``, ``color``, optional ``plot_widget``). Both
+        lists are rendered into the same scroll area so the analyst sees
+        all active cursor measurements in one place.
+        """
+        h_cursors = h_cursors or []
         vbar = self._scroll.verticalScrollBar()
         old_scroll = vbar.value()
 
@@ -175,7 +186,7 @@ class CursorReadoutPanel(QGroupBox):
             if w:
                 w.deleteLater()
 
-        if not cursors:
+        if not cursors and not h_cursors:
             self._delta_label.setText("")
             self._info_label.setText("Add cursors with V / Shift+V / H keys.")
             vbar.setValue(min(old_scroll, vbar.maximum()))
@@ -183,15 +194,19 @@ class CursorReadoutPanel(QGroupBox):
 
         self._info_label.setText("")
 
-        # ΔX header when two cursors active
+        # ΔX header when two vertical cursors active; otherwise show the
+        # single cursor's time. With no vertical cursors but H-cursors
+        # present, clear the header so it doesn't show a stale time.
         if len(cursors) >= 2:
             dt_val = abs(cursors[1]['time'] - cursors[0]['time'])
             self._delta_label.setText(
                 f"ΔX = {TimeAxisItem._fmt_elapsed(dt_val)}  ({dt_val:.3f} s)")
-        else:
+        elif cursors:
             t0 = cursors[0]['time']
             self._delta_label.setText(
                 f"t = {TimeAxisItem._fmt_elapsed(t0)}  ({t0:.3f} s)")
+        else:
+            self._delta_label.setText("")
 
         # Per-cursor readout
         # Collect values for ΔY computation (cursor_idx -> {(log_id,param): value})
@@ -255,6 +270,38 @@ class CursorReadoutPanel(QGroupBox):
                 row_w = self._make_row(
                     f"  {short}",
                     f"Δ {self._fmt_val(delta)} {unit}".strip())
+                self._layout.insertWidget(self._layout.count() - 1, row_w)
+
+        # ── Horizontal cursors ─────────────────────────────────────────
+        # Each H-cursor pins a Y value on its host subplot. We list them
+        # with their colour swatch and value; when two H-cursors live on
+        # the same subplot we add a ΔY row so the analyst can read the
+        # range without doing the arithmetic by hand.
+        if h_cursors:
+            sep = QLabel("── H Cursors ──")
+            sep.setFont(self._LABEL_FONT)
+            self._layout.insertWidget(self._layout.count() - 1, sep)
+            for hi, hc in enumerate(h_cursors, start=1):
+                value = hc.get('value', float('nan'))
+                color = hc.get('color', '')
+                row_w = self._make_row(
+                    f"● H{hi}",
+                    self._fmt_val(value),
+                    color=color, bold=True)
+                self._layout.insertWidget(self._layout.count() - 1, row_w)
+
+            # Group h-cursors by host plot widget so we only show ΔY
+            # between cursors on the same subplot (different subplots may
+            # have wildly different units / axes, so a global ΔY would
+            # mislead).
+            by_plot: dict = {}
+            for hc in h_cursors:
+                by_plot.setdefault(id(hc.get('plot_widget')), []).append(hc)
+            for hcs in by_plot.values():
+                if len(hcs) < 2:
+                    continue
+                dy = hcs[-1].get('value', 0.0) - hcs[0].get('value', 0.0)
+                row_w = self._make_row("  ΔY", f"Δ {self._fmt_val(dy)}")
                 self._layout.insertWidget(self._layout.count() - 1, row_w)
 
         vbar.setValue(min(old_scroll, vbar.maximum()))
