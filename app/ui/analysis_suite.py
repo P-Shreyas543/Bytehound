@@ -1605,28 +1605,11 @@ class AnalysisSuiteWindow(QMainWindow):
             pw.showGrid(x=True, y=True, alpha=alpha)
             normalized = self._is_subplot_normalized(group)
             smoothed = self._is_subplot_smoothed(group)
-            # Y-axis title:
-            #   1 param   → full name with units (matches sidebar swatch).
-            #   ≥2 params → compact summary ("Speed, Power +1"). Full names
-            #               live in the legend; rotated long titles
-            #               otherwise overshoot the plot's vertical extent.
-            if len(group) == 1:
-                p = group[0]
-                unit = _parse_unit(p)
-                short = re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', p).strip()
-                axis_title = f"{short} ({unit})" if unit else p
-            else:
-                # Multi-param: show unit only if all params share one
-                units = [_parse_unit(p) for p in group]
-                shared_unit = units[0] if units and all(u == units[0] for u in units) and units[0] else None
-                axis_title = self._axis_title_for_group(group)
-                if shared_unit:
-                    axis_title = f"{axis_title} ({shared_unit})"
-            if normalized:
-                axis_title = f"{axis_title}  (normalized 0–1)"
-            if smoothed:
-                axis_title = f"{axis_title}  · smoothed N={self._smoothing_window}"
-            pw.setLabel('left', axis_title, color=fg)
+            # No rotated y-axis title — the parameter name now lives in
+            # the legend (see ``legend_name`` below). Empty-string label
+            # keeps pyqtgraph from reserving extra space on the left
+            # margin where the title used to render.
+            pw.setLabel('left', '')
             pw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
             # Visible card-style border around each subplot so the boundary
@@ -1715,7 +1698,26 @@ class AnalysisSuiteWindow(QMainWindow):
                     # Single-param: color = log, style = solid.
                     curve_color, style = _curve_visuals(group, param, li, entry.color)
                     pen = pg.mkPen(color=curve_color, width=1.6, style=style)
-                    legend_name = f"{entry.name} · {param}" if multi else entry.name
+                    # Legend entry always carries the parameter name (with
+                    # unit when present) because the rotated y-axis label
+                    # was removed. Format: "<param> · <log>" so the
+                    # variable is the primary identifier and the log is
+                    # the qualifier when multiple logs are loaded.
+                    # Single-log + single-param: skip the redundant log
+                    # suffix to keep the legend compact.
+                    if multi or len(self._logs) > 1:
+                        legend_name = f"{param} · {entry.name}"
+                    else:
+                        legend_name = param
+                    # Annotate per-subplot transforms in the legend since
+                    # they used to live in the (now-removed) axis title.
+                    if normalized or smoothed:
+                        suffix_parts = []
+                        if normalized:
+                            suffix_parts.append("norm")
+                        if smoothed:
+                            suffix_parts.append(f"smooth N={self._smoothing_window}")
+                        legend_name = f"{legend_name}  ({', '.join(suffix_parts)})"
                     curve = pw.plot(x[mask], y[mask], pen=pen, name=legend_name)
                     curve.setVisible(entry.visible)
                     curve.setClipToView(True)
@@ -2195,9 +2197,27 @@ class AnalysisSuiteWindow(QMainWindow):
     def _update_cursor_readout(self):
         visible_logs = [e for e in self._logs.values() if e.visible]
         params = self._get_checked_params()
+        # Enrich each H-cursor with the param list of the subplot it's
+        # anchored on so the readout panel can render it with the same
+        # "C1  t  [param] / ● log / param  value" structure as V-cursors.
+        # The h_cursor dict itself carries only the plot_widget reference;
+        # the param mapping lives on the AnalysisSuiteWindow.
+        h_cursor_views: list[dict] = []
+        for hc in self._h_cursors:
+            pw = hc.get('plot_widget')
+            group: list[str] = []
+            if pw is not None and pw in self._plot_widgets:
+                pi = self._plot_widgets.index(pw)
+                if 0 <= pi < len(self._plot_groups):
+                    group = list(self._plot_groups[pi])
+            h_cursor_views.append({
+                **hc,
+                'plot_group': group,
+                'plot_widget_id': id(pw),
+            })
         self._cursor_readout.update_readout(
             self._v_cursors, visible_logs, params,
-            h_cursors=self._h_cursors,
+            h_cursors=h_cursor_views,
         )
 
     def _update_cursor_dots(self):

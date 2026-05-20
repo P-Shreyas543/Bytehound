@@ -273,35 +273,77 @@ class CursorReadoutPanel(QGroupBox):
                 self._layout.insertWidget(self._layout.count() - 1, row_w)
 
         # ── Horizontal cursors ─────────────────────────────────────────
-        # Each H-cursor pins a Y value on its host subplot. We list them
-        # with their colour swatch and value; when two H-cursors live on
-        # the same subplot we add a ΔY row so the analyst can read the
-        # range without doing the arithmetic by hand.
+        # Render H-cursors with the same "header + log swatch + per-param"
+        # structure as V-cursors (above). An H-cursor pins a Y value on
+        # one subplot, so the "value" column for each (log, param) row is
+        # just the cursor's Y — but listing per-log is still useful: it
+        # tells the analyst which curve(s) and logs the threshold applies
+        # to without them having to mentally cross-reference the subplot
+        # group with the sidebar log list.
         if h_cursors:
             sep = QLabel("── H Cursors ──")
             sep.setFont(self._LABEL_FONT)
             self._layout.insertWidget(self._layout.count() - 1, sep)
+
             for hi, hc in enumerate(h_cursors, start=1):
                 value = hc.get('value', float('nan'))
                 color = hc.get('color', '')
-                row_w = self._make_row(
-                    f"● H{hi}",
-                    self._fmt_val(value),
-                    color=color, bold=True)
-                self._layout.insertWidget(self._layout.count() - 1, row_w)
+                group: list[str] = hc.get('plot_group') or []
+                # Header line — mirrors `C1  t  [param]` for V-cursors.
+                group_label = ", ".join(
+                    re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', p).strip()
+                    for p in group
+                ) or "—"
+                hdr_txt = f"H{hi}  Y = {self._fmt_val(value)}  [{group_label}]"
+                hdr = QLabel(hdr_txt)
+                hdr.setFont(self._LABEL_FONT)
+                if color:
+                    hdr.setStyleSheet(f"color: {color};")
+                self._layout.insertWidget(self._layout.count() - 1, hdr)
 
-            # Group h-cursors by host plot widget so we only show ΔY
-            # between cursors on the same subplot (different subplots may
-            # have wildly different units / axes, so a global ΔY would
-            # mislead).
+                # Per-log rows — same swatch+name+param structure as V.
+                for log in logs:
+                    if not log.visible:
+                        continue
+                    # Skip logs that don't carry any of this subplot's params.
+                    log_params = [p for p in group if p in log.columns]
+                    if not log_params:
+                        continue
+                    row_w = self._make_row(f"● {log.name}", "",
+                                           color=log.color, bold=True)
+                    self._layout.insertWidget(self._layout.count() - 1, row_w)
+                    for param in log_params:
+                        short = re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', param).strip()
+                        unit = _parse_unit(param) or ""
+                        val_str = f"{self._fmt_val(value)} {unit}".strip()
+                        row_w = self._make_row(f"  {short}", val_str)
+                        self._layout.insertWidget(self._layout.count() - 1, row_w)
+
+            # ΔY between H-cursors on the SAME subplot. We use
+            # plot_widget_id (set by the caller) instead of id(plot_widget)
+            # so the panel doesn't need a reference to the live widget.
             by_plot: dict = {}
             for hc in h_cursors:
-                by_plot.setdefault(id(hc.get('plot_widget')), []).append(hc)
+                by_plot.setdefault(hc.get('plot_widget_id'), []).append(hc)
             for hcs in by_plot.values():
                 if len(hcs) < 2:
                     continue
+                # ΔY between first and last cursor on this subplot. A
+                # numbered list of pairwise deltas would be noisier than
+                # useful for the typical 2-cursor workflow.
                 dy = hcs[-1].get('value', 0.0) - hcs[0].get('value', 0.0)
-                row_w = self._make_row("  ΔY", f"Δ {self._fmt_val(dy)}")
+                group = hcs[0].get('plot_group') or []
+                group_label = ", ".join(
+                    re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', p).strip()
+                    for p in group
+                )
+                unit = _parse_unit(group[0]) or "" if group else ""
+                sep2 = QLabel(f"── ΔY  [{group_label}] ──")
+                sep2.setFont(self._LABEL_FONT)
+                self._layout.insertWidget(self._layout.count() - 1, sep2)
+                row_w = self._make_row(
+                    "  Δ Y",
+                    f"Δ {self._fmt_val(dy)} {unit}".strip())
                 self._layout.insertWidget(self._layout.count() - 1, row_w)
 
         vbar.setValue(min(old_scroll, vbar.maximum()))
