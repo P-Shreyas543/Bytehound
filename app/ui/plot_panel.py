@@ -174,9 +174,20 @@ def _format_elapsed_time(seconds: float, spacing: Optional[float] = None) -> str
         sign = "-" if seconds < 0 else ""
         minutes, secs = divmod(abs_s, 60)
         return f"{sign}{int(minutes)}:{int(secs):02d}"
-    if spacing < 1:
-        return f"{seconds:.1f}s"
-    return f"{seconds:.0f}s"
+    # Adaptive precision: pick one decimal finer than the tick spacing so
+    # adjacent ticks render as distinct values when the user zooms in.
+    # Previously hard-coded to .1f, which made ticks at e.g. 1.123 and
+    # 1.127 both print as "1.1s" — the "two same labels" the user saw.
+    # Capped at 3 decimals to keep labels short.
+    if spacing >= 1:
+        decimals = 0
+    elif spacing >= 0.1:
+        decimals = 1
+    elif spacing >= 0.01:
+        decimals = 2
+    else:
+        decimals = 3
+    return f"{seconds:.{decimals}f}s"
 
 
 if pg is not None:
