@@ -973,10 +973,6 @@ class AnalysisSuiteWindow(QMainWindow):
         self._cursor_dots: dict[str, list] = {}   # cursor_id → [{'pw', 'item'}]
         self._v_cursor_counter: int = 0          # ever-increasing label counter
         self._xy_window = None                   # keep reference to non-modal XY window
-        self._plot_height = int(
-            self._qsettings.value("analysis/plot_height", DEFAULT_PLOT_HEIGHT))
-        self._last_mouse_pw: Optional[pg.PlotWidget] = None
-        self._last_mouse_pos: Optional[QPointF] = None
         self._wall_clock_mode: bool = False       # X-axis: elapsed vs wall-clock
         self._persisted_x_range = self._qsettings.value("analysis/x_range")
         self._persisted_cursors = self._qsettings.value(
@@ -1078,23 +1074,18 @@ class AnalysisSuiteWindow(QMainWindow):
         log_layout.addWidget(log_scroll, 1)
         side_layout.addWidget(log_group, 1)
 
-        # Plot height slider
-        height_row = QHBoxLayout()
-        height_row.addWidget(QLabel("Plot Height:"))
-        self._height_slider = QSlider(Qt.Horizontal)
-        self._height_slider.setRange(MIN_PLOT_HEIGHT, MAX_PLOT_HEIGHT)
-        self._height_slider.setValue(self._plot_height)
-        self._height_slider.valueChanged.connect(self._on_plot_height_changed)
-        self._height_slider.mouseDoubleClickEvent = lambda e: (
-            self._height_slider.setValue(DEFAULT_PLOT_HEIGHT))
-        self._height_slider.setToolTip(
-            f"Drag to resize subplots ({MIN_PLOT_HEIGHT}–{MAX_PLOT_HEIGHT}px).\n"
-            f"Double-click to reset to {DEFAULT_PLOT_HEIGHT}px.")
-        height_row.addWidget(self._height_slider)
-        self._height_label = QLabel(f"{DEFAULT_PLOT_HEIGHT}px")
-        self._height_label.setMinimumWidth(40)
-        height_row.addWidget(self._height_label)
-        side_layout.addLayout(height_row)
+        # Plot layout combo
+        from .plot_panel import GRID_LAYOUTS
+        layout_row = QHBoxLayout()
+        layout_row.addWidget(QLabel("Layout:"))
+        self._layout_combo = QComboBox()
+        self._layout_combo.addItems(list(GRID_LAYOUTS.keys()))
+        saved_layout = str(self._qsettings.value("analysis/layout", "2×1")).lower().replace("x", "×")
+        self._layout_combo.setCurrentText(saved_layout if saved_layout in GRID_LAYOUTS else "2×1")
+        self._layout_combo.currentTextChanged.connect(self._on_layout_changed)
+        layout_row.addWidget(self._layout_combo)
+        layout_row.addStretch(1)
+        side_layout.addLayout(layout_row)
 
         # Parameter selector group — pushed to bottom
         param_group = QGroupBox("Parameters (Subplots)")
@@ -1185,17 +1176,14 @@ class AnalysisSuiteWindow(QMainWindow):
         root_layout.addWidget(sidebar)
 
         # ── Middle: plot area ────────────────────────────────────────
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
+        from PySide6.QtWidgets import QGridLayout
         self._plot_container = QWidget()
-        self._plot_layout = QVBoxLayout(self._plot_container)
+        self._plot_layout = QGridLayout(self._plot_container)
         # Generous outer padding + spacing so axis tick labels at the edges
         # don't collide with the sidebar/scrollbar or the next subplot below.
         self._plot_layout.setContentsMargins(8, 8, 8, 8)
         self._plot_layout.setSpacing(10)
-        self._plot_layout.addStretch()
-        self._scroll.setWidget(self._plot_container)
-        root_layout.addWidget(self._scroll, stretch=1)
+        root_layout.addWidget(self._plot_container, stretch=1)
 
         # ── Right: tabbed analyst panels (cursor readout + statistics) ──
         right_tabs = QTabWidget()
@@ -1348,6 +1336,10 @@ class AnalysisSuiteWindow(QMainWindow):
                 pen = pg.mkPen(fg)
                 ax.setPen(pen)
                 ax.setTextPen(pen)
+                if hasattr(ax, 'labelStyle'):
+                    style = dict(ax.labelStyle)
+                    style['color'] = fg
+                    pw.setLabel(axis_name, **style)
             pw.showGrid(x=True, y=True, alpha=alpha)
             # Update legend styling
             try:
@@ -1535,14 +1527,11 @@ class AnalysisSuiteWindow(QMainWindow):
                     curve.setData(x[mask], y[mask])
 
     # ──────────────────────────────────────────────────────────────────
-    # Plot height
+    # Plot Layout
     # ──────────────────────────────────────────────────────────────────
-    def _on_plot_height_changed(self, value: int):
-        self._plot_height = value
-        self._height_label.setText(f"{value}px")
-        for pw in self._plot_widgets:
-            pw.setMinimumHeight(value)
-            pw.setMaximumHeight(value)
+    def _on_layout_changed(self, layout: str):
+        self._qsettings.setValue("analysis/layout", layout)
+        self._rebuild_plots()
 
     # ──────────────────────────────────────────────────────────────────
     # Parameter selector
@@ -2360,7 +2349,6 @@ class AnalysisSuiteWindow(QMainWindow):
 
         groups = self._get_subplot_groups()
         if not groups or not self._logs:
-            self._plot_layout.addStretch()
             return
 
         bg = THEME.c('plot_bg')
@@ -2396,10 +2384,8 @@ class AnalysisSuiteWindow(QMainWindow):
                 axis_title = f"{axis_title}  (normalized 0–1)"
             if smoothed:
                 axis_title = f"{axis_title}  · smoothed N={self._smoothing_window}"
-            pw.setLabel('left', axis_title)
-            pw.setMinimumHeight(self._plot_height)
-            pw.setMaximumHeight(self._plot_height)
-            pw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            pw.setLabel('left', axis_title, color=fg)
+            pw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
             # Visible card-style border around each subplot so the boundary
             # is unambiguous, and internal padding so axis tick labels never
@@ -2417,12 +2403,13 @@ class AnalysisSuiteWindow(QMainWindow):
             # don't fight for the same pixels when values are big or names
             # are long. Width auto-grows beyond this if needed.
             plot_item.getAxis('left').setWidth(64)
-            # Cap the rotated y-title at the plot's drawing height so it
-            # cannot grow taller than the panel and trigger the overshoot.
-            try:
-                plot_item.getAxis('left').label.setTextWidth(self._plot_height - 24)
-            except Exception:
-                pass
+
+            from .plot_panel import GRID_LAYOUTS
+            rows, cols = GRID_LAYOUTS.get(self._layout_combo.currentText(), (2, 1))
+            grid_row = gi // cols
+            grid_col = gi % cols
+            self._plot_layout.addWidget(pw, grid_row, grid_col)
+            self._plot_widgets.append(pw)
 
             # Performance: clip and downsample
             pw.setClipToView(True)

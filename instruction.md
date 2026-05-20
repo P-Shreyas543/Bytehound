@@ -700,8 +700,18 @@ RX path 1:1.
 `QSettings("Bytehound", "Bytehound")` for persistence (window state,
 theme, last config path, last port/baud).
 
-Theme: `qdarktheme.setup_theme("dark"|"light", corner_shape="rounded")`,
-applied at app start with the saved value.
+Theme: `qdarktheme.setup_theme("dark"|"light"|"auto", corner_shape="rounded")`,
+applied at app start with the saved value (resolved through
+`resolve_theme()` — see §Theme).
+
+**Window sizing.** `MainWindow.__init__` calls `self.resize(1280, 780)` for
+the default size and `self.setMinimumSize(640, 480)` to declare the
+supported floor. To keep the actual floor at that value, the wide plot
+control bar in `_build_plot_tab()` uses elastic policies on the hint label
+(`QSizePolicy.Ignored, Preferred` so it clips on narrow windows instead of
+holding the row hostage) and a relaxed `_hover_label.setMinimumWidth(120)`.
+This is what makes the app fit a 50% / 50% screen split on a 1080p
+display via Win+Left / Win+Right.
 
 ### Menus
 
@@ -735,7 +745,7 @@ Built dynamically in `_populate_view_menu()`. Items in order:
 | Item | Behavior |
 |------|----------|
 | **Panels** (submenu) | Toggle visibility of each dockable panel via `dock.toggleViewAction()`. Entries: **Connection**, **Live Plot**, **Bitfields**, **Enums**, **TX Commands**, **Parameter Editor**, **Raw Console**, **Activity Log**. State persists via `QMainWindow.saveState`. |
-| **Theme** (submenu) | Exclusive checkable group: **Dark** / **Light** / **System**. Calls `_apply_theme(key)`. Persists to `QSettings("ui/theme")`. Re-applies the Windows dark/light title bar to every open top-level widget. |
+| **Theme** (submenu) | Exclusive checkable group: **Dark** / **Light** / **System**. Calls `_apply_theme(key)`. Persists to `QSettings("ui/theme")` and immediately `sync()`s so a crash before normal shutdown cannot lose the selection. **System** stores `"auto"`; every downstream painter resolves that to the actual OS theme via `resolve_theme()` (see §Theme). Re-applies the Windows dark/light title bar to every open top-level widget. |
 | **Reset Window Layout** | Restores docks/toolbar to their default arrangement. |
 
 #### Device
@@ -818,25 +828,75 @@ padding is `6px 24px`; menu container padding is `5px`; separators use
 
 ### Theme & native title bar (Windows)
 
-Theming has two layers:
+Theming has three layers:
 
 1. **Client area** — `qdarktheme.setup_theme("dark"|"light"|"auto",
    corner_shape="rounded")`, applied at startup with the saved
    `QSettings("ui/theme")` value and again from `_apply_theme()` on every
-   user toggle.
-2. **Native Windows title bar** — qdarktheme cannot reach the OS-drawn title
+   user toggle. The user's raw selection (including `"auto"` for System) is
+   what gets persisted, so the next launch reopens in the same mode.
+2. **Card / dock / table QSS overrides** — `build_card_qss(theme)` in
+   [theming.py](app/ui/theming.py) assembles `_QSS_BASE` plus either
+   `_QSS_DARK_OVERRIDES` or `_QSS_LIGHT_OVERRIDES`. The full stylesheet is
+   re-installed on the `MainWindow` on every toggle via `_apply_card_qss()`,
+   which is why explicit per-theme rules cascade reliably (palette() in a
+   widget stylesheet does NOT — see "palette-cache caveat" below).
+3. **Native Windows title bar** — qdarktheme cannot reach the OS-drawn title
    bar (the strip with min/max/close). `_apply_windows_dark_titlebar()`
    ([main_window.py:87](app/ui/main_window.py#L87)) calls
    `DwmSetWindowAttribute` with `DWMWA_USE_IMMERSIVE_DARK_MODE` (attribute 20,
    falling back to 19 on older Windows 10 builds).
+
+#### System theme ("auto") resolution
+
+`_apply_theme(theme)` accepts `"dark"`, `"light"`, or `"auto"`. The user's
+raw choice is persisted, but the rest of the codebase branches on a binary
+`dark`/`light` — every site (toolbar tints, plot palette, status badges,
+title bar, plot chip backgrounds) used to do `if theme == "dark": ... else: ...`
+which silently treated `"auto"` as light regardless of the actual OS theme.
+
+`resolve_theme(theme)` ([theming.py](app/ui/theming.py)) is the central
+resolver:
+
+- Pass `"dark"` / `"light"` through unchanged.
+- For `"auto"` (or any other value), inspect the live
+  `QApplication.palette().color(QPalette.ColorRole.Window)` — qdarktheme
+  has already installed the OS-aware palette by the time we ask. Lightness
+  < 128 → `"dark"`, else → `"light"`.
+- If no `QApplication` is alive yet, fall back to `"dark"`.
+
+Every theme-branching site in `app/ui/*` (theming, widgets, ui_builders,
+main_window, plot_orchestration) routes through `resolve_theme()` before
+choosing colours. `build_card_qss("auto")` resolves internally so external
+callers (Analysis Suite) don't need to think about it.
+
+#### palette-cache caveat — and the fix
+
+Qt's QSS engine resolves `palette(role)` references **once** at
+`setStyleSheet` time and caches the concrete colour forever. Changing the
+`QApplication.palette()` (as qdarktheme does on theme switch) does NOT
+invalidate that cache, so labels styled with `color: palette(mid)` stay on
+the previous theme's colour. Two complementary mitigations are in place:
+
+1. **Explicit per-theme rules in the cascaded QSS** (preferred). Secondary
+   text widgets carry `objectName`s — `#hintLabel` (editor info, dialog
+   hints), `#auxReadout` (session clock, Hz rate), `#hoverReadout` (plot
+   hover) — and the dark/light override blocks include `QLabel#name { color: #hex }`
+   rules. Because the MainWindow stylesheet is fully replaced on each toggle,
+   these update reliably.
+2. **`_refresh_palette_dependent_widgets()`** as a safety net. After every
+   theme change, walks the descendant tree and `QApplication.topLevelWidgets()`,
+   re-setting (clear + unpolish/polish + re-apply) the stylesheet on any
+   widget whose stylesheet still contains `palette(`. Covers transient
+   dialogs and any future widget that uses `palette()` without us tracking it.
 
 Coverage for **every** top-level widget — main window, Analysis Suite,
 X-Y Plotter, updater progress dialog, and every `QMessageBox` /
 `QInputDialog` / `QFileDialog` popup — is provided by `TitleBarThemeFilter`
 ([main_window.py](app/ui/main_window.py)), an application-wide event filter
 installed on the `QApplication` in [app/main.py](app/main.py). The filter
-listens for `QEvent.Show` and applies the dark/light variant based on the
-current `QSettings("ui/theme")` value. When the user toggles the theme at
+listens for `QEvent.Show` and applies the dark/light variant based on
+`resolve_theme(QSettings("ui/theme"))`. When the user toggles the theme at
 runtime, `_apply_theme()` also walks `QApplication.topLevelWidgets()` and
 re-applies to every currently-open window.
 
@@ -862,6 +922,19 @@ the **Live Plot**. Plot history is a `deque(maxlen=1500)` of `(t_seconds, value)
 per signal.
 
 ### Dockable panels (all `QDockWidget`)
+
+**Float-to-window promotion.** Every dock listed below — Live Plot,
+Bitfields, Enums, TX Commands, Parameter Editor, Raw Console, Activity Log
+— has its `topLevelChanged` signal wired to `_promote_dock_to_window()`
+([ui_builders.py](app/ui/ui_builders.py)). When the user pops the dock out
+(drag off the main window, or double-click its title bar), the helper
+upgrades it from Qt's default tool-window chrome to a real `Qt.Window` with
+`WindowMinMaxButtonsHint | WindowCloseButtonHint | WindowSystemMenuHint`,
+then re-`show()`s it so the new chrome takes effect. Drop it back into a
+dock area and Qt restores the docked-tab look automatically. This is what
+gives popped-out docks the standard `—  ▢  ✕` controls and lets the user
+maximise the Live Plot onto a second monitor or minimise individual
+panels independently of the main window.
 
 - **Connection** (top-left): Port `QComboBox`, Baud `QComboBox`, Refresh,
   Connect/Disconnect, Polling toggle.
@@ -936,6 +1009,30 @@ per signal.
 
   Re-entrancy guard: `self._plot_range_changing` is set `True` around any
   internal `setXRange` call so `_on_plot_range_changed` ignores it.
+
+  #### Time axis (`_TimeAxisItem`)
+
+  The bottom axis is a custom `pg.AxisItem` subclass in
+  [plot_panel.py](app/ui/plot_panel.py) with two modes:
+
+  - **Elapsed** (default): seconds since session start, rendered by
+    `_format_elapsed_time(seconds, spacing)`.
+  - **Clock**: wall-clock `HH:MM:SS` rendered from `session_start + seconds`.
+
+  `_format_elapsed_time` picks decimal precision from the tick `spacing`
+  pyqtgraph hands it, so zoomed-in views read as distinct values instead
+  of repeating the same label:
+
+  | Tick spacing  | Decimals | Example   |
+  |---------------|----------|-----------|
+  | ≥ 1 s         | 0        | `3s`      |
+  | ≥ 0.1 s       | 1        | `1.5s`    |
+  | ≥ 0.01 s      | 2        | `1.12s`   |
+  | < 0.01 s      | 3        | `1.127s`  |
+  | ≥ 10 s spacing or `\|seconds\| ≥ 60` |   | `2:30` (mm:ss) |
+
+  Tick placement uses a `_nice_step()` 1/2/5×10ⁿ progression sized from a
+  per-axis `min_label_px` budget, so labels stay readable across zoom levels.
 
   #### Data pipeline
 
@@ -1075,7 +1172,7 @@ update check.
 
 | Key                    | Type    | Meaning                                       |
 |------------------------|---------|-----------------------------------------------|
-| `ui/theme`             | str     | `"dark"` \| `"light"`                         |
+| `ui/theme`             | str     | `"dark"` \| `"light"` \| `"auto"` (System)    |
 | `window/geometry`      | bytes   | `saveGeometry()`                              |
 | `window/state`         | bytes   | `saveState()`                                 |
 | `serial/last_port`     | str     | Pre-select on next launch                     |
@@ -1229,6 +1326,20 @@ Pytest suite under `tests/`. Required coverage:
 - `test_logging.py` — raw CSV row format + append-with-header logic; decoded xlsx data sheet and metadata sheet contents.
 - `test_replay.py` — both CSV and legacy text formats; bad lines collected,
   not raised.
+- `test_boot_smoke.py` — headless boot smoke for the `MainWindow` mixin
+  stack. Constructs `MainWindow` under `QT_QPA_PLATFORM=offscreen` and
+  exercises one representative method per mixin (Theming, PlotOrchestration,
+  DetailTabs, TxPanel, ConfigLoader, LoggingSession, PollingSession, Popups,
+  UpdaterWiring). Catches the class of bugs that "import-level OK" smoke
+  can't: missing cross-mixin references, attribute-ordering issues in
+  `__init__`, and missing module imports that only fire when a method is
+  actually called. Includes runtime-path coverage too:
+  `test_apply_decoded_with_synthetic_frame` pushes a synthetic `DecodedFrame`
+  through `_apply_decoded` (exercises `_format_number` and the live-cell
+  staging path); `test_fit_panel_y_now_with_seeded_data` seeds the
+  `_plot_history` ring buffer and triggers `_fit_panel_y_now` (exercises the
+  `np.nanmin`/`nanmax` autofit branch); `test_theme_auto_resolves` guards
+  the System / `"auto"` theme path.
 
 Pure-function modules (`decoder/`, `protocol/`, `commands/`, `serial_logging/`)
 must be testable without Qt installed.
@@ -1296,6 +1407,25 @@ The script exits with a non-zero code equal to the number of failed checks, and 
 The sketch contains a byte-by-byte RX state machine that validates the full frame (header `AA 55`, frame ID LE, length, payload, CRC16 Modbus LE, footer `EE`) before dispatching to a command handler. Bytes that fail any check are silently discarded and the parser resyncs on the next `AA 55`.
 
 Flash via Arduino IDE 1.8 / 2.x at 115200 baud; no external libraries.
+
+### Lint & pre-commit gate
+
+Ruff is configured in [pyproject.toml](pyproject.toml) with the `E`, `F`,
+`W`, `B` rule families (defaults plus flake8-bugbear). Two helpers wrap
+the common invocations:
+
+- [scripts/lint.ps1](scripts/lint.ps1) — `.\scripts\lint.ps1` runs the
+  full ruleset over `app/`, `tests/`, and `scripts/`. `.\scripts\lint.ps1 -Fast`
+  narrows to `F821,F822,F823` (undefined names / bad `__all__` / pre-assignment
+  references) for sub-second feedback. Resolves `.venv\Scripts\ruff.exe`
+  explicitly so it works without the venv activated.
+- [.git/hooks/pre-commit](.git/hooks/pre-commit) — installed locally
+  (not tracked); runs `ruff check --select F821,F822,F823` against
+  the **staged** Python files only and blocks the commit on any hit.
+  This catches the class of bug that a `python -c "import ..."` smoke
+  passes but a running app crashes on — exactly what triggered the
+  `_format_number` and missing-`np` failures during the mixin refactor.
+  Bypass with `git commit --no-verify` only when justified.
 
 ---
 
