@@ -265,14 +265,17 @@ class UIBuildersMixin:
         self.addToolBar(toolbar)
 
     def _promote_dock_to_window(self, dock, floating: bool) -> None:
-        """Give a floated QDockWidget the OS minimize/maximize controls.
+        """Give every floated QDockWidget the OS minimize/maximize controls.
 
         Qt's default floating mode for QDockWidget paints only a thin tool
         title bar (float-toggle + close). On Windows that hides the standard
-        ``— ▢ ✕`` control trio, so users can't maximise the popped-out plot
+        ``— ▢ ✕`` control trio, so users can't maximise a popped-out dock
         onto a second monitor or minimise it independently of the main
         window. Promoting it to a real ``Qt.Window`` with full chrome on
-        float, and reverting on re-dock, fixes both.
+        float, and letting Qt revert chrome on re-dock, fixes both. Wired
+        uniformly for every dock (Live Plot, Bitfields, Enums, TX Commands,
+        Parameter Editor, Raw Console, Activity Log) in
+        ``_build_main_layout``.
         """
         if floating:
             dock.setWindowFlags(
@@ -360,14 +363,6 @@ class UIBuildersMixin:
         )
         self._plot_dock.setWidget(self._build_plot_tab())
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._plot_dock)
-        # When the user pops the Live Plot out, promote it to a full top-level
-        # window so the OS shows Minimize / Maximize / Restore in its title
-        # bar. QDockWidget's default floating mode only paints the tool-window
-        # chrome (just float-toggle + close), which prevented operators from
-        # maximising the plot on a second monitor.
-        self._plot_dock.topLevelChanged.connect(
-            lambda floating, d=self._plot_dock: self._promote_dock_to_window(d, floating)
-        )
 
         self._bitfields_dock = QDockWidget("Bitfields", self)
         self._bitfields_dock.setObjectName("BitfieldsDock")
@@ -443,6 +438,12 @@ class UIBuildersMixin:
             self._activity_dock,
         ):
             _pad_dock_content(dock)
+            # Every dock, when popped out, becomes a fully independent
+            # top-level window with OS Min/Max/Restore chrome — see
+            # _promote_dock_to_window for the rationale.
+            dock.topLevelChanged.connect(
+                lambda floating, d=dock: self._promote_dock_to_window(d, floating)
+            )
 
         self._populate_view_menu()
 
