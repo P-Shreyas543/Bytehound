@@ -259,6 +259,12 @@ class MainWindow(
         self._version = _read_version()
         self.setWindowTitle(f"{APP_DISPLAY_NAME} v{self._version}")
         self.resize(1280, 780)
+        # Explicit minimum so the user can snap the window to half-screen on
+        # a 1080p display without Qt blocking the resize. The actual floor
+        # is still set by child widgets' implicit minimums; this just
+        # documents the supported lower bound and matches the targets we
+        # tuned in _build_plot_tab (hover/hint width relaxation).
+        self.setMinimumSize(640, 480)
 
         icon_path = _find_logo("logo_sq.ico") or _find_logo("logo_sq.png")
         if icon_path is not None:

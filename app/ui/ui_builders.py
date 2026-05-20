@@ -443,18 +443,27 @@ class UIBuildersMixin:
         hint = QLabel("Right-click a row → Add to Plot   ·   Space = Pause/Live")
         hint.setEnabled(False)
         hint.setStyleSheet("font-size: 11px;")
-        controls.addWidget(hint)
-        controls.addStretch(1)
+        # Ignored horizontal policy lets the long hint text clip when the user
+        # shrinks the window (e.g. snapping to a 50% screen split). Without
+        # this, the label's full-text sizeHint forced the entire plot dock
+        # — and therefore the MainWindow — wider than half a 1080p screen.
+        hint.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        hint.setMinimumWidth(0)
+        controls.addWidget(hint, 1)
 
         # Hover readout — shows time + value(s) under the mouse on any subplot.
-        # Fixed-width so the controls bar doesn't reflow when text changes.
         self._hover_label = QLabel("", outer)
         self._hover_label.setObjectName("hoverReadout")
         self._hover_label.setStyleSheet(
             "font-family: Consolas, monospace; font-size: 11px; padding: 0 6px;"
         )
-        self._hover_label.setMinimumWidth(280)
+        # 280px was the old minimum — too wide to fit a 50/50 split. The
+        # readout content ("T+10s 3.45V") rarely needs more than ~150px;
+        # let the label expand opportunistically up to its preferred width
+        # but allow it to collapse on narrow windows.
+        self._hover_label.setMinimumWidth(120)
         self._hover_label.setMaximumWidth(420)
+        self._hover_label.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self._hover_label.setToolTip("Time and signal values under the mouse cursor.")
         controls.addWidget(self._hover_label)
 
