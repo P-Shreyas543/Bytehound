@@ -400,6 +400,44 @@ def build_card_qss(theme: str) -> str:
 class ThemingMixin:
     """MainWindow mixin holding theme/styling methods."""
 
+    def _refresh_palette_dependent_widgets(self) -> None:
+        """Re-resolve cached palette() references after an app-wide theme swap.
+
+        Qt resolves ``palette(role)`` in a widget's stylesheet exactly once
+        when ``setStyleSheet`` is called, then caches the concrete colour.
+        Changing ``QApplication.palette()`` (as qdarktheme does on theme
+        switch) does NOT invalidate that cache, so labels styled with e.g.
+        ``color: palette(mid)`` stay on the previous theme's colour.
+
+        Walking descendants once per switch is cheap — a few hundred widgets
+        at worst — and the cost is paid only on user action, not per packet.
+        Includes top-level dialogs/popups too so transient windows opened
+        after a theme change pick up the new palette.
+        """
+        from PySide6.QtWidgets import QApplication, QWidget
+        seen: set[int] = set()
+
+        def repolish(w: QWidget) -> None:
+            wid = id(w)
+            if wid in seen:
+                return
+            seen.add(wid)
+            qss = w.styleSheet()
+            if qss and "palette(" in qss:
+                # Re-setting the same string forces Qt's CSS engine to re-run
+                # palette() resolution against the live QApplication palette.
+                w.setStyleSheet(qss)
+            for child in w.findChildren(QWidget):
+                repolish(child)
+
+        repolish(self)
+        # Cover dialogs/popups Qt has spawned that aren't descendants of self.
+        app = QApplication.instance()
+        if app is not None:
+            for tlw in app.topLevelWidgets():
+                if isinstance(tlw, QWidget):
+                    repolish(tlw)
+
     def _apply_card_qss(self, theme: str) -> None:
         """Install card + dock QSS.  Called on startup and on every theme switch.
 
@@ -449,16 +487,15 @@ class ThemingMixin:
         # not pick up the QPalette change automatically.
         self._apply_plot_theme(effective)
         # Stylesheets that reference `palette(...)` are resolved once when
-        # setStyleSheet is called and the cached colour stays put after a
-        # theme swap. Force a re-polish on the auxiliary readouts so the
-        # Hz/session-clock text re-resolves against the new palette.
-        for lbl_name in ("_session_clock_label", "_rate_label"):
-            lbl = getattr(self, lbl_name, None)
-            if lbl is None:
-                continue
-            lbl.style().unpolish(lbl)
-            lbl.style().polish(lbl)
-            lbl.update()
+        # setStyleSheet is called and the resolved colour is cached, so a
+        # plain QApplication palette swap leaves those widgets stuck on the
+        # previous theme's colours. Walk the descendant tree and re-set the
+        # stylesheet on every widget that has palette() references; setting
+        # the same string back forces Qt to re-resolve against the new app
+        # palette. Catches the editor "🔒 Only signals marked RW..." info
+        # label, hover readout, session clock, Hz rate, and any future
+        # widget that uses palette(...) without us having to track it.
+        self._refresh_palette_dependent_widgets()
         # Forward theme change to the Analysis Suite if it's open — it's a
         # separate top-level window so QSS doesn't cascade into it.
         analysis = getattr(self, "_analysis_window", None)
