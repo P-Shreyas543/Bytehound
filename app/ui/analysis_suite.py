@@ -37,7 +37,7 @@ from PySide6.QtWidgets import (
     QDialog, QDoubleSpinBox, QFileDialog, QFrame,
     QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
     QMainWindow, QMenu, QMessageBox,
-    QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QStatusBar, QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStatusBar, QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -933,7 +933,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self.setWindowFlag(Qt.Window)
         self.setWindowTitle(f"Analysis Suite — {APP_NAME}")
         self.resize(1500, 900)
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(600, 400)
 
         self._logs: dict[str, LogEntry] = {}
         self._color_index = 0
@@ -1030,15 +1030,13 @@ class AnalysisSuiteWindow(QMainWindow):
     # UI construction
     # ──────────────────────────────────────────────────────────────────
     def _build_ui(self):
-        central = QWidget()
-        self.setCentralWidget(central)
-        root_layout = QHBoxLayout(central)
-        root_layout.setContentsMargins(4, 4, 4, 4)
+        self._splitter = QSplitter(Qt.Horizontal)
+        self._splitter.setContentsMargins(4, 4, 4, 4)
+        self.setCentralWidget(self._splitter)
 
         # ── Left sidebar ─────────────────────────────────────────────
         sidebar = QWidget()
-        sidebar.setMaximumWidth(320)
-        sidebar.setMinimumWidth(240)
+        sidebar.setMinimumWidth(200)
         side_layout = QVBoxLayout(sidebar)
         side_layout.setContentsMargins(4, 4, 4, 4)
         side_layout.setSpacing(4)
@@ -1173,7 +1171,7 @@ class AnalysisSuiteWindow(QMainWindow):
 
         side_layout.addWidget(param_group, 2)
 
-        root_layout.addWidget(sidebar)
+        self._splitter.addWidget(sidebar)
 
         # ── Middle: plot area ────────────────────────────────────────
         from PySide6.QtWidgets import QGridLayout
@@ -1183,18 +1181,21 @@ class AnalysisSuiteWindow(QMainWindow):
         # don't collide with the sidebar/scrollbar or the next subplot below.
         self._plot_layout.setContentsMargins(8, 8, 8, 8)
         self._plot_layout.setSpacing(10)
-        root_layout.addWidget(self._plot_container, stretch=1)
+        self._splitter.addWidget(self._plot_container)
 
         # ── Right: tabbed analyst panels (cursor readout + statistics) ──
         right_tabs = QTabWidget()
-        right_tabs.setMaximumWidth(360)
-        right_tabs.setMinimumWidth(240)
+        right_tabs.setMinimumWidth(200)
         self._cursor_readout = CursorReadoutPanel()
         right_tabs.addTab(self._cursor_readout, "Cursors")
         self._stats_panel = StatisticsPanel()
         right_tabs.addTab(self._stats_panel, "Statistics")
         self._right_tabs = right_tabs
-        root_layout.addWidget(right_tabs)
+        self._splitter.addWidget(right_tabs)
+        
+        self._splitter.setStretchFactor(0, 0)
+        self._splitter.setStretchFactor(1, 1)
+        self._splitter.setStretchFactor(2, 0)
 
         # Debounced stats refresh — sigRangeChanged fires continuously while
         # the user pans/zooms; 150ms is short enough to feel live but stops
