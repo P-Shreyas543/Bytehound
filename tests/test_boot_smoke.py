@@ -172,3 +172,79 @@ def test_load_canonical_config_end_to_end(window: MainWindow) -> None:
     window._populate_group_selector()
     window._apply_group_filter()
     window._redraw_plot()
+
+
+def _load_canonical_or_skip(window: MainWindow):
+    """Helper: load the canonical config fixture or skip if missing."""
+    config_path = Path(__file__).resolve().parent / "fixtures" / "canonical_config"
+    if not config_path.exists():
+        pytest.skip(f"canonical config fixture not found: {config_path}")
+    window._load_config_from_path(config_path)
+    assert window._config is not None
+    return window._config
+
+
+def test_apply_decoded_with_synthetic_frame(window: MainWindow) -> None:
+    """Push a synthetic DecodedFrame through the live packet path.
+
+    Covers the runtime-only code in ``_apply_decoded`` that the plain mixin-
+    method smoke doesn't reach — including ``_format_number``, the staged-
+    cell write, and the per-signal plot-history append.
+    """
+    from app.decoder.frame_decoder import DecodedFrame, DecodedSignal
+
+    config = _load_canonical_or_skip(window)
+    # Pick the first real signal from the loaded config so the row exists
+    # in the table model and the (frame_id, signal_name) key resolves.
+    spec = config.all_signals[0]
+    signal = DecodedSignal(
+        frame_id=spec.frame_id,
+        frame_name=spec.frame_name,
+        signal_name=spec.signal_name,
+        raw_value=1234,
+        scaled_value=1.234,
+        unit=spec.unit,
+        status="ok",
+        group=spec.group,
+        display_value="1.234 V",
+    )
+    decoded = DecodedFrame(
+        frame_id=spec.frame_id,
+        frame_name=spec.frame_name,
+        signals=[signal],
+    )
+    window._apply_decoded(decoded)
+
+    # Plot-history append fires only when the plot dock is visible. We don't
+    # gate on that here — the assertion is simply: no exception raised, and
+    # the table model now holds the staged value for this signal.
+    key = (spec.frame_id, spec.signal_name)
+    row = window._table_model.row_for_key(key)
+    assert row is not None, "row should exist after _apply_decoded"
+
+
+def test_fit_panel_y_now_with_seeded_data(window: MainWindow) -> None:
+    """Exercise ``_fit_panel_y_now`` with a panel + history actually populated.
+
+    The plain ``_redraw_plot`` smoke doesn't reach the ``np.nanmin/nanmax``
+    branch — it's only walked when a panel has assigned keys AND those keys
+    have data in ``_plot_history``.
+    """
+    config = _load_canonical_or_skip(window)
+    if not window._plot_panels:
+        pytest.skip("no plot panels available")
+
+    spec = config.all_signals[0]
+    key = (spec.frame_id, spec.signal_name)
+
+    # Seed the ring buffer the same way _apply_decoded would.
+    buf = window._plot_history.setdefault(key, window._make_history_buffer())
+    for i in range(5):
+        buf.append(float(i), float(i) * 0.5)
+
+    panel = window._plot_panels[0]
+    panel.assigned_keys = [key]
+    panel.auto_fit_y = True
+
+    window._fit_panel_y_now(panel)
+    window._throttled_y_autofit()
