@@ -3,16 +3,20 @@
 Launched from the Data menu as a non-modal QMainWindow.  All Excel loading
 runs in a QThread so the live test is never blocked.  Plots use OpenGL
 acceleration via pyqtgraph for lag-free pan/zoom even with many data points.
+
+Module split (helpers extracted to keep this file focused on the main window):
+    * ``analysis_theme``   – :data:`THEME` provider + colour palettes + dirs
+    * ``log_io``           – :class:`LogEntry` + :class:`LogLoaderThread`
+    * ``analysis_widgets`` – :class:`TimeAxisItem` / :class:`CursorReadoutPanel`
+                              / :class:`StatisticsPanel`
+    * ``xy_plot``          – :class:`XYPlotWindow`
 """
 import csv
-import pandas as pd
 import json
 import logging
 import os
 import re
 import uuid
-from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Optional
 
 # Module-level logger. Routing to stderr / files is left to the host
@@ -21,89 +25,40 @@ from typing import Optional
 # additional channel so terminal users and crash reports see context.
 _log = logging.getLogger("bytehound.analysis_suite")
 
-import datetime as _dt
-
 import numpy as np
 import pyqtgraph as pg
 
 # ── Global pyqtgraph config (must run before any PlotWidget is created) ──
 pg.setConfigOptions(antialias=True, useOpenGL=True)
-from PySide6.QtCore import QThread, Qt, Signal, QPointF, QObject, QSettings, QTimer
+from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtGui import (
     QAction, QColor, QFont, QKeySequence, QPainter,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox,
-    QDialog, QDoubleSpinBox, QFileDialog, QFrame,
-    QGroupBox, QHBoxLayout, QHeaderView, QLabel, QLineEdit,
+    QDoubleSpinBox, QFileDialog, QFrame,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit,
     QMainWindow, QMenu, QMessageBox,
-    QPushButton, QScrollArea, QSizePolicy, QSlider, QSpinBox, QSplitter, QStatusBar, QTableWidget, QTableWidgetItem, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
+    QPushButton, QScrollArea, QSizePolicy, QSplitter, QStatusBar, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
-# ═══════════════════════════════════════════════════════════════════════
-# Stubs to replace missing dependencies
-# ═══════════════════════════════════════════════════════════════════════
-APP_NAME = "Bytehound"
-APP_ORG = "Bytehound"
-
-def get_datalogs_dir() -> str:
-    path = Path.home() / "Documents" / APP_NAME / "Logs"
-    path.mkdir(parents=True, exist_ok=True)
-    return str(path)
-
-def get_analysis_dir() -> str:
-    path = Path.home() / "Documents" / APP_NAME / "Analysis"
-    path.mkdir(parents=True, exist_ok=True)
-    return str(path)
-
-# Theme-aware color provider so plots/cursors follow the app's dark/light
-# setting. Mirrors _apply_plot_theme() in main_window.py — same Slate (#1E293B)
-# for dark plot bg and #FFFFFF for light, so the Analysis Suite plots match
-# the Live Plot canvas exactly.
-_DARK_PLOT_COLORS = {
-    'plot_bg': '#1E293B',
-    'plot_fg': '#CBD5E1',
-    'crosshair': '#94A3B8',
-    'cursor_label_bg': '#0F172A',
-    'border': '#334155',
-    'legend_bg': (0, 0, 0, 100),
-}
-_LIGHT_PLOT_COLORS = {
-    'plot_bg': '#FFFFFF',
-    'plot_fg': '#475569',
-    'crosshair': '#64748B',
-    'cursor_label_bg': '#F3F4F6',
-    'border': '#E5E7EB',
-    'legend_bg': (255, 255, 255, 160),
-}
-
-class _AppTheme(QObject):
-    theme_changed = Signal(str)
-
-    def theme(self) -> str:
-        return str(QSettings(APP_ORG, APP_NAME).value("ui/theme", "dark"))
-
-    def c(self, key: str) -> str:
-        palette = _LIGHT_PLOT_COLORS if self.theme() == "light" else _DARK_PLOT_COLORS
-        return palette.get(key, '#FFFFFF')
-
-    def plot_grid_alpha(self) -> float:
-        return 0.15
-
-THEME = _AppTheme()
+# Helper modules — see file docstring above for the full split rationale.
+from .analysis_theme import (
+    APP_NAME, APP_ORG, CURSOR_COLORS, LOG_COLORS, SELECTED_CURSOR_COLOR,
+    THEME, _parse_unit, get_analysis_dir, get_datalogs_dir,
+)
+from .analysis_widgets import CursorReadoutPanel, StatisticsPanel, TimeAxisItem
+from .log_io import (
+    LogEntry, LogLoaderThread, _CSV_CACHE,
+    # Re-exported for backwards compatibility — tests and external callers
+    # historically imported these from this module.
+    _is_time_like_param, _test_name_from_path,
+)
+from .xy_plot import XYPlotWindow
 
 # ═══════════════════════════════════════════════════════════════════════
 # Constants
 # ═══════════════════════════════════════════════════════════════════════
-LOG_COLORS = [
-    '#1f77b4', '#ff7f0e', '#2ca02c', '#d62728', '#9467bd',
-    '#8c564b', '#e377c2', '#7f7f7f', '#17becf', '#bcbd22',
-    '#ff9896', '#98df8a', '#c5b0d5', '#393b79',
-]
-
-CURSOR_COLORS = ['#e63946', '#457b9d', '#2a9d8f', '#f4a261', '#6a4c93']
-SELECTED_CURSOR_COLOR = '#ff0000'
-
 DEFAULT_PARAMS = [
     "Vehicle Speed (Kmph)", "Dyno Act Torque (Nm)",
     "Vehicle Power (W)", "Roller Speed (RPM)",
@@ -114,60 +69,6 @@ MIN_PLOT_HEIGHT = 80
 MAX_PLOT_HEIGHT = 600
 DEFAULT_PLOT_HEIGHT = 200
 
-
-# ─────────────────────────────────────────────────────────────────────
-# Custom time-axis — renders ticks as mm:ss or H:MM:SS
-# ─────────────────────────────────────────────────────────────────────
-class TimeAxisItem(pg.AxisItem):
-    """X-axis that renders elapsed seconds as mm:ss or H:MM:SS.
-
-    Set *epoch_offset* to a POSIX timestamp to switch to wall-clock
-    mode (HH:MM:SS).  Reset to ``None`` to return to elapsed mode.
-    """
-
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self._epoch_offset: float | None = None
-
-    @property
-    def epoch_offset(self) -> float | None:
-        return self._epoch_offset
-
-    @epoch_offset.setter
-    def epoch_offset(self, value: float | None):
-        self._epoch_offset = value
-        # Force label refresh
-        self.picture = None
-        self.update()
-
-    # -- formatting helpers --------------------------------------------------
-    @staticmethod
-    def _fmt_elapsed(seconds: float) -> str:
-        """Format elapsed seconds as mm:ss or H:MM:SS."""
-        neg = seconds < 0
-        s = abs(seconds)
-        h = int(s // 3600)
-        m = int((s % 3600) // 60)
-        sec = int(s % 60)
-        if h > 0:
-            txt = f"{h}:{m:02d}:{sec:02d}"
-        else:
-            txt = f"{m}:{sec:02d}"
-        return f"-{txt}" if neg else txt
-
-    @staticmethod
-    def _fmt_wallclock(posix: float) -> str:
-        """Format a POSIX timestamp as HH:MM:SS."""
-        try:
-            dt = _dt.datetime.fromtimestamp(posix)
-            return dt.strftime("%H:%M:%S")
-        except (OSError, OverflowError, ValueError):
-            return "?"
-
-    def tickStrings(self, values, scale, spacing):
-        if self._epoch_offset is not None:
-            return [self._fmt_wallclock(v + self._epoch_offset) for v in values]
-        return [self._fmt_elapsed(v) for v in values]
 
 # ─────────────────────────────────────────────────────────────────────
 # Multi-param subplot visual encoding
@@ -220,642 +121,12 @@ def _curve_visuals(group: list[str], param: str, log_index: int, log_color: str
 # ═══════════════════════════════════════════════════════════════════════
 # Data model
 # ═══════════════════════════════════════════════════════════════════════
-@dataclass
-class LogEntry:
-    """One loaded test-log file."""
-    id: str = ""
-    path: str = ""
-    name: str = ""
-    color: str = "#1f77b4"
-    visible: bool = True
-    time_offset: float = 0.0
-    start_timestamp: Optional[float] = None  # POSIX epoch of first sample
-    elapsed: np.ndarray = field(default_factory=lambda: np.zeros(0))
-    columns: dict[str, np.ndarray] = field(default_factory=dict)
+# LogEntry, _is_time_like_param, _test_name_from_path, _CSV_CACHE, and
+# LogLoaderThread now live in ``log_io``. CursorReadoutPanel,
+# StatisticsPanel, TimeAxisItem now live in ``analysis_widgets``.
+# XYPlotWindow lives in ``xy_plot``. Imports at the top of this file
+# re-expose the names so existing code keeps working unchanged.
 
-    def available_params(self) -> list[str]:
-        return [name for name in self.columns.keys() if not _is_time_like_param(name)]
-
-
-def _is_time_like_param(name: str) -> bool:
-    """Return True for columns that represent time axes rather than data."""
-    norm = re.sub(r'\s+', ' ', (name or '').strip().lower())
-    if norm in {
-        '', 'time', 'timestamp', 'elapsed', 'elapsed (s)', 'time (s)',
-        'elapsed time', 'elapsed time (s)',
-    }:
-        return True
-    return norm.startswith('timestamp ') or norm.startswith('elapsed ')
-
-
-def _test_name_from_path(path: str) -> str:
-    """Extract a human-readable test name from the log filename."""
-    base = os.path.splitext(os.path.basename(path))[0]
-    # Strip DynoLog_ prefix and _YYYYMMDD_HHMMSS suffix
-    base = re.sub(r'^DynoLog_', '', base)
-    base = re.sub(r'_\d{8}_\d{6}$', '', base)
-    return base or os.path.basename(path)
-
-
-def _parse_unit(param_name: str) -> str | None:
-    """Extract unit string from a column header.
-
-    Recognises both parenthesised and bracketed conventions:
-        ``Voltage [V]``  → ``V``
-        ``Speed (Kmph)`` → ``Kmph``
-        ``Temperature``  → None
-    """
-    m = re.search(r'[\[\(]([^\]\)]+)[\]\)]\s*$', param_name)
-    return m.group(1).strip() if m else None
-
-
-# File-path → LogEntry cache so re-toggling a parameter does not re-read disk.
-_CSV_CACHE: dict[str, LogEntry] = {}
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Background loader thread
-# ═══════════════════════════════════════════════════════════════════════
-class LogLoaderThread(QThread):
-    """Loads one .xlsx (Bytehound decoded or Dyno) or _decoded.csv log in a
-    background thread."""
-    sigFinished = Signal(str, str, object)   # (log_id, path, LogEntry or None)
-    sigProgress = Signal(int)                # Progress percentage (0-100)
-    error = Signal(str, str)                # (path, error_message)
-
-    def __init__(self, path: str, log_id: str, color: str, parent=None):
-        super().__init__(parent)
-        self._path = path
-        self._log_id = log_id
-        self._color = color
-
-    def run(self):
-        try:
-            ext = os.path.splitext(self._path)[1].lower()
-            if ext == ".csv":
-                self._load_csv()
-            else:
-                self._load_xlsx()
-        except Exception as exc:
-            self.error.emit(self._path, str(exc))
-
-    def _load_csv(self):
-        """Parse a legacy _decoded.csv file (pre-xlsx Bytehound versions)."""
-        import pandas as pd
-        try:
-            df = pd.read_csv(self._path, comment='#')
-        except Exception as e:
-            self.error.emit(self._path, f"Failed to parse CSV: {e}")
-            return
-        
-        if df.empty:
-            self.error.emit(self._path, "No data rows found in CSV.")
-            return
-
-        import datetime as dt
-        first_ts_posix: float | None = None
-
-        if "elapsed_ms" in df.columns:
-            elapsed_arr = (pd.to_numeric(df["elapsed_ms"], errors='coerce').fillna(0) / 1000.0).to_numpy(dtype=np.float64)
-        elif "timestamp" in df.columns:
-            ts_series = pd.to_datetime(df["timestamp"], errors='coerce')
-            valid_ts = ts_series.dropna()
-            if valid_ts.empty:
-                self.error.emit(self._path, "No valid timestamps found.")
-                return
-            first_ts = valid_ts.iloc[0]
-            first_ts_posix = first_ts.timestamp()
-            elapsed_arr = (ts_series - first_ts).dt.total_seconds().fillna(0).to_numpy(dtype=np.float64)
-        else:
-            self.error.emit(self._path, "No timestamp or elapsed_ms column found.")
-            return
-
-        data_columns = [c for c in df.columns if c not in {"timestamp", "elapsed_ms"} and not _is_time_like_param(c)]
-        if not data_columns:
-            self.error.emit(self._path, "No data columns found in CSV.")
-            return
-
-        columns: dict[str, np.ndarray] = {}
-        for col in data_columns:
-            arr = pd.to_numeric(df[col], errors='coerce').to_numpy(dtype=np.float64)
-            if not np.all(np.isnan(arr)):
-                columns[col] = arr
-
-        if not columns:
-            self.error.emit(self._path, "No numeric columns found in CSV.")
-            return
-
-        entry = LogEntry(
-            id=self._log_id,
-            path=self._path,
-            name=_test_name_from_path(self._path),
-            color=self._color,
-            start_timestamp=first_ts_posix,
-            elapsed=elapsed_arr,
-            columns=columns,
-        )
-        _CSV_CACHE[self._path] = entry
-        self.sigProgress.emit(100)
-        self.sigFinished.emit(self._log_id, self._path, entry)
-
-    def _load_xlsx(self):
-        """Parse a .xlsx file. Supports three schemas using high-performance pandas."""
-        import pandas as pd
-        try:
-            xls = pd.ExcelFile(self._path)
-            sheet = 'Data' if 'Data' in xls.sheet_names else ('Record' if 'Record' in xls.sheet_names else xls.sheet_names[0])
-            df = pd.read_excel(xls, sheet_name=sheet)
-        except Exception as e:
-            self.error.emit(self._path, f"Failed to parse Excel: {e}")
-            return
-        
-        if df.empty:
-            self.error.emit(self._path, "No data rows found.")
-            return
-
-        headers = [str(c) if c else "" for c in df.columns]
-        
-        elapsed_col = None
-        elapsed_scale = 1.0
-        frame_block_elapsed_cols = set()
-        frame_block_id_cols = set()
-        
-        for h in headers:
-            if h.endswith(".elapsed_ms"):
-                frame_block_elapsed_cols.add(h)
-                elapsed_col = h  # LAST one wins (trigger frame)
-                elapsed_scale = 1e-3
-            elif h.endswith(".frame_id"):
-                frame_block_id_cols.add(h)
-
-        if not elapsed_col:
-            for h in headers:
-                if h == "Elapsed (s)":
-                    elapsed_col = h
-                    elapsed_scale = 1.0
-                    break
-                if h == "elapsed_ms":
-                    elapsed_col = h
-                    elapsed_scale = 1e-3
-                    break
-
-        if not elapsed_col:
-            elapsed_arr = np.zeros(len(df), dtype=np.float64)
-        else:
-            elapsed_arr = (pd.to_numeric(df[elapsed_col], errors='coerce').ffill().fillna(0) * elapsed_scale).to_numpy(dtype=np.float64)
-
-        columns: dict[str, np.ndarray] = {}
-        skip_cols = frame_block_elapsed_cols | frame_block_id_cols | {elapsed_col}
-
-        for h in headers:
-            if h in skip_cols or _is_time_like_param(h):
-                continue
-            arr = pd.to_numeric(df[h], errors='coerce').to_numpy(dtype=np.float64)
-            columns[h] = arr
-
-        entry = LogEntry(
-            id=self._log_id,
-            path=self._path,
-            name=_test_name_from_path(self._path),
-            color=self._color,
-            elapsed=elapsed_arr,
-            columns=columns,
-        )
-        _CSV_CACHE[self._path] = entry
-        self.sigProgress.emit(100)
-        self.sigFinished.emit(self._log_id, self._path, entry)
-
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Cursor readout widget
-# ═══════════════════════════════════════════════════════════════════════
-class CursorReadoutPanel(QGroupBox):
-    """Displays interpolated values at vertical cursor positions.
-
-    Features:
-    - Monospace numbers, right-aligned for scan-ability.
-    - Colored swatch ● next to each log name.
-    - ΔX / ΔY readouts when two cursors are active.
-    """
-
-    _MONO = QFont("Consolas", 9)
-    _MONO_BOLD = QFont("Consolas", 9, QFont.Bold)
-    _LABEL_FONT = QFont("PT Sans", 8, QFont.Bold)
-
-    def __init__(self, parent=None):
-        super().__init__("Cursor Readout", parent)
-        self.setMinimumWidth(200)
-
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.NoFrame)
-
-        self._inner = QWidget()
-        self._layout = QVBoxLayout(self._inner)
-        self._layout.setContentsMargins(4, 4, 4, 4)
-        self._layout.setSpacing(1)
-        self._scroll.setWidget(self._inner)
-
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 12, 0, 0)
-        outer.addWidget(self._scroll)
-
-        self._delta_label = QLabel("")
-        self._delta_label.setFont(self._MONO_BOLD)
-        self._layout.addWidget(self._delta_label)
-        self._info_label = QLabel("Add cursors with V / Shift+V / H keys.")
-        self._info_label.setFont(QFont("PT Sans", 8))
-        self._info_label.setWordWrap(True)
-        self._layout.addWidget(self._info_label)
-        self._layout.addStretch()
-
-    # -- helpers -------------------------------------------------------------
-    @staticmethod
-    def _fmt_val(v: float) -> str:
-        """Format a value with 3 significant figures."""
-        if not np.isfinite(v):
-            return "\u2014"
-        if v == 0:
-            return "0"
-        return f"{v:.4g}"
-
-    def _make_row(self, left: str, right: str, *,
-                  color: str = "", bold: bool = False) -> QWidget:
-        """Build a compact horizontal row: left-aligned label + right-aligned value."""
-        row = QWidget()
-        hl = QHBoxLayout(row)
-        hl.setContentsMargins(0, 0, 0, 0)
-        hl.setSpacing(4)
-        ll = QLabel(left)
-        ll.setFont(self._MONO_BOLD if bold else self._MONO)
-        if color:
-            ll.setStyleSheet(f"color: {color};")
-        rl = QLabel(right)
-        rl.setFont(self._MONO)
-        rl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        hl.addWidget(ll, 1)
-        hl.addWidget(rl)
-        return row
-
-    def update_readout(self, cursors: list[dict],
-                       logs: list['LogEntry'],
-                       active_params: list[str]):
-        vbar = self._scroll.verticalScrollBar()
-        old_scroll = vbar.value()
-
-        # Clear dynamic labels (keep delta + info + stretch)
-        while self._layout.count() > 3:
-            item = self._layout.takeAt(2)
-            w = item.widget() if item else None
-            if w:
-                w.deleteLater()
-
-        if not cursors:
-            self._delta_label.setText("")
-            self._info_label.setText("Add cursors with V / Shift+V / H keys.")
-            vbar.setValue(min(old_scroll, vbar.maximum()))
-            return
-
-        self._info_label.setText("")
-
-        # ΔX header when two cursors active
-        if len(cursors) >= 2:
-            dt_val = abs(cursors[1]['time'] - cursors[0]['time'])
-            self._delta_label.setText(
-                f"\u0394X = {TimeAxisItem._fmt_elapsed(dt_val)}  ({dt_val:.3f} s)")
-        else:
-            t0 = cursors[0]['time']
-            self._delta_label.setText(
-                f"t = {TimeAxisItem._fmt_elapsed(t0)}  ({t0:.3f} s)")
-
-        # Per-cursor readout
-        # Collect values for ΔY computation (cursor_idx -> {(log_id,param): value})
-        cursor_vals: list[dict[tuple[str, str], float]] = []
-
-        for _ci, cursor in enumerate(cursors):
-            t = cursor['time']
-            label_num = cursor.get('label', 0)
-            scope = cursor.get('scope', 'all')
-            plot_param = cursor.get('plot_param')
-            hdr_txt = f"C{label_num}  {TimeAxisItem._fmt_elapsed(t)}"
-            if scope == 'plot' and plot_param:
-                hdr_txt += f"  [{plot_param}]"
-            hdr = QLabel(hdr_txt)
-            hdr.setFont(self._LABEL_FONT)
-            self._layout.insertWidget(self._layout.count() - 1, hdr)
-
-            if scope == 'plot' and plot_param:
-                params_for_cursor = [plot_param]
-            else:
-                params_for_cursor = active_params
-
-            vals: dict[tuple[str, str], float] = {}
-            for log in logs:
-                if not log.visible or len(log.elapsed) == 0:
-                    continue
-                x = log.elapsed + log.time_offset
-                # Swatch + log name
-                row_w = self._make_row(f"\u25cf {log.name}", "",
-                                       color=log.color, bold=True)
-                self._layout.insertWidget(self._layout.count() - 1, row_w)
-                for param in params_for_cursor:
-                    if param not in log.columns:
-                        continue
-                    idx = int(np.clip(np.searchsorted(x, t), 0, len(x) - 1))
-                    v = log.columns[param][idx]
-                    short = re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', param).strip()
-                    unit = _parse_unit(param) or ""
-                    if np.isfinite(v):
-                        val_str = f"{self._fmt_val(v)} {unit}".strip()
-                        vals[(log.id, param)] = v
-                    else:
-                        val_str = "\u2014"
-                    row_w = self._make_row(f"  {short}", val_str)
-                    self._layout.insertWidget(self._layout.count() - 1, row_w)
-            cursor_vals.append(vals)
-
-        # ΔY readout between two cursors
-        if len(cursor_vals) >= 2:
-            sep = QLabel("\u2500\u2500 \u0394Y \u2500\u2500")
-            sep.setFont(self._LABEL_FONT)
-            self._layout.insertWidget(self._layout.count() - 1, sep)
-            keys = set(cursor_vals[0].keys()) & set(cursor_vals[1].keys())
-            for key in sorted(keys, key=lambda k: k[1]):
-                v0 = cursor_vals[0][key]
-                v1 = cursor_vals[1][key]
-                delta = v1 - v0
-                _, param = key
-                short = re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', param).strip()
-                unit = _parse_unit(param) or ""
-                row_w = self._make_row(
-                    f"  {short}",
-                    f"\u0394 {self._fmt_val(delta)} {unit}".strip())
-                self._layout.insertWidget(self._layout.count() - 1, row_w)
-
-        vbar.setValue(min(old_scroll, vbar.maximum()))
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# X-Y Scatter Plot Window
-# ═══════════════════════════════════════════════════════════════════════
-# Symbol name → pyqtgraph symbol string
-_XY_SYMBOLS = [
-    ('Circle (outline)', 'o'),
-    ('Circle (filled)', 'o'),
-    ('Square', 's'),
-    ('Triangle', 't'),
-    ('Diamond', 'd'),
-    ('Cross', '+'),
-]
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# Statistics panel — visible-range descriptive stats per curve
-# ═══════════════════════════════════════════════════════════════════════
-class StatisticsPanel(QWidget):
-    """Per-curve descriptive statistics (min/max/mean/median/std/percentiles)
-    computed over the currently visible x-range of each subplot.
-
-    Updates are debounced so panning/zooming doesn't trigger continuous
-    recomputation on large logs.
-    """
-
-    STATS_COLUMNS = ["Curve", "Min", "P5", "Mean", "Median", "P95", "Max", "Std", "n"]
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 6, 0, 0)
-        layout.setSpacing(4)
-
-        self._info = QLabel("Load logs and check parameters to see statistics.")
-        self._info.setWordWrap(True)
-        self._info.setStyleSheet("color: palette(mid); font-size: 11px; padding: 2px;")
-        layout.addWidget(self._info)
-
-        self._table = QTableWidget(0, len(self.STATS_COLUMNS))
-        self._table.setHorizontalHeaderLabels(self.STATS_COLUMNS)
-        self._table.verticalHeader().setVisible(False)
-        self._table.setEditTriggers(QTableWidget.NoEditTriggers)
-        self._table.setSelectionBehavior(QTableWidget.SelectRows)
-        self._table.setAlternatingRowColors(True)
-        self._table.setFont(QFont("Consolas", 9))
-        hh = self._table.horizontalHeader()
-        hh.setSectionResizeMode(0, QHeaderView.Stretch)
-        for col in range(1, len(self.STATS_COLUMNS)):
-            hh.setSectionResizeMode(col, QHeaderView.ResizeToContents)
-        layout.addWidget(self._table, 1)
-
-    @staticmethod
-    def compute_stats(x: np.ndarray, y: np.ndarray,
-                       x_range: tuple[float, float] | None
-                       ) -> dict[str, float] | None:
-        """Return a stats dict for the slice of y where x is within
-        ``x_range`` (or the full series if x_range is None). NaNs are
-        ignored. Returns None if there are no finite samples in range."""
-        if x.size == 0 or y.size == 0:
-            return None
-        if x_range is not None:
-            lo, hi = x_range
-            mask = (x >= lo) & (x <= hi)
-        else:
-            mask = np.ones_like(x, dtype=bool)
-        yv = y[mask]
-        yv = yv[~np.isnan(yv)]
-        if yv.size == 0:
-            return None
-        return {
-            "min":    float(np.min(yv)),
-            "p5":     float(np.percentile(yv, 5)),
-            "max":    float(np.max(yv)),
-            "mean":   float(np.mean(yv)),
-            "median": float(np.median(yv)),
-            "p95":    float(np.percentile(yv, 95)),
-            "std":    float(np.std(yv)),
-            "n":      int(yv.size),
-        }
-
-    @staticmethod
-    def _fmt(v: float) -> str:
-        """Format with 3 significant figures."""
-        if not np.isfinite(v):
-            return "\u2014"
-        if v == 0:
-            return "0"
-        return f"{v:.3g}"
-
-    def update_stats(self, rows: list[dict]):
-        """``rows`` is a list of {curve, log_id, param, color, x, y, x_range}.
-        We compute stats and re-render the table."""
-        self._table.setRowCount(0)
-        if not rows:
-            self._info.setText("No visible curves. Check parameters to populate.")
-            return
-        self._info.setText(f"Stats over visible x-range  \u00b7  {len(rows)} curve(s)")
-        self._table.setRowCount(len(rows))
-        for r, info in enumerate(rows):
-            stats = self.compute_stats(info["x"], info["y"], info.get("x_range"))
-            label = info["curve"]
-            color = info.get("color", "")
-
-            name_item = QTableWidgetItem(label)
-            if color:
-                name_item.setForeground(QColor(color))
-            self._table.setItem(r, 0, name_item)
-
-            if stats is None:
-                placeholders = ["\u2014"] * (len(self.STATS_COLUMNS) - 2) + ["0"]
-                for c, txt in enumerate(placeholders, start=1):
-                    cell = QTableWidgetItem(txt)
-                    cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                    self._table.setItem(r, c, cell)
-                continue
-
-            for c, key in enumerate(["min", "p5", "mean", "median", "p95", "max", "std", "n"], start=1):
-                if key == "n":
-                    txt = str(stats[key])
-                else:
-                    txt = self._fmt(stats[key])
-                cell = QTableWidgetItem(txt)
-                cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
-                self._table.setItem(r, c, cell)
-
-
-class XYPlotWindow(QDialog):
-    """Scatter / X-Y plot window for cross-parameter analysis."""
-
-    def __init__(self, logs: dict[str, LogEntry], parent=None):
-        super().__init__(parent)
-        # Qt.Window: independent z-order (not an owned always-on-top window)
-        self.setWindowFlag(Qt.Window)
-        self.setWindowTitle(f"X-Y Plotter — {APP_NAME}")
-        self.resize(900, 700)
-        self.setMinimumSize(600, 400)
-        self.setAttribute(Qt.WA_DeleteOnClose, False)
-
-        self._logs = logs
-        self._curves: list = []
-
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-
-        # ── Row 1: axis selectors ─────────────────────────────────
-        ctrl = QHBoxLayout()
-        ctrl.addWidget(QLabel("X-Axis:"))
-        self._x_combo = QComboBox()
-        self._x_combo.setMinimumWidth(160)
-        ctrl.addWidget(self._x_combo)
-        ctrl.addWidget(QLabel("Y-Axis:"))
-        self._y_combo = QComboBox()
-        self._y_combo.setMinimumWidth(160)
-        ctrl.addWidget(self._y_combo)
-        ctrl.addSpacing(12)
-
-        # ── Symbol style ─────────────────────────────────────────
-        ctrl.addWidget(QLabel("Symbol:"))
-        self._sym_combo = QComboBox()
-        for name, _ in _XY_SYMBOLS:
-            self._sym_combo.addItem(name)
-        self._sym_combo.setCurrentIndex(1)  # filled circle default
-        ctrl.addWidget(self._sym_combo)
-        ctrl.addSpacing(8)
-
-        # ── Symbol size ──────────────────────────────────────────
-        ctrl.addWidget(QLabel("Size:"))
-        self._size_spin = QSpinBox()
-        self._size_spin.setRange(2, 30)
-        self._size_spin.setValue(6)
-        self._size_spin.setFixedWidth(55)
-        ctrl.addWidget(self._size_spin)
-        ctrl.addSpacing(12)
-
-        # ── Regression checkbox ──────────────────────────────────
-        self._regress_cb = QCheckBox("Regression")
-        self._regress_cb.setToolTip("Show linear regression line with R²")
-        ctrl.addWidget(self._regress_cb)
-        ctrl.addSpacing(8)
-
-        btn_plot = QPushButton("Plot")
-        btn_plot.clicked.connect(self._do_plot)
-        ctrl.addWidget(btn_plot)
-
-        btn_swap = QPushButton("⇄ Swap")
-        btn_swap.setToolTip("Swap X and Y axis parameters")
-        btn_swap.clicked.connect(self._swap_axes)
-        ctrl.addWidget(btn_swap)
-
-        btn_clear = QPushButton("Clear")
-        btn_clear.clicked.connect(self._clear_plot)
-        ctrl.addWidget(btn_clear)
-        ctrl.addStretch()
-        layout.addLayout(ctrl)
-
-        # ── Populate combos ───────────────────────────────────────
-        all_params: list[str] = []
-        seen = set()
-        for entry in self._logs.values():
-            for p in entry.available_params():
-                if p not in seen:
-                    seen.add(p)
-                    all_params.append(p)
-        self._x_combo.addItems(all_params)
-        self._y_combo.addItems(all_params)
-        if len(all_params) >= 2:
-            self._x_combo.setCurrentIndex(0)
-            self._y_combo.setCurrentIndex(1)
-
-        # ── Plot widget ───────────────────────────────────────────
-        self._plot = pg.PlotWidget()
-        bg = THEME.c('plot_bg')
-        fg = THEME.c('plot_fg')
-        self._plot.setBackground(bg)
-        self._plot.showGrid(x=True, y=True, alpha=THEME.plot_grid_alpha())
-        for ax_name in ('left', 'bottom'):
-            ax = self._plot.getAxis(ax_name)
-            pen = pg.mkPen(fg)
-            ax.setPen(pen)
-            ax.setTextPen(pen)
-        self._legend = self._plot.addLegend(offset=(10, 10))
-        layout.addWidget(self._plot)
-
-    def _do_plot(self):
-        x_param = self._x_combo.currentText()
-        y_param = self._y_combo.currentText()
-        if not x_param or not y_param:
-            return
-        self._plot.setLabel('bottom', x_param)
-        self._plot.setLabel('left', y_param)
-
-        sym_idx = self._sym_combo.currentIndex()
-        sym_str = _XY_SYMBOLS[sym_idx][1]
-        size = self._size_spin.value()
-        # Outline vs filled: outline uses mkPen with color, filled uses no pen
-        filled = (self._sym_combo.currentText().lower().find('filled') >= 0
-                  or self._sym_combo.currentIndex() == 1)
-
-        for entry in self._logs.values():
-            if not entry.visible:
-                continue
-            if x_param not in entry.columns or y_param not in entry.columns:
-                continue
-            x = entry.columns[x_param]
-            y = entry.columns[y_param]
-            mask = ~(np.isnan(x) | np.isnan(y))
-            pen = pg.mkPen(None) if filled else pg.mkPen(entry.color, width=1)
-            brush = pg.mkBrush(entry.color) if filled else pg.mkBrush(None)
-            scatter = pg.ScatterPlotItem(
-                x=x[mask], y=y[mask],
-                pen=pen, brush=brush,
-                symbol=sym_str, size=size,
-                name=entry.name)
-            self._plot.addItem(scatter)
-            self._curves.append(scatter)
-
-    def _clear_plot(self):
-        for c in self._curves:
-            self._plot.removeItem(c)
-        self._curves.clear()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -2226,7 +1497,7 @@ class AnalysisSuiteWindow(QMainWindow):
         log_id = uuid.uuid4().hex[:8]
         color = self._next_color()
         thread = LogLoaderThread(path, log_id, color, self)
-        thread.log_loaded.connect(self._on_log_loaded)
+        thread.sigFinished.connect(self._on_log_loaded)
         thread.error.connect(self._on_load_error)
         thread.finished.connect(lambda t=thread: self._cleanup_thread(t))
         self._loader_threads.append(thread)
@@ -3200,7 +2471,7 @@ class AnalysisSuiteWindow(QMainWindow):
             log_id = uuid.uuid4().hex[:8]
             color = log_info.get('color', self._next_color())
             thread = LogLoaderThread(log_path, log_id, color, self)
-            thread.log_loaded.connect(
+            thread.sigFinished.connect(
                 lambda lid, p, e, info=log_info: self._on_session_log_loaded(lid, p, e, info))
             thread.error.connect(self._on_load_error)
             thread.finished.connect(lambda t=thread: self._cleanup_thread(t))
@@ -3447,7 +2718,7 @@ class AnalysisSuiteWindow(QMainWindow):
             pass
         for t in self._loader_threads:
             try:
-                t.log_loaded.disconnect()
+                t.sigFinished.disconnect()
                 t.error.disconnect()
                 t.finished.disconnect()
             except Exception:
