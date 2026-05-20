@@ -2437,16 +2437,23 @@ class AnalysisSuiteWindow(QMainWindow):
             # Visible-range change → debounced stats refresh + (optional) auto-fit Y.
             pw.getPlotItem().vb.sigRangeChanged.connect(self._on_view_range_changed)
 
-            self._plot_widgets.append(pw)
+            # _plot_widgets already populated above when the widget was
+            # added to the grid (line ~2355); only _plot_groups needs to
+            # be tracked here. Previous code re-appended to _plot_widgets
+            # and re-added the widget to the layout via addWidget(pw)
+            # without grid coords, which both duplicated entries and
+            # placed the second instance at grid (0,0) on top of others.
             self._plot_groups.append(list(group))
-            self._plot_layout.addWidget(pw)
 
             # Per-subplot context menu
             pw.setContextMenuPolicy(Qt.CustomContextMenu)
             pw.customContextMenuRequested.connect(
                 lambda pos, _pw=pw: self._on_subplot_context_menu(pos, _pw))
 
-        self._plot_layout.addStretch()
+        # NOTE: no addStretch() here — QGridLayout has no such method
+        # (that's QBoxLayout). Subplots fill the grid cells; extra room
+        # is distributed by Qt's grid policy. Calling addStretch() used
+        # to crash _do_rebuild_plots whenever the user re-arranged params.
         self._restore_v_cursors()
         self._update_cursor_dots()
         # Trigger an initial stats compute on the freshly rendered subplots.
