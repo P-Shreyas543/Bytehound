@@ -5,6 +5,7 @@ runs in a QThread so the live test is never blocked.  Plots use OpenGL
 acceleration via pyqtgraph for lag-free pan/zoom even with many data points.
 """
 import csv
+import pandas as pd
 import json
 import logging
 import os
@@ -24,7 +25,6 @@ import datetime as _dt
 
 import numpy as np
 import pyqtgraph as pg
-from openpyxl import load_workbook
 
 # ── Global pyqtgraph config (must run before any PlotWidget is created) ──
 pg.setConfigOptions(antialias=True, useOpenGL=True)
@@ -279,7 +279,8 @@ _CSV_CACHE: dict[str, LogEntry] = {}
 class LogLoaderThread(QThread):
     """Loads one .xlsx (Bytehound decoded or Dyno) or _decoded.csv log in a
     background thread."""
-    log_loaded = Signal(str, str, object)   # (log_id, path, LogEntry or None)
+    sigFinished = Signal(str, str, object)   # (log_id, path, LogEntry or None)
+    sigProgress = Signal(int)                # Progress percentage (0-100)
     error = Signal(str, str)                # (path, error_message)
 
     def __init__(self, path: str, log_id: str, color: str, parent=None):
@@ -300,90 +301,49 @@ class LogLoaderThread(QThread):
 
     def _load_csv(self):
         """Parse a legacy _decoded.csv file (pre-xlsx Bytehound versions)."""
-        with open(self._path, newline='', encoding='utf-8') as f:
-            def _iter_rows():
-                for line in f:
-                    stripped = line.strip()
-                    if not stripped or stripped.startswith("#"):
-                        continue
-                    yield line
-            reader = csv.DictReader(_iter_rows())
-            fieldnames = reader.fieldnames or []
-            rows = list(reader)
-
-        if not fieldnames:
-            self.error.emit(self._path, "CSV header row is missing.")
+        import pandas as pd
+        try:
+            df = pd.read_csv(self._path, comment='#')
+        except Exception as e:
+            self.error.emit(self._path, f"Failed to parse CSV: {e}")
             return
-        if not rows:
+        
+        if df.empty:
             self.error.emit(self._path, "No data rows found in CSV.")
             return
 
-        data_columns = [
-            name for name in fieldnames
-            if name and name not in {"timestamp", "elapsed_ms"}
-        ]
+        import datetime as dt
+        first_ts_posix: float | None = None
+
+        if "elapsed_ms" in df.columns:
+            elapsed_arr = (pd.to_numeric(df["elapsed_ms"], errors='coerce').fillna(0) / 1000.0).to_numpy(dtype=np.float64)
+        elif "timestamp" in df.columns:
+            ts_series = pd.to_datetime(df["timestamp"], errors='coerce')
+            valid_ts = ts_series.dropna()
+            if valid_ts.empty:
+                self.error.emit(self._path, "No valid timestamps found.")
+                return
+            first_ts = valid_ts.iloc[0]
+            first_ts_posix = first_ts.timestamp()
+            elapsed_arr = (ts_series - first_ts).dt.total_seconds().fillna(0).to_numpy(dtype=np.float64)
+        else:
+            self.error.emit(self._path, "No timestamp or elapsed_ms column found.")
+            return
+
+        data_columns = [c for c in df.columns if c not in {"timestamp", "elapsed_ms"} and not _is_time_like_param(c)]
         if not data_columns:
             self.error.emit(self._path, "No data columns found in CSV.")
             return
 
-        import datetime as dt
-        first_ts = None
-        first_ts_posix: float | None = None  # for start_timestamp
-        col_data: dict[str, list[tuple[float, float]]] = {name: [] for name in data_columns}
+        columns: dict[str, np.ndarray] = {}
+        for col in data_columns:
+            arr = pd.to_numeric(df[col], errors='coerce').to_numpy(dtype=np.float64)
+            if not np.all(np.isnan(arr)):
+                columns[col] = arr
 
-        for row in rows:
-            elapsed_s: float | None = None
-            elapsed_raw = row.get("elapsed_ms", "")
-            if elapsed_raw is not None and str(elapsed_raw).strip() != "":
-                try:
-                    elapsed_s = float(elapsed_raw) / 1000.0
-                except ValueError:
-                    elapsed_s = None
-
-            if elapsed_s is None:
-                ts_str = row.get("timestamp", "")
-                try:
-                    ts = dt.datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S.%f")
-                except ValueError:
-                    try:
-                        ts = dt.datetime.strptime(ts_str, "%Y-%m-%d %H:%M:%S")
-                    except ValueError:
-                        ts = None
-                if first_ts is None and ts is not None:
-                    first_ts = ts
-                    try:
-                        first_ts_posix = first_ts.timestamp()
-                    except Exception:
-                        pass
-                elapsed_s = (ts - first_ts).total_seconds() if (ts and first_ts) else 0.0
-
-            for label in data_columns:
-                cell = row.get(label, "")
-                if cell is None or str(cell).strip() == "":
-                    continue
-                try:
-                    value = float(cell)
-                except (ValueError, TypeError):
-                    continue
-                col_data[label].append((elapsed_s, value))
-
-        col_data = {label: pairs for label, pairs in col_data.items() if pairs}
-        if not col_data:
+        if not columns:
             self.error.emit(self._path, "No numeric columns found in CSV.")
             return
-
-        # Build unified time axis (union of all timestamps, sorted)
-        all_times = sorted({t for times in col_data.values() for t, _ in times})
-        n = len(all_times)
-        time_idx = {t: i for i, t in enumerate(all_times)}
-        elapsed_arr = np.array(all_times)
-
-        columns: dict[str, np.ndarray] = {}
-        for label, pairs in col_data.items():
-            arr = np.full(n, np.nan)
-            for t, v in pairs:
-                arr[time_idx[t]] = v
-            columns[label] = arr
 
         entry = LogEntry(
             id=self._log_id,
@@ -395,99 +355,75 @@ class LogLoaderThread(QThread):
             columns=columns,
         )
         _CSV_CACHE[self._path] = entry
-        self.log_loaded.emit(self._log_id, self._path, entry)
+        self.sigProgress.emit(100)
+        self.sigFinished.emit(self._log_id, self._path, entry)
 
     def _load_xlsx(self):
-        """Parse a .xlsx file. Supports three schemas:
-
-        * **Bytehound decoded (cycle-buffered)** — sheet ``Data`` with
-          per-frame blocks like ``<frame>.elapsed_ms``, ``<frame>.frame_id``,
-          ``<frame>.<signal>``. The trigger frame's elapsed_ms (the LAST
-          ``*.elapsed_ms`` column) is used as the time axis.
-        * **Bytehound decoded (legacy flat)** — sheet ``Data`` with a single
-          ``elapsed_ms`` column.
-        * **Dyno test rig** — sheet ``Record`` (or active), column
-          ``Elapsed (s)`` then signals.
-        """
-        wb = load_workbook(self._path, read_only=True, data_only=True)
-        if 'Data' in wb.sheetnames:
-            ws = wb['Data']
-        elif 'Record' in wb.sheetnames:
-            ws = wb['Record']
-        else:
-            ws = wb.active
-        rows = list(ws.iter_rows(values_only=True))
-        wb.close()
-        if len(rows) < 2:
+        """Parse a .xlsx file. Supports three schemas using high-performance pandas."""
+        import pandas as pd
+        try:
+            xls = pd.ExcelFile(self._path)
+            sheet = 'Data' if 'Data' in xls.sheet_names else ('Record' if 'Record' in xls.sheet_names else xls.sheet_names[0])
+            df = pd.read_excel(xls, sheet_name=sheet)
+        except Exception as e:
+            self.error.emit(self._path, f"Failed to parse Excel: {e}")
+            return
+        
+        if df.empty:
             self.error.emit(self._path, "No data rows found.")
             return
 
-        headers = [str(c) if c else "" for c in rows[0]]
-        data_rows = rows[1:]
-
-        # Pick the elapsed-time column.
-        #   Dyno      → "Elapsed (s)"             (seconds)
-        #   Bytehound → "<frame>.elapsed_ms"      (ms, prefer the trigger
-        #                                          frame = LAST occurrence)
-        #              or legacy flat "elapsed_ms"
-        elapsed_idx = -1
+        headers = [str(c) if c else "" for c in df.columns]
+        
+        elapsed_col = None
         elapsed_scale = 1.0
-        frame_block_elapsed_indices: set[int] = set()
-        frame_block_id_indices: set[int] = set()
-        for i, h in enumerate(headers):
+        frame_block_elapsed_cols = set()
+        frame_block_id_cols = set()
+        
+        for h in headers:
             if h.endswith(".elapsed_ms"):
-                frame_block_elapsed_indices.add(i)
-                elapsed_idx = i  # keep updating → LAST one wins (trigger frame)
+                frame_block_elapsed_cols.add(h)
+                elapsed_col = h  # LAST one wins (trigger frame)
                 elapsed_scale = 1e-3
             elif h.endswith(".frame_id"):
-                frame_block_id_indices.add(i)
-        if elapsed_idx < 0:
-            for i, h in enumerate(headers):
+                frame_block_id_cols.add(h)
+
+        if not elapsed_col:
+            for h in headers:
                 if h == "Elapsed (s)":
-                    elapsed_idx = i
+                    elapsed_col = h
                     elapsed_scale = 1.0
                     break
                 if h == "elapsed_ms":
-                    elapsed_idx = i
+                    elapsed_col = h
                     elapsed_scale = 1e-3
                     break
 
-        n = len(data_rows)
-        elapsed = np.zeros(n)
+        if not elapsed_col:
+            elapsed_arr = np.zeros(len(df), dtype=np.float64)
+        else:
+            elapsed_arr = (pd.to_numeric(df[elapsed_col], errors='coerce').ffill().fillna(0) * elapsed_scale).to_numpy(dtype=np.float64)
+
         columns: dict[str, np.ndarray] = {}
+        skip_cols = frame_block_elapsed_cols | frame_block_id_cols | {elapsed_col}
 
-        skip_indices = frame_block_elapsed_indices | frame_block_id_indices | {elapsed_idx}
-        col_map: dict[int, str] = {}
-        for i, h in enumerate(headers):
-            if i in skip_indices:
+        for h in headers:
+            if h in skip_cols or _is_time_like_param(h):
                 continue
-            if not _is_time_like_param(h):
-                col_map[i] = h
-                columns[h] = np.full(n, np.nan)
-
-        for r, row in enumerate(data_rows):
-            if elapsed_idx >= 0 and elapsed_idx < len(row):
-                try:
-                    elapsed[r] = float(row[elapsed_idx]) * elapsed_scale
-                except (ValueError, TypeError):
-                    elapsed[r] = elapsed[r - 1] if r > 0 else 0.0
-            for ci, param in col_map.items():
-                if ci < len(row) and row[ci] is not None:
-                    try:
-                        columns[param][r] = float(row[ci])
-                    except (ValueError, TypeError):
-                        pass
+            arr = pd.to_numeric(df[h], errors='coerce').to_numpy(dtype=np.float64)
+            columns[h] = arr
 
         entry = LogEntry(
             id=self._log_id,
             path=self._path,
             name=_test_name_from_path(self._path),
             color=self._color,
-            elapsed=elapsed,
+            elapsed=elapsed_arr,
             columns=columns,
         )
         _CSV_CACHE[self._path] = entry
-        self.log_loaded.emit(self._log_id, self._path, entry)
+        self.sigProgress.emit(100)
+        self.sigFinished.emit(self._log_id, self._path, entry)
 
 
 
@@ -1375,7 +1311,8 @@ class AnalysisSuiteWindow(QMainWindow):
             log_id = uuid.uuid4().hex[:8]
             color = self._next_color()
             thread = LogLoaderThread(path, log_id, color, self)
-            thread.log_loaded.connect(self._on_log_loaded)
+            thread.sigFinished.connect(self._on_log_loaded)
+            thread.sigProgress.connect(self._on_load_progress)
             thread.error.connect(self._on_load_error)
             thread.finished.connect(lambda t=thread: self._cleanup_thread(t))
             self._loader_threads.append(thread)
@@ -1385,6 +1322,11 @@ class AnalysisSuiteWindow(QMainWindow):
         if n:
             QApplication.setOverrideCursor(Qt.WaitCursor)
             self._status.showMessage(f"Loading {n} file(s)... please wait")
+
+    def _on_load_progress(self, percent: int):
+        n = len(self._loader_threads)
+        if n > 0:
+            self._status.showMessage(f"Loading {n} file(s)... {percent}%")
 
     def _cleanup_thread(self, t):
         if t in self._loader_threads:
