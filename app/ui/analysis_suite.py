@@ -880,6 +880,14 @@ class AnalysisSuiteWindow(QMainWindow):
         # _plot_widgets[i]. A single-param subplot has a list of length 1.
         self._plot_widgets: list[pg.PlotWidget] = []
         self._plot_groups: list[list[str]] = []
+        # Last position the mouse hovered over a subplot, set by _on_mouse_moved.
+        # Initialised to None up-front so the cursor-add right-click actions
+        # (_add_horizontal_cursor_at_mouse, _anchor_pw_and_t, etc.) can safely
+        # read them before the user has ever hovered a plot. Without these,
+        # opening the context menu before any mouse-move raised
+        # AttributeError on the lookup.
+        self._last_mouse_pw: Optional[pg.PlotWidget] = None
+        self._last_mouse_pos = None
         # Persists the user-defined subplot layout (list of param lists) even
         # when params are unchecked or new logs are loaded.
         self._subplot_layout: list[list[str]] = []
@@ -2352,7 +2360,14 @@ class AnalysisSuiteWindow(QMainWindow):
             grid_row = gi // cols
             grid_col = gi % cols
             self._plot_layout.addWidget(pw, grid_row, grid_col)
+            # _plot_widgets and _plot_groups MUST stay in lockstep: the
+            # mouse SignalProxy created below fires at 60fps and indexes
+            # both lists with the same `pi`. If we appended to _plot_groups
+            # at the end of the iteration body, a mouse move during widget
+            # setup (curve plotting, axis labels) would see _plot_widgets
+            # ahead of _plot_groups and raise IndexError in _on_mouse_moved.
             self._plot_widgets.append(pw)
+            self._plot_groups.append(list(group))
 
             # Performance: clip and downsample
             pw.setClipToView(True)
@@ -2437,13 +2452,13 @@ class AnalysisSuiteWindow(QMainWindow):
             # Visible-range change → debounced stats refresh + (optional) auto-fit Y.
             pw.getPlotItem().vb.sigRangeChanged.connect(self._on_view_range_changed)
 
-            # _plot_widgets already populated above when the widget was
-            # added to the grid (line ~2355); only _plot_groups needs to
-            # be tracked here. Previous code re-appended to _plot_widgets
-            # and re-added the widget to the layout via addWidget(pw)
-            # without grid coords, which both duplicated entries and
-            # placed the second instance at grid (0,0) on top of others.
-            self._plot_groups.append(list(group))
+            # _plot_widgets and _plot_groups already appended in lockstep
+            # at the top of the iteration (right after addWidget(pw, r, c)).
+            # Previous code re-appended to _plot_widgets and re-added the
+            # widget via addWidget(pw) without grid coords here, which
+            # duplicated entries and placed the second instance at grid
+            # (0,0) on top of others — left in the prior commit as a
+            # comment to flag the change; now fully removed.
 
             # Per-subplot context menu
             pw.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -2664,7 +2679,14 @@ class AnalysisSuiteWindow(QMainWindow):
 
         # Build tooltip
         pi = self._plot_widgets.index(pw) if pw in self._plot_widgets else -1
-        if pi < 0:
+        # Defensive bounds-check on _plot_groups too. Normally the two
+        # lists are appended atomically inside _do_rebuild_plots, but a
+        # rate-limited mouse event can race with a teardown/rebuild
+        # sequence (e.g. layout change while the user is hovering) where
+        # _plot_widgets has already been cleared/repopulated but
+        # _plot_groups is mid-clear. Bailing here is harmless — the next
+        # event tick after rebuild completes shows the correct tooltip.
+        if pi < 0 or pi >= len(self._plot_groups):
             return
         group = self._plot_groups[pi]
         multi = len(group) > 1
