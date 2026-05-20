@@ -2203,7 +2203,7 @@ class AnalysisSuiteWindow(QMainWindow):
         # The h_cursor dict itself carries only the plot_widget reference;
         # the param mapping lives on the AnalysisSuiteWindow.
         h_cursor_views: list[dict] = []
-        for hc in self._h_cursors:
+        for idx, hc in enumerate(self._h_cursors, start=1):
             pw = hc.get('plot_widget')
             group: list[str] = []
             if pw is not None and pw in self._plot_widgets:
@@ -2212,6 +2212,7 @@ class AnalysisSuiteWindow(QMainWindow):
                     group = list(self._plot_groups[pi])
             h_cursor_views.append({
                 **hc,
+                'label': hc.get('label', idx),
                 'plot_group': group,
                 'plot_widget_id': id(pw),
             })
@@ -2296,11 +2297,12 @@ class AnalysisSuiteWindow(QMainWindow):
             val = (y_range[0] + y_range[1]) / 2.0
 
         ci = len(self._h_cursors)
+        label_num = ci + 1
         color = CURSOR_COLORS[(ci + 2) % len(CURSOR_COLORS)]
         line = pg.InfiniteLine(
             pos=val, angle=0, movable=True,
             pen=pg.mkPen(color, width=2, style=Qt.DashDotLine),
-            label=f'{val:.2f}',
+            label=f'H{label_num}: {val:.2f}',
             labelOpts={'position': 0.05, 'color': color,
                        'fill': THEME.c('cursor_label_bg'),
                        'movable': True})
@@ -2315,13 +2317,18 @@ class AnalysisSuiteWindow(QMainWindow):
         self._h_cursors.append({
             'line': line, 'plot_widget': pw,
             'value': val, 'color': color,
+            'label': label_num,
         })
         self._update_cursor_readout()
 
     def _on_h_cursor_moved(self, cursor_index: int, line: pg.InfiniteLine) -> None:
         """Sync the H-cursor's cached value + label + readout after a drag."""
         v = float(line.value())
-        line.label.setText(f'{v:.2f}')
+        label_num = None
+        if 0 <= cursor_index < len(self._h_cursors):
+            label_num = self._h_cursors[cursor_index].get('label')
+        label_txt = f'H{label_num}: {v:.2f}' if label_num else f'{v:.2f}'
+        line.label.setText(label_txt)
         if 0 <= cursor_index < len(self._h_cursors):
             self._h_cursors[cursor_index]['value'] = v
         self._update_cursor_readout()
@@ -2444,7 +2451,7 @@ class AnalysisSuiteWindow(QMainWindow):
                 'plot_param': cdata.get('plot_param'),
             })
 
-        for hc in self._h_cursors:
+        for hi, hc in enumerate(self._h_cursors, start=1):
             pi = -1
             for i, pw in enumerate(self._plot_widgets):
                 if pw is hc['plot_widget']:
@@ -2454,6 +2461,7 @@ class AnalysisSuiteWindow(QMainWindow):
                 'plot_index': pi,
                 'value': hc['line'].value(),
                 'color': hc['color'],
+                'label': hc.get('label', hi),
             })
 
         if self._plot_widgets:
@@ -2593,19 +2601,24 @@ class AnalysisSuiteWindow(QMainWindow):
                 pw = self._plot_widgets[pi]
                 val = hc_data.get('value', 0)
                 color = hc_data.get('color', '#e63946')
+                label_num = hc_data.get('label', len(self._h_cursors) + 1)
                 line = pg.InfiniteLine(
                     pos=val, angle=0, movable=True,
                     pen=pg.mkPen(color, width=2, style=Qt.DashDotLine),
-                    label=f'{val:.2f}',
+                    label=f'H{label_num}: {val:.2f}',
                     labelOpts={'position': 0.05, 'color': color,
                                'fill': THEME.c('cursor_label_bg'),
                                'movable': True})
                 pw.addItem(line, ignoreBounds=True)
+                ci = len(self._h_cursors)
                 line.sigPositionChanged.connect(
-                    lambda l: l.label.setText(f'{l.value():.2f}'))
+                    lambda l, _ci=ci: self._on_h_cursor_moved(_ci, l))
+                line.sigClicked.connect(
+                    lambda *a, _ci=ci: self._on_h_cursor_selected(_ci))
                 self._h_cursors.append({
                     'line': line, 'plot_widget': pw,
                     'value': val, 'color': color,
+                    'label': label_num,
                 })
 
         # Restore view range

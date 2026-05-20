@@ -404,12 +404,113 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     </div>
 
     <h3 id="analysis-suite">The Analysis Suite</h3>
-    <p>For deep-diving into saved test data and comparing multiple runs:</p>
+    <p>For deep-diving into saved test data and comparing multiple runs. The window is non-modal, so you can keep it open while the main app is running.</p>
+
+    <h4>Open and load logs</h4>
     <ol>
-        <li>Go to <strong>Tools → Analysis Suite</strong>.</li>
-        <li>Click <strong>Load Logs</strong> and select one or more files. The loader accepts Bytehound decoded <code>.xlsx</code> logs, legacy decoded <code>.csv</code> logs, and external Dyno-style <code>.xlsx</code> exports.</li>
-        <li>Overlay multiple parameters, place draggable time-cursors to measure deltas, and use the <strong>Scatter → X-Y Plotter</strong> to graph parameters against each other.</li>
+        <li>Go to <strong>Tools -&gt; Analysis Suite</strong>.</li>
+        <li>Click <strong>Load Logs</strong> (or <strong>File -&gt; Load Logs...</strong>) and choose one or more files.</li>
+        <li>Supported formats: Bytehound decoded <code>.xlsx</code>, legacy decoded <code>.csv</code>, and external Dyno-style <code>.xlsx</code> exports.</li>
     </ol>
+    <ul>
+        <li><strong>Visibility:</strong> use the checkbox beside each log to show or hide it.</li>
+        <li><strong>Color:</strong> click the colored dot to change the log color.</li>
+        <li><strong>Offset:</strong> use the time offset spin box (seconds) to align runs.</li>
+        <li><strong>Remove:</strong> the Remove button drops the most recently loaded log.</li>
+    </ul>
+
+    <h4>Layout and parameters</h4>
+    <p>Use the <strong>Layout</strong> dropdown to choose the subplot grid. All subplots share a linked X-axis.</p>
+    <ul>
+        <li><strong>Check/clear:</strong> the checkbox beside each parameter toggles its curve.</li>
+        <li><strong>Search:</strong> filter parameters with the search box; the hit counter shows matches.</li>
+        <li><strong>Group/ungroup:</strong> multi-select parameters, then use <strong>Group</strong> / <strong>Ungroup</strong> to control overlays.</li>
+        <li><strong>Drag and drop:</strong> drag parameters between subplots, or create a new empty subplot and drop into it.</li>
+        <li><strong>Right-click:</strong> move parameters to another subplot, normalize curves to 0-1, enable smoothing, or delete a subplot.</li>
+    </ul>
+
+    <h4>Plot behavior and view tools</h4>
+    <ul>
+        <li><strong>Hover crosshair:</strong> the status bar shows time and values under the cursor.</li>
+        <li><strong>Multi-param encoding:</strong> in multi-parameter subplots, color indicates parameter and line style indicates log; in single-parameter plots, color tracks the log.</li>
+        <li><strong>Auto-fit Y:</strong> <strong>View -&gt; Auto-Fit Y to Visible Range</strong> re-scales Y after X zoom/pan (<kbd>F</kbd>).</li>
+        <li><strong>Wall clock:</strong> <strong>View -&gt; Wall Clock Time (X-Axis)</strong> swaps elapsed time for HH:MM:SS when the log has a start timestamp.</li>
+        <li><strong>Reset zoom:</strong> <strong>View -&gt; Reset Zoom</strong> or <kbd>Ctrl+0</kbd>.</li>
+    </ul>
+
+    <h4>Cursors and statistics</h4>
+    <ul>
+        <li><strong>Vertical cursors:</strong> <kbd>V</kbd> adds a cursor on the hovered subplot; <kbd>Shift+V</kbd> adds one across all subplots.</li>
+        <li><strong>Horizontal cursor:</strong> <kbd>H</kbd> adds a Y cursor at the current mouse position.</li>
+        <li><strong>Edit:</strong> drag cursors to measure deltas; <kbd>Delete</kbd> removes the selected cursor; <strong>Tools -&gt; Clear All Cursors</strong> wipes them.</li>
+        <li><strong>Cursors tab:</strong> now shows a clean table with <em>Cursor</em>, <em>Log</em>, <em>Parameter</em>, <em>Value</em>, <em>Unit</em>, and <em>Delta</em>.</li>
+        <li><strong>Vertical deltas:</strong> when two vertical cursors are active, the Delta column shows C2 minus C1 for each curve.</li>
+        <li><strong>Horizontal deltas:</strong> when two horizontal cursors are on the same subplot, the Delta column shows H2 minus H1.</li>
+        <li><strong>Cursor labels:</strong> horizontal cursors are labeled in-plot as <strong>H1: value</strong>, <strong>H2: value</strong> and also appear as <strong>H1 @ value</strong> in the table.</li>
+        <li><strong>Statistics tab:</strong> shows min, P5, mean, median, P95, max, std, and n for the visible X-range of each curve.</li>
+    </ul>
+
+    <div class="note">
+        <strong>Statistics glossary:</strong>
+        <ul>
+            <li><strong>P5 / P95:</strong> 5th and 95th percentiles (values below/above which 5% of samples fall).</li>
+            <li><strong>Std:</strong> standard deviation, a measure of spread around the mean.</li>
+            <li><strong>n:</strong> number of samples in the current visible X-range.</li>
+        </ul>
+    </div>
+
+    <div class="note">
+        <strong>Example cursor table:</strong>
+        <table>
+            <tr><th>Cursor</th><th>Log</th><th>Parameter</th><th>Value</th><th>Unit</th><th>Delta</th></tr>
+            <tr><td>C1 @ 1:14</td><td>serial_log</td><td>Pack Voltage</td><td>53.81</td><td>V</td><td></td></tr>
+            <tr><td>C2 @ 2:16</td><td>serial_log</td><td>Pack Voltage</td><td>48.73</td><td>V</td><td>-5.08</td></tr>
+            <tr><td>H1 @ 48.7</td><td>serial_log</td><td>Pack Voltage</td><td>48.70</td><td>V</td><td></td></tr>
+            <tr><td>H2 @ 49.2</td><td>serial_log</td><td>Pack Voltage</td><td>49.20</td><td>V</td><td>0.50</td></tr>
+        </table>
+    </div>
+
+    <h4>Export and sessions</h4>
+    <ul>
+        <li><strong>Sessions:</strong> <strong>File -&gt; Save Session</strong> stores layout, checked params, cursors, and view range; <strong>Load Session...</strong> restores them.</li>
+        <li><strong>CSV export:</strong> <strong>File -&gt; Export Visible Data as CSV...</strong> writes a wide table over the current X-range.</li>
+        <li><strong>Images/PDF:</strong> <strong>File -&gt; Export Plots as Image...</strong> or <strong>Export Plots as PDF...</strong>.</li>
+        <li><strong>Per-plot export:</strong> right-click a subplot to export its visible range or copy the plot image.</li>
+        <li><strong>Folders:</strong> <strong>File -&gt; Open Data Logs Folder</strong> and <strong>Open Analysis Folder</strong> jump to the saved output locations.</li>
+    </ul>
+
+    <h4>Menu reference (quick guide)</h4>
+    <p>Short summary of where common actions live:</p>
+    <ul>
+        <li><strong>File:</strong> load logs, manage sessions, export CSV/images/PDF, open output folders, close window.</li>
+        <li><strong>View:</strong> auto-fit Y, reset zoom, switch Cursors/Statistics tab, set smoothing window, toggle wall-clock time.</li>
+        <li><strong>Layout:</strong> group/ungroup parameters, add a new empty subplot.</li>
+        <li><strong>Tools:</strong> add or clear vertical/horizontal cursors.</li>
+        <li><strong>Scatter:</strong> open the X-Y Plotter.</li>
+    </ul>
+
+    <div class="note">
+        <strong>Quick tips:</strong>
+        <ul>
+            <li>Hover any subplot to see live values in the status bar.</li>
+            <li>Use <kbd>V</kbd> / <kbd>Shift+V</kbd> for vertical cursors and <kbd>H</kbd> for a horizontal cursor.</li>
+            <li>Press <kbd>Delete</kbd> to remove the selected cursor.</li>
+            <li>Right-click a subplot to export its visible range or copy an image.</li>
+            <li>Right-click a subplot row in the parameter tree to normalize or smooth that subplot.</li>
+            <li>Use the search box to filter parameters without losing your layout.</li>
+        </ul>
+    </div>
+
+    <div class="success">
+        <strong>Common workflows:</strong>
+        <ul>
+            <li><strong>Align two runs:</strong> load both logs, then adjust the time offset spin box on one log until key events line up.</li>
+            <li><strong>Compare signal deltas:</strong> add two vertical cursors and read the X and Y values in the Cursors tab.</li>
+            <li><strong>Normalize mixed units:</strong> group the parameters, then right-click the subplot header and enable Normalize (0-1).</li>
+            <li><strong>Clean up noisy data:</strong> enable smoothing on a subplot and set the window size under View -&gt; Smoothing Window...</li>
+            <li><strong>Export a report snapshot:</strong> zoom to a range, then export CSV or PDF from the File menu.</li>
+        </ul>
+    </div>
 
     <!-- Section 5 -->
     <h2 id="section-5">5. Customizing Your Data (The Excel Config)</h2>

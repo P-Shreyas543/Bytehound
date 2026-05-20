@@ -26,7 +26,7 @@ import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
-    QFrame, QGroupBox, QHBoxLayout, QHeaderView, QLabel, QScrollArea,
+    QGroupBox, QHeaderView, QLabel,
     QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -105,34 +105,40 @@ class CursorReadoutPanel(QGroupBox):
 
     _MONO = QFont("Consolas", 9)
     _MONO_BOLD = QFont("Consolas", 9, QFont.Bold)
-    _LABEL_FONT = QFont("PT Sans", 8, QFont.Bold)
+    _TABLE_COLUMNS = ["Cursor", "Log", "Parameter", "Value", "Unit", "Delta"]
 
     def __init__(self, parent=None):
         super().__init__("Cursor Readout", parent)
         self.setMinimumWidth(200)
 
-        self._scroll = QScrollArea()
-        self._scroll.setWidgetResizable(True)
-        self._scroll.setFrameShape(QFrame.NoFrame)
-
-        self._inner = QWidget()
-        self._layout = QVBoxLayout(self._inner)
-        self._layout.setContentsMargins(4, 4, 4, 4)
-        self._layout.setSpacing(1)
-        self._scroll.setWidget(self._inner)
-
         outer = QVBoxLayout(self)
-        outer.setContentsMargins(0, 12, 0, 0)
-        outer.addWidget(self._scroll)
+        outer.setContentsMargins(8, 12, 8, 8)
+        outer.setSpacing(6)
 
         self._delta_label = QLabel("")
         self._delta_label.setFont(self._MONO_BOLD)
-        self._layout.addWidget(self._delta_label)
+        outer.addWidget(self._delta_label)
+
         self._info_label = QLabel("Add cursors with V / Shift+V / H keys.")
         self._info_label.setFont(QFont("PT Sans", 8))
         self._info_label.setWordWrap(True)
-        self._layout.addWidget(self._info_label)
-        self._layout.addStretch()
+        self._info_label.setStyleSheet("color: palette(mid);")
+        outer.addWidget(self._info_label)
+
+        self._table = QTableWidget(0, len(self._TABLE_COLUMNS))
+        self._table.setHorizontalHeaderLabels(self._TABLE_COLUMNS)
+        self._table.verticalHeader().setVisible(False)
+        self._table.setEditTriggers(QTableWidget.NoEditTriggers)
+        self._table.setSelectionBehavior(QTableWidget.SelectRows)
+        self._table.setAlternatingRowColors(True)
+        self._table.setFont(self._MONO)
+        hh = self._table.horizontalHeader()
+        hh.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hh.setSectionResizeMode(2, QHeaderView.Stretch)
+        for col in range(3, len(self._TABLE_COLUMNS)):
+            hh.setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        outer.addWidget(self._table, 1)
 
     # -- helpers -------------------------------------------------------------
     @staticmethod
@@ -144,23 +150,18 @@ class CursorReadoutPanel(QGroupBox):
             return "0"
         return f"{v:.4g}"
 
-    def _make_row(self, left: str, right: str, *,
-                  color: str = "", bold: bool = False) -> QWidget:
-        """Build a compact horizontal row: left-aligned label + right-aligned value."""
-        row = QWidget()
-        hl = QHBoxLayout(row)
-        hl.setContentsMargins(0, 0, 0, 0)
-        hl.setSpacing(4)
-        ll = QLabel(left)
-        ll.setFont(self._MONO_BOLD if bold else self._MONO)
+    @staticmethod
+    def _strip_param_label(param: str) -> str:
+        return re.sub(r"\s*[\[\(][^\]\)]*[\]\)]\s*$", "", param).strip()
+
+    def _set_cell(self, row: int, col: int, text: str,
+                  *, color: str | None = None, align_right: bool = False) -> None:
+        item = QTableWidgetItem(text)
         if color:
-            ll.setStyleSheet(f"color: {color};")
-        rl = QLabel(right)
-        rl.setFont(self._MONO)
-        rl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        hl.addWidget(ll, 1)
-        hl.addWidget(rl)
-        return row
+            item.setForeground(QColor(color))
+        if align_right:
+            item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._table.setItem(row, col, item)
 
     def update_readout(self, cursors: list[dict],
                        logs: list['LogEntry'],
@@ -176,20 +177,11 @@ class CursorReadoutPanel(QGroupBox):
         all active cursor measurements in one place.
         """
         h_cursors = h_cursors or []
-        vbar = self._scroll.verticalScrollBar()
-        old_scroll = vbar.value()
-
-        # Clear dynamic labels (keep delta + info + stretch)
-        while self._layout.count() > 3:
-            item = self._layout.takeAt(2)
-            w = item.widget() if item else None
-            if w:
-                w.deleteLater()
+        self._table.setRowCount(0)
 
         if not cursors and not h_cursors:
             self._delta_label.setText("")
             self._info_label.setText("Add cursors with V / Shift+V / H keys.")
-            vbar.setValue(min(old_scroll, vbar.maximum()))
             return
 
         self._info_label.setText("")
@@ -208,145 +200,114 @@ class CursorReadoutPanel(QGroupBox):
         else:
             self._delta_label.setText("")
 
-        # Per-cursor readout
-        # Collect values for ΔY computation (cursor_idx -> {(log_id,param): value})
-        cursor_vals: list[dict[tuple[str, str], float]] = []
+        def params_for_cursor(cursor: dict) -> list[str]:
+            if cursor.get('scope') == 'plot' and cursor.get('plot_param'):
+                return [cursor.get('plot_param')]
+            return active_params
 
-        for _ci, cursor in enumerate(cursors):
-            t = cursor['time']
-            label_num = cursor.get('label', 0)
-            scope = cursor.get('scope', 'all')
-            plot_param = cursor.get('plot_param')
-            hdr_txt = f"C{label_num}  {TimeAxisItem._fmt_elapsed(t)}"
-            if scope == 'plot' and plot_param:
-                hdr_txt += f"  [{plot_param}]"
-            hdr = QLabel(hdr_txt)
-            hdr.setFont(self._LABEL_FONT)
-            self._layout.insertWidget(self._layout.count() - 1, hdr)
-
-            if scope == 'plot' and plot_param:
-                params_for_cursor = [plot_param]
-            else:
-                params_for_cursor = active_params
-
+        def collect_values(cursor: dict) -> dict[tuple[str, str], float]:
             vals: dict[tuple[str, str], float] = {}
+            t = cursor.get('time', 0.0)
             for log in logs:
-                if not log.visible or len(log.elapsed) == 0:
+                if len(log.elapsed) == 0:
                     continue
                 x = log.elapsed + log.time_offset
-                # Swatch + log name
-                row_w = self._make_row(f"● {log.name}", "",
-                                       color=log.color, bold=True)
-                self._layout.insertWidget(self._layout.count() - 1, row_w)
-                for param in params_for_cursor:
+                for param in params_for_cursor(cursor):
                     if param not in log.columns:
                         continue
                     idx = int(np.clip(np.searchsorted(x, t), 0, len(x) - 1))
                     v = log.columns[param][idx]
-                    short = re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', param).strip()
-                    unit = _parse_unit(param) or ""
                     if np.isfinite(v):
-                        val_str = f"{self._fmt_val(v)} {unit}".strip()
-                        vals[(log.id, param)] = v
-                    else:
-                        val_str = "—"
-                    row_w = self._make_row(f"  {short}", val_str)
-                    self._layout.insertWidget(self._layout.count() - 1, row_w)
-            cursor_vals.append(vals)
+                        vals[(log.id, param)] = float(v)
+            return vals
 
-        # ΔY readout between two cursors
-        if len(cursor_vals) >= 2:
-            sep = QLabel("── ΔY ──")
-            sep.setFont(self._LABEL_FONT)
-            self._layout.insertWidget(self._layout.count() - 1, sep)
-            keys = set(cursor_vals[0].keys()) & set(cursor_vals[1].keys())
-            for key in sorted(keys, key=lambda k: k[1]):
-                v0 = cursor_vals[0][key]
-                v1 = cursor_vals[1][key]
-                delta = v1 - v0
-                _, param = key
-                short = re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', param).strip()
-                unit = _parse_unit(param) or ""
-                row_w = self._make_row(
-                    f"  {short}",
-                    f"Δ {self._fmt_val(delta)} {unit}".strip())
-                self._layout.insertWidget(self._layout.count() - 1, row_w)
+        delta_map: dict[tuple[str, str], float] = {}
+        if len(cursors) == 2:
+            v0 = collect_values(cursors[0])
+            v1 = collect_values(cursors[1])
+            for key in v0.keys() & v1.keys():
+                delta_map[key] = v1[key] - v0[key]
 
-        # ── Horizontal cursors ─────────────────────────────────────────
-        # Render H-cursors with the same "header + log swatch + per-param"
-        # structure as V-cursors (above). An H-cursor pins a Y value on
-        # one subplot, so the "value" column for each (log, param) row is
-        # just the cursor's Y — but listing per-log is still useful: it
-        # tells the analyst which curve(s) and logs the threshold applies
-        # to without them having to mentally cross-reference the subplot
-        # group with the sidebar log list.
-        if h_cursors:
-            sep = QLabel("── H Cursors ──")
-            sep.setFont(self._LABEL_FONT)
-            self._layout.insertWidget(self._layout.count() - 1, sep)
-
-            for hi, hc in enumerate(h_cursors, start=1):
-                value = hc.get('value', float('nan'))
-                color = hc.get('color', '')
-                group: list[str] = hc.get('plot_group') or []
-                # Header line — mirrors `C1  t  [param]` for V-cursors.
-                group_label = ", ".join(
-                    re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', p).strip()
-                    for p in group
-                ) or "—"
-                hdr_txt = f"H{hi}  Y = {self._fmt_val(value)}  [{group_label}]"
-                hdr = QLabel(hdr_txt)
-                hdr.setFont(self._LABEL_FONT)
-                if color:
-                    hdr.setStyleSheet(f"color: {color};")
-                self._layout.insertWidget(self._layout.count() - 1, hdr)
-
-                # Per-log rows — same swatch+name+param structure as V.
-                for log in logs:
-                    if not log.visible:
-                        continue
-                    # Skip logs that don't carry any of this subplot's params.
-                    log_params = [p for p in group if p in log.columns]
-                    if not log_params:
-                        continue
-                    row_w = self._make_row(f"● {log.name}", "",
-                                           color=log.color, bold=True)
-                    self._layout.insertWidget(self._layout.count() - 1, row_w)
-                    for param in log_params:
-                        short = re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', param).strip()
-                        unit = _parse_unit(param) or ""
-                        val_str = f"{self._fmt_val(value)} {unit}".strip()
-                        row_w = self._make_row(f"  {short}", val_str)
-                        self._layout.insertWidget(self._layout.count() - 1, row_w)
-
-            # ΔY between H-cursors on the SAME subplot. We use
-            # plot_widget_id (set by the caller) instead of id(plot_widget)
-            # so the panel doesn't need a reference to the live widget.
-            by_plot: dict = {}
-            for hc in h_cursors:
-                by_plot.setdefault(hc.get('plot_widget_id'), []).append(hc)
-            for hcs in by_plot.values():
-                if len(hcs) < 2:
+        row = 0
+        for ci, cursor in enumerate(cursors):
+            t = cursor.get('time', 0.0)
+            label_num = cursor.get('label', ci + 1)
+            cursor_color = cursor.get('color', '')
+            cursor_text = f"C{label_num} @ {TimeAxisItem._fmt_elapsed(t)}"
+            for log in logs:
+                if len(log.elapsed) == 0:
                     continue
-                # ΔY between first and last cursor on this subplot. A
-                # numbered list of pairwise deltas would be noisier than
-                # useful for the typical 2-cursor workflow.
-                dy = hcs[-1].get('value', 0.0) - hcs[0].get('value', 0.0)
-                group = hcs[0].get('plot_group') or []
-                group_label = ", ".join(
-                    re.sub(r'\s*[\[\(][^\]\)]*[\]\)]\s*$', '', p).strip()
-                    for p in group
-                )
-                unit = _parse_unit(group[0]) or "" if group else ""
-                sep2 = QLabel(f"── ΔY  [{group_label}] ──")
-                sep2.setFont(self._LABEL_FONT)
-                self._layout.insertWidget(self._layout.count() - 1, sep2)
-                row_w = self._make_row(
-                    "  Δ Y",
-                    f"Δ {self._fmt_val(dy)} {unit}".strip())
-                self._layout.insertWidget(self._layout.count() - 1, row_w)
+                x = log.elapsed + log.time_offset
+                for param in params_for_cursor(cursor):
+                    if param not in log.columns:
+                        continue
+                    idx = int(np.clip(np.searchsorted(x, t), 0, len(x) - 1))
+                    v = log.columns[param][idx]
+                    value_text = self._fmt_val(v)
+                    unit = _parse_unit(param) or ""
+                    short = self._strip_param_label(param)
+                    delta_text = ""
+                    if len(cursors) == 2 and ci == 1:
+                        delta = delta_map.get((log.id, param))
+                        if delta is not None:
+                            delta_text = self._fmt_val(delta)
 
-        vbar.setValue(min(old_scroll, vbar.maximum()))
+                    self._table.insertRow(row)
+                    self._set_cell(row, 0, cursor_text, color=cursor_color)
+                    self._set_cell(row, 1, log.name, color=log.color)
+                    self._set_cell(row, 2, short)
+                    self._set_cell(row, 3, value_text, align_right=True)
+                    self._set_cell(row, 4, unit)
+                    self._set_cell(row, 5, delta_text, align_right=True)
+                    row += 1
+
+        h_delta_map: dict[tuple[int, int], float] = {}
+        by_plot: dict[int, list[dict]] = {}
+        for hc in h_cursors:
+            by_plot.setdefault(hc.get('plot_widget_id'), []).append(hc)
+        for plot_id, items in by_plot.items():
+            items_sorted = sorted(items, key=lambda h: h.get('label', 0))
+            if len(items_sorted) < 2:
+                continue
+            base = items_sorted[0].get('value', float('nan'))
+            if not np.isfinite(base):
+                continue
+            for hc in items_sorted[1:]:
+                val = hc.get('value', float('nan'))
+                if np.isfinite(val):
+                    h_delta_map[(plot_id, hc.get('label', 0))] = val - base
+
+        for hi, hc in enumerate(h_cursors, start=1):
+            value = hc.get('value', float('nan'))
+            cursor_color = hc.get('color', '')
+            label_num = hc.get('label', hi)
+            cursor_text = f"H{label_num} @ {self._fmt_val(value)}"
+            group: list[str] = hc.get('plot_group') or []
+            plot_id = hc.get('plot_widget_id')
+            for log in logs:
+                if len(log.elapsed) == 0:
+                    continue
+                log_params = [p for p in group if p in log.columns]
+                if not log_params:
+                    continue
+                for param in log_params:
+                    unit = _parse_unit(param) or ""
+                    short = self._strip_param_label(param)
+                    delta_text = ""
+                    delta = h_delta_map.get((plot_id, label_num))
+                    if delta is not None:
+                        delta_text = self._fmt_val(delta)
+                    self._table.insertRow(row)
+                    self._set_cell(row, 0, cursor_text, color=cursor_color)
+                    self._set_cell(row, 1, log.name, color=log.color)
+                    self._set_cell(row, 2, short)
+                    self._set_cell(row, 3, self._fmt_val(value), align_right=True)
+                    self._set_cell(row, 4, unit)
+                    self._set_cell(row, 5, delta_text, align_right=True)
+                    row += 1
+
+        if row == 0:
+            self._info_label.setText("No cursor values for the selected parameters.")
 
 
 # ═══════════════════════════════════════════════════════════════════════
