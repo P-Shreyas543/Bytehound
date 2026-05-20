@@ -484,6 +484,26 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         <strong>Not for Modbus RTU.</strong> Modbus has its own fixed-per-FC framing — <code>tx_pad_length</code> is ignored when <code>parser_type = modbus_rtu</code>.
     </div>
 
+    <p><strong>Bundled template content</strong> (the single enabled row that <em>File → Export Template</em> writes — blanks for <code>length_byte_order</code>, <code>crc_coverage</code>, <code>footer_hex</code>, <code>escape_mode</code>, and <code>tx_pad_length</code> mean "use the sensible default"):</p>
+    <pre>profile_name           = Default
+parser_type            = framed
+header_hex             = AA 55
+frame_id_size          = 2
+frame_id_byte_order    = little
+length_size            = 1
+length_meaning         = payload_only
+length_byte_order      =                     ← inherits frame_id_byte_order
+crc_type               = crc16_modbus
+crc_size               = 2
+crc_byte_order         = little
+crc_coverage           =                     ← defaults to header_to_payload
+footer_hex             =                     ← no footer byte
+escape_mode            =                     ← defaults to none
+raw_log_format         = hex
+inter_frame_delay_ms   = 10
+tx_pad_length          =                     ← variable-length TX
+enabled                = TRUE</pre>
+
     <hr>
 
     <h3 id="sheet-frames">Sheet 2 — Frames</h3>
@@ -499,11 +519,11 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code> <em>(default)</em></td><td>Set <code>FALSE</code> to completely ignore this frame — the row is skipped at load time and no signals from it are decoded.</td></tr>
         <tr><td><code>description</code></td><td>text</td><td><code>Battery pack telemetry</code> <em>(blank ok)</em></td><td>Optional free-text note — not displayed in the app.</td></tr>
     </table>
-    <p><strong>Example — two frames with different payload sizes:</strong></p>
-    <pre>frame_id | frame_name    | payload_length | enabled
-0x0010   | BMS Status    | 8              | TRUE
-0x0020   | Cell Voltages | 28             | TRUE
-0x0030   | Fault Flags   |                | TRUE    ← blank length = no length check</pre>
+    <p><strong>Bundled template content</strong> (what <em>File → Export Template</em> produces — same 3 frames the bundled Variables sheet references):</p>
+    <pre>frame_id | frame_name   | payload_length | direction | enabled | description
+0x1000   | BMS Status   | 8              | rx        | TRUE    | Main battery telemetry frame
+0x2000   | BMS Settings | 8              | rx        | TRUE    | Configurable parameter frame
+0x3000   | Status Flags | 8              | rx        | TRUE    | Bitfield status register frame</pre>
 
     <hr>
 
@@ -532,10 +552,16 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <div class="note">
         <strong>Frame auto-creation.</strong> If <code>id_or_address</code> refers to a frame ID that does not exist in the Frames sheet, the loader silently creates one named <code>Node 0x&lt;id&gt;</code>. This is the recommended workflow for Modbus configs — declare your registers in Variables only and omit the Frames sheet altogether.
     </div>
-    <p><strong>Example — 4-byte frame <code>0x0010</code> with two signals:</strong></p>
-    <pre>id_or_address | signal_name  | data_type | scale | offset | unit
-0x0010        | Pack Voltage | uint16    | 0.01  | 0      | V      ← auto-placed at bytes 0–1
-0x0010        | Pack Current | int16     | 0.1   | 0      | A      ← auto-placed at bytes 2–3</pre>
+    <p><strong>Bundled template content</strong> (showing the key columns; <code>read_write</code>, <code>min_value</code>, <code>max_value</code>, <code>description</code>, <code>enabled</code> omitted for width):</p>
+    <pre>id_or_address | signal_name      | data_type | count | byte_order | scale | offset | unit | group
+0x1000        | Pack Voltage     | uint16    | 1     | little     | 0.01  | 0      | V    |
+0x1000        | Pack Current     | int16     | 1     | little     | 0.1   | 0      | A    |
+0x1000        | Pack SOC         | uint8     | 1     | little     | 1     | 0      | %    |
+0x1000        | Pack Temperature | int16     | 1     | little     | 0.1   | -40    | °C   |
+0x2000        | Cell Voltage     | uint16    | 8     | little     | 0.001 | 0      | V    | Cell Voltages   ← count=8 auto-expands to 8 signals
+0x3000        | Fault Flags      | uint8     | 1     | little     | 1     | 0      |      |                ← see Bitfields sheet
+0x3000        | BMS State        | uint8     | 1     | little     | 1     | 0      |      |                ← see Enums sheet
+0x2000        | Voltage Limit    | uint16    | 1     | little     | 0.01  | 0      | V    |                ← read_write=RW → Parameter Editor</pre>
 
     <hr>
 
@@ -557,6 +583,12 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <div class="warning">
         <strong>Common pitfall:</strong> if your legacy CSV uses <code>frame_id</code> instead of <code>frame_id_hex</code> as the column header, the loader will reject the entire config with <code>missing required columns</code>. Rename the column to <code>frame_id_hex</code> or migrate to the modern Variables sheet.
     </div>
+    <p><strong>Bundled template content</strong> (legacy schema for the same 0x1000 frame — every byte offset and length is explicit):</p>
+    <pre>frame_id_hex | frame_name | signal_name      | start_byte | byte_length | endianness | data_type | scale | offset | unit
+0x1000       | BMS Status | Pack Voltage     | 0          | 2           | little     | uint      | 0.01  | 0      | V
+0x1000       | BMS Status | Pack Current     | 2          | 2           | little     | int       | 0.1   | 0      | A
+0x1000       | BMS Status | Pack SOC         | 4          | 1           | little     | uint      | 1     | 0      | %
+0x1000       | BMS Status | Pack Temperature | 5          | 2           | little     | int       | 0.1   | -40    | °C</pre>
 
     <hr>
 
@@ -574,12 +606,16 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <div class="note">
         <strong>Bit numbering recap.</strong> Bitfield rows operate on the <em>fully assembled raw integer</em> of the parent signal (after byte-order is applied), not on raw payload bytes. A <code>uint16</code> read as little-endian is reconstructed into a single 16-bit integer first; <code>bit_index = 15</code> then picks its most-significant bit regardless of which physical byte that bit came from.
     </div>
-    <p><strong>Example — 8-bit fault register:</strong></p>
-    <pre>id_or_address | signal_name | bit_index | label           | active_text | inactive_text
-0x0020        | Fault Flags | 0         | Overvoltage     | FAULT       | OK
-0x0020        | Fault Flags | 1         | Undervoltage    | FAULT       | OK
-0x0020        | Fault Flags | 2         | Overtemperature | FAULT       | OK
-0x0020        | Fault Flags | 3         | Contactor       | OPEN        | CLOSED</pre>
+    <p><strong>Bundled template content</strong> (decodes the 8-bit <code>Fault Flags</code> register from frame <code>0x3000</code>):</p>
+    <pre>id_or_address | signal_name | bit_index | label        | active_text | inactive_text
+0x3000        | Fault Flags | 0         | Charging     | YES         | NO
+0x3000        | Fault Flags | 1         | Discharging  | YES         | NO
+0x3000        | Fault Flags | 2         | Balancing    | YES         | NO
+0x3000        | Fault Flags | 3         | Fault        | FAULT       | OK
+0x3000        | Fault Flags | 4         | Overvoltage  | FAULT       | OK
+0x3000        | Fault Flags | 5         | Undervoltage | FAULT       | OK
+0x3000        | Fault Flags | 6         | Overtemp     | FAULT       | OK
+0x3000        | Fault Flags | 7         | Ready        | YES         | NO</pre>
 
     <hr>
 
@@ -592,12 +628,13 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         <tr><td><code>value</code></td><td>integer <em>(required)</em></td><td><code>2</code></td><td>Raw integer value from the hardware. Decimal (<code>2</code>) or hex with prefix (<code>0x02</code>) — both work via <code>int(value, 0)</code>.</td></tr>
         <tr><td><code>label</code></td><td>text <em>(required)</em></td><td><code>RUN</code></td><td>Human-readable text shown when the signal equals this value. Empty labels are allowed but render as blank in the Enums panel.</td></tr>
     </table>
-    <p><strong>Example — state machine signal:</strong></p>
+    <p><strong>Bundled template content</strong> (decodes the <code>BMS State</code> signal from frame <code>0x3000</code> into one of five labels):</p>
     <pre>id_or_address | signal_name | value | label
-0x0010        | State       | 0     | IDLE
-0x0010        | State       | 1     | PRECHARGE
-0x0010        | State       | 2     | RUN
-0x0010        | State       | 3     | FAULT</pre>
+0x3000        | BMS State   | 0     | Idle
+0x3000        | BMS State   | 1     | Charging
+0x3000        | BMS State   | 2     | Discharging
+0x3000        | BMS State   | 3     | Fault
+0x3000        | BMS State   | 4     | Service</pre>
     <div class="note">
         <strong>Duplicate values overwrite silently.</strong> Enum mappings are stored as <code>{value → label}</code> per signal, so if two rows share the same <code>(id_or_address, signal_name, value)</code> the second row's label wins. No warning is emitted — keep your <code>value</code> column unique within each signal.
     </div>
@@ -617,11 +654,13 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <div class="warning">
         <strong>Frame scope pitfall.</strong> A blank <code>frame_id</code> does not combine values across multiple frames into one global statistic. It means "no frame filter": the calculation runs separately for each decoded frame that has signals in the matching group. Use a <code>0x</code> prefix for hex frame IDs here; bare values such as <code>10</code> are parsed as decimal.
     </div>
-    <p><strong>Example — min/max/avg of 12 cell voltages:</strong></p>
+    <p><strong>Bundled template content</strong> (computes 4 stats across the 8 expanded <code>Cell Voltage 1..8</code> signals from frame <code>0x2000</code>):</p>
+    <pre>group_name    | operations         | unit | frame_id | enabled
+Cell Voltages | min|max|diff|avg   | V    | 0x2000   | TRUE</pre>
+    <p><strong>How this links up:</strong></p>
     <ol>
-        <li>In Variables, set <code>group = Cell Voltages</code> for all 12 cell voltage signals.</li>
-        <li>In CalcGroups add: <code>group_name = Cell Voltages</code>, <code>operations = min|max|avg|diff</code>.</li>
-        <li>The Data Table shows four extra rows: <em>Cell Voltages min / max / avg / diff</em>, updated live.</li>
+        <li>In Variables, the <code>Cell Voltage</code> row at frame <code>0x2000</code> has <code>count = 8</code> and <code>group = Cell Voltages</code> — auto-expanded into <em>Cell Voltage 1</em> … <em>Cell Voltage 8</em>.</li>
+        <li>This CalcGroups row picks them up and adds four extra rows to the Data Table — <em>Cell Voltages min</em>, <em>max</em>, <em>avg</em>, <em>diff</em> — updated live with each <code>0x2000</code> frame.</li>
     </ol>
 
     <hr>
@@ -639,6 +678,10 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <div class="warning">
         <strong>Duplicate names overwrite silently.</strong> Commands are stored by <code>command_name</code>, so if two enabled rows use the same name, the later row wins and no warning is emitted. Keep <code>command_name</code> unique.
     </div>
+    <p><strong>Bundled template content</strong> (one static-payload command and one parameterized command — the latter has matching rows in TxCommandFields):</p>
+    <pre>command_name      | id_or_address | payload_hex | description                                              | enabled
+Reset Faults      | 0x1000        | FF FF       | Clears all active fault flags on the BMS                 | TRUE
+Set Voltage Limit | 0x2000        |             | Set the overvoltage threshold (requires field input)     | TRUE</pre>
 
     <hr>
 
@@ -660,11 +703,15 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <div class="warning">
         <strong>Field matching is silent.</strong> Rows whose <code>command_name</code> does not match an enabled TxCommands row are parsed but never shown. If two fields on the same command reuse the same <code>signal_name</code>, the form labels collide and the later input value is reused for that name. Keep <code>command_name</code> valid and <code>signal_name</code> unique within each command.
     </div>
+    <p><strong>Bundled template content</strong> (attaches one user-entered voltage field to the <em>Set Voltage Limit</em> command — encoded as <code>uint16 little</code> with scale 0.01):</p>
+    <pre>command_name      | signal_name        | data_type | byte_order | scale | offset | unit | min_value | max_value | default
+Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0      | V    | 0         | 60        | 55</pre>
+    <p>A user typing <code>55.5</code> in the form sends <code>raw = (55.5 − 0) / 0.01 = 5550</code> appended after the static payload (which is empty in this case).</p>
 
     <hr>
 
     <h3 id="sheet-serialdefaults">Sheet 10 — SerialDefaults</h3>
-    <p>Reserved for future config-driven serial connection defaults. The loader parses and stores the first row, but no other code currently consults it; the Connection dialog uses saved app settings instead. Omit this sheet in normal use.</p>
+    <p>Reserved for future config-driven serial connection defaults. The loader parses and stores the first row, but no other code currently consults it; the Connection dialog uses saved app settings instead. The bundled template ships a sensible default row so the column shape is visible — you can leave it as-is or omit the sheet entirely.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
         <tr><td><code>baud_rate</code></td><td>integer <em>(required)</em></td><td><code>115200</code></td><td>Reserved baud-rate default. Parsed and stored if the sheet has a row, but no other code currently consults it.</td></tr>
@@ -676,6 +723,9 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <div class="warning">
         <strong>Do not add a partially blank row.</strong> If this sheet is absent or empty, the loader uses internal defaults. If the sheet contains a row, all five column headers are required; <code>baud_rate</code>, <code>data_bits</code>, and <code>timeout_ms</code> must contain valid integers.
     </div>
+    <p><strong>Bundled template content</strong> (standard 8-N-1 at 115 200 baud with a 100 ms read timeout — matches what the Connection dialog uses by default):</p>
+    <pre>baud_rate | data_bits | stop_bits | parity | timeout_ms
+115200    | 8         | 1         | N      | 100</pre>
 
     <hr>
 
@@ -694,6 +744,11 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
     <div class="warning">
         If your hardware <strong>streams data automatically</strong> without being asked (e.g. sends packets every 50 ms on its own), leave this sheet <strong>empty</strong> and do <strong>not</strong> use Auto-Fetch. Polling an already-streaming device sends unnecessary requests and may corrupt the data stream.
     </div>
+    <p><strong>Bundled template content</strong> (polls all three telemetry frames with per-frame intervals and timeouts):</p>
+    <pre>id_or_address | interval_ms | timeout_ms | enabled
+0x1000        | 100         | 50         | true
+0x2000        | 500         | 100        | true
+0x3000        | 200         | 50         | true</pre>
 
     <!-- Section 6 -->
     <h2 id="section-6">6. Appearance &amp; Updates</h2>
