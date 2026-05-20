@@ -472,8 +472,9 @@ class MainWindow(
     def _populate_view_menu(self) -> None:
         menu = self._view_menu
         menu.clear()
+        from .theming import resolve_theme
         theme = str(self._settings.value("ui/theme", "dark"))
-        ic = "#F8FAFC" if theme == "dark" else "#1F2937"
+        ic = "#F8FAFC" if resolve_theme(theme) == "dark" else "#1F2937"
 
         # Each toggle gets a distinctive Material Design icon that hints at
         # the panel's content. Without these the Panels submenu was a wall
@@ -545,8 +546,10 @@ class MainWindow(
 
     def showEvent(self, event) -> None:  # type: ignore[override]
         super().showEvent(event)
+        from .theming import resolve_theme
         theme = str(self._settings.value("ui/theme", "dark"))
-        QTimer.singleShot(0, lambda: _apply_windows_dark_titlebar(self, dark=(theme == "dark")))
+        dark = (resolve_theme(theme) == "dark")
+        QTimer.singleShot(0, lambda: _apply_windows_dark_titlebar(self, dark=dark))
         # Split right column after the window is fully shown so Qt honours it.
         if not self._settings.value("window/state"):  # only on first launch
             QTimer.singleShot(50, self._apply_default_dock_split)
@@ -1566,8 +1569,9 @@ class MainWindow(
             toast.setObjectName("bytehoundToast")
             toast.setAlignment(Qt.AlignmentFlag.AlignCenter)
             # Theme-adaptive colours: dark toast on light bg, lighter toast on dark bg.
+            from .theming import resolve_theme
             theme = str(self._settings.value("ui/theme", "dark"))
-            if theme == "light":
+            if resolve_theme(theme) == "light":
                 bg_rgba = "rgba(30, 41, 59, 235)"   # Slate-800 @ 92%
                 fg = "#F8FAFC"                       # Slate-50
             else:

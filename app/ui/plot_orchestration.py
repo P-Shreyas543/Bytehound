@@ -289,8 +289,9 @@ class PlotOrchestrationMixin:
             panel_keys = [old_keys[i] if i < len(old_keys) else [] for i in range(n)]
 
         # Build PlotItems and variable strips
+        from .theming import resolve_theme
         first_vb = None
-        theme = str(self._settings.value("ui/theme", "dark"))
+        theme = resolve_theme(str(self._settings.value("ui/theme", "dark")))
         axis_color = "#CBD5E1" if theme == "dark" else "#475569"
         border_color = "#334155" if theme == "dark" else "#CBD5E1"
         for idx in range(n):

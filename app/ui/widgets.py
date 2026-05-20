@@ -286,10 +286,13 @@ class _StatusBadgeDelegate(QStyledItemDelegate):
     def _palette(self) -> tuple[QColor, QColor, QColor]:
         # Resolve the current theme on every paint; cheap, and avoids needing
         # a separate "theme changed" signal wired into the delegate.
+        # Lazy import: widgets.py is imported during theming.py module init,
+        # so a top-level import would be a cycle.
+        from .theming import resolve_theme
         theme = "dark"
         if self._settings is not None:
             theme = str(self._settings.value("ui/theme", "dark"))
-        if theme == "light":
+        if resolve_theme(theme) == "light":
             return self._LIGHT_GREEN, self._LIGHT_RED, self._LIGHT_ORANGE
         return self._DARK_GREEN, self._DARK_RED, self._DARK_ORANGE
 
@@ -339,8 +342,9 @@ class TitleBarThemeFilter(QObject):
         if event.type() == QEvent.Type.Show:
             try:
                 if hasattr(obj, "isWindow") and obj.isWindow() and hasattr(obj, "winId"):
+                    from .theming import resolve_theme
                     theme = str(self._settings.value("ui/theme", "dark"))
-                    _apply_windows_dark_titlebar(obj, dark=(theme == "dark"))
+                    _apply_windows_dark_titlebar(obj, dark=(resolve_theme(theme) == "dark"))
             except Exception:
                 pass
         return False

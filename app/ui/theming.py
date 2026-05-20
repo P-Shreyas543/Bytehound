@@ -344,17 +344,55 @@ QTabBar::tab:hover:!selected {
 """
 
 
+def resolve_theme(theme: str) -> str:
+    """Map any theme name to a concrete ``"dark"`` or ``"light"``.
+
+    The user-facing theme selection includes ``"auto"`` (System), which
+    qdarktheme handles natively for its own palette but every QSS override
+    and per-paint branch in this codebase used to fall through the
+    ``theme == "dark"`` check and silently render as light. Result: on a
+    dark-OS machine, picking System gave a dark qdarktheme palette with
+    our LIGHT overrides on top — visually broken.
+
+    The resolution path here:
+      1. ``"dark"`` / ``"light"`` pass through unchanged.
+      2. Anything else (``"auto"``, legacy values, typos) is resolved by
+         inspecting the QApplication palette that qdarktheme just installed
+         — palette window lightness < 128 means dark.
+      3. If no QApplication is alive yet (very early boot), fall back to
+         dark — the historical default.
+    """
+    if theme == "dark":
+        return "dark"
+    if theme == "light":
+        return "light"
+    try:
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QPalette
+        app = QApplication.instance()
+        if app is not None:
+            window = app.palette().color(QPalette.ColorRole.Window)
+            return "dark" if window.lightness() < 128 else "light"
+    except Exception:
+        pass
+    return "dark"
+
+
 def build_card_qss(theme: str) -> str:
     """Assemble the app's shared card/dock/table/tab QSS for a given theme.
 
     Exposed so secondary top-level windows (e.g. Analysis Suite) can apply the
     same styling — qdarktheme's palette is applied app-wide, but these QSS
     rules are not, and must be installed on each top-level window.
+
+    Accepts ``"auto"`` and resolves to the actual OS theme via
+    :func:`resolve_theme` so callers don't have to.
     """
+    effective = resolve_theme(theme)
     qss = _QSS_BASE
-    if theme == "dark":
+    if effective == "dark":
         qss += "\n" + _QSS_DARK_OVERRIDES
-    elif theme == "light":
+    else:
         qss += "\n" + _QSS_LIGHT_OVERRIDES
     return qss
 
@@ -391,19 +429,25 @@ class ThemingMixin:
         except Exception as exc:
             self._popup_warning("Theme", f"Failed to apply theme: {exc}")
             return
-        # Persist the new theme BEFORE rebuilding any UI that reads it back
-        # from QSettings. _rebuild_action_icons -> _populate_view_menu reads
-        # the saved value to decide its icon tint; without this ordering,
-        # the View submenu stayed on the previous theme's tint until the
-        # NEXT theme change.
+        # Persist the USER'S selection (may be "auto"/System) so the choice
+        # is sticky across restarts. sync() flushes immediately so a crash
+        # before normal shutdown doesn't lose the setting.
+        # _rebuild_action_icons -> _populate_view_menu reads the saved value
+        # to decide its icon tint; without writing BEFORE that, the View
+        # submenu stays on the previous theme's tint until the NEXT change.
         self._settings.setValue("ui/theme", theme)
+        self._settings.sync()
+        # Resolve "auto" -> "dark"/"light" once. Every downstream painter
+        # branches on a binary; passing "auto" through to them would land
+        # in the light path even on a dark OS.
+        effective = resolve_theme(theme)
         # Re-apply our card + dark-override QSS on top of the fresh qdarktheme base.
-        self._apply_card_qss(theme)
+        self._apply_card_qss(effective)
         # Rebuild qtawesome icons with the correct tint for the new theme.
-        self._rebuild_action_icons(theme)
+        self._rebuild_action_icons(effective)
         # Repaint the pyqtgraph canvas — it is not a QWidget child so it does
         # not pick up the QPalette change automatically.
-        self._apply_plot_theme(theme)
+        self._apply_plot_theme(effective)
         # Stylesheets that reference `palette(...)` are resolved once when
         # setStyleSheet is called and the cached colour stays put after a
         # theme swap. Force a re-polish on the auxiliary readouts so the
@@ -427,7 +471,7 @@ class ThemingMixin:
                 )
         from PySide6.QtWidgets import QApplication
         # Schedule title-bar update via singleShot so the native HWND is stable.
-        dark = (theme == "dark")
+        dark = (effective == "dark")
         for w in QApplication.topLevelWidgets():
             QTimer.singleShot(0, lambda _w=w, _d=dark: _apply_windows_dark_titlebar(_w, _d))
         # Status-badge colours come from a custom delegate that reads the
@@ -450,7 +494,8 @@ class ThemingMixin:
         """Tint the pyqtgraph canvas + axis labels for the active theme."""
         if pg is None or not hasattr(self, "_gl_widget"):
             return
-        if theme == "dark":
+        effective = resolve_theme(theme)
+        if effective == "dark":
             bg = "#1E293B"          # match QDockWidget body — same Slate
             axis = "#CBD5E1"        # high-contrast on dark
             self._plot_palette = _PLOT_PALETTE_DARK
@@ -459,7 +504,7 @@ class ThemingMixin:
             axis = "#475569"        # readable on light
             self._plot_palette = _PLOT_PALETTE_LIGHT
         self._gl_widget.setBackground(pg.mkColor(bg))
-        crosshair_pen = self._plot_crosshair_pen(theme)
+        crosshair_pen = self._plot_crosshair_pen(effective)
         # Repaint the axis lines + tick labels on every existing PlotItem.
         for panel in getattr(self, "_plot_panels", []):
             plot = getattr(panel, "plot_item", None)
@@ -471,7 +516,7 @@ class ThemingMixin:
                     ax.setPen(pg.mkPen(axis))
                     ax.setTextPen(pg.mkPen(axis))
             if getattr(panel, "legend", None) is not None:
-                self._style_plot_legend(panel.legend, theme)
+                self._style_plot_legend(panel.legend, effective)
             if getattr(panel, "vline", None) is not None:
                 panel.vline.setPen(crosshair_pen)
             if getattr(panel, "hline", None) is not None:
@@ -486,13 +531,14 @@ class ThemingMixin:
     def _plot_crosshair_pen(self, theme: str):
         if pg is None:
             return QPen()
-        color = "#94A3B8" if theme == "dark" else "#64748B"
+        effective = resolve_theme(theme)
+        color = "#94A3B8" if effective == "dark" else "#64748B"
         return pg.mkPen(color, width=1, style=Qt.PenStyle.DashLine)
 
     def _style_plot_legend(self, legend, theme: str) -> None:
         if pg is None or legend is None:
             return
-        if theme == "dark":
+        if resolve_theme(theme) == "dark":
             bg = QColor(15, 23, 42, 160)
             border = "#475569"
         else:
@@ -514,7 +560,7 @@ class ThemingMixin:
         a fixed white icon vanishes against a light-theme menu background.
         Theme-tinted icons read well in both places.
         """
-        color = "#F8FAFC" if theme == "dark" else "#1F2937"
+        color = "#F8FAFC" if resolve_theme(theme) == "dark" else "#1F2937"
 
         # Primary AND secondary actions all use the theme tint.
         for action, name in [

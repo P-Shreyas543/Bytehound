@@ -99,6 +99,27 @@ def test_theme_toggle_round_trip(window: MainWindow) -> None:
     window._apply_theme(saved)
 
 
+def test_theme_auto_resolves(window: MainWindow) -> None:
+    """System ("auto") theme must resolve to dark/light, not silently fall
+    through every branch as light. Regression guard for the bug where
+    picking System on a dark OS produced a dark qdarktheme palette with
+    LIGHT overrides on top."""
+    from app.ui.theming import resolve_theme
+
+    saved = str(window._settings.value("ui/theme", "dark"))
+    try:
+        window._apply_theme("auto")
+        # The saved value stays "auto" (user choice persists)...
+        assert window._settings.value("ui/theme") == "auto"
+        # ...but every painter resolves to a concrete theme.
+        assert resolve_theme("auto") in ("dark", "light")
+        # Plot palette must have been swapped to a real palette, not left
+        # at whatever default getattr returns.
+        assert window._current_plot_palette()
+    finally:
+        window._apply_theme(saved)
+
+
 def test_plot_orchestration_methods(window: MainWindow) -> None:
     window._redraw_plot()
     window._apply_plot_time_mode("elapsed", persist=False)

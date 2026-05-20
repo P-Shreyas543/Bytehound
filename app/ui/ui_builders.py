@@ -109,8 +109,9 @@ class UIBuildersMixin:
         #   light menu bg + dark icon  -> good
         #   green/yellow/pink button + white-or-dark icon -> still readable
         #     because the button colours are saturated (high contrast both ways).
+        from .theming import resolve_theme
         _saved_theme = str(self._settings.value("ui/theme", "dark"))
-        _ic = "#F8FAFC" if _saved_theme == "dark" else "#1F2937"
+        _ic = "#F8FAFC" if resolve_theme(_saved_theme) == "dark" else "#1F2937"
 
         # Keyboard shortcuts are passed to setShortcut() so Qt automatically
         # renders them in the menu text (right-aligned) — users learn them by
