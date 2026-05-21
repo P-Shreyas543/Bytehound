@@ -154,7 +154,6 @@
             <li><a href="#section-4">4. Logging and Data Analysis</a>
                 <ul class="sub-menu">
                     <li><a href="#recording-logs">Recording Logs</a></li>
-                    <li><a href="#replaying">Replaying a Test</a></li>
                     <li><a href="#analysis-suite">The Analysis Suite</a></li>
                 </ul>
             </li>
@@ -382,25 +381,14 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         <li>Click <strong>Device → Start Logging</strong> (or use the toolbar). Choose <strong>Raw + Decoded</strong>, <strong>Raw only</strong>, or <strong>Decoded only</strong>, then pick the base filename. The button turns <span style="color:#e91e8c"><strong>pink</strong></span> while logging is active.</li>
         <li>The default folder is <code>~/Documents/Bytehound/</code>. Depending on the selected mode, the app writes:
             <ul>
-                <li><code>*_raw.csv</code> — timestamped RX/TX hex frames with <code>timestamp</code>, <code>direction</code>, <code>hex</code>, and <code>delta_t_ms</code> columns. This is the byte-level replay source.</li>
+                <li><code>*_raw.csv</code> — timestamped RX/TX hex frames with <code>timestamp</code>, <code>direction</code>, <code>hex</code>, and <code>delta_t_ms</code> columns. The byte-level capture of the session.</li>
                 <li><code>*_decoded.xlsx</code> — Excel workbook with two sheets: <code>Metadata</code> (app, version, port, baud, config path, session start, logging mode, etc.) and <code>Data</code> (one wide row per complete poll cycle, with a per-frame block of <code>elapsed_ms</code> + <code>frame_id</code> + signals).</li>
             </ul>
         </li>
         <li>When finished, click <strong>Device → Stop Logging</strong>. This finalises the decoded workbook.</li>
     </ol>
     <div class="note">
-        The raw CSV is flushed periodically (default 0.5 s, configurable under <strong>Tools → Logging Settings</strong>) and once more on close. The decoded <code>.xlsx</code> is buffered in memory and saved on <strong>Stop Logging</strong> — if the app crashes before Stop, the decoded workbook is lost. A session config snapshot is saved beside the log, so the raw CSV can be replayed later with the matching decoder.
-    </div>
-
-    <h3 id="replaying">Replaying a Test</h3>
-    <p>To replay a previously recorded raw stream through the currently loaded config:</p>
-    <ol>
-        <li>Click <strong>File → Load Raw Log</strong> and select your <code>*_raw.csv</code> file.</li>
-        <li>The app reads the log, skips malformed lines with a warning, and replays RX rows through all panels (table, plot, bitfields, enums) as if live.</li>
-        <li>No serial port connection is needed during replay.</li>
-    </ol>
-    <div class="warning">
-        Replays use whatever config is currently loaded. For accurate decoded values, load the same config or session snapshot that was used when the raw log was captured.
+        The raw CSV is flushed periodically (default 0.5 s, configurable under <strong>Tools → Logging Settings</strong>) and once more on close. The decoded <code>.xlsx</code> is buffered in memory and saved on <strong>Stop Logging</strong> — if the app crashes before Stop, the decoded workbook is lost. A session config snapshot is saved beside the log so the same decoder can be re-applied later.
     </div>
 
     <h3 id="analysis-suite">The Analysis Suite</h3>

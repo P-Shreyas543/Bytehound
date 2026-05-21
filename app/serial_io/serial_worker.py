@@ -96,8 +96,7 @@ class PollingWorker(QThread):
         # being emitted so the GUI thread never blocks on decode work.
         # decode_frame is pure (no shared state); the FrameConfig is treated
         # read-only for the worker's lifetime — the GUI must not mutate it
-        # while a session is live. None = pre-decoding disabled (replay path,
-        # tests).
+        # while a session is live. None = pre-decoding disabled (tests).
         self._decode_config: Optional[FrameConfig] = decode_config
 
         self._schedules = [

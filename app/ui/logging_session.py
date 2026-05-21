@@ -57,8 +57,7 @@ class LoggingSessionMixin:
         if self._serial is None:
             self._popup_warning(
                 "Start Logging",
-                "Please connect to a device before starting logging.\n"
-                "(Offline log replay does not support active logging.)"
+                "Please connect to a device before starting logging."
             )
             return
 

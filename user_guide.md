@@ -11,7 +11,7 @@ For the in-depth, illustrated handbook see **Help → View Documentation** insid
 3. [Configuration Workflow](#configuration-workflow)
 4. [Connecting to a Serial Device](#connecting-to-a-serial-device)
 5. [Viewing and Visualizing Data](#viewing-and-visualizing-data)
-6. [Logging and Offline Replay](#logging-and-offline-replay)
+6. [Logging](#logging)
 7. [Transmitting Commands (TX)](#transmitting-commands-tx)
 8. [Themes and Layout](#themes-and-layout)
 9. [Build & Distribution](#build--distribution)
@@ -95,7 +95,7 @@ Tabs showing live ON/OFF state per named bit and the active enum label per varia
 
 ---
 
-## Logging and Offline Replay
+## Logging
 
 ### Recording
 1. **File → Start Logging** and choose a base filename.
@@ -107,10 +107,7 @@ Tabs showing live ON/OFF state per named bit and the active enum label per varia
 
 The default log directory is `~/Documents/Bytehound` and a 📂 button next to the logging status opens it.
 
-### Replay
-1. Make sure the appropriate config is loaded (preferably the saved snapshot).
-2. **File → Load Raw Log** and pick the `.txt` file.
-3. Tables, bitfields, enums, and plot history populate exactly as they would have live.
+To inspect a recorded run after the fact, open the matching `*_decoded.xlsx` in the **Analysis Suite** (*Tools → Analysis Suite*). It supports time cursors, statistics over an X-range, smoothing, and overlaying multiple runs.
 
 ---
 

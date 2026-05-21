@@ -189,10 +189,9 @@ class TelemetryTableModel(QAbstractTableModel):
     ) -> bool:
         """Immediately update the four live columns and emit dataChanged.
 
-        Use this for low-frequency one-shot updates (e.g. log replay).
-        For high-frequency batched updates, prefer ``stage_live_cells`` +
-        ``commit_staged`` to avoid emitting dozens of signals per row per
-        flush cycle.
+        Use this for low-frequency one-shot updates. For high-frequency
+        batched updates, prefer ``stage_live_cells`` + ``commit_staged``
+        to avoid emitting dozens of signals per row per flush cycle.
 
         Returns True if the key was found, False otherwise.
         """

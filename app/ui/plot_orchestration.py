@@ -104,9 +104,9 @@ class PlotOrchestrationMixin:
         """Periodically refit Y for panels with auto_fit_y=True.
 
         Replaces pyqtgraph's continuous auto-range (which fires on every
-        setData call → tick regeneration → QPicture replay) with a 2 Hz
-        recompute. Skips when the computed range matches the current view
-        so the axis only repaints when bounds actually changed.
+        setData call) with a 2 Hz recompute. Skips when the computed range
+        matches the current view so the axis only repaints when bounds
+        actually changed.
         """
         if pg is None or not self._plot_panels:
             return

@@ -139,10 +139,6 @@ class UIBuildersMixin:
         self._export_template_action.setShortcut(QKeySequence("Ctrl+E"))
         self._export_template_action.triggered.connect(self._on_export_template)
 
-        self._load_log_action = QAction(_icon("mdi6.history", _ic), "Load Raw Log", self)
-        self._load_log_action.setShortcut(QKeySequence("Ctrl+Shift+O"))
-        self._load_log_action.triggered.connect(self._on_load_log)
-
         self._clear_action = QAction(_icon("mdi6.broom", _ic), "Clear Console / Log", self)
         self._clear_action.setShortcut(QKeySequence("Ctrl+K"))
         self._clear_action.triggered.connect(self._on_clear)
@@ -187,8 +183,6 @@ class UIBuildersMixin:
         file_menu.addAction(self._load_config_action)
         file_menu.addAction(self._export_template_action)
         file_menu.addSeparator()
-        file_menu.addAction(self._load_log_action)
-        file_menu.addSeparator()
         file_menu.addAction(self._exit_action)
         _add_sep()
 
@@ -227,8 +221,6 @@ class UIBuildersMixin:
         # --- Secondary actions (file / log) ---
         toolbar.addAction(self._load_config_action)
         toolbar.addAction(self._export_template_action)
-        toolbar.addSeparator()
-        toolbar.addAction(self._load_log_action)
         toolbar.addSeparator()
 
         # --- Primary actions: Connect, Poll, Log ---

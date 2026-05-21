@@ -634,7 +634,6 @@ class ThemingMixin:
         for action, name in [
             (self._load_config_action,      "mdi6.folder-upload-outline"),
             (self._export_template_action,  "mdi6.file-export-outline"),
-            (self._load_log_action,         "mdi6.history"),
             (self._clear_action,            "mdi6.broom"),
             (self._copy_value_action,       "mdi6.content-copy"),
             (self._exit_action,             "mdi6.exit-to-app"),

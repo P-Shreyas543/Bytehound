@@ -172,7 +172,6 @@ from ..decoder.types import FrameConfig
 from ..serial_logging.decoded_logger import DecodedLogger
 from ..serial_logging.raw_logger import RawLogger
 from ..protocol.packet_parser import create_parser, ParserProtocol, ParsedPacket
-from ..serial_io.replay_source import parse_log_file, replay_bytes
 from ..serial_io.serial_worker import PollingWorker
 
 _COLUMNS = (
@@ -345,10 +344,9 @@ class MainWindow(
         self._ui_timer.setInterval(16)  # ~60 Hz
         self._ui_timer.timeout.connect(self._flush_ui)
 
-        # 2 Hz Y-axis autofit. Y-autorange on every packet forces a full axis
-        # tick regeneration + QPicture replay (10s of profile time at 100 Hz);
-        # throttling to 500 ms is visually indistinguishable for telemetry and
-        # cuts the axis-paint cost roughly proportionally.
+        # 2 Hz Y-axis autofit. Y-autorange on every packet costs ~10s of profile
+        # time at 100 Hz; throttling to 500 ms is visually indistinguishable for
+        # telemetry and cuts the axis-paint cost roughly proportionally.
         self._y_autofit_timer = QTimer(self)
         self._y_autofit_timer.setInterval(500)
         self._y_autofit_timer.timeout.connect(self._throttled_y_autofit)
@@ -756,59 +754,6 @@ class MainWindow(
         self._set_status(f"Exported Excel template to {target}")
         self._log_activity(f"[ACTION] Exported Excel template: {target}")
 
-    def _on_load_log(self) -> None:
-        if self._config is None or self._parser is None:
-            return
-        path_str, _ = QFileDialog.getOpenFileName(
-            self, "Select raw log file", "", "Log files (*.csv *.txt *.log);;All files (*)"
-        )
-        if not path_str:
-            return
-
-        rows, errors = parse_log_file(path_str)
-        # Mirror every parse error into the Activity Log so the user can
-        # review them after dismissing the popup. The popup truncates at
-        # 5 lines for readability; the log keeps the full list.
-        if errors:
-            self._log_activity(
-                f"[REPLAY] {len(errors)} log line(s) failed to parse in {Path(path_str).name}"
-            )
-            for line_err in errors:
-                self._log_activity(f"  [REPLAY-PARSE] {line_err}")
-            self._popup_warning(
-                "Log parse warnings",
-                f"{len(errors)} line(s) skipped (full list in Activity Log):\n"
-                + "\n".join(errors[:5])
-                + ("\n…" if len(errors) > 5 else ""),
-            )
-        self._seen_decode_warnings.clear()
-        replay_bad_packets = 0
-        for chunk in replay_bytes(rows):
-            self._rx_bytes += len(chunk)
-            self._parser.feed(chunk)
-            for pkt in self._parser.extract_all():
-                if not pkt.ok:
-                    replay_bad_packets += 1
-                    fid = f"0x{pkt.frame_id:04X}" if pkt.frame_id is not None else "?"
-                    self._log_activity(
-                        f"  [REPLAY-FRAME] {fid}: {pkt.error or 'unknown error'}"
-                    )
-                self._handle_packet(pkt)
-        if replay_bad_packets:
-            self._log_activity(
-                f"[REPLAY] {replay_bad_packets} frame(s) failed CRC or framing during replay"
-            )
-        # _handle_packet no longer touches the status-bar counts (the live
-        # path refreshes once per UI flush). Replay has no UI timer, so do
-        # a single refresh here after the whole file is consumed.
-        self._refresh_counts_label()
-        self._set_status(f"Replayed {len(rows)} log row(s) from {Path(path_str).name}")
-        self._log_activity(
-            f"[ACTION] Replayed log file ({len(rows)} rows, {replay_bad_packets} bad frames): {path_str}"
-        )
-
-
-
     def _disconnect(self, *, reason: str = "Disconnected") -> None:
         """Single shutdown path for every disconnect scenario.
 
@@ -923,9 +868,9 @@ class MainWindow(
         # appendPlainText per flush instead of one per packet. At 1 kHz RX
         # this drops the Qt block-layout cost by ~50x.
         self._console_buffer: List[str] = []
-        # Items may be either bare ParsedPacket (replay / legacy) or
-        # (ParsedPacket, DecodedFrame|None) tuples (live, post worker-side
-        # decode). Normalise here so _handle_packet doesn't branch.
+        # Worker pushes (ParsedPacket, DecodedFrame|None) tuples; legacy
+        # bare-ParsedPacket items are normalised here so _handle_packet
+        # doesn't have to branch.
         for item in packets:
             if isinstance(item, tuple):
                 packet, pre_decoded = item
@@ -1110,8 +1055,6 @@ class MainWindow(
             self._delta_t_ms = (now - self._last_packet_perf) * 1000.0
         self._last_packet_perf = now
         # Buffer the console line. _flush_ui appends them all in one shot.
-        # Falling back to direct append keeps replay (which calls
-        # _handle_packet outside the batch path) behaving as before.
         # Skip the whole console pipeline when the dock is hidden: the
         # datetime.strftime + hex.upper formatting is ~10 µs per packet
         # which dominates the per-packet UI cost at 1 kHz. Same UX
@@ -1119,22 +1062,12 @@ class MainWindow(
         # re-open time forward.
         console_dock = getattr(self, "_console_dock", None)
         if console_dock is None or console_dock.isVisible():
-            line = self._format_console_row(packet)
-            buf = getattr(self, "_console_buffer", None)
-            if buf is None:
-                self._console.appendPlainText(line)
-            else:
-                buf.append(line)
+            self._console_buffer.append(self._format_console_row(packet))
         if self._raw_logger:
             self._raw_logger.log("RX", packet.raw, delta_t_ms=self._delta_t_ms)
         if not packet.ok:
-            # During live, the worker is the single source of truth for the CRC
-            # error count and pushes it via metrics_updated → _on_metrics_updated.
-            # Counting again here would double-count and produce a 0↔1 flicker
-            # as the two writes race. In replay mode there is no worker, so we
-            # do the bookkeeping ourselves.
-            if self._serial is None:
-                self._error_count += 1
+            # Worker is the single source of truth for the CRC error count
+            # and pushes it via metrics_updated → _on_metrics_updated.
             return
 
         # Reset LED to green when data is flowing again after a timeout.
@@ -1146,9 +1079,9 @@ class MainWindow(
                 self._set_status("Connected")
 
         assert self._config is not None
-        # Live path: the worker thread already decoded for us so the GUI
-        # thread doesn't block on decode work. Replay (no worker) and the
-        # rare worker-decode-error fallback path go through decode_frame here.
+        # The worker thread already decoded for us so the GUI thread doesn't
+        # block on decode work. The rare worker-decode-error fallback path
+        # goes through decode_frame here.
         decoded = pre_decoded if pre_decoded is not None else decode_frame(
             self._config, packet.frame_id, packet.payload
         )
@@ -1527,7 +1460,6 @@ class MainWindow(
 
     def _refresh_action_state(self) -> None:
         ready = self._config is not None
-        self._load_log_action.setEnabled(ready)
         self._clear_action.setEnabled(ready)
         # Logging requires an active connection; _set_connection_ui controls this.
         # Only set enabled=True here if we're currently connected.

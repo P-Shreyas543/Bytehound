@@ -35,8 +35,7 @@ Persistence trade-off
 ---------------------
 openpyxl write-only mode streams rows into the workbook in memory but
 only persists to disk on :meth:`close`. A crash before Stop Logging
-loses the decoded workbook; the raw CSV (streamed) is unaffected and can
-be replayed to regenerate the decoded values.
+loses the decoded workbook; the raw CSV (streamed) is unaffected.
 
 Threading model
 ---------------

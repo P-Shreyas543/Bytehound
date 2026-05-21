@@ -8,7 +8,7 @@ Exercises every feature the user asked about:
 4. TX commands         - Reset (static payload) is built and goes on the wire
 5. Parameter editor    - Set_Voltage_Limit is built from a user-supplied value
                          AND the Arduino reflects the new value back via 0x2000
-6. Loggers + replay    - raw / decoded CSV write and round-trip cleanly
+6. Loggers            - raw / decoded CSV write cleanly
 
 Run:  python smoke_headless.py [--port COM7]
 
@@ -31,7 +31,6 @@ from PySide6.QtCore import QCoreApplication, QTimer
 from app.commands.tx_command_builder import build_tx_command
 from app.decoder.config_loader import load_config
 from app.decoder.frame_decoder import decode_frame
-from app.serial_io.replay_source import parse_log_file, replay_bytes
 from app.serial_io.serial_worker import PollingWorker, SerialSettings
 from app.serial_logging.decoded_logger import DecodedLogger
 from app.serial_logging.raw_logger import RawLogger
@@ -308,19 +307,6 @@ def main() -> int:
             )
     else:
         rep.fail("No 0x2000 frames captured - cannot check round-trip")
-
-    # ----- 8. Logger + replay round-trip ---------------------------------
-    print("\n=== 8. Logger / replay round-trip ===")
-    rows, errors = parse_log_file(raw_path)
-    if errors:
-        rep.fail(f"Raw log re-parse had {len(errors)} errors")
-    else:
-        rep.ok(f"Raw log parsed back: {len(rows)} rows, 0 errors")
-    rx_bytes = sum(len(chunk) for chunk in replay_bytes(rows, directions=("RX",)))
-    if rx_bytes > 0:
-        rep.ok(f"Replay engine yielded {rx_bytes} RX bytes")
-    else:
-        rep.fail("Replay yielded zero RX bytes")
 
     # ----- Summary --------------------------------------------------------
     print("\n========================== SUMMARY ==========================")

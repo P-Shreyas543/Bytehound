@@ -1,6 +1,6 @@
 # Bytehound
 
-Python desktop tool for framed serial data logging, decoding, replay, TX command building, and live visualization. Driven entirely by user-editable CSV/Excel configuration — no hard-coded frame layouts.
+Python desktop tool for framed serial data logging, decoding, TX command building, and live visualization. Driven entirely by user-editable CSV/Excel configuration — no hard-coded frame layouts.
 
 ## Requirements
 

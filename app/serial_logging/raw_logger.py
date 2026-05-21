@@ -100,7 +100,7 @@ class RawLogger:
         # Refuse to append to an existing file whose header does not match
         # the current schema. Silently writing rows with a different column
         # count corrupts the CSV (header says 3 cols, data has 4) and breaks
-        # pandas, Excel, and the app's own replay parser.
+        # pandas and Excel.
         if not new_file:
             existing = self._read_existing_header()
             if existing != self.COLUMNS:

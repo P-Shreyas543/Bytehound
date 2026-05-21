@@ -71,15 +71,20 @@ class UpdaterWiringMixin:
         self._downloader = UpdateDownloader(url, dest_path, expected_sha256=sha256)
         self._downloader.progress.connect(self._on_download_progress)
         self._downloader.finished.connect(self._on_download_finished)
-        self._downloader.error.connect(
-            lambda e: self._popup_critical("Updater Error", f"Download failed:\n{e}")
-        )
+        self._downloader.error.connect(self._on_download_error)
         self._progress.canceled.connect(self._downloader.requestInterruption)
         self._downloader.start()
 
     def _on_download_progress(self, downloaded: int, total: int) -> None:
         self._progress.setMaximum(total)
         self._progress.setValue(downloaded)
+
+    def _on_download_error(self, message: str) -> None:
+        # Close the always-on-top progress dialog first; otherwise it floats
+        # above the error popup and blocks the user from dismissing it.
+        if getattr(self, "_progress", None) is not None:
+            self._progress.close()
+        self._popup_critical("Updater Error", f"Download failed:\n{message}")
 
     def _on_download_finished(self, dest_path: str) -> None:
         self._progress.close()

@@ -115,8 +115,8 @@ class ConfigLoaderMixin:
 
         # The running PollingWorker captured its protocol/parser/schedules at
         # construction time. Loading a new config replaces self._config and
-        # self._parser (used by replay), but the worker keeps decoding live
-        # bytes with the OLD rules until it is restarted. Tell the user.
+        # self._parser, but the worker keeps decoding live bytes with the OLD
+        # rules until it is restarted. Tell the user.
         if self._serial is not None and self._serial.is_open:
             self._popup_information(
                 "Reconnect required",

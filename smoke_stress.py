@@ -14,7 +14,6 @@ Designed to find production bugs by hammering every part of the stack:
   Phase 9  TX flood (priority queue overflow handled gracefully)
   Phase 10 Parameter editor round-trip (multiple set-points)
   Phase 11 Long-run leak check (5 s bursts, watch _pending_packets / RAM)
-  Phase 12 Logger + replay round-trip
 
 The Arduino must be flashed with the sketch in Arduino_BMS_Simulator/.
 Exit code is the number of failed checks (0 = all green).
@@ -42,7 +41,6 @@ from app.commands.tx_command_builder import build_tx_command
 from app.decoder.config_loader import load_config
 from app.decoder.frame_decoder import decode_frame
 from app.protocol.packet_builder import build_packet
-from app.serial_io.replay_source import parse_log_file, replay_bytes
 from app.serial_io.serial_worker import PollingWorker, SerialSettings
 from app.serial_logging.decoded_logger import DecodedLogger
 from app.serial_logging.raw_logger import RawLogger
@@ -417,21 +415,12 @@ def main() -> int:
     send_raw(0x1002, bytes([0x00]))   # stress off
     run_for(app, 0.5)
 
-    # ---------- Phase 12 — logger / replay round-trip ---------------------
-    hdr("Phase 12  Logger + replay round-trip")
+    # ---------- Phase 12 — clean shutdown of worker + loggers -------------
+    hdr("Phase 12  Clean shutdown")
     worker.close()
     raw_logger.close()
     decoded_logger.close()
-    rows, log_errors = parse_log_file(raw_path)
-    if log_errors:
-        rep.fail(f"raw log parse errors", f"{len(log_errors)}")
-    else:
-        rep.ok(f"Raw log re-parsed cleanly", f"{len(rows)} rows")
-    rx_bytes = sum(len(chunk) for chunk in replay_bytes(rows, directions=("RX",)))
-    if rx_bytes > 0:
-        rep.ok(f"Replay yielded RX bytes", f"{rx_bytes} bytes")
-    else:
-        rep.fail("Replay yielded zero RX bytes")
+    rep.ok("Worker and loggers closed without exception")
 
     # ---------- Summary --------------------------------------------------
     hdr(f"Summary  {len(rep.passed)} passed, {len(rep.failed)} failed")

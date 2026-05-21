@@ -23,7 +23,6 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 10. [Serial I/O & Polling Engine](#10-serial-io--polling-engine)
 11. [TX Commands & Parameter Editor](#11-tx-commands--parameter-editor)
 12. [Logging Formats](#12-logging-formats)
-13. [Replay Source](#13-replay-source)
 14. [UI Specification](#14-ui-specification)
 15. [Analysis Suite](#15-analysis-suite)
 16. [Auto-Updater](#16-auto-updater)
@@ -91,7 +90,7 @@ directories. Branding files themselves are tracked.
   bitfields.
 - Visualizes data live (table + plot) and lets the user send commands and
   edit parameters back to the device.
-- Records and replays sessions with per-byte fidelity.
+- Records sessions with per-byte fidelity for later offline analysis.
 
 **Non-Goals.**
 
@@ -143,8 +142,7 @@ BMS-MonitorApp/
 │   │   ├── packet_parser.py            # framed + Modbus RTU stream parsers
 │   │   └── packet_builder.py           # mirror of parser, for TX
 │   ├── serial_io/
-│   │   ├── serial_worker.py            # QThread: open port, poll, RX/TX
-│   │   └── replay_source.py            # read raw_log.csv, yield bytes
+│   │   └── serial_worker.py            # QThread: open port, poll, RX/TX
 │   ├── serial_logging/
 │   │   ├── raw_logger.py               # CSV writer: timestamp,direction,hex,delta_t_ms
 │   │   └── decoded_logger.py           # xlsx writer: Metadata + Data sheets
@@ -670,25 +668,10 @@ periodically (`flush_interval`, default 0.5 s) so a crash loses ≤ one
 buffer. The decoded `DecodedLogger` uses openpyxl write-only mode and
 **only writes to disk when `close()` is called** (on Stop Logging or
 shutdown). An app crash before Stop loses the decoded workbook; the raw
-CSV is unaffected and can be replayed to regenerate decoded values.
+CSV is unaffected.
 
 When logging starts, the active config is snapshotted next to the log via
 `snapshot_config(...)` so the file is self-describing.
-
----
-
-## 13. Replay Source
-
-`parse_log_file(path)` accepts:
-
-- The CSV format above (header row detected and skipped).
-- Legacy plain-text rows: `YYYY-MM-DD HH:MM:SS.mmm, RX|TX, HEX BYTES`.
-
-Returns `(rows, errors)`; bad lines are collected, not raised.
-
-`replay_bytes(rows, directions=("RX",))` yields each row's bytes in order.
-The UI feeds these into a fresh `ParserProtocol` so replay reuses the live
-RX path 1:1.
 
 ---
 
@@ -727,8 +710,6 @@ if `qtawesome` is missing at runtime.
 |------|------|----------|
 | **Import Config** | `_on_load_config` | Pick a `.xlsx` / `.xlsm` workbook or a directory of CSVs. Loaded via `load_config(path)`. Path persists in `QSettings` key `config/last_path` and auto-loads next launch. |
 | **Export Template** | `_on_export_template` | Write a blank dictionary template via `export_excel_template(...)`. |
-| — separator — |  |  |
-| **Load Raw Log** | `_on_load_log` | Pick a `*_raw.csv` recording. Switches UI to replay mode. |
 | — separator — |  |  |
 | **Exit** | `self.close` | Saves window geometry/state and quits. |
 
@@ -773,7 +754,7 @@ Built dynamically in `_populate_view_menu()`. Items in order:
 Built in `_build_toolbar()`. The toolbar is streamlined to prioritize primary
 hardware actions and configuration loading. Order, left to right:
 
-**Import Config** | **Export Template** | **Load Raw Log** | **Connect** | **Start Auto-Fetch**
+**Import Config** | **Export Template** | **Connect** | **Start Auto-Fetch**
 
 - **Visual hierarchy:** **Connect** and **Start Auto-Fetch** are the primary
   hardware actions. Both `QToolButton`s carry `objectName="primaryAction"` and
@@ -1061,12 +1042,6 @@ All panels persist their dock area and visibility via `QMainWindow.saveState`.
 - **Toggle Polling**: `worker.set_polling_global(enabled)`. Reflects in the
   status bar.
 
-### Replay mode
-
-Loading a raw log via *File → Load Raw Log* puts the UI into a non-live mode:
-the file is parsed, bytes are fed sequentially through a fresh parser, and
-every panel updates as if live. No serial port is opened.
-
 ---
 
 ## 15. Analysis Suite
@@ -1324,8 +1299,6 @@ Pytest suite under `tests/`. Required coverage:
 - `test_polling_worker.py` — schedule cadence, priority TX preempts polling
   (use a fake serial transport).
 - `test_logging.py` — raw CSV row format + append-with-header logic; decoded xlsx data sheet and metadata sheet contents.
-- `test_replay.py` — both CSV and legacy text formats; bad lines collected,
-  not raised.
 - `test_boot_smoke.py` — headless boot smoke for the `MainWindow` mixin
   stack. Constructs `MainWindow` under `QT_QPA_PLATFORM=offscreen` and
   exercises one representative method per mixin (Theming, PlotOrchestration,
@@ -1379,7 +1352,6 @@ The script exits with a non-zero code equal to the number of failed checks, and 
 | 5 | Enums | `Mode` `enum_label` resolves to one of `{Idle, Charging, Discharging, Fault, Service}` |
 | 6 | TX commands | Both `Reset` (static payload) and `Set_Voltage_Limit` (parameterized) appear in `tx_recorded` |
 | 7 | Round-trip | After `Set_Voltage_Limit(58.5 V)` the simulator's next `0x2000` frame reflects the new value (closes the parameter-editor loop end-to-end) |
-| 8 | Logger / replay | `*_raw.csv` re-parses with zero errors and `replay_bytes()` yields the captured RX bytes |
 
 ### Arduino BMS Simulator
 
@@ -1439,14 +1411,12 @@ The build is "done" when:
 2. **Config-driven:** Editing only the Excel/CSV config (no Python changes)
    is sufficient to support a new device's frames, signals, bitfields, enums,
    TX buttons, and polling schedule.
-3. **Live ↔ Replay parity:** Replaying `*_raw.csv` produces the exact same
-   table/plot/log output as the original live session.
-4. **Crash-free I/O:** Disconnecting mid-stream, hot-plugging the device, and
+3. **Crash-free I/O:** Disconnecting mid-stream, hot-plugging the device, and
    sending malformed bytes do not crash the app — only counters tick up.
    Logging stops automatically on disconnect.
-5. **Persistent UX:** Window layout, theme, last port/baud, last config path,
+4. **Persistent UX:** Window layout, theme, last port/baud, last config path,
    live plot layout, and per-panel signal assignments survive a restart.
-6. **Multi-grid plot:** The Live Plot correctly renders 1–8 subplots, all
+5. **Multi-grid plot:** The Live Plot correctly renders 1–8 subplots, all
    X-linked. Per-panel variable assignment works from the strip and from the
    right-click table context menu. Live mode (0→now) and Explore mode (frozen
    on pan/zoom) switch correctly. Pause/Live toggle (Space) snaps back to Live.
