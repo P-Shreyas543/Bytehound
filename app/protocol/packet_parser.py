@@ -21,6 +21,281 @@ _MAX_BUFFER_BYTES = 1_000_000
 _BUFFER_TAIL_BYTES = 4096  # how many recent bytes to keep when trimming
 
 
+LENGTH_MEANINGS = ("payload_only", "frame_total", "header_to_crc", "payload_plus_crc")
+CRC_COVERAGES = ("header_to_payload", "frame_id_to_payload", "payload_only", "full_frame")
+ESCAPE_MODES = ("none", "slip", "hdlc", "cobs")
+
+
+# ---------------------------------------------------------------------------
+# Outer escape / unescape layer.
+#
+# An "escape mode" is applied AFTER the inner Bytehound frame is built and
+# BEFORE inner parsing on RX. The inner frame is the normal
+# header+fid+length+payload+CRC+footer byte sequence; the outer layer wraps
+# that with delimiter bytes and escapes any special bytes that would
+# otherwise be mistaken for delimiters.
+#
+# We support three industry-standard schemes:
+#   * SLIP (RFC 1055): END=0xC0 delimits frames; ESC=0xDB; 0xC0 inside a
+#     frame is encoded as DB DC, 0xDB as DB DD.
+#   * HDLC byte-stuffing: flag=0x7E delimits frames; ESC=0x7D; 0x7E in
+#     payload becomes 7D 5E, 0x7D becomes 7D 5D.
+#   * COBS (Cheshire/Baker 1999): every 0x00 in the encoded frame is
+#     stripped; a code byte prefixes each chunk pointing to the next zero;
+#     a final 0x00 byte delimits frames.
+# ---------------------------------------------------------------------------
+
+_SLIP_END = 0xC0
+_SLIP_ESC = 0xDB
+_SLIP_ESC_END = 0xDC
+_SLIP_ESC_ESC = 0xDD
+
+_HDLC_FLAG = 0x7E
+_HDLC_ESC = 0x7D
+_HDLC_XOR = 0x20  # XOR mask applied to the escaped byte
+
+
+def escape_frame(inner: bytes, mode: str) -> bytes:
+    """Return the on-wire byte sequence for ``inner`` under ``mode``.
+
+    Empty input is allowed (some schemes produce a keepalive on empty input);
+    callers that don't want keepalives must check before calling.
+    """
+    if mode == "none":
+        return inner
+    if mode == "slip":
+        out = bytearray([_SLIP_END])
+        for b in inner:
+            if b == _SLIP_END:
+                out.extend((_SLIP_ESC, _SLIP_ESC_END))
+            elif b == _SLIP_ESC:
+                out.extend((_SLIP_ESC, _SLIP_ESC_ESC))
+            else:
+                out.append(b)
+        out.append(_SLIP_END)
+        return bytes(out)
+    if mode == "hdlc":
+        out = bytearray([_HDLC_FLAG])
+        for b in inner:
+            if b == _HDLC_FLAG or b == _HDLC_ESC:
+                out.append(_HDLC_ESC)
+                out.append(b ^ _HDLC_XOR)
+            else:
+                out.append(b)
+        out.append(_HDLC_FLAG)
+        return bytes(out)
+    if mode == "cobs":
+        return _cobs_encode(inner) + b"\x00"
+    raise ValueError(f"Unsupported escape_mode: {mode!r}")
+
+
+def _cobs_encode(data: bytes) -> bytes:
+    """Standard COBS encode (no trailing delimiter — the caller appends 0x00)."""
+    out = bytearray()
+    chunk = bytearray()
+    for b in data:
+        if b == 0:
+            out.append(len(chunk) + 1)
+            out.extend(chunk)
+            chunk.clear()
+        else:
+            chunk.append(b)
+            if len(chunk) == 0xFE:
+                out.append(0xFF)
+                out.extend(chunk)
+                chunk.clear()
+    out.append(len(chunk) + 1)
+    out.extend(chunk)
+    return bytes(out)
+
+
+def _cobs_decode(data: bytes) -> bytes:
+    """COBS decode of a complete frame (excluding the trailing 0x00 delimiter).
+
+    Returns the decoded bytes, or raises ValueError if ``data`` is malformed.
+    """
+    out = bytearray()
+    i = 0
+    n = len(data)
+    while i < n:
+        code = data[i]
+        if code == 0:
+            raise ValueError("unexpected zero byte inside COBS-encoded frame")
+        block_len = code - 1
+        if i + 1 + block_len > n:
+            raise ValueError("COBS code byte points past end of frame")
+        out.extend(data[i + 1 : i + 1 + block_len])
+        i += 1 + block_len
+        if code != 0xFF and i < n:
+            out.append(0)
+    return bytes(out)
+
+
+class _Unframer:
+    """Streaming outer-layer unframer.
+
+    Feed raw on-wire bytes via :meth:`feed`; complete inner-frame byte blobs
+    are queued and returned by :meth:`extract_frames`. The unframer maintains
+    just enough state to span chunk boundaries (escape pending across feeds,
+    half-built frame, etc).
+    """
+
+    def __init__(self, mode: str) -> None:
+        if mode not in ESCAPE_MODES:
+            raise ValueError(f"Unsupported escape_mode: {mode!r}")
+        self._mode = mode
+        self._cur = bytearray()
+        self._ready: list[bytes] = []
+        # SLIP / HDLC: tracks whether the previous byte was the ESC marker.
+        self._esc_pending = False
+
+    def feed(self, data: bytes) -> None:
+        if self._mode == "slip":
+            self._feed_slip(data)
+        elif self._mode == "hdlc":
+            self._feed_hdlc(data)
+        elif self._mode == "cobs":
+            self._feed_cobs(data)
+        else:
+            raise ValueError(f"unframer must not be used with escape_mode={self._mode!r}")
+
+    def extract_frames(self) -> list[bytes]:
+        out = self._ready
+        self._ready = []
+        return out
+
+    def _emit_current(self) -> None:
+        if self._cur:
+            self._ready.append(bytes(self._cur))
+            self._cur.clear()
+
+    def _feed_slip(self, data: bytes) -> None:
+        for b in data:
+            if self._esc_pending:
+                if b == _SLIP_ESC_END:
+                    self._cur.append(_SLIP_END)
+                elif b == _SLIP_ESC_ESC:
+                    self._cur.append(_SLIP_ESC)
+                else:
+                    # Invalid escape sequence — drop the current frame and
+                    # resync on the next END byte.
+                    self._cur.clear()
+                self._esc_pending = False
+            elif b == _SLIP_END:
+                self._emit_current()
+            elif b == _SLIP_ESC:
+                self._esc_pending = True
+            else:
+                self._cur.append(b)
+
+    def _feed_hdlc(self, data: bytes) -> None:
+        for b in data:
+            if self._esc_pending:
+                self._cur.append(b ^ _HDLC_XOR)
+                self._esc_pending = False
+            elif b == _HDLC_FLAG:
+                self._emit_current()
+            elif b == _HDLC_ESC:
+                self._esc_pending = True
+            else:
+                self._cur.append(b)
+
+    def _feed_cobs(self, data: bytes) -> None:
+        for b in data:
+            if b == 0:
+                if self._cur:
+                    try:
+                        decoded = _cobs_decode(bytes(self._cur))
+                    except ValueError:
+                        decoded = b""
+                    if decoded:
+                        self._ready.append(decoded)
+                    self._cur.clear()
+            else:
+                self._cur.append(b)
+
+
+def encode_length_field(payload_size: int, protocol: "ProtocolConfig") -> int:
+    """Return the integer to write into the length field, given a payload of
+    ``payload_size`` bytes and the protocol's ``length_meaning``.
+
+    The four supported meanings count different regions of the on-wire frame:
+
+    * ``payload_only`` — just the payload bytes (legacy default).
+    * ``frame_total`` — every byte in the frame (header through footer).
+    * ``header_to_crc`` — header through CRC inclusive, footer excluded.
+    * ``payload_plus_crc`` — payload bytes plus CRC bytes.
+    """
+    h = len(protocol.header)
+    f = protocol.frame_id_size
+    l = protocol.length_size
+    c = protocol.crc_size if protocol.crc_type != "none" else 0
+    z = len(protocol.footer)
+    p = payload_size
+    meaning = protocol.length_meaning
+    if meaning == "payload_only":
+        return p
+    if meaning == "frame_total":
+        return h + f + l + p + c + z
+    if meaning == "header_to_crc":
+        return h + f + l + p + c
+    if meaning == "payload_plus_crc":
+        return p + c
+    raise ValueError(f"Unsupported length_meaning: {meaning!r}")
+
+
+def decode_length_field(length_value: int, protocol: "ProtocolConfig") -> int:
+    """Inverse of :func:`encode_length_field`. Returns the payload size that
+    a frame with this length-field value would carry. A negative return means
+    the on-wire length value is too small to be a valid frame of this shape —
+    the parser should treat the byte as garbage and resync.
+    """
+    h = len(protocol.header)
+    f = protocol.frame_id_size
+    l = protocol.length_size
+    c = protocol.crc_size if protocol.crc_type != "none" else 0
+    z = len(protocol.footer)
+    meaning = protocol.length_meaning
+    if meaning == "payload_only":
+        return length_value
+    if meaning == "frame_total":
+        return length_value - (h + f + l + c + z)
+    if meaning == "header_to_crc":
+        return length_value - (h + f + l + c)
+    if meaning == "payload_plus_crc":
+        return length_value - c
+    raise ValueError(f"Unsupported length_meaning: {meaning!r}")
+
+
+def crc_coverage_bytes(
+    header: bytes,
+    fid_bytes: bytes,
+    length_bytes: bytes,
+    payload: bytes,
+    footer: bytes,
+    protocol: "ProtocolConfig",
+) -> bytes:
+    """Return the byte range over which the CRC is computed, per
+    ``protocol.crc_coverage``.
+
+    * ``header_to_payload`` — header + frame_id + length + payload.
+    * ``frame_id_to_payload`` — frame_id + length + payload (header excluded).
+    * ``payload_only`` — payload bytes only.
+    * ``full_frame`` — everything except the CRC field itself (header +
+      frame_id + length + payload + footer).
+    """
+    coverage = protocol.crc_coverage
+    if coverage == "header_to_payload":
+        return header + fid_bytes + length_bytes + payload
+    if coverage == "frame_id_to_payload":
+        return fid_bytes + length_bytes + payload
+    if coverage == "payload_only":
+        return bytes(payload)
+    if coverage == "full_frame":
+        return header + fid_bytes + length_bytes + payload + footer
+    raise ValueError(f"Unsupported crc_coverage: {coverage!r}")
+
+
 @dataclass(frozen=True)
 class ParsedPacket:
     raw: bytes
@@ -65,9 +340,23 @@ class FramedParser(ParserProtocol):
     def __init__(self, protocol: ProtocolConfig) -> None:
         self.protocol = protocol
         self._buf = bytearray()
+        # When escape_mode != "none" an outer unframer extracts complete
+        # inner-frame blobs from the on-wire stream; those blobs are then
+        # appended to ``_buf`` and the existing header-search logic processes
+        # them as if no escaping had ever happened.
+        self._unframer = (
+            _Unframer(protocol.escape_mode)
+            if protocol.escape_mode != "none"
+            else None
+        )
 
     def feed(self, data: bytes) -> None:
-        self._buf.extend(data)
+        if self._unframer is None:
+            self._buf.extend(data)
+        else:
+            self._unframer.feed(data)
+            for inner in self._unframer.extract_frames():
+                self._buf.extend(inner)
         _trim_if_overflow(self._buf, "FramedParser")
 
     def extract_all(self) -> List[ParsedPacket]:
@@ -113,7 +402,16 @@ class FramedParser(ParserProtocol):
         # length_byte_order falls back to frame_id_byte_order when not
         # explicitly configured. Backward-compatible with existing configs.
         length_endian = pc.length_byte_order or pc.frame_id_byte_order
-        payload_len = int.from_bytes(length_bytes, length_endian)
+        length_value = int.from_bytes(length_bytes, length_endian)
+
+        # Translate the on-wire length value into the payload size per the
+        # protocol's length_meaning. A negative result means the value is
+        # too small to be a real frame of this shape (e.g. frame_total < fixed
+        # bytes) — the bytes after the header marker are garbage; drop the
+        # header byte to resync.
+        payload_len = decode_length_field(length_value, pc)
+        if payload_len < 0:
+            return None, 1
 
         total_size = fixed_size + payload_len
         # If total_size is larger than we could ever buffer, this frame is
@@ -141,11 +439,9 @@ class FramedParser(ParserProtocol):
         footer_off = crc_off + pc.crc_size
         footer_bytes = bytes(self._buf[footer_off : footer_off + len(pc.footer)])
 
-        # Only "header_to_payload" is supported; the config validator
-        # (config_loader._validate_protocol) rejects anything else, so
-        # there's no runtime branch here. If/when additional coverages
-        # are added, gate them at the validator first.
-        coverage = bytes(self._buf[: payload_off + payload_len])
+        coverage = crc_coverage_bytes(
+            header, fid_bytes, length_bytes, payload, footer_bytes, pc,
+        )
 
         if pc.crc_type != "none":
             expected = crc_mod.compute(pc.crc_type, coverage)

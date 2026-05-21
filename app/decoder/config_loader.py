@@ -374,6 +374,12 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
             f"protocol: length_byte_order must be 'big', 'little', or empty (got {length_byte_order_raw!r})"
         )
 
+    raw_log_format_raw = (row.get("raw_log_format") or "hex").strip().lower()
+    if raw_log_format_raw not in {"hex", "compact"}:
+        raise ConfigError(
+            f"protocol: raw_log_format must be 'hex' or 'compact' (got {raw_log_format_raw!r})"
+        )
+
     protocol = ProtocolConfig(
         profile_name=row["profile_name"],
         header=_hex_to_bytes(row["header_hex"], "header_hex"),
@@ -398,6 +404,7 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         inter_frame_delay_ms=_to_int(row.get("inter_frame_delay_ms", "10"), field_name="inter_frame_delay_ms"),
         length_byte_order=length_byte_order,
         modbus_node_address=_to_int(row.get("modbus_node_address", "1"), field_name="modbus_node_address"),
+        raw_log_format=raw_log_format_raw,
     )
     _validate_protocol(protocol)
     return protocol
@@ -410,12 +417,23 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
         raise ConfigError("protocol: frame_id_byte_order must be big or little")
     if protocol.crc_byte_order not in {"big", "little"}:
         raise ConfigError("protocol: crc_byte_order must be big or little")
-    if protocol.length_meaning != "payload_only":
-        raise ConfigError("protocol: only length_meaning=payload_only is supported")
-    if protocol.crc_coverage != "header_to_payload":
-        raise ConfigError("protocol: only crc_coverage=header_to_payload is supported")
-    if protocol.escape_mode != "none":
-        raise ConfigError("protocol: only escape_mode=none is currently supported")
+    if protocol.length_meaning not in {"payload_only", "frame_total", "header_to_crc", "payload_plus_crc"}:
+        raise ConfigError(
+            f"protocol: length_meaning must be one of "
+            f"'payload_only', 'frame_total', 'header_to_crc', 'payload_plus_crc' "
+            f"(got {protocol.length_meaning!r})"
+        )
+    if protocol.crc_coverage not in {"header_to_payload", "frame_id_to_payload", "payload_only", "full_frame"}:
+        raise ConfigError(
+            f"protocol: crc_coverage must be one of "
+            f"'header_to_payload', 'frame_id_to_payload', 'payload_only', 'full_frame' "
+            f"(got {protocol.crc_coverage!r})"
+        )
+    if protocol.escape_mode not in {"none", "slip", "hdlc", "cobs"}:
+        raise ConfigError(
+            f"protocol: escape_mode must be one of "
+            f"'none', 'slip', 'hdlc', 'cobs' (got {protocol.escape_mode!r})"
+        )
     if protocol.parser_type not in {"framed", "modbus_rtu"}:
         raise ConfigError("protocol: parser_type must be framed or modbus_rtu")
 
@@ -429,12 +447,23 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
         enabled = _to_bool(row.get("enabled", "true"), default=True, field_name="frames.enabled")
         if not enabled:
             continue
+        direction_raw = (row.get("direction", "") or "").strip().lower()
+        if direction_raw == "":
+            direction = "rxtx"
+        elif direction_raw in {"rx", "tx", "rxtx"}:
+            direction = direction_raw
+        else:
+            raise ConfigError(
+                f"frames row {row_no}: direction must be 'rx', 'tx', 'rxtx', "
+                f"or blank (got {direction_raw!r})"
+            )
         frames[frame_id] = FrameDefinition(
             frame_id=frame_id,
             frame_name=row["frame_name"],
             payload_length=_to_optional_int(row.get("payload_length", ""), field_name="payload_length"),
             enabled=enabled,
             description=row.get("description", ""),
+            direction=direction,
         )
     return frames
 

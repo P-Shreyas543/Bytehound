@@ -568,24 +568,44 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
         <tr><td><code>profile_name</code></td><td>text</td><td><code>BMS_v2</code></td><td>Free-text label for this protocol profile.</td></tr>
         <tr><td><code>parser_type</code></td><td>enum</td><td><code>framed</code></td><td><code>framed</code> = custom byte-framed protocol (default for most embedded MCUs). <code>modbus_rtu</code> = standard Modbus RTU — framing, FC codes, and CRC are handled automatically.</td></tr>
+        <tr><td><code>modbus_node_address</code></td><td>integer</td><td><code>1</code> <em>(default)</em></td><td>Modbus slave address used as the first byte of every outgoing Modbus request. Only meaningful when <code>parser_type = modbus_rtu</code>; ignored for <code>framed</code>. Defaults to <code>1</code> if blank or omitted.</td></tr>
         <tr><td><code>header_hex</code></td><td>hex bytes</td><td><code>AA 55</code></td><td>Fixed start-of-frame marker the parser searches for. Space-separated hex bytes. <em>Ignored when parser_type = modbus_rtu.</em></td></tr>
         <tr><td><code>frame_id_size</code></td><td>integer</td><td><code>2</code></td><td>How many bytes carry the frame ID after the header. <em>Ignored for modbus_rtu.</em></td></tr>
         <tr><td><code>frame_id_byte_order</code></td><td>enum</td><td><code>little</code></td><td><code>big</code> or <code>little</code> endian for the frame ID bytes.</td></tr>
         <tr><td><code>length_size</code></td><td>integer</td><td><code>1</code></td><td>How many bytes carry the payload-length field. <em>Ignored for modbus_rtu (length is implicit in each FC).</em></td></tr>
-        <tr><td><code>length_meaning</code></td><td>enum</td><td><code>payload_only</code></td><td>What the length field counts. Only <code>payload_only</code> is supported. <em>Ignored for modbus_rtu.</em></td></tr>
+        <tr><td><code>length_meaning</code></td><td>enum</td><td><code>payload_only</code> <em>(default)</em></td><td>What the length field counts on the wire. Four values supported: <code>payload_only</code> (just the payload bytes), <code>frame_total</code> (header + frame_id + length + payload + CRC + footer — the full frame size), <code>header_to_crc</code> (everything except the footer), <code>payload_plus_crc</code> (payload + CRC bytes). The parser and TX builder honour the chosen value end-to-end. <em>Ignored for modbus_rtu.</em></td></tr>
         <tr><td><code>crc_type</code></td><td>enum</td><td><code>crc16_modbus</code></td><td>Checksum algorithm: <code>crc16_modbus</code>, <code>crc16_ccitt</code>, <code>crc32</code>, or <code>none</code>. For modbus_rtu the CRC is always CRC16/Modbus regardless of this field.</td></tr>
         <tr><td><code>crc_size</code></td><td>integer</td><td><code>2</code></td><td>How many bytes the CRC occupies at the end of the frame. <em>Ignored for modbus_rtu.</em></td></tr>
         <tr><td><code>crc_byte_order</code></td><td>enum</td><td><code>little</code></td><td><code>big</code> or <code>little</code> byte order for the CRC field. <em>Ignored for modbus_rtu.</em></td></tr>
         <tr><td><code>footer_hex</code></td><td>hex bytes</td><td><em>(leave blank)</em></td><td>Optional end-of-frame marker. Leave blank if your protocol has no footer. <em>Ignored for modbus_rtu.</em></td></tr>
+        <tr><td><code>raw_log_format</code></td><td>enum</td><td><code>hex</code> <em>(default)</em></td><td>Controls how the raw CSV logger formats the <code>hex</code> column. <code>hex</code> (default) writes space-separated uppercase bytes like <code>AA 55 01 20</code>. <code>compact</code> writes contiguous bytes like <code>AA550120</code> — smaller files, faster to grep. Invalid values are rejected at load time.</td></tr>
         <tr><td><code>inter_frame_delay_ms</code></td><td>integer</td><td><code>10</code></td><td>Minimum gap (ms) between consecutive TX requests. Default 10 ms.</td></tr>
         <tr><td><code>tx_pad_length</code></td><td>integer</td><td><code>16</code> <em>(or blank)</em></td><td>Forces every outgoing TX packet to be exactly this many bytes on the wire. Short commands are zero-padded between payload and CRC; CRC is computed <em>over</em> the padding so the receiver's check still passes. Leave blank to send variable-length packets. <em>Framed only — see <a href="#tx-pad-length">Fixed-length TX</a> below.</em></td></tr>
         <tr><td><code>length_byte_order</code></td><td>enum <em>(blank / <code>big</code> / <code>little</code>)</em></td><td><em>(leave blank)</em></td><td>Byte order for the length field. Leave blank to inherit <code>frame_id_byte_order</code> — that covers almost every protocol. Only set this explicitly if your protocol uses multi-byte lengths in a different endianness from the frame ID.</td></tr>
-        <tr><td><code>crc_coverage</code></td><td>enum</td><td><em>(leave blank)</em></td><td>Which part of the frame the CRC covers. Only <code>header_to_payload</code> is currently supported; leaving this blank picks the right value automatically. Reserved for future protocol variants.</td></tr>
-        <tr><td><code>escape_mode</code></td><td>enum</td><td><em>(leave blank)</em></td><td>Byte-escaping scheme (e.g. for protocols that escape header/footer bytes inside the payload). Only <code>none</code> is currently supported. Reserved for future protocol variants.</td></tr>
+        <tr><td><code>crc_coverage</code></td><td>enum</td><td><code>header_to_payload</code> <em>(default when blank)</em></td><td>Which bytes the CRC is computed over. Four values supported: <code>header_to_payload</code> (header + frame_id + length + payload — the usual choice), <code>frame_id_to_payload</code> (skips the header), <code>payload_only</code> (just the payload), <code>full_frame</code> (everything except the CRC field itself, i.e. header + frame_id + length + payload + footer). The parser and TX builder use the same coverage so build/parse round-trips are byte-exact.</td></tr>
+        <tr><td><code>escape_mode</code></td><td>enum</td><td><code>none</code> <em>(default when blank)</em></td><td>Outer byte-stuffing / delimiter scheme applied <em>around</em> each Bytehound frame on the wire. Four values supported: <code>none</code> (current behaviour — frames are delimited by the <code>header</code> signature with no escaping), <code>slip</code> (RFC 1055: 0xC0 delimiter, 0xDB escape), <code>hdlc</code> (HDLC byte-stuffing: 0x7E flag, 0x7D escape with XOR 0x20), <code>cobs</code> (Consistent Overhead Byte Stuffing: 0x00 delimiter, code-prefixed chunks). The parser's outer un-framer runs first; the existing header / length / CRC / footer logic then processes the un-escaped inner frame.</td></tr>
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code></td><td>Only one row may be <code>TRUE</code>. The app uses that row and ignores all others.</td></tr>
     </table>
     <div class="note">
-        The two columns <code>crc_coverage</code> and <code>escape_mode</code> are advanced fields with a single supported value today. The bundled config templates leave them blank, which is the recommended setting. They are listed for completeness so power users editing the raw CSV templates know what each column means.
+        <code>length_meaning</code>, <code>crc_coverage</code>, and <code>escape_mode</code> all support multiple values now. Leave them blank to inherit the most common defaults (<code>payload_only</code>, <code>header_to_payload</code>, <code>none</code>) — these are what 99% of custom embedded protocols use.
+    </div>
+
+    <div class="warning">
+        <strong>Interop caveat for the <code>length_meaning</code> and <code>crc_coverage</code> alternates.</strong> Bytehound's parser and TX builder agree end-to-end on all 16 combinations (32 build → parse round-trip tests cover them with and without a footer). What that proves is <em>internal</em> consistency: Bytehound can decode what Bytehound builds. It does <strong>not</strong> prove that Bytehound's interpretation of <code>frame_total</code> / <code>header_to_crc</code> / <code>payload_plus_crc</code> / <code>frame_id_to_payload</code> / <code>payload_only</code> / <code>full_frame</code> matches another vendor's protocol that happens to use the same name.<br><br>
+        Concretely:
+        <ul>
+            <li><code>frame_total</code> here counts <em>every</em> byte from the start of the header through the footer inclusive — header + frame_id + length + payload + CRC + footer.</li>
+            <li><code>header_to_crc</code> counts header + frame_id + length + payload + CRC (footer excluded).</li>
+            <li><code>payload_plus_crc</code> counts payload + CRC only.</li>
+            <li><code>full_frame</code> CRC covers header + frame_id + length + payload + footer (every byte except the CRC field itself).</li>
+            <li><code>frame_id_to_payload</code> CRC covers frame_id + length + payload (header excluded from CRC).</li>
+            <li><code>payload_only</code> (CRC) covers just the payload bytes.</li>
+        </ul>
+        If you connect Bytehound to a real device that uses one of these names with even slightly different boundaries, the build/parse will silently mismatch the device — every TX frame will fail the device's CRC, every RX frame will fail Bytehound's CRC. <strong>Test the first byte sequence on the wire</strong> against your device's reference implementation before trusting these alternates in production.
+    </div>
+
+    <div class="warning">
+        <strong>Same caveat for the <code>escape_mode</code> alternates.</strong> Bytehound implements SLIP per RFC 1055, HDLC byte-stuffing with the standard 0x7E flag / 0x7D escape / XOR 0x20 mapping, and COBS per Cheshire &amp; Baker (1999). 134 round-trip tests cover every combination of escape_mode × length_meaning × crc_coverage × footer, plus targeted tests for the worst-case payloads (all-special bytes, frames chunked one byte at a time, three frames in one feed). Internal consistency is proven; <strong>vendor interop is not</strong>. Some HDLC implementations escape additional control bytes (0x11 / 0x13 XON/XOFF), some COBS variants insert a phantom zero, and at least one well-known "SLIP" device drops the leading 0xC0. Always verify the first wire bytes against your device's reference output before deploying.
     </div>
     <div class="success">
         <strong>Wire format (framed):</strong> &nbsp;<code>[ header ] [ frame_id ] [ length ] [ payload ] [ CRC ] [ footer? ]</code><br>
@@ -638,9 +658,10 @@ crc_byte_order         = little
 crc_coverage           =                     ← defaults to header_to_payload
 footer_hex             =                     ← no footer byte
 escape_mode            =                     ← defaults to none
-raw_log_format         = hex
+raw_log_format         = hex                 ← `hex` = spaced, `compact` = contiguous
 inter_frame_delay_ms   = 10
 tx_pad_length          =                     ← variable-length TX
+modbus_node_address    = 1                   ← Modbus slave address (ignored when parser_type = framed)
 enabled                = TRUE</pre>
 
     <hr>
@@ -655,14 +676,15 @@ enabled                = TRUE</pre>
         <tr><td><code>frame_id</code></td><td>hex <em>(required)</em></td><td><code>0x0010</code></td><td>Frame identifier as sent by hardware. Can be <code>0x10</code>, <code>10</code>, or <code>16</code> (decimal).</td></tr>
         <tr><td><code>frame_name</code></td><td>text <em>(required)</em></td><td><code>BMS Status</code></td><td>Display name shown in the Data Table's Frame column.</td></tr>
         <tr><td><code>payload_length</code></td><td>integer</td><td><code>8</code> <em>(blank = no validation)</em></td><td>Expected payload size in bytes <em>for this frame only</em>. If the received payload differs, a decode warning appears in the Raw Console and Activity Log. Leave blank to skip validation for this frame.</td></tr>
+        <tr><td><code>direction</code></td><td>enum</td><td><code>rxtx</code> <em>(default)</em></td><td>Whether the frame can be received, transmitted, or both — <strong>controls UI gating</strong>. <code>rx</code>: telemetry-only — frame is parsed when received, but hidden from <strong>TX Commands</strong> and from the <strong>Parameter Editor</strong> (signals on rx-only frames cannot be written). <code>tx</code>: command-only — never expected on the RX wire. <code>rxtx</code> (default when blank): both directions. Case-insensitive. Invalid values are rejected at load time. Auto-created frames default to <code>rxtx</code>.</td></tr>
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code> <em>(default)</em></td><td>Set <code>FALSE</code> to completely ignore this frame — the row is skipped at load time and no signals from it are decoded.</td></tr>
         <tr><td><code>description</code></td><td>text</td><td><code>Battery pack telemetry</code> <em>(blank ok)</em></td><td>Optional free-text note — not displayed in the app.</td></tr>
     </table>
     <p><strong>Bundled template content</strong> (what <em>File → Export Template</em> produces — same 3 frames the bundled Variables sheet references):</p>
     <pre>frame_id | frame_name   | payload_length | direction | enabled | description
-0x1000   | BMS Status   | 8              | rx        | TRUE    | Main battery telemetry frame
-0x2000   | BMS Settings | 8              | rx        | TRUE    | Configurable parameter frame
-0x3000   | Status Flags | 8              | rx        | TRUE    | Bitfield status register frame</pre>
+0x1000   | BMS Status   | 8              | rxtx      | TRUE    | Telemetry + Reset Faults TX target
+0x2000   | BMS Settings | 8              | rxtx      | TRUE    | Telemetry + Set Voltage Limit / writable signals
+0x3000   | Status Flags | 8              | rx        | TRUE    | Bitfield status register (telemetry only)</pre>
 
     <hr>
 
@@ -811,7 +833,7 @@ Cell Voltages | min|max|diff|avg   | V    | 0x2000   | TRUE</pre>
         <tr><td><code>command_name</code></td><td>text <em>(required)</em></td><td><code>Reset Faults</code></td><td>Command label shown in the TX Commands selector. Matching rows in TxCommandFields attach user-input fields to this command.</td></tr>
         <tr><td><code>id_or_address</code></td><td>hex <em>(required)</em></td><td><code>0x0090</code></td><td>Frame ID (or Modbus register address) of the outgoing packet. Must be non-empty; use a <code>0x</code> prefix for clarity.</td></tr>
         <tr><td><code>payload_hex</code></td><td>hex bytes</td><td><code>01 00</code> <em>(blank ok)</em></td><td>Static payload bytes prepended before any TxCommandFields values. Leave blank if all payload bytes come from user-input fields. Invalid hex is reported when the command is previewed or sent.</td></tr>
-        <tr><td><code>description</code></td><td>text</td><td><em>(leave blank)</em></td><td>Reserved for future command notes. The loader parses and stores this, but no other code currently consults it; it is not shown as a tooltip today. Leave blank in normal use.</td></tr>
+        <tr><td><code>description</code></td><td>text</td><td><code>Clears all active fault flags</code> <em>(blank ok)</em></td><td>Free-text note shown as the tooltip on the TX Commands selector — hover the currently selected command (or any entry in the open dropdown) to see this text. Keep it concise; one line is ideal.</td></tr>
         <tr><td><code>enabled</code></td><td>TRUE/FALSE</td><td><code>TRUE</code> <em>(default: <code>TRUE</code>)</em></td><td>Set <code>FALSE</code> to hide the command without deleting the row. Disabled rows are skipped at load time.</td></tr>
     </table>
     <div class="warning">
@@ -850,14 +872,14 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
     <hr>
 
     <h3 id="sheet-serialdefaults">Sheet 10 — SerialDefaults</h3>
-    <p>Reserved for future config-driven serial connection defaults. The loader parses and stores the first row, but no other code currently consults it; the Connection dialog uses saved app settings instead. The bundled template ships a sensible default row so the column shape is visible — you can leave it as-is or omit the sheet entirely.</p>
+    <p>Config-driven defaults for the Connection dialog. When the dialog opens, each field is filled from <strong>QSettings (your last-used choice) if present, otherwise from this sheet</strong>. That means a fresh install — or a freshly loaded config you've never connected with before — opens the Connect dialog already showing this config's expected baud rate, parity, etc.; subsequent runs keep whatever you explicitly chose.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>baud_rate</code></td><td>integer <em>(required)</em></td><td><code>115200</code></td><td>Reserved baud-rate default. Parsed and stored if the sheet has a row, but no other code currently consults it.</td></tr>
-        <tr><td><code>data_bits</code></td><td>integer <em>(required)</em></td><td><code>8</code></td><td>Reserved data-bits default. Parsed and stored if the sheet has a row, but no other code currently consults it.</td></tr>
-        <tr><td><code>stop_bits</code></td><td>number <em>(required)</em></td><td><code>1</code> <em>(blank: <code>1.0</code>)</em></td><td>Reserved stop-bits default. Blank cells fall back to <code>1.0</code>, but no other code currently consults the stored value.</td></tr>
-        <tr><td><code>parity</code></td><td>text <em>(required)</em></td><td><code>N</code> <em>(blank: <code>N</code>)</em></td><td>Reserved parity default. Blank cells fall back to <code>N</code> and non-blank values are uppercased; the loader does not validate the value, and no other code currently consults it.</td></tr>
-        <tr><td><code>timeout_ms</code></td><td>integer <em>(required)</em></td><td><code>100</code></td><td>Reserved read-timeout default. Parsed and stored if the sheet has a row, but no other code currently consults it.</td></tr>
+        <tr><td><code>baud_rate</code></td><td>integer <em>(required)</em></td><td><code>115200</code></td><td>Baud-rate default for the Connection dialog. Used on first open; thereafter QSettings wins.</td></tr>
+        <tr><td><code>data_bits</code></td><td>integer <em>(required)</em></td><td><code>8</code></td><td>Data-bits default for the Connection dialog. Combo offers <code>8</code> and <code>7</code>.</td></tr>
+        <tr><td><code>stop_bits</code></td><td>number <em>(required)</em></td><td><code>1</code> <em>(blank: <code>1.0</code>)</em></td><td>Stop-bits default for the Connection dialog. Combo offers <code>1</code>, <code>1.5</code>, <code>2</code>. Blank cells fall back to <code>1.0</code>.</td></tr>
+        <tr><td><code>parity</code></td><td>text <em>(required)</em></td><td><code>N</code> <em>(blank: <code>N</code>)</em></td><td>Parity default for the Connection dialog. Combo offers <code>N</code>, <code>E</code>, <code>O</code>. Blank cells fall back to <code>N</code>; values are uppercased on load.</td></tr>
+        <tr><td><code>timeout_ms</code></td><td>integer <em>(required)</em></td><td><code>100</code></td><td>Read-timeout default for the Connection dialog. Combo offers <code>20</code>/<code>50</code>/<code>100</code>/<code>250</code>/<code>500</code>/<code>1000</code> ms.</td></tr>
     </table>
     <div class="warning">
         <strong>Do not add a partially blank row.</strong> If this sheet is absent or empty, the loader uses internal defaults. If the sheet contains a row, all five column headers are required; <code>baud_rate</code>, <code>data_bits</code>, and <code>timeout_ms</code> must contain valid integers.

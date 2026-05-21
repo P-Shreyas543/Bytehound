@@ -1,4 +1,4 @@
 frame_id,frame_name,payload_length,direction,enabled,description
-0x1000,BMS Status,8,rx,TRUE,Main battery telemetry frame
-0x2000,BMS Settings,8,rx,TRUE,Configurable parameter frame
-0x3000,Status Flags,8,rx,TRUE,Bitfield status register frame
+0x1000,BMS Status,8,rxtx,TRUE,Telemetry + Reset Faults TX target
+0x2000,BMS Settings,8,rxtx,TRUE,Telemetry + Set Voltage Limit / writable signals
+0x3000,Status Flags,8,rx,TRUE,Bitfield status register (telemetry only)

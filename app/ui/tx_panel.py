@@ -59,12 +59,44 @@ class TxPanelMixin:
         return widget
 
     def _populate_tx_commands(self) -> None:
+        from PySide6.QtCore import Qt
         self._tx_command_combo.clear()
         self._tx_field_inputs.clear()
         if self._config is None:
             return
-        self._tx_command_combo.addItems(sorted(self._config.tx_commands))
+        # Hide commands whose target frame is marked rx-only in frames.csv —
+        # sending to an rx-only frame is a config mistake we surface by
+        # omission. Commands whose frame_id is unknown to the frames map are
+        # left visible (auto-created frames default to rxtx).
+        frames = self._config.frames
+        visible = sorted(
+            name for name, cmd in self._config.tx_commands.items()
+            if frames.get(cmd.frame_id) is None or frames[cmd.frame_id].is_tx_capable
+        )
+        for name in visible:
+            description = self._config.tx_commands[name].description.strip()
+            self._tx_command_combo.addItem(name)
+            if description:
+                # Per-item tooltip — hovering over each entry in the open
+                # dropdown surfaces the TxCommands.description text.
+                idx = self._tx_command_combo.count() - 1
+                self._tx_command_combo.setItemData(idx, description, Qt.ItemDataRole.ToolTipRole)
+        # Keep the combo's own tooltip in sync with the currently selected
+        # entry so the description is also visible without opening the dropdown.
+        # Connect once: _populate_tx_commands runs on every config reload,
+        # so guard with a flag to avoid stacking N copies of the slot.
+        if not getattr(self, "_tx_tooltip_signal_bound", False):
+            self._tx_command_combo.currentIndexChanged.connect(self._refresh_tx_combo_tooltip)
+            self._tx_tooltip_signal_bound = True
+        self._refresh_tx_combo_tooltip()
         self._rebuild_tx_fields()
+
+    def _refresh_tx_combo_tooltip(self, *_args) -> None:
+        if self._config is None or self._tx_command_combo.count() == 0:
+            self._tx_command_combo.setToolTip("")
+            return
+        cmd = self._config.tx_commands.get(self._tx_command_combo.currentText())
+        self._tx_command_combo.setToolTip(cmd.description.strip() if cmd else "")
 
     def _rebuild_tx_fields(self) -> None:
         while self._tx_fields_form.rowCount():

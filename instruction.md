@@ -257,7 +257,7 @@ aliases:
 | `crc_coverage`          | enum    | Only `header_to_payload` is supported                  |
 | `footer_hex`            | hex     | Optional                                               |
 | `escape_mode`           | enum    | Only `none` is supported                               |
-| `raw_log_format`        | str     | Free text label                                        |
+| `raw_log_format`        | str     | `hex` (spaced) or `compact` (contiguous) — drives RawLogger hex column |
 | `enabled`               | bool    | Default true                                           |
 | `parser_type`           | enum    | `framed` (default) \| `modbus_rtu`                     |
 | `tx_pad_length`         | int?    | Pad TX to this many bytes (optional)                   |

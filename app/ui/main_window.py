@@ -792,7 +792,11 @@ class MainWindow(
             self._popup_warning("Connect", "Please load a configuration first.")
             return
 
-        dlg = ConnectionDialog(self._settings, parent=self)
+        dlg = ConnectionDialog(
+            self._settings,
+            parent=self,
+            config_defaults=self._config.serial_defaults,
+        )
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
 
@@ -1116,7 +1120,16 @@ class MainWindow(
         self._editor_value_items: Dict[str, List[QTableWidgetItem]] = {}
         if not self._config:
             return
-        rw_signals = [s for s in self._config.all_signals if s.read_write in ("W", "RW")]
+        # Filter out signals on rx-only frames — direction='rx' means we are
+        # never supposed to TX to that frame, so the Parameter Editor must
+        # not even surface those signals as writable. Unknown frames default
+        # to rxtx (auto-created entries) so they stay visible.
+        frames = self._config.frames
+        rw_signals = [
+            s for s in self._config.all_signals
+            if s.read_write in ("W", "RW")
+            and (frames.get(s.frame_id) is None or frames[s.frame_id].is_tx_capable)
+        ]
         if not rw_signals:
             # Nothing writable — insert a single informational row
             self._editor_table.insertRow(0)

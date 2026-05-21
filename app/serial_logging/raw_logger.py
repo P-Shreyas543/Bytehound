@@ -57,6 +57,7 @@ class RawLogger:
         flush_interval: float = _FLUSH_INTERVAL,
         metadata: Mapping[str, str] | None = None,
         on_error: ErrorCallback | None = None,
+        hex_format: str = "hex",
     ) -> None:
         self.path = Path(path)
         self._fp: TextIO | None = None
@@ -66,6 +67,9 @@ class RawLogger:
         self._metadata = dict(metadata) if metadata else {}
         self._on_error = on_error
         self._disabled = False
+        if hex_format not in {"hex", "compact"}:
+            raise ValueError(f"hex_format must be 'hex' or 'compact' (got {hex_format!r})")
+        self._hex_format = hex_format
 
         self._queue: "queue.Queue[Optional[tuple]]" = queue.Queue(maxsize=_WRITER_QUEUE_SIZE)
         self._writer_thread: Optional[threading.Thread] = None
@@ -265,7 +269,8 @@ class RawLogger:
             return False
         try:
             ts, direction, raw, delta_t_ms = item
-            writer.writerow([ts, direction, raw.hex(" ").upper(), f"{delta_t_ms:.1f}"])
+            hex_str = raw.hex(" ").upper() if self._hex_format == "hex" else raw.hex().upper()
+            writer.writerow([ts, direction, hex_str, f"{delta_t_ms:.1f}"])
             return True
         except Exception as exc:
             self._record_error("write", exc)

@@ -8,6 +8,7 @@ the active `ProtocolConfig`.
 from __future__ import annotations
 
 from . import crc as crc_mod
+from .packet_parser import encode_length_field, crc_coverage_bytes, escape_frame
 from ..decoder.types import ProtocolConfig
 
 
@@ -16,23 +17,21 @@ def build_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> byt
         return build_modbus_packet(protocol, frame_id, payload)
 
     pc = protocol
-    if pc.length_meaning != "payload_only":
-        raise ValueError(f"Unsupported length_meaning: {pc.length_meaning!r}")
-    if pc.crc_coverage != "header_to_payload":
-        raise ValueError(f"Unsupported crc_coverage: {pc.crc_coverage!r}")
-
     fid_bytes = frame_id.to_bytes(pc.frame_id_size, pc.frame_id_byte_order)
-    max_payload = (1 << (8 * pc.length_size)) - 1
-    if len(payload) > max_payload:
+    max_length_value = (1 << (8 * pc.length_size)) - 1
+    length_value = encode_length_field(len(payload), pc)
+    if length_value > max_length_value or length_value < 0:
         raise ValueError(
-            f"Payload is {len(payload)} bytes but length field can hold {max_payload}"
+            f"Encoded length field is {length_value} but length_size={pc.length_size} "
+            f"can only hold 0..{max_length_value}; reduce payload, increase length_size, "
+            f"or switch length_meaning."
         )
     # length_byte_order falls back to frame_id_byte_order when unset, matching
     # the parser's behaviour so build/parse round-trips are byte-exact.
     length_endian = pc.length_byte_order or pc.frame_id_byte_order
-    length_bytes = len(payload).to_bytes(pc.length_size, length_endian)
+    length_bytes = length_value.to_bytes(pc.length_size, length_endian)
 
-    coverage = pc.header + fid_bytes + length_bytes + payload
+    pre_crc = pc.header + fid_bytes + length_bytes + payload
 
     if pc.tx_pad_length is not None:
         target_total_len = pc.tx_pad_length - pc.crc_size - len(pc.footer)
@@ -41,23 +40,31 @@ def build_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> byt
                 f"tx_pad_length={pc.tx_pad_length} is smaller than CRC+footer "
                 f"({pc.crc_size + len(pc.footer)} bytes); cannot pad"
             )
-        unpadded_total = len(coverage) + pc.crc_size + len(pc.footer)
+        unpadded_total = len(pre_crc) + pc.crc_size + len(pc.footer)
         if unpadded_total > pc.tx_pad_length:
             raise ValueError(
                 f"TX frame (id=0x{frame_id:X}) is {unpadded_total} bytes but "
                 f"tx_pad_length is {pc.tx_pad_length}; increase tx_pad_length "
                 f"or shrink the command payload"
             )
-        if target_total_len > len(coverage):
-            coverage += b'\x00' * (target_total_len - len(coverage))
+        if target_total_len > len(pre_crc):
+            # The padding is conceptually part of the on-wire payload region;
+            # extend `payload` so the CRC coverage helper sees the same bytes
+            # the parser would on the wire.
+            payload = payload + b'\x00' * (target_total_len - len(pre_crc))
+            pre_crc = pc.header + fid_bytes + length_bytes + payload
 
     if pc.crc_type == "none":
         crc_bytes = b""
     else:
+        coverage = crc_coverage_bytes(
+            pc.header, fid_bytes, length_bytes, payload, pc.footer, pc,
+        )
         crc_value = crc_mod.compute(pc.crc_type, coverage)
         crc_bytes = crc_value.to_bytes(pc.crc_size, pc.crc_byte_order)
 
-    return coverage + crc_bytes + pc.footer
+    inner = pre_crc + crc_bytes + pc.footer
+    return escape_frame(inner, pc.escape_mode)
 
 
 def build_modbus_packet(protocol: ProtocolConfig, target_id: int, payload: bytes) -> bytes:

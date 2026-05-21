@@ -180,6 +180,12 @@ class ProtocolConfig:
     #: Modbus RTU node address (slave ID). Only relevant when
     #: ``parser_type == "modbus_rtu"``. Defaults to 1.
     modbus_node_address: int = 1
+    #: How the raw CSV logger formats the ``hex`` column.
+    #: ``"hex"`` (default) writes space-separated bytes: ``AA 55 01 20``.
+    #: ``"compact"`` writes contiguous bytes: ``AA550120``. Both are
+    #: uppercase. Validated by the loader; the logger reads it via the
+    #: ``hex_format`` constructor parameter.
+    raw_log_format: str = "hex"
 
 
 @dataclass(frozen=True)
@@ -192,6 +198,19 @@ class FrameDefinition:
     #: shown anywhere in the UI today — intended for documentation that
     #: lives next to the data, not for display.
     description: str = ""
+    #: ``rx`` (receive only — hidden from TX Commands and Parameter Editor),
+    #: ``tx`` (send only — never expected on the wire), or ``rxtx`` (default,
+    #: both directions). Auto-created frames inherit the default ``rxtx`` so
+    #: they remain available to every UI panel.
+    direction: str = "rxtx"
+
+    @property
+    def is_tx_capable(self) -> bool:
+        return self.direction in ("tx", "rxtx")
+
+    @property
+    def is_rx_capable(self) -> bool:
+        return self.direction in ("rx", "rxtx")
 
 
 @dataclass(frozen=True)

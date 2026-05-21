@@ -27,6 +27,25 @@ def test_raw_logger_writes_csv_with_header(tmp_path):
     assert lines[1] == "2026-05-04 12:37:37.125,RX,AA 55 00 10 04 0F A0 0B B8 BE 70,0.0"
 
 
+def test_raw_logger_compact_hex_format(tmp_path):
+    """hex_format='compact' writes contiguous uppercase bytes (no spaces)."""
+    path = tmp_path / "raw.csv"
+    with RawLogger(path, hex_format="compact") as logger:
+        logger.log(
+            "RX",
+            bytes.fromhex("AA550010040FA00BB8BE70"),
+            datetime(2026, 5, 4, 12, 37, 37, 125000),
+        )
+    lines = path.read_text(encoding="utf-8").splitlines()
+    assert lines[1] == "2026-05-04 12:37:37.125,RX,AA550010040FA00BB8BE70,0.0"
+
+
+def test_raw_logger_invalid_hex_format_rejected(tmp_path):
+    import pytest
+    with pytest.raises(ValueError, match="hex_format must be"):
+        RawLogger(tmp_path / "raw.csv", hex_format="binary")
+
+
 def test_raw_logger_appends_without_duplicating_header(tmp_path):
     path = tmp_path / "raw.csv"
     ts = datetime(2026, 5, 4, 12, 37, 37, 125000)

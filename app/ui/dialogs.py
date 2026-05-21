@@ -9,23 +9,36 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QWidget
 )
 
+from ..decoder.types import SerialDefaults
 from ..serial_io.serial_worker import SerialSettings, available_ports
 
 
 class ConnectionDialog(QDialog):
     """Modal dialog for configuring and opening a serial connection.
 
-    Pre-populates all fields from ``QSettings`` so the user's last-used
-    port/baud/etc. are remembered between sessions.  On Accept the chosen
-    values are persisted back to ``QSettings`` and exposed via
-    ``get_settings()``.
+    Field-priority order on open is QSettings → loaded config's
+    ``SerialDefaults`` → hard-coded fallback. That means the user's
+    explicit last-used choice always wins, but a freshly loaded config
+    with bespoke serial defaults (say, 9600 / E / 2 stop bits for a
+    Modbus device) pre-populates the dialog on first open instead of
+    showing the generic 115200 / N / 1 fallback.
+
+    On Accept the chosen values are persisted back to ``QSettings`` and
+    exposed via ``get_settings()``.
     """
 
-    def __init__(self, settings: QSettings, parent=None) -> None:
+    def __init__(
+        self,
+        settings: QSettings,
+        parent=None,
+        *,
+        config_defaults: SerialDefaults | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Serial Connection Settings")
         self.setMinimumWidth(360)
         self._settings = settings
+        self._config_defaults = config_defaults or SerialDefaults()
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -105,11 +118,15 @@ class ConnectionDialog(QDialog):
             if self._port_combo.itemData(i, Qt.ItemDataRole.UserRole) == saved_port:
                 self._port_combo.setCurrentIndex(i)
                 break
-        self._baud_combo.setCurrentText(str(s.value("conn/baud", "115200")))
-        self._data_bits_combo.setCurrentText(str(s.value("conn/data_bits", "8")))
-        self._stop_bits_combo.setCurrentText(str(s.value("conn/stop_bits", "1")))
-        self._parity_combo.setCurrentText(str(s.value("conn/parity", "N")))
-        self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", "50")))
+        # The config's SerialDefaults becomes the per-key fallback when
+        # QSettings has no stored value yet. Stop_bits uses ``%g`` so 1.0
+        # renders as "1" and matches the combo items "1", "1.5", "2".
+        cd = self._config_defaults
+        self._baud_combo.setCurrentText(str(s.value("conn/baud", str(cd.baud_rate))))
+        self._data_bits_combo.setCurrentText(str(s.value("conn/data_bits", str(cd.data_bits))))
+        self._stop_bits_combo.setCurrentText(str(s.value("conn/stop_bits", f"{cd.stop_bits:g}")))
+        self._parity_combo.setCurrentText(str(s.value("conn/parity", cd.parity)))
+        self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", str(cd.timeout_ms))))
 
     def _on_accept(self) -> None:
         s = self._settings
