@@ -149,6 +149,7 @@
                 <ul class="sub-menu">
                     <li><a href="#tx-commands">TX Commands</a></li>
                     <li><a href="#parameter-editing">Parameter Editor</a></li>
+                    <li><a href="#tx-packet-anatomy">Reading a TX packet</a></li>
                 </ul>
             </li>
             <li><a href="#section-4">4. Logging and Data Analysis</a>
@@ -370,6 +371,55 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
         Parameter Editor writes are recorded in the <strong>Activity Log</strong> with the signal name, engineering value, unit, and full raw hex. TX Command sends are also echoed in the Raw Console as <code>TX</code> lines.
     </div>
 
+    <h3 id="tx-packet-anatomy">Reading a TX packet (byte-by-byte)</h3>
+    <p>Every <code>TX</code> line you see in the Raw Console — whether it came from a <strong>TX Command</strong>, the <strong>Parameter Editor</strong>, or an Auto-Fetch poll request — follows the same wire format defined by your Protocol sheet. Use this guide to decode any TX line.</p>
+
+    <h4>Framed packet — variable length (no <code>tx_pad_length</code>)</h4>
+    <p>Reference packet from the bundled template (Set_Voltage_Limit at 58.5 V on frame <code>0x0120</code>):</p>
+    <pre><code>TX, AA 55 01 20 02 49 02 3C 9E EE</code></pre>
+    <pre>AA 55          ← header (2 bytes, from Protocol.header)
+01 20          ← frame_id 0x0120 (big-endian, from frame_id_size + byte_order)
+02             ← length = 2 (payload bytes only, from length_meaning=payload_only)
+49 02          ← payload, little-endian uint16 = 0x0249 = 585 → 585 × 0.1 = 58.5 V
+3C 9E          ← CRC16 over header..payload (crc_type, crc_size, crc_byte_order)
+EE             ← footer (1 byte, from Protocol.footer)</pre>
+
+    <h4>Framed packet — fixed length (<code>tx_pad_length</code> set)</h4>
+    <p>Same protocol, but with <code>tx_pad_length = 16</code> and a write of <code>123</code> to a uint16 signal on frame <code>0x0050</code>:</p>
+    <pre><code>TX, AA 55 00 50 02 7B 00 00 00 00 00 00 00 00 00 00</code></pre>
+    <pre>AA 55                              ← header (2 bytes)
+00 50                              ← frame_id 0x0050
+02                                 ← length = 2 (payload only — padding is not counted)
+7B 00                              ← payload, little-endian uint16 = 0x007B = 123
+00 00 00 00 00 00 00 00 00         ← 9 bytes of zero-padding to reach tx_pad_length=16</pre>
+    <div class="warning">
+        If your packet ends in zeros with <strong>no CRC or footer visible</strong> like the example above, that means your config has <code>crc_type = none</code> and an empty <code>footer</code>. If you expected a CRC and footer, open your Protocol sheet and check those two fields. With a CRC and footer configured, the last bytes of the frame would be the CRC + footer, and the zero-padding would sit <em>between</em> the payload and the CRC. <code>tx_pad_length</code> is the <strong>total frame length on the wire</strong>, including CRC and footer.
+    </div>
+
+    <h4>Modbus RTU — single-register write (FC 06)</h4>
+    <p>With <code>parser_type = modbus_rtu</code> and <code>modbus_node_address = 1</code>, writing <code>123</code> to register address <code>0x0050</code>:</p>
+    <pre><code>TX, 01 06 00 50 00 7B 99 8C</code></pre>
+    <pre>01             ← node address (from Protocol.modbus_node_address)
+06             ← function code: 06 = Write Single Register
+00 50          ← target register address 0x0050 (big-endian, per Modbus spec)
+00 7B          ← value to write, big-endian uint16 = 0x007B = 123
+99 8C          ← CRC16/Modbus over preceding bytes, little-endian (per Modbus spec)</pre>
+    <div class="note">
+        Modbus byte order is fixed by the spec: addresses and values are big-endian, the CRC is little-endian. The Protocol sheet's <code>byte_order</code> fields are ignored for Modbus.
+    </div>
+
+    <h4>Quick reference — where each byte comes from</h4>
+    <table>
+        <tr><th>Byte(s)</th><th>Source</th><th>How to change it</th></tr>
+        <tr><td>Header</td><td><code>Protocol.header</code></td><td>Edit the Protocol sheet's <code>header</code> hex value.</td></tr>
+        <tr><td>Frame ID</td><td>Variable's <code>id_or_address</code> (or TxCommands row)</td><td>Set in Variables / TxCommands.</td></tr>
+        <tr><td>Frame ID size + byte order</td><td><code>frame_id_size</code>, <code>frame_id_byte_order</code></td><td>Protocol sheet.</td></tr>
+        <tr><td>Length</td><td>Computed from payload size</td><td>Controlled by <code>length_size</code>, <code>length_byte_order</code>, <code>length_meaning</code>.</td></tr>
+        <tr><td>Payload bytes</td><td>Encoded from your value via <code>raw = (value − offset) / scale</code></td><td>Set <code>scale</code>, <code>offset</code>, <code>data_type</code>, <code>byte_order</code> on the variable.</td></tr>
+        <tr><td>Zero-padding (if any)</td><td><code>Protocol.tx_pad_length</code></td><td>Set or clear <code>tx_pad_length</code>. Padding sits between payload and CRC.</td></tr>
+        <tr><td>CRC</td><td>Computed over <code>crc_coverage</code> region</td><td><code>crc_type</code>, <code>crc_size</code>, <code>crc_byte_order</code>, <code>crc_coverage</code>.</td></tr>
+        <tr><td>Footer</td><td><code>Protocol.footer</code></td><td>Edit the Protocol sheet's <code>footer</code> hex value.</td></tr>
+    </table>
 
     <!-- Section 4 -->
     <h2 id="section-4">4. Logging and Data Analysis</h2>
