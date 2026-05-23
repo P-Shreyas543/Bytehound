@@ -247,7 +247,9 @@ def main() -> int:
 
     def on_packets(packets):
         nonlocal pkt_total, crc_errors
-        for pkt in packets:
+        for item in packets:
+            # PollingWorker emits (ParsedPacket, decoded-or-None) tuples.
+            pkt, pre_decoded = item if isinstance(item, tuple) else (item, None)
             pkt_total += 1
             raw_logger.log("RX", pkt.raw)
             if not pkt.ok:
@@ -256,7 +258,7 @@ def main() -> int:
             seen_frame_ids.add(pkt.frame_id)
             if pkt.frame_id in arrival_times:
                 arrival_times[pkt.frame_id].append(time.perf_counter())
-            decoded = decode_frame(config, pkt.frame_id, pkt.payload)
+            decoded = pre_decoded if pre_decoded is not None else decode_frame(config, pkt.frame_id, pkt.payload)
             elapsed_ms = int((time.perf_counter() - log_start) * 1000)
             decoded_logger.log_frame(decoded, elapsed_ms)
 
@@ -308,9 +310,28 @@ def main() -> int:
         except Exception as e:
             rep.note(f"Set Voltage Limit build failed: {e}")
 
+    def disable_streaming_and_arm_cadence():
+        # 0x1005 [01] = autonomous streaming off. From this point on the only
+        # 0x1000/0x2000/0x3000 frames on the wire are responses to polls.
+        # We also CLEAR arrival_times here so Phase 10's cadence measurement
+        # only sees the polling-only window — the early ~2 seconds of mixed
+        # autonomous+polling traffic would otherwise pull the average gap
+        # low and flake the test.
+        from app.protocol.packet_builder import build_packet
+        try:
+            worker.enqueue_priority_tx(build_packet(config.protocol, 0x1005, b"\x01"))
+            for fid in arrival_times:
+                arrival_times[fid].clear()
+            rep.note(f"streaming OFF + cadence buckets cleared at t={(boot_ms + 2000) / 1000:.1f}s")
+        except Exception as e:
+            rep.note(f"0x1005 build failed: {e}")
+
     QTimer.singleShot(boot_ms, enable_polling)
-    QTimer.singleShot(boot_ms + 1000, send_reset)
-    QTimer.singleShot(boot_ms + 3000, send_set_limit)
+    QTimer.singleShot(boot_ms + 500, send_reset)
+    # Reset (above) also re-enables streaming inside the firmware, so we
+    # turn streaming off AFTER reset rather than before.
+    QTimer.singleShot(boot_ms + 2000, disable_streaming_and_arm_cadence)
+    QTimer.singleShot(boot_ms + 3500, send_set_limit)
 
     def stop():
         worker.close()

@@ -1,0 +1,2 @@
+command_name,id_or_address,payload_hex,description,enabled
+Set Voltage Limit,0x0028,,Write the Voltage Limit register (FC06 single-register write),TRUE

@@ -1,0 +1,16 @@
+id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,group,read_write,min_value,max_value,description,enabled
+0x0010,Pack Voltage,uint16,1,big,0.01,0,V,,R,0,60,Total pack voltage,TRUE
+0x0011,Pack Current,int16,1,big,0.1,0,A,,R,-200,200,Charge (+) / discharge (-) current,TRUE
+0x0012,Pack SOC,uint16,1,big,1,0,%,,R,0,100,State of charge,TRUE
+0x0013,Pack Temperature,int16,1,big,0.1,-40,°C,,R,-40,85,Pack temperature sensor,TRUE
+0x0020,Cell Voltage 1,uint16,1,big,0.001,0,V,Cell Voltages,R,2.5,4.2,Cell 1 voltage,TRUE
+0x0021,Cell Voltage 2,uint16,1,big,0.001,0,V,Cell Voltages,R,2.5,4.2,Cell 2 voltage,TRUE
+0x0022,Cell Voltage 3,uint16,1,big,0.001,0,V,Cell Voltages,R,2.5,4.2,Cell 3 voltage,TRUE
+0x0023,Cell Voltage 4,uint16,1,big,0.001,0,V,Cell Voltages,R,2.5,4.2,Cell 4 voltage,TRUE
+0x0024,Cell Voltage 5,uint16,1,big,0.001,0,V,Cell Voltages,R,2.5,4.2,Cell 5 voltage,TRUE
+0x0025,Cell Voltage 6,uint16,1,big,0.001,0,V,Cell Voltages,R,2.5,4.2,Cell 6 voltage,TRUE
+0x0026,Cell Voltage 7,uint16,1,big,0.001,0,V,Cell Voltages,R,2.5,4.2,Cell 7 voltage,TRUE
+0x0027,Cell Voltage 8,uint16,1,big,0.001,0,V,Cell Voltages,R,2.5,4.2,Cell 8 voltage,TRUE
+0x0028,Voltage Limit,uint16,1,big,0.01,0,V,,RW,40,60,User-configurable overvoltage threshold,TRUE
+0x0030,Status Bits,uint16,1,big,1,0,,,R,,,Bitfield register - see bitfields.csv,TRUE
+0x0031,BMS State,uint16,1,big,1,0,,,R,,,Enum state machine value - see enums.csv,TRUE

@@ -1,0 +1,2 @@
+profile_name,parser_type,header_hex,frame_id_size,frame_id_byte_order,length_size,length_meaning,length_byte_order,crc_type,crc_size,crc_byte_order,crc_coverage,footer_hex,escape_mode,raw_log_format,inter_frame_delay_ms,tx_pad_length,modbus_node_address,enabled
+SLIP_BMS,framed,AA 55,2,little,1,payload_only,,crc16_modbus,2,little,,EE,slip,hex,10,,1,TRUE

@@ -1,0 +1,2 @@
+frame_id,frame_name,payload_length,direction,enabled,description
+0x1000,BMS Status,8,rxtx,TRUE,Telemetry + Reset Faults TX target

@@ -23,9 +23,10 @@ def test_load_bundled_config(resources_dir):
     assert cfg.protocol.length_size == 1
     assert cfg.protocol.crc_type == "crc16_modbus"
     assert cfg.protocol.crc_byte_order == "little"
-    # Bundled template uses an empty footer (CRC-only framing). If you
-    # change protocol.csv to add a footer, update this assertion to match.
-    assert cfg.protocol.footer == b""
+    # Bundled template ships footer_hex = EE to match the bundled Arduino
+    # simulator's trailer byte. If you remove the footer from protocol.csv,
+    # update this assertion to match.
+    assert cfg.protocol.footer == b"\xEE"
 
     assert 0x1000 in cfg.signals_by_frame
     sigs = cfg.signals_by_frame[0x1000]

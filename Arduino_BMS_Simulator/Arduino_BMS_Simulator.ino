@@ -32,7 +32,7 @@
 //                                                               the named TX
 //                                                               command.
 //
-//   Stress-test hooks (used only by smoke_stress.py):
+//   Test hooks (used by smoke_headless.py and smoke_stress.py):
 //     0x1002 stress_mode       payload uint8 (1=on, 0=off) - 5x faster
 //                                                            telemetry cadence
 //     0x1003 inject_crc_errors payload uint8 N            - emit next N
@@ -42,6 +42,14 @@
 //     0x1004 go_silent         payload uint8 seconds      - suppress all RX
 //                                                            for N seconds
 //                                                            (tests watchdog)
+//     0x1005 streaming_mode    payload uint8 (1=off, 0=on, default on) -
+//                                                            disables the
+//                                                            autonomous
+//                                                            telemetry timers
+//                                                            so smoke_headless
+//                                                            can measure the
+//                                                            polling-only
+//                                                            arrival cadence.
 //
 // Build: Arduino IDE 1.8+ / 2.x, board "Arduino Mega 2560" (or any Arduino
 // with hardware Serial), 115200 baud.
@@ -61,16 +69,21 @@ static uint16_t crc16_modbus(const uint8_t *data, uint16_t length) {
   return crc;
 }
 
-// ---------- Stress-test state -------------------------------------------
+// ---------- Test-hook state ---------------------------------------------
 // pending_crc_corruptions: when > 0, the next sendFrame() XORs the high CRC
 //   byte with 0xFF before transmitting, then decrements. This is how the
 //   stress test exercises the host-side CRC error counter.
 // silent_until_ms: while millis() < silent_until_ms, all telemetry emission
 //   is suppressed. The host uses this to verify the data-watchdog fires.
 // stress_mode_on: 5x faster cadence on the periodic emitters.
+// streaming_on: when false, the autonomous timer-driven emitters in loop()
+//   are suppressed. Poll-driven responses in on_command() still work, so
+//   smoke_headless.py uses this to measure polling cadence deterministically
+//   (without the firmware also racing the host at the timer interval).
 static uint8_t        pending_crc_corruptions = 0;
 static unsigned long  silent_until_ms = 0;
 static bool           stress_mode_on = false;
+static bool           streaming_on   = true;
 
 // ---------- Send one framed packet --------------------------------------
 static void sendFrame(uint16_t frame_id, const uint8_t *payload, uint8_t payload_length) {
@@ -215,6 +228,7 @@ static void on_command(uint16_t frame_id, const uint8_t *payload, uint8_t length
     pending_crc_corruptions = 0;
     silent_until_ms = 0;
     stress_mode_on = false;
+    streaming_on = true;  // re-enable autonomous emission so a Reset undoes any 0x1005 toggle
     return;
   }
 
@@ -262,6 +276,15 @@ static void on_command(uint16_t frame_id, const uint8_t *payload, uint8_t length
   //                    host can prove its data-watchdog fires.
   if (frame_id == 0x1004 && length == 1) {
     silent_until_ms = millis() + (unsigned long)payload[0] * 1000UL;
+    return;
+  }
+  // 0x1005 [0|1] : disable / enable autonomous timer-driven emission.
+  //                Default is enabled (so a freshly plugged-in board streams
+  //                without prompting). smoke_headless sends [01] so the
+  //                polling cadence phase can measure polling-only behaviour
+  //                without the firmware racing the host at the timer rate.
+  if (frame_id == 0x1005 && length == 1) {
+    streaming_on = (payload[0] == 0);
     return;
   }
 }
@@ -316,10 +339,11 @@ void loop() {
 
   unsigned long now = millis();
 
-  // Silent mode: suppress all timer-driven emissions until silent_until_ms.
-  // Inbound poll requests are also gated in on_command(). Used to test the
-  // host's data watchdog.
-  bool silent = (now < silent_until_ms);
+  // Silent mode: suppress all timer-driven emissions until silent_until_ms
+  // (data-watchdog test) OR while streaming is explicitly disabled by the
+  // host (poll-only cadence test). Inbound poll requests are still gated
+  // by silent_until_ms in on_command() but unaffected by streaming_on.
+  bool silent = (now < silent_until_ms) || !streaming_on;
 
   // Stress mode pulls every cadence in by 5x so the host has to keep up
   // with a much faster RX stream + more frequent cycle updates.

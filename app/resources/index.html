@@ -643,7 +643,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         <strong>Not for Modbus RTU.</strong> Modbus has its own fixed-per-FC framing — <code>tx_pad_length</code> is ignored when <code>parser_type = modbus_rtu</code>.
     </div>
 
-    <p><strong>Bundled template content</strong> (the single enabled row that <em>File → Export Template</em> writes — blanks for <code>length_byte_order</code>, <code>crc_coverage</code>, <code>footer_hex</code>, <code>escape_mode</code>, and <code>tx_pad_length</code> mean "use the sensible default"):</p>
+    <p><strong>Bundled template content</strong> (the single enabled row that <em>File → Export Template</em> writes — blanks for <code>length_byte_order</code>, <code>crc_coverage</code>, <code>escape_mode</code>, and <code>tx_pad_length</code> mean "use the sensible default"):</p>
     <pre>profile_name           = Default
 parser_type            = framed
 header_hex             = AA 55
@@ -656,7 +656,7 @@ crc_type               = crc16_modbus
 crc_size               = 2
 crc_byte_order         = little
 crc_coverage           =                     ← defaults to header_to_payload
-footer_hex             =                     ← no footer byte
+footer_hex             = EE                  ← matches the bundled Arduino simulator's trailer byte
 escape_mode            =                     ← defaults to none
 raw_log_format         = hex                 ← `hex` = spaced, `compact` = contiguous
 inter_frame_delay_ms   = 10
