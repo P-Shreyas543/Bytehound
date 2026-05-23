@@ -203,7 +203,7 @@ _COLUMNS = (
 from app.ui.plot_panel import (
     GRID_LAYOUTS,
     PlotPanel,
-    _RingBuffer,
+    TimeSeriesBuffer,
     _TimeAxisItem,
     _EMPTY_F64,
     _PLOT_INITIAL_WINDOW_S,
@@ -241,16 +241,16 @@ class MainWindow(
     PopupsMixin,
     QMainWindow,
 ):
-    def _make_history_buffer(self) -> "_RingBuffer":
-        """Factory for the ring-buffer entries in ``self._plot_history``.
+    def _make_history_buffer(self) -> "TimeSeriesBuffer":
+        """Factory for per-signal entries in ``self._plot_history``.
 
-        Fixed-capacity numpy-backed ring buffer keyed by signal. Capacity is
-        read from ``self._plot_history_maxlen`` so it can be changed at
-        runtime; existing buffers keep their original capacity until a new
-        signal is first plotted.
+        Append-only chunked store. ``_plot_history_max_samples`` acts as a
+        soft cap (``None`` = unbounded — keep every sample for the whole
+        session). Existing buffers keep their cap until cleared; the cap
+        is reapplied when the user changes the display window.
         """
-        n = getattr(self, "_plot_history_maxlen", 6_000)
-        return _RingBuffer(n)
+        cap = getattr(self, "_plot_history_max_samples", None)
+        return TimeSeriesBuffer(cap)
 
 
     def __init__(self) -> None:
@@ -294,14 +294,27 @@ class MainWindow(
 
         # Timer removed; using PollingWorker QThread
 
-        # Live-plot history. One _RingBuffer per signal — pre-allocated
-        # numpy storage that exposes ordered slices for setData with zero
-        # per-tick fromiter loops. Was previously two bounded deques per
-        # signal; the deque version paid a Python-level loop on every
-        # redraw to convert to numpy.
-        self._plot_history_maxlen: int = int(
-            self._settings.value("plot/history_maxlen", 6_000))
-        self._plot_history: Dict[Tuple[int, str], _RingBuffer] = (
+        # Live-plot history. One TimeSeriesBuffer per signal — append-only
+        # chunked storage that retains every sample since session start.
+        # The display "Window" combo (Last 1 min / 5 min / … / All) controls
+        # how much of the buffer is rendered, not what is stored. The soft
+        # cap below is a marathon-run safety valve; ``None`` keeps everything.
+        # 0 in QSettings is interpreted as "unbounded" so users who already
+        # have the default persisted don't suddenly get a different cap.
+        raw_cap = self._settings.value("plot/history_max_samples", 0)
+        try:
+            cap_int = int(raw_cap)
+        except (TypeError, ValueError):
+            cap_int = 0
+        self._plot_history_max_samples: Optional[int] = cap_int if cap_int > 0 else None
+        # Display window in seconds. 0 / None means "All session".
+        raw_window = self._settings.value("plot/window_seconds", 300)  # default 5 min
+        try:
+            window_int = int(raw_window)
+        except (TypeError, ValueError):
+            window_int = 300
+        self._plot_window_seconds: Optional[int] = window_int if window_int > 0 else None
+        self._plot_history: Dict[Tuple[int, str], TimeSeriesBuffer] = (
             defaultdict(self._make_history_buffer))
         # Multi-grid plot state
         self._plot_panels: List[PlotPanel] = []   # one entry per subplot cell

@@ -41,6 +41,18 @@ from .widgets import _contrast_text_color
 class PlotOrchestrationMixin:
     """MainWindow mixin holding the live-plot orchestration methods."""
 
+    def _visible_window_t_min(self) -> Optional[float]:
+        """Lower bound (in elapsed seconds) of the currently-shown X window.
+
+        Returns ``None`` when the user has selected "All session", which
+        means callers should look at the full series.
+        """
+        window = getattr(self, "_plot_window_seconds", None)
+        if not window:
+            return None
+        current_t = (datetime.now() - self._session_started).total_seconds()
+        return max(0.0, current_t - float(window))
+
     def _plot_time_axis_label(self) -> str:
         if self._plot_time_mode == "clock":
             return "Time (HH:MM:SS)"
@@ -57,6 +69,26 @@ class PlotOrchestrationMixin:
     def _on_plot_time_mode_changed(self, idx: int) -> None:
         mode = "elapsed" if idx == 0 else "clock"
         self._apply_plot_time_mode(mode, persist=True)
+
+    def _on_plot_window_changed(self, idx: int) -> None:
+        """User picked a new sliding-window length from the Window combo.
+
+        Persists the choice and triggers an immediate redraw so the new
+        window takes effect without waiting for the next packet.
+        """
+        options = getattr(self, "_plot_window_options", None)
+        if not options or idx < 0 or idx >= len(options):
+            return
+        _, seconds = options[idx]
+        self._plot_window_seconds = seconds
+        # 0 sentinel in QSettings → "All session" (None internally).
+        self._settings.setValue("plot/window_seconds", int(seconds) if seconds else 0)
+        # Resuming Live makes the window change visible immediately; if the
+        # user was in Explore, they presumably want to inspect history, so
+        # we leave that state alone and just redraw.
+        if hasattr(self, "_hover_cache"):
+            self._hover_cache.clear()
+        self._redraw_plot()
 
     def _apply_plot_time_mode(self, mode: str, *, persist: bool = True) -> None:
         if mode not in ("elapsed", "clock"):
@@ -123,13 +155,17 @@ class PlotOrchestrationMixin:
         vb = panel.plot_item.getViewBox()
         if vb is None:
             return
+        # Only consider samples in the currently visible time window so
+        # zooming out of a long-running session doesn't squash the y-axis
+        # against historical outliers the user can no longer see.
+        t_min = self._visible_window_t_min()
         y_min: float | None = None
         y_max: float | None = None
         for key in panel.assigned_keys:
             buf = self._plot_history.get(key)
             if buf is None or len(buf) == 0:
                 continue
-            _, ys = buf.arrays()
+            _, ys = buf.arrays_since(t_min) if t_min is not None else buf.arrays()
             if ys.size == 0:
                 continue
             local_min = float(np.nanmin(ys))
@@ -668,12 +704,20 @@ class PlotOrchestrationMixin:
                     self._hover_cache = {}
                 cached_arrays = self._hover_cache.get(key)
                 if cached_arrays is None:
-                    xs_view, ys_view = buf.arrays()
-                    # Copy so a later ring-buffer wrap can't mutate storage
-                    # behind the cached arrays — the pre-wrap arrays() path
-                    # returns views into the underlying numpy storage. The
-                    # cache is cleared every redraw flush, so copies don't
-                    # accumulate.
+                    # In Live mode with a finite window, only the visible
+                    # slice is needed — saves a full-series copy when the
+                    # buffer has hours of data.
+                    if self._plot_live:
+                        window_t_min = self._visible_window_t_min()
+                    else:
+                        window_t_min = None
+                    if window_t_min is not None:
+                        xs_view, ys_view = buf.arrays_since(window_t_min)
+                    else:
+                        xs_view, ys_view = buf.arrays()
+                    # Copy so chunk seal-and-swap can't mutate storage behind
+                    # the cached arrays — arrays_since() of a single chunk
+                    # returns a view, and the cache is cleared every flush.
                     cached_arrays = (xs_view.copy(), ys_view.copy())
                     self._hover_cache[key] = cached_arrays
                 xs_arr, ys_arr = cached_arrays
@@ -746,12 +790,17 @@ class PlotOrchestrationMixin:
 
         current_t = (datetime.now() - self._session_started).total_seconds()
         palette = self._current_plot_palette()
+        # Sliding-window lower bound (None = show entire session).
+        # Only honoured in Live mode — Explore means the user has panned
+        # to inspect historical data and needs the full series to be
+        # visible regardless of the current Window dropdown setting.
+        window_t_min = self._visible_window_t_min() if self._plot_live else None
 
         color_offset = 0
-        # Track the oldest sample still in any ring buffer. The history deques
-        # are bounded (_plot_history_maxlen), so on long sessions xs[0] is well
-        # past zero — anchoring the live X axis at 0 then leaves most of the
-        # plot empty. Pin the left edge to the oldest sample we actually have.
+        # Track the oldest sample we want to *show*. For finite windows this
+        # is just window_t_min; for "All session" it is the first sample we
+        # have. We never look past samples that were dropped by the safety
+        # cap (TimeSeriesBuffer keeps first_x() current).
         oldest_x: Optional[float] = None
 
         for panel in self._plot_panels:
@@ -769,9 +818,6 @@ class PlotOrchestrationMixin:
             for local_idx, key in enumerate(panel.assigned_keys):
                 buf = self._plot_history.get(key)
                 xs_len = len(buf) if buf is not None else 0
-                # Compute oldest_x from the cheap ring-buffer accessor — no
-                # need to build the numpy array just for the live X-range
-                # anchor.
                 if buf is not None and xs_len:
                     first_x = buf.first_x()
                     if first_x is not None and (oldest_x is None or first_x < oldest_x):
@@ -785,32 +831,28 @@ class PlotOrchestrationMixin:
                     curve = pi.plot(name=label, pen=pg.mkPen(color, width=1.8))
                     _configure_live_curve(curve)
                     panel.curves[key] = curve
-                    # Cache the colour on the curve itself so we can skip the
-                    # setPen + mkPen allocation on every subsequent redraw —
-                    # the colour only changes when the assignment shifts.
                     curve.__bh_color = color  # type: ignore[attr-defined]
                 elif getattr(curve, "__bh_color", None) != color:
                     curve.setPen(pg.mkPen(color, width=1.8))
                     curve.__bh_color = color  # type: ignore[attr-defined]
 
-                # Skip setData when this curve's ring buffer hasn't changed
-                # since the last redraw. The buffer is bounded, so len alone
-                # goes stale once it saturates — combine length with the
-                # right-most timestamp, which increases monotonically with
-                # every appended sample. At 60 Hz over many curves this
-                # dominates the redraw cost when only a few signals are
-                # actively producing data.
+                # Skip setData when this curve hasn't changed since the last
+                # redraw. Signature mixes length, right-most timestamp, and
+                # the window lower bound — so widening the window after a
+                # long quiet period still re-renders the older samples.
                 last_x = buf.last_x() if (buf is not None and xs_len) else None
-                signature = (xs_len, last_x)
+                signature = (xs_len, last_x, window_t_min)
                 if getattr(curve, "__bh_last_sig", None) == signature:
                     continue
                 curve.__bh_last_sig = signature  # type: ignore[attr-defined]
 
                 if buf is None or xs_len == 0:
                     x_values, y_values = _EMPTY_F64, _EMPTY_F64
+                elif window_t_min is not None:
+                    # Feed only samples inside the visible window; whole
+                    # chunks below the window are skipped by arrays_since().
+                    x_values, y_values = buf.arrays_since(window_t_min)
                 else:
-                    # Ring buffer returns ordered numpy slices/copies; no
-                    # Python-level fromiter loop required.
                     x_values, y_values = buf.arrays()
 
                 curve.setData(
@@ -821,27 +863,35 @@ class PlotOrchestrationMixin:
 
             color_offset += len(panel.assigned_keys)
 
-        # Live mode X range. Two cases:
+        # Live mode X range. Three cases:
         #   - No data yet: anchor [0, INITIAL_WINDOW] so the axis reads 0 at
         #     the left while waiting for the first packet.
-        #   - Data present: anchor [oldest_x, current_t * 1.05] so the curves
-        #     fill the panel instead of crowding into the right edge once the
-        #     ring buffer has dropped early samples.
+        #   - Finite window: anchor [current_t - window, current_t * 1.02]
+        #     so the newest sample sits near the right edge and the axis
+        #     scrolls as time advances.
+        #   - All session: anchor [oldest_x, current_t * 1.05] so the curve
+        #     fills the panel from the first sample we still have.
         # The re-entrancy guard stops sigXRangeChanged from flipping us to Explore.
         if self._plot_live and self._plot_panels:
             self._plot_range_changing = True
             try:
                 first_pi = self._plot_panels[0].plot_item
-                if oldest_x is None:
+                if oldest_x is None and window_t_min is None:
                     x_min = 0.0
                     x_max = _PLOT_INITIAL_WINDOW_S
+                elif window_t_min is not None:
+                    # Pin to the sliding window even when the first packet
+                    # hasn't arrived — keeps the axis reading sensibly.
+                    span = max(float(self._plot_window_seconds or 0), _PLOT_INITIAL_WINDOW_S)
+                    x_min = max(0.0, current_t - span)
+                    x_max = max(current_t, x_min + _PLOT_INITIAL_WINDOW_S)
+                    # Small right padding so the newest point isn't flush
+                    # against the edge.
+                    x_max = x_min + (x_max - x_min) * 1.02
                 else:
-                    x_min = oldest_x
-                    # Small right padding (5%) so the newest point isn't flush
-                    # against the edge. Guard against a near-zero span on the
-                    # very first packet by enforcing a minimum window width.
-                    span = max(current_t - oldest_x, _PLOT_INITIAL_WINDOW_S)
-                    x_max = oldest_x + span * 1.05
+                    x_min = oldest_x or 0.0
+                    span = max(current_t - x_min, _PLOT_INITIAL_WINDOW_S)
+                    x_max = x_min + span * 1.05
                 first_pi.setXRange(x_min, x_max, padding=0)
             finally:
                 self._plot_range_changing = False

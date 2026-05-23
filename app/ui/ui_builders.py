@@ -506,6 +506,37 @@ class UIBuildersMixin:
         self._time_mode_combo.currentIndexChanged.connect(self._on_plot_time_mode_changed)
         controls.addWidget(self._time_mode_combo)
 
+        # Sliding display window. Samples are always retained in full
+        # (TimeSeriesBuffer keeps every value since session start);
+        # this selector only changes how much of the history is shown.
+        controls.addWidget(QLabel("Window:"))
+        self._plot_window_combo = QComboBox(outer)
+        # (label, seconds-or-None). None = "All session".
+        self._plot_window_options: list[tuple[str, "int | None"]] = [
+            ("Last 1 min", 60),
+            ("Last 5 min", 5 * 60),
+            ("Last 10 min", 10 * 60),
+            ("Last 30 min", 30 * 60),
+            ("Last 1 hr", 60 * 60),
+            ("Last 2 hr", 2 * 60 * 60),
+            ("All session", None),
+        ]
+        for label, _ in self._plot_window_options:
+            self._plot_window_combo.addItem(label)
+        # Restore saved selection (matches by seconds value).
+        current_secs = self._plot_window_seconds
+        match_idx = next(
+            (i for i, (_, s) in enumerate(self._plot_window_options) if s == current_secs),
+            1,  # default: "Last 5 min"
+        )
+        self._plot_window_combo.setCurrentIndex(match_idx)
+        self._plot_window_combo.setToolTip(
+            "How much history to show in Live mode. All samples are still\n"
+            "kept in memory; this only changes the visible time window."
+        )
+        self._plot_window_combo.currentIndexChanged.connect(self._on_plot_window_changed)
+        controls.addWidget(self._plot_window_combo)
+
         # Pause / Live toggle — checkable, color-coded so users see the
         # current mode at a glance. Clicking Live also re-fits Y auto-range
         # and snaps X back to (0, now), so it doubles as a reset.
