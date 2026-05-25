@@ -599,7 +599,43 @@ class MainWindow(
         ):
             dock.setVisible(True)
         self._toolbar.setVisible(True)
+        # The captured _default_state is whatever Qt happened to lay out at
+        # construction time — usually fine but the Live Plot ends up wider
+        # than ideal and the right column too narrow. Apply explicit
+        # proportions so Reset always produces a tidy, useable layout.
+        QTimer.singleShot(0, self._apply_tidy_dock_proportions)
         self._toast("Window layout reset")
+
+    def _apply_tidy_dock_proportions(self) -> None:
+        """Tune dock widths/heights to a sensible split.
+
+        Right column ≈ 36% of width, bottom plot ≈ 38% of height. Right
+        column's vertical split: panels 65% / logs 35%. Deferred via
+        singleShot so the geometry restore has settled before we resize.
+        """
+        w = self.width()
+        h = self.height()
+        if w <= 0 or h <= 0:
+            return
+        # Width: pull the right column wider so the bottom plot dock has
+        # less width to fill — addresses the "plot stretched on x" feel.
+        right_docks = [
+            self._bitfields_dock, self._enums_dock, self._tx_dock, self._editor_dock,
+            self._console_dock, self._activity_dock,
+        ]
+        right_w = max(360, int(w * 0.36))
+        self.resizeDocks(right_docks, [right_w] * len(right_docks), Qt.Orientation.Horizontal)
+        # Height: bottom Live Plot gets ~38% of window height.
+        self.resizeDocks([self._plot_dock], [int(h * 0.38)], Qt.Orientation.Vertical)
+        # Right column vertical split: panels 65% / logs 35%.
+        self.resizeDocks(
+            [self._bitfields_dock, self._console_dock],
+            [int(h * 0.65), int(h * 0.35)],
+            Qt.Orientation.Vertical,
+        )
+        # Make sure the user's preferred tabs come back to the front.
+        self._tx_dock.raise_()
+        self._activity_dock.raise_()
 
     def _save_window_state(self) -> None:
         self._settings.setValue("window/geometry", self.saveGeometry())
@@ -1415,7 +1451,7 @@ class MainWindow(
                 try:
                     for panel in self._plot_panels:
                         vb = panel.plot_item.getViewBox()
-                        if vb is not None and panel.auto_fit_y:
+                        if vb is not None and panel.y_scale_mode != "manual":
                             # Trigger an immediate one-shot fit; the 2 Hz
                             # timer handles steady-state.
                             self._fit_panel_y_now(panel)

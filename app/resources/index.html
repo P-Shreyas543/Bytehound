@@ -253,10 +253,21 @@
     <ul>
         <li>Click <strong>+ Add</strong> next to a panel label to pick a signal from your loaded config.</li>
         <li>Each assigned signal appears as a coloured chip button (e.g. <code>● VoltageA  ✕</code>). Click the chip to remove it.</li>
-        <li>Use the <strong>Auto Y</strong> checkbox on each panel to keep its Y-axis fitted to visible data. Uncheck it when you want to manually lock the Y range.</li>
+        <li>Use the <strong>Y-scale dropdown</strong> on each panel to control how the Y-axis tracks data (see <em>Y-axis Scale Modes</em> below).</li>
         <li>Alternatively, <strong>right-click</strong> any row in the Data Table → <em>Add to Live Plot</em> → choose the panel number from the sub-menu.</li>
     </ul>
     <p>Panel assignments and layout are automatically saved and restored between sessions.</p>
+
+    <h4>Y-axis Scale Modes</h4>
+    <p>Each panel strip has a small dropdown that picks how its Y-axis behaves on every redraw:</p>
+    <table>
+        <tr><th>Mode</th><th>Behaviour</th><th>When to use</th></tr>
+        <tr><td><strong>Y: Fit</strong></td><td>Tight auto-fit with 5% padding. Axis rescales every 0.5 s to the visible data.</td><td>Default. Clean signals where you want the curve to fill the panel.</td></tr>
+        <tr><td><strong>Y: Loose</strong></td><td>Auto-fit with 25% headroom. Small noise stays inside the padding instead of triggering rescales.</td><td>Signals that wiggle a bit but you still want auto-tracking.</td></tr>
+        <tr><td><strong>Y: Expand</strong></td><td>Axis only grows, never shrinks. Once the bounds are large enough to contain the data, they stay put.</td><td>Noisy signals where Fit causes the axis to "breathe". Industry-standard noise killer (Vector CANalyzer's <em>Auto max</em>, LabVIEW's <em>Loose Fit</em>).</td></tr>
+        <tr><td><strong>Y: Manual</strong></td><td>Locked at a fixed range. Opens a dialog to type Y min / Y max; mouse pan/zoom still works and persists.</td><td>Signals with a known expected range (e.g. cell voltages 2.5 – 4.2 V).</td></tr>
+    </table>
+    <p>You can also <strong>right-click</strong> a panel → <em>Set Y Range…</em> to type bounds directly (this also switches the panel to Manual mode).</p>
 
     <h4>View Modes</h4>
     <table>

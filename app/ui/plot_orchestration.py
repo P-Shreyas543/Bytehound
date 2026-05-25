@@ -18,9 +18,20 @@ import numpy as np
 from PySide6.QtCore import QSettings, Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QCheckBox, QHBoxLayout, QInputDialog, QLabel, QMessageBox,
-    QPushButton, QWidget,
+    QComboBox, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox,
+    QPushButton, QToolButton, QWidget, QWidgetAction,
 )
+
+
+# Order matters: indexes are persisted to QSettings and used by the panel-strip
+# QComboBox. Tuples are (mode-key, dropdown-label, tooltip).
+_Y_SCALE_MODES: list[tuple[str, str, str]] = [
+    ("fit",    "Y: Fit",    "Tight auto-fit (5% padding). Axis rescales every 0.5 s."),
+    ("loose",  "Y: Loose",  "Auto-fit with 25% headroom — gentler than Fit; small noise stays inside the padding."),
+    ("expand", "Y: Expand", "Axis only grows, never shrinks. Best for noisy signals — eliminates the 'breathing' you get with Fit."),
+    ("manual", "Y: Manual", "Lock the y-range. Opens a dialog to type min/max; you can also mouse-pan/zoom or right-click → Set Y Range… later."),
+]
+_Y_SCALE_KEYS = [m[0] for m in _Y_SCALE_MODES]
 
 try:
     import pyqtgraph as pg
@@ -35,7 +46,6 @@ from .plot_panel import (
     _configure_live_curve,
     _format_elapsed_time,
 )
-from .widgets import _contrast_text_color
 
 
 class PlotOrchestrationMixin:
@@ -71,7 +81,7 @@ class PlotOrchestrationMixin:
         self._apply_plot_time_mode(mode, persist=True)
 
     def _on_plot_window_changed(self, idx: int) -> None:
-        """User picked a new sliding-window length from the Window combo.
+        """User picked a new sliding-window length from the segmented control.
 
         Persists the choice and triggers an immediate redraw so the new
         window takes effect without waiting for the next packet.
@@ -79,7 +89,9 @@ class PlotOrchestrationMixin:
         options = getattr(self, "_plot_window_options", None)
         if not options or idx < 0 or idx >= len(options):
             return
-        _, seconds = options[idx]
+        # Options entries are (short_label, full_label, seconds_or_None);
+        # only the seconds value matters for the window.
+        seconds = options[idx][-1]
         self._plot_window_seconds = seconds
         # 0 sentinel in QSettings → "All session" (None internally).
         self._settings.setValue("plot/window_seconds", int(seconds) if seconds else 0)
@@ -115,7 +127,7 @@ class PlotOrchestrationMixin:
         if panel_idx >= len(self._plot_panels):
             return
         panel = self._plot_panels[panel_idx]
-        if panel.auto_fit_y:
+        if panel.y_scale_mode != "manual":
             return
         if not y_range or len(y_range) != 2:
             return
@@ -133,7 +145,7 @@ class PlotOrchestrationMixin:
         timer.start(500)
 
     def _throttled_y_autofit(self) -> None:
-        """Periodically refit Y for panels with auto_fit_y=True.
+        """Periodically refit Y for panels in fit/loose/expand mode.
 
         Replaces pyqtgraph's continuous auto-range (which fires on every
         setData call) with a 2 Hz recompute. Skips when the computed range
@@ -145,12 +157,15 @@ class PlotOrchestrationMixin:
         if not self._plot_live:
             return  # paused — leave the user's view alone
         for panel in self._plot_panels:
-            if not panel.auto_fit_y:
+            if panel.y_scale_mode == "manual":
                 continue
             self._fit_panel_y_now(panel)
 
     def _fit_panel_y_now(self, panel) -> None:
         if pg is None:
+            return
+        mode = panel.y_scale_mode
+        if mode == "manual":
             return
         vb = panel.plot_item.getViewBox()
         if vb is None:
@@ -180,18 +195,33 @@ class PlotOrchestrationMixin:
             pad = max(abs(y_min) * 0.05, 1.0)
             y_min -= pad
             y_max += pad
+
         cur_range = vb.viewRange()[1]
-        if cur_range and len(cur_range) == 2:
-            span = max(y_max - y_min, 1e-9)
-            if abs(cur_range[0] - y_min) / span < 0.01 and abs(cur_range[1] - y_max) / span < 0.01:
-                return  # bounds unchanged — skip the repaint
-        vb.setYRange(y_min, y_max, padding=0.05)
+        if mode == "expand" and cur_range and len(cur_range) == 2:
+            # Grow-only: union the new data bounds with the current view so
+            # the axis never shrinks. setYRange below is called with padding=0
+            # so repeated growths don't compound padding.
+            cur_y_min, cur_y_max = float(cur_range[0]), float(cur_range[1])
+            new_y_min = min(cur_y_min, y_min)
+            new_y_max = max(cur_y_max, y_max)
+            if new_y_min == cur_y_min and new_y_max == cur_y_max:
+                return  # data still inside current bounds — no repaint
+            y_min, y_max = new_y_min, new_y_max
+            padding = 0.0
+        else:
+            padding = 0.25 if mode == "loose" else 0.05
+            if cur_range and len(cur_range) == 2:
+                span = max(y_max - y_min, 1e-9)
+                if (abs(cur_range[0] - y_min) / span < 0.01
+                        and abs(cur_range[1] - y_max) / span < 0.01):
+                    return  # bounds unchanged — skip the repaint
+        vb.setYRange(y_min, y_max, padding=padding)
 
     def _persist_plot_y_range(self, panel_idx: int) -> None:
         if panel_idx >= len(self._plot_panels):
             return
         panel = self._plot_panels[panel_idx]
-        if panel.auto_fit_y:
+        if panel.y_scale_mode != "manual":
             return
         pending = self._plot_y_range_pending.get(panel_idx)
         if pending is None:
@@ -227,13 +257,13 @@ class PlotOrchestrationMixin:
         vb = panel.plot_item.getViewBox()
         if vb is None:
             return
-        if panel.auto_fit_y:
-            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
-            self._fit_panel_y_now(panel)
-        else:
+        if panel.y_scale_mode == "manual":
             y_range = self._read_saved_y_range(panel_idx)
             if y_range is not None:
                 vb.setYRange(y_range[0], y_range[1], padding=0)
+        else:
+            vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
+            self._fit_panel_y_now(panel)
         if resume_live and not self._plot_live:
             self._set_plot_live(True, source="reset")
         self._redraw_plot()
@@ -356,6 +386,10 @@ class PlotOrchestrationMixin:
                     "Reset View && Resume Live",
                     lambda i=idx: self._reset_panel_view(i, resume_live=True),
                 )
+                vb.menu.addAction(
+                    "Set Y Range…",
+                    lambda i=idx: self._prompt_panel_y_range(i),
+                )
                 vb.menu.addAction("Clear", lambda i=idx: self._clear_panel_history(i))
             # Card-style frame around each panel's view box so each subplot
             # has an unambiguous boundary on the dark/light canvas. Matches
@@ -413,16 +447,25 @@ class PlotOrchestrationMixin:
             panel.vline = vline      # type: ignore[attr-defined]
             panel.hline = hline      # type: ignore[attr-defined]
             panel.mouse_proxy = proxy  # type: ignore[attr-defined]
-            # Restore per-panel Auto-Y preference (defaults to True).
-            saved_auto_y = self._settings.value(f"plot/panel/{idx}/auto_y", True)
-            panel.auto_fit_y = (
-                bool(saved_auto_y)
-                if not isinstance(saved_auto_y, str)
-                else saved_auto_y.lower() in ("true", "1", "yes"))
+            # Restore per-panel Y-scale mode. Falls back to the legacy
+            # `auto_y` boolean key so users upgrading from the old checkbox
+            # don't get reset to defaults.
+            saved_mode = self._settings.value(f"plot/panel/{idx}/y_scale_mode", None)
+            if saved_mode is None:
+                legacy = self._settings.value(f"plot/panel/{idx}/auto_y", True)
+                if isinstance(legacy, str):
+                    legacy_on = legacy.lower() in ("true", "1", "yes")
+                else:
+                    legacy_on = bool(legacy)
+                saved_mode = "fit" if legacy_on else "manual"
+            mode = str(saved_mode).lower()
+            if mode not in _Y_SCALE_KEYS:
+                mode = "fit"
+            panel.y_scale_mode = mode
             # Throttled auto-Y: we run our own 2 Hz fit (see _throttled_y_autofit)
             # so pyqtgraph's per-update auto-range stays off regardless of preference.
             vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
-            if not panel.auto_fit_y:
+            if panel.y_scale_mode == "manual":
                 y_range = self._read_saved_y_range(idx)
                 if y_range is not None:
                     vb.setYRange(y_range[0], y_range[1], padding=0)
@@ -464,7 +507,14 @@ class PlotOrchestrationMixin:
         self._apply_plot_theme(str(self._settings.value("ui/theme", "dark")))
 
     def _make_panel_strip(self, panel_idx: int) -> QWidget:
-        """Build the variable-chip strip for one subplot panel."""
+        """Build the per-panel control strip.
+
+        Layout: ``P{n}: [Signals ▾ (count)] [+ Add] [Auto Y]``. The
+        assigned signals live behind the Signals dropdown so a panel
+        with 14 cell voltages doesn't blow out the strip width and
+        squash the plot underneath. Each menu row carries a colour
+        swatch, the signal name, and a remove (✕) button.
+        """
         strip = QWidget()
         strip.setObjectName(f"panelStrip_{panel_idx}")
         strip.setMaximumHeight(36)
@@ -474,67 +524,183 @@ class PlotOrchestrationMixin:
         lbl = QLabel(f"P{panel_idx + 1}:")
         lbl.setStyleSheet("font-weight:bold; font-size:11px;")
         hl.addWidget(lbl)
-        self._refresh_panel_strip_contents(panel_idx, hl)
+
+        panel = self._plot_panels[panel_idx] if panel_idx < len(self._plot_panels) else None
+        sig_count = len(panel.assigned_keys) if panel else 0
+        signals_btn = QToolButton()
+        signals_btn.setText(self._panel_signals_button_label(sig_count))
+        signals_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        signals_btn.setFixedHeight(24)
+        signals_btn.setStyleSheet(
+            "QToolButton { font-size:11px; padding: 0 8px; }"
+            "QToolButton::menu-indicator { subcontrol-position: right center; }"
+        )
+        signals_btn.setToolTip(
+            "Signals assigned to this panel. Click a row's ✕ to remove."
+        )
+        signals_btn.setMenu(self._build_panel_signals_menu(panel_idx, signals_btn))
+        signals_btn.setEnabled(sig_count > 0)
+        hl.addWidget(signals_btn)
+
         add_btn = QPushButton("+ Add")
         add_btn.setFixedHeight(24)
         add_btn.setStyleSheet("font-size:11px; padding: 0 6px;")
         add_btn.clicked.connect(lambda _, i=panel_idx: self._on_panel_add_signal(i))
         hl.addWidget(add_btn)
-        # Per-panel Auto-Y checkbox — when on, pyqtgraph rescales y to fit
-        # all visible curves on every redraw. When off, the user controls
-        # zoom manually (typical "freeze the y-axis" workflow).
-        auto_y_cb = QCheckBox("Auto Y")
-        auto_y_cb.setToolTip(
-            "Auto-rescale the y-axis on every update so growing signals "
-            "stay in view. Uncheck to lock the current y range."
+        # Per-panel Y-scale mode. Fit/Loose/Expand/Manual — see _Y_SCALE_MODES.
+        # Expand mode is the noise-killer: axis only grows, so jittery signals
+        # don't make it breathe on every redraw.
+        y_scale_cb = QComboBox()
+        y_scale_cb.setFixedHeight(24)
+        y_scale_cb.setStyleSheet("QComboBox { font-size: 11px; padding: 0 4px; }")
+        current_mode = panel.y_scale_mode if panel else "fit"
+        for mode_key, label, tip in _Y_SCALE_MODES:
+            y_scale_cb.addItem(label, mode_key)
+            y_scale_cb.setItemData(y_scale_cb.count() - 1, tip, Qt.ItemDataRole.ToolTipRole)
+        try:
+            y_scale_cb.setCurrentIndex(_Y_SCALE_KEYS.index(current_mode))
+        except ValueError:
+            y_scale_cb.setCurrentIndex(0)
+        y_scale_cb.setToolTip(
+            "Y-axis scale mode. Use Expand if Fit is too twitchy on noisy signals."
         )
-        auto_y_cb.setStyleSheet("font-size: 11px;")
-        panel = self._plot_panels[panel_idx] if panel_idx < len(self._plot_panels) else None
-        auto_y_cb.setChecked(bool(panel.auto_fit_y) if panel else True)
-        auto_y_cb.toggled.connect(
-            lambda checked, i=panel_idx: self._on_panel_auto_y_toggled(i, checked))
-        hl.addWidget(auto_y_cb)
+        y_scale_cb.currentIndexChanged.connect(
+            lambda new_idx, i=panel_idx: self._on_panel_y_scale_changed(i, new_idx))
+        hl.addWidget(y_scale_cb)
         hl.addStretch(1)
         return strip
 
-    def _on_panel_auto_y_toggled(self, panel_idx: int, checked: bool) -> None:
+    @staticmethod
+    def _panel_signals_button_label(count: int) -> str:
+        if count == 0:
+            return "Signals (none)"
+        if count == 1:
+            return "Signals (1)"
+        return f"Signals ({count})"
+
+    def _build_panel_signals_menu(self, panel_idx: int, parent: QWidget) -> QMenu:
+        """Build the dropdown menu listing this panel's assigned signals.
+
+        Each row is a custom widget with [colour dot] [name] [✕]. The
+        menu is rebuilt fresh whenever the strip is rebuilt (after add
+        or remove), so there's no separate refresh path.
+        """
+        menu = QMenu(parent)
+        menu.setStyleSheet("QMenu { padding: 4px; }")
+        if panel_idx >= len(self._plot_panels):
+            return menu
+        panel = self._plot_panels[panel_idx]
+        if not panel.assigned_keys:
+            empty_action = menu.addAction("(no signals on this panel)")
+            empty_action.setEnabled(False)
+            return menu
+
+        color_offset = sum(
+            len(self._plot_panels[i].assigned_keys) for i in range(panel_idx)
+        )
+        palette = self._current_plot_palette()
+        for local_idx, key in enumerate(panel.assigned_keys):
+            color = palette[(color_offset + local_idx) % len(palette)]
+            row = self._build_panel_signal_menu_row(panel_idx, key, color, menu)
+            action = QWidgetAction(menu)
+            action.setDefaultWidget(row)
+            menu.addAction(action)
+        return menu
+
+    def _build_panel_signal_menu_row(
+        self, panel_idx: int, key: Tuple[int, str], color: str, menu: QMenu,
+    ) -> QWidget:
+        row = QWidget(menu)
+        rl = QHBoxLayout(row)
+        rl.setContentsMargins(6, 2, 6, 2)
+        rl.setSpacing(8)
+        dot = QLabel("●", row)
+        dot.setStyleSheet(f"color:{color}; font-size:14px;")
+        rl.addWidget(dot)
+        name = QLabel(f"0x{key[0]:04X} · {key[1]}", row)
+        name.setStyleSheet("font-size:11px;")
+        name.setMinimumWidth(180)
+        rl.addWidget(name, 1)
+        remove = QToolButton(row)
+        remove.setText("✕")
+        remove.setAutoRaise(True)
+        remove.setToolTip("Remove this signal from the panel")
+        remove.setStyleSheet(
+            "QToolButton { font-size:11px; padding: 0 6px; color:#b04a4a; }"
+            "QToolButton:hover { color:#ff5555; }"
+        )
+
+        def _remove():
+            menu.close()
+            self._remove_signal_from_panel(panel_idx, key)
+
+        remove.clicked.connect(_remove)
+        rl.addWidget(remove)
+        return row
+
+    def _on_panel_y_scale_changed(self, panel_idx: int, new_idx: int) -> None:
         if panel_idx >= len(self._plot_panels) or pg is None:
             return
+        if new_idx < 0 or new_idx >= len(_Y_SCALE_KEYS):
+            return
+        mode = _Y_SCALE_KEYS[new_idx]
         panel = self._plot_panels[panel_idx]
-        panel.auto_fit_y = checked
+        panel.y_scale_mode = mode
         vb = panel.plot_item.getViewBox()
         # Don't enable pyqtgraph's continuous auto-Y — the 2 Hz throttled
-        # fitter handles it. Just trigger an immediate fit when turning on.
+        # fitter handles it.
         vb.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
-        if checked:
-            self._fit_panel_y_now(panel)
-        if not checked:
+        if mode == "manual":
+            # Freeze the current view as the starting lock, then prompt the
+            # user to type exact bounds. Cancel keeps the frozen view.
             y_range = vb.viewRange()[1]
             if y_range and len(y_range) == 2:
                 self._settings.setValue(
                     f"plot/panel/{panel_idx}/y_range",
                     [float(y_range[0]), float(y_range[1])],
                 )
-        self._settings.setValue(f"plot/panel/{panel_idx}/auto_y", checked)
+            self._settings.setValue(f"plot/panel/{panel_idx}/y_scale_mode", mode)
+            self._prompt_panel_y_range(panel_idx)
+            return
+        # Switching back into an auto mode: refit immediately so the user
+        # sees the change without waiting for the next throttled tick.
+        self._fit_panel_y_now(panel)
+        self._settings.setValue(f"plot/panel/{panel_idx}/y_scale_mode", mode)
 
-    def _refresh_panel_strip_contents(self, panel_idx: int, layout: QHBoxLayout) -> None:
-        """Add chip labels for each assigned key in the panel strip."""
-        if panel_idx >= len(self._plot_panels):
+    def _prompt_panel_y_range(self, panel_idx: int) -> None:
+        """Pop the Y-range dialog for *panel_idx* and apply on accept.
+
+        Also flips the panel into Manual mode — typing a range only makes
+        sense if the axis won't immediately rescale away from it. Reachable
+        from the Y-scale dropdown's Manual option and the ViewBox right-
+        click menu.
+        """
+        if pg is None or panel_idx >= len(self._plot_panels):
             return
         panel = self._plot_panels[panel_idx]
-        color_offset = sum(len(self._plot_panels[i].assigned_keys) for i in range(panel_idx))
-        palette = self._current_plot_palette()
-        for local_idx, key in enumerate(panel.assigned_keys):
-            color = palette[(color_offset + local_idx) % len(palette)]
-            text_color = _contrast_text_color(color)
-            chip = QPushButton(f"● {key[1]}  ✕")
-            chip.setFixedHeight(22)
-            chip.setStyleSheet(
-                f"font-size:10px; padding:0 5px; border-radius:4px;"
-                f"background:{color}; color:{text_color}; border:none;"
-            )
-            chip.clicked.connect(lambda _, i=panel_idx, k=key: self._remove_signal_from_panel(i, k))
-            layout.addWidget(chip)
+        vb = panel.plot_item.getViewBox()
+        if vb is None:
+            return
+        cur = vb.viewRange()[1]
+        cur_min = float(cur[0]) if cur and len(cur) == 2 else 0.0
+        cur_max = float(cur[1]) if cur and len(cur) == 2 else 1.0
+
+        from .dialogs import YRangeDialog
+        dlg = YRangeDialog(self, f"Panel {panel_idx + 1}", cur_min, cur_max)
+        if dlg.exec() != dlg.DialogCode.Accepted:
+            return
+        y_min, y_max = dlg.get_range()
+        # Force Manual mode so the throttled fitter doesn't immediately
+        # overwrite the user's chosen range on the next 2 Hz tick.
+        panel.y_scale_mode = "manual"
+        self._settings.setValue(f"plot/panel/{panel_idx}/y_scale_mode", "manual")
+        self._settings.setValue(
+            f"plot/panel/{panel_idx}/y_range", [y_min, y_max],
+        )
+        vb.setYRange(y_min, y_max, padding=0)
+        # Sync the strip combobox in case the user reached this dialog via
+        # the right-click menu while the dropdown still said Fit/Loose/Expand.
+        self._rebuild_panel_strips()
 
     def _rebuild_panel_strips(self) -> None:
         """Rebuild all variable-chip strips after assignments change."""

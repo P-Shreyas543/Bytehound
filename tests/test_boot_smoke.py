@@ -24,7 +24,7 @@ os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
 
 from PySide6.QtCore import QSettings, QTimer
 from PySide6.QtGui import QFont
-from PySide6.QtWidgets import QApplication, QHBoxLayout
+from PySide6.QtWidgets import QApplication
 
 import qdarktheme
 
@@ -130,7 +130,7 @@ def test_plot_orchestration_methods(window: MainWindow) -> None:
     window._refresh_plot_indicators()
     window._read_saved_y_range(0)
     window._rebuild_plot_grid(2, 1)
-    window._refresh_panel_strip_contents(0, QHBoxLayout())
+    window._build_panel_signals_menu(0, window)
     window._rebuild_panel_strips()
 
 
@@ -265,7 +265,7 @@ def test_fit_panel_y_now_with_seeded_data(window: MainWindow) -> None:
 
     panel = window._plot_panels[0]
     panel.assigned_keys = [key]
-    panel.auto_fit_y = True
+    panel.y_scale_mode = "fit"
 
     window._fit_panel_y_now(panel)
     window._throttled_y_autofit()

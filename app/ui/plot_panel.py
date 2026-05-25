@@ -40,13 +40,17 @@ class PlotPanel:
     ``plot_item``     – the pyqtgraph PlotItem for this cell.
     ``assigned_keys`` – ordered list of (frame_id, signal_name) signals to draw.
     ``curves``        – mapping from key → PlotDataItem (the live curve object).
-    ``auto_fit_y``    – when True, pyqtgraph rescales the y-axis automatically
-                        so growing signals stay in view without manual zoom.
+    ``y_scale_mode`` – how the y-axis tracks data on each redraw:
+                        "fit"    = tight auto-fit (5% padding)
+                        "loose"  = auto-fit + 25% headroom (less twitchy)
+                        "expand" = grow-only; axis never shrinks, so noisy
+                                   signals don't make it breathe
+                        "manual" = locked at user-chosen range
     """
     plot_item: object                                     # pg.PlotItem
     assigned_keys: List[Tuple[int, str]] = field(default_factory=list)
     curves:        Dict[Tuple[int, str], object] = field(default_factory=dict)
-    auto_fit_y:    bool = True
+    y_scale_mode:  str = "fit"
     legend:        Optional[object] = None
     time_axis:     Optional[object] = None
     index:         int = 0

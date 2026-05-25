@@ -510,29 +510,36 @@ class UIBuildersMixin:
         # (TimeSeriesBuffer keeps every value since session start);
         # this selector only changes how much of the history is shown.
         controls.addWidget(QLabel("Window:"))
-        self._plot_window_combo = QComboBox(outer)
-        # (label, seconds-or-None). None = "All session".
-        self._plot_window_options: list[tuple[str, "int | None"]] = [
-            ("Last 1 min", 60),
-            ("Last 5 min", 5 * 60),
-            ("Last 10 min", 10 * 60),
-            ("Last 30 min", 30 * 60),
-            ("Last 1 hr", 60 * 60),
-            ("Last 2 hr", 2 * 60 * 60),
-            ("All session", None),
+        # Options entries are (short_label, full_label, seconds_or_None).
+        # The short label still drives the visible combo text; the full
+        # label is the tooltip for each option.
+        self._plot_window_options: list[tuple[str, str, "int | None"]] = [
+            ("1m",  "Last 1 minute",   60),
+            ("5m",  "Last 5 minutes",  5 * 60),
+            ("10m", "Last 10 minutes", 10 * 60),
+            ("30m", "Last 30 minutes", 30 * 60),
+            ("1h",  "Last 1 hour",     60 * 60),
+            ("2h",  "Last 2 hours",    2 * 60 * 60),
+            ("All", "All session",     None),
         ]
-        for label, _ in self._plot_window_options:
-            self._plot_window_combo.addItem(label)
-        # Restore saved selection (matches by seconds value).
         current_secs = self._plot_window_seconds
-        match_idx = next(
-            (i for i, (_, s) in enumerate(self._plot_window_options) if s == current_secs),
-            1,  # default: "Last 5 min"
+        selected_idx = next(
+            (i for i, (_, _, s) in enumerate(self._plot_window_options) if s == current_secs),
+            1,  # default: 5m
         )
-        self._plot_window_combo.setCurrentIndex(match_idx)
+        self._plot_window_combo = QComboBox(outer)
+        self._plot_window_combo.setFixedHeight(24)
+        self._plot_window_combo.setStyleSheet(
+            "QComboBox { font-size: 11px; padding: 0 6px; min-width: 70px; }"
+        )
+        for short, full, _seconds in self._plot_window_options:
+            # Show "5m" in the closed combo, "5m — Last 5 minutes" in the
+            # dropdown so users can scan the full descriptions on open.
+            self._plot_window_combo.addItem(f"{short} — {full}")
+        self._plot_window_combo.setCurrentIndex(selected_idx)
         self._plot_window_combo.setToolTip(
-            "How much history to show in Live mode. All samples are still\n"
-            "kept in memory; this only changes the visible time window."
+            "How much history to show in Live mode. "
+            "All samples are kept in memory regardless of this setting."
         )
         self._plot_window_combo.currentIndexChanged.connect(self._on_plot_window_changed)
         controls.addWidget(self._plot_window_combo)
@@ -601,6 +608,12 @@ class UIBuildersMixin:
 
         # ── Graphics canvas ────────────────────────────────────────────────
         self._gl_widget = pg.GraphicsLayoutWidget(outer)
+        # GraphicsLayoutWidget has no intrinsic minimum size, so without
+        # this the layout would happily squash it to 0 when the dock
+        # shrinks. 80 px keeps at least one curve visible without forcing
+        # the dock to be tall — users can still drag the splitter down or
+        # undock/float the panel freely.
+        self._gl_widget.setMinimumHeight(80)
         # The pyqtgraph canvas is not a QWidget child so qdarktheme does not
         # paint it; we tint it explicitly per theme. Re-applied on every
         # theme switch by _apply_plot_theme().

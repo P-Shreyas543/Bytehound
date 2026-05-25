@@ -302,3 +302,76 @@ class LoggingSettingsDialog(QDialog):
 
     def get_values(self) -> Tuple[str, float]:
         return self._level_combo.currentText(), float(self._flush_spin.value())
+
+
+class YRangeDialog(QDialog):
+    """Modal dialog to type a fixed Y-axis range for a plot panel.
+
+    Used when a panel is in Manual Y-scale mode. Defaults to the panel's
+    current view range so the user can tweak rather than start from zero.
+    """
+
+    def __init__(
+        self,
+        parent: QWidget | None,
+        panel_label: str,
+        current_min: float,
+        current_max: float,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Set Y Range — {panel_label}")
+        self.setModal(True)
+        self.resize(280, 130)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+
+        header = QLabel(
+            "Locks the y-axis to a fixed range. Mouse pan/zoom still works "
+            "and overrides what you type here.",
+            self,
+        )
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        # Range chosen to cover BMS signal scales (mV cells through pack
+        # voltage / temperatures) without being so wide that typo'd values
+        # blow the axis off-screen.
+        self._min_spin = QDoubleSpinBox(self)
+        self._min_spin.setRange(-1e9, 1e9)
+        self._min_spin.setDecimals(3)
+        self._min_spin.setSingleStep(1.0)
+        self._min_spin.setValue(float(current_min))
+
+        self._max_spin = QDoubleSpinBox(self)
+        self._max_spin.setRange(-1e9, 1e9)
+        self._max_spin.setDecimals(3)
+        self._max_spin.setSingleStep(1.0)
+        self._max_spin.setValue(float(current_max))
+
+        form.addRow("Y min", self._min_spin)
+        form.addRow("Y max", self._max_spin)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _on_accept(self) -> None:
+        if self._max_spin.value() <= self._min_spin.value():
+            # Reject silently rather than pop a second dialog — the spin
+            # boxes are right there for the user to fix.
+            self._max_spin.setFocus()
+            self._max_spin.selectAll()
+            return
+        self.accept()
+
+    def get_range(self) -> Tuple[float, float]:
+        return float(self._min_spin.value()), float(self._max_spin.value())
