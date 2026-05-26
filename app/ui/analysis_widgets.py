@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 import numpy as np
 import pyqtgraph as pg
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QGroupBox, QHeaderView, QLabel,
@@ -309,6 +309,59 @@ class CursorReadoutPanel(QGroupBox):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Stats calculation background thread
+# ═══════════════════════════════════════════════════════════════════════
+class StatsWorker(QThread):
+    sigFinished = Signal(list)
+
+    def __init__(self, rows: list[dict], parent=None):
+        super().__init__(parent)
+        self.rows = rows
+        self._is_cancelled = False
+
+    def cancel(self):
+        self._is_cancelled = True
+
+    def run(self):
+        results = []
+        for info in self.rows:
+            if self._is_cancelled:
+                return
+            stats = self._compute_stats_internal(info["x"], info["y"], info.get("x_range"))
+            results.append({
+                "curve": info["curve"],
+                "color": info.get("color"),
+                "stats": stats
+            })
+        if not self._is_cancelled:
+            self.sigFinished.emit(results)
+
+    @staticmethod
+    def _compute_stats_internal(x: np.ndarray, y: np.ndarray, x_range: tuple[float, float] | None) -> dict[str, float] | None:
+        if x.size == 0 or y.size == 0:
+            return None
+        if x_range is not None:
+            lo, hi = x_range
+            mask = (x >= lo) & (x <= hi)
+        else:
+            mask = np.ones_like(x, dtype=bool)
+        yv = y[mask]
+        yv = yv[~np.isnan(yv)]
+        if yv.size == 0:
+            return None
+        return {
+            "min":    float(np.min(yv)),
+            "p5":     float(np.percentile(yv, 5)),
+            "max":    float(np.max(yv)),
+            "mean":   float(np.mean(yv)),
+            "median": float(np.median(yv)),
+            "p95":    float(np.percentile(yv, 95)),
+            "std":    float(np.std(yv)),
+            "n":      int(yv.size),
+        }
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Statistics panel — visible-range descriptive stats per curve
 # ═══════════════════════════════════════════════════════════════════════
 class StatisticsPanel(QWidget):
@@ -344,35 +397,12 @@ class StatisticsPanel(QWidget):
         for col in range(1, len(self.STATS_COLUMNS)):
             hh.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         layout.addWidget(self._table, 1)
+        self._worker = None
 
     @staticmethod
-    def compute_stats(x: np.ndarray, y: np.ndarray,
-                       x_range: tuple[float, float] | None
-                       ) -> dict[str, float] | None:
-        """Return a stats dict for the slice of y where x is within
-        ``x_range`` (or the full series if x_range is None). NaNs are
-        ignored. Returns None if there are no finite samples in range."""
-        if x.size == 0 or y.size == 0:
-            return None
-        if x_range is not None:
-            lo, hi = x_range
-            mask = (x >= lo) & (x <= hi)
-        else:
-            mask = np.ones_like(x, dtype=bool)
-        yv = y[mask]
-        yv = yv[~np.isnan(yv)]
-        if yv.size == 0:
-            return None
-        return {
-            "min":    float(np.min(yv)),
-            "p5":     float(np.percentile(yv, 5)),
-            "max":    float(np.max(yv)),
-            "mean":   float(np.mean(yv)),
-            "median": float(np.median(yv)),
-            "p95":    float(np.percentile(yv, 95)),
-            "std":    float(np.std(yv)),
-            "n":      int(yv.size),
-        }
+    def compute_stats(x: np.ndarray, y: np.ndarray, x_range: tuple[float, float] | None) -> dict[str, float] | None:
+        """Calculate statistics over the given x-range, delegating to StatsWorker."""
+        return StatsWorker._compute_stats_internal(x, y, x_range)
 
     @staticmethod
     def _fmt(v: float) -> str:
@@ -385,15 +415,30 @@ class StatisticsPanel(QWidget):
 
     def update_stats(self, rows: list[dict]):
         """``rows`` is a list of {curve, log_id, param, color, x, y, x_range}.
-        We compute stats and re-render the table."""
-        self._table.setRowCount(0)
+        Starts a background worker to calculate statistics."""
+        if self._worker is not None:
+            self._worker.cancel()
+            self._worker.sigFinished.disconnect()
+            self._worker.wait()
+            self._worker = None
+
         if not rows:
+            self._table.setRowCount(0)
             self._info.setText("No visible curves. Check parameters to populate.")
             return
-        self._info.setText(f"Stats over visible x-range  ·  {len(rows)} curve(s)")
-        self._table.setRowCount(len(rows))
-        for r, info in enumerate(rows):
-            stats = self.compute_stats(info["x"], info["y"], info.get("x_range"))
+
+        self._info.setText("Stats over visible x-range  ·  Calculating...")
+        self._worker = StatsWorker(rows, self)
+        self._worker.sigFinished.connect(self._on_stats_calculated)
+        self._worker.start()
+
+    def _on_stats_calculated(self, results: list[dict]):
+        self._worker = None
+        self._table.setRowCount(0)
+        self._info.setText(f"Stats over visible x-range  ·  {len(results)} curve(s)")
+        self._table.setRowCount(len(results))
+        for r, info in enumerate(results):
+            stats = info["stats"]
             label = info["curve"]
             color = info.get("color", "")
 

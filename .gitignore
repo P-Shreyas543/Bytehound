@@ -55,3 +55,6 @@ session_*.json
 tools/codesign.*
 tools/sign-runner.cmd
 sign-password.txt
+
+# Model artifacts and generated screenshots
+artifacts/
