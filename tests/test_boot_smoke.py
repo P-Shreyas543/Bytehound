@@ -358,10 +358,8 @@ def test_copy_diagnostics_produces_useful_text(window: MainWindow) -> None:
         assert marker in text, f"Missing diagnostics section: {marker!r}"
 
 
-def test_settings_migration_bumps_pipelining_defaults(qapp) -> None:
-    """Existing users with pipelining off + depth=2 (the old defaults)
-    get auto-upgraded to pipelining on + depth=8 the next time the app
-    starts. Users who customised either key keep their value."""
+def test_settings_migration_uses_safe_sequential_polling_defaults(qapp) -> None:
+    """Migration returns Auto-Fetch to safe sequential polling defaults."""
     from PySide6.QtCore import QSettings
     from app.ui.main_window import APP_ORG, APP_NAME, _migrate_settings
 
@@ -380,15 +378,15 @@ def test_settings_migration_bumps_pipelining_defaults(qapp) -> None:
 
         _migrate_settings(s)
 
-        assert s.value("poll/pipelining", type=bool) is True, \
-            "pipelining should auto-flip True on first launch"
-        assert int(s.value("poll/pipeline_depth")) == 8, \
-            "depth=2 should auto-bump to 8 on first launch"
+        assert s.value("poll/pipelining", type=bool) is False, \
+            "pipelining should default off for one-request-at-a-time hardware"
+        assert int(s.value("poll/pipeline_depth")) == 1, \
+            "depth should default to one in-flight request"
         # Re-running must be a no-op.
-        s.setValue("poll/pipeline_depth", 4)  # user picks something specific
+        s.setValue("poll/pipeline_depth", 4)  # later edits are not re-overwritten
         _migrate_settings(s)
         assert int(s.value("poll/pipeline_depth")) == 4, \
-            "user's custom depth must not be re-overwritten on a 2nd run"
+            "settings migration must not re-run once version is stored"
     finally:
         for k, v in saved.items():
             if v is None:
@@ -398,9 +396,8 @@ def test_settings_migration_bumps_pipelining_defaults(qapp) -> None:
         s.sync()
 
 
-def test_settings_migration_respects_user_customisation(qapp) -> None:
-    """A user who saved depth=4 (NOT the old default 2) must keep depth=4
-    after the migration runs — only the *exact* old default gets bumped."""
+def test_settings_migration_resets_old_pipeline_customisation_once(qapp) -> None:
+    """The v2 migration intentionally disables saved pipelining once."""
     from PySide6.QtCore import QSettings
     from app.ui.main_window import APP_ORG, APP_NAME, _migrate_settings
 
@@ -411,16 +408,15 @@ def test_settings_migration_respects_user_customisation(qapp) -> None:
         )
     }
     try:
-        s.setValue("poll/pipelining", True)   # already on
-        s.setValue("poll/pipeline_depth", 4)  # deliberate non-default
+        s.setValue("poll/pipelining", True)
+        s.setValue("poll/pipeline_depth", 4)
         s.remove("settings/migration_version")
         s.sync()
 
         _migrate_settings(s)
 
-        assert int(s.value("poll/pipeline_depth")) == 4, \
-            "user's depth=4 must not be clobbered by migration"
-        assert s.value("poll/pipelining", type=bool) is True
+        assert int(s.value("poll/pipeline_depth")) == 1
+        assert s.value("poll/pipelining", type=bool) is False
     finally:
         for k, v in saved.items():
             if v is None:

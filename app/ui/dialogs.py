@@ -195,26 +195,21 @@ class PollingConfigDialog(QDialog):
         btn_row.addWidget(none_btn)
         layout.addLayout(btn_row)
 
-        # Pipelining row — keeps multiple poll requests in flight to cut
-        # cycle time on slow-turnaround devices. Defaults to ON with depth
-        # 8: with N enabled schedules and a device whose response time
-        # equals the configured interval (the common case for a
-        # request/response MCU), depth=8 lets each target be polled at
-        # ~configured interval. The previous default (off / depth 2) made
-        # 10-target configs run 5× slower than configured. Users on
-        # devices that can't handle parallel requests can still uncheck.
+        # Pipelining is useful only for devices that explicitly tolerate
+        # multiple outstanding poll requests. Hardware that processes one
+        # command at a time can drop or delay overlapped requests, so the
+        # default is the safer sequential mode.
         self._pipeline_chk = QCheckBox("Pipeline poll requests", self)
         self._pipeline_chk.setToolTip(
             "Send up to N polls without waiting for each response. Replies "
             "are matched by frame_id. Disable if the device drops or "
             "corrupts overlapping requests. Not available for Modbus RTU."
         )
-        saved_pipe = settings.value("poll/pipelining", True, type=bool)
-        self._pipeline_chk.setChecked(bool(saved_pipe))
+        self._pipeline_chk.setChecked(False)
 
         self._pipeline_depth = QSpinBox(self)
         self._pipeline_depth.setRange(1, 16)
-        self._pipeline_depth.setValue(int(settings.value("poll/pipeline_depth", 8)))
+        self._pipeline_depth.setValue(int(settings.value("poll/pipeline_depth", 1)))
         self._pipeline_depth.setToolTip("Max number of in-flight poll requests.")
         self._pipeline_depth.setEnabled(self._pipeline_chk.isChecked())
         self._pipeline_chk.toggled.connect(self._pipeline_depth.setEnabled)
@@ -262,7 +257,8 @@ class PollingConfigDialog(QDialog):
 
     def get_pipelining(self) -> Tuple[bool, int]:
         """Return (enabled, max_in_flight) for pipelined polling."""
-        return self._pipeline_chk.isChecked(), int(self._pipeline_depth.value())
+        depth = int(self._pipeline_depth.value())
+        return self._pipeline_chk.isChecked() and depth > 1, depth
 
 
 class LoggingSettingsDialog(QDialog):

@@ -27,6 +27,7 @@ import queue
 import threading
 import time
 from dataclasses import dataclass, replace as dataclass_replace
+from datetime import datetime
 from typing import Iterable, List, Optional
 
 import serial
@@ -62,6 +63,17 @@ POLLING_BOOT_GRACE = 2.5
 # user wants to retry it. Reset on any successful response.
 CONSECUTIVE_TIMEOUT_DISABLE_THRESHOLD = 5
 
+# Small scheduling/USB-driver slack added to poll waits. Some boards answer at
+# the edge of the configured timeout (for example 500-520 ms with a 500 ms
+# timeout); without a little slack the next poll can be sent just before the
+# matching response lands, which makes the raw log look out of order.
+POLL_RESPONSE_GRACE_MS = 50
+
+# COM-port probe runs against the BMS hardware showed 10-50 ms command spacing
+# can drop whole poll replies even though successful replies arrive in ~16 ms.
+# Keep polling conservative; manual priority TX still uses protocol settings.
+POLL_TX_GAP_FLOOR_MS = 100
+
 # OS error codes that indicate a physical disconnect on Windows.
 _DISCONNECT_WINERRORS = {5, 22, 31, 1167}
 
@@ -82,6 +94,7 @@ class PollingWorker(QThread):
     metrics_updated = Signal(int, int, int)   # timeouts, crc_errors, rx_bytes
     error_occurred = Signal(str)
     tx_recorded = Signal(bytes)
+    wire_recorded = Signal(str, bytes, object)  # direction, raw bytes, datetime
 
     # Hardware-safety signals
     connection_lost = Signal()   # USB physically unplugged
@@ -140,6 +153,8 @@ class PollingWorker(QThread):
         self._serial: serial.Serial | None = None
         self._stop_event = threading.Event()          # thread-safe shutdown flag
         self._polling_global_enabled = False
+        self._last_tx_time: float = 0.0
+        self._flush_rx_before_polling = False
 
         # Pipelined polling: when enabled, the loop sends up to
         # _pipeline_depth poll requests without waiting for each response,
@@ -249,6 +264,9 @@ class PollingWorker(QThread):
 
     def set_polling_global(self, enabled: bool) -> None:
         with QMutexLocker(self._mutex):
+            if enabled and not self._polling_global_enabled:
+                self._flush_rx_before_polling = True
+                self._in_flight.clear()
             self._polling_global_enabled = enabled
 
     def set_pipelining(self, enabled: bool, depth: int = 2) -> None:
@@ -262,12 +280,14 @@ class PollingWorker(QThread):
         Modbus RTU is silently forced off — its responses don't carry a
         register-address tag we can use to demux out-of-order replies.
         """
+        depth = max(1, min(int(depth), 8))
+        if depth <= 1:
+            enabled = False
         if self.protocol.parser_type == "modbus_rtu" and enabled:
             self.error_occurred.emit(
                 "Pipelined polling is not supported for Modbus RTU; ignored."
             )
             enabled = False
-        depth = max(1, min(int(depth), 8))
         with QMutexLocker(self._mutex):
             self._pipelining_enabled = enabled
             self._pipeline_depth = depth
@@ -370,6 +390,7 @@ class PollingWorker(QThread):
         """
         cfg = self._decode_config
         for p in packets:
+            self.wire_recorded.emit("RX", p.raw, datetime.now())
             if not p.ok:
                 self._crc_errors += 1
                 self._batch.append((p, None))
@@ -417,6 +438,70 @@ class PollingWorker(QThread):
             self.metrics_updated.emit(self._timeouts, self._crc_errors, self._rx_bytes)
             self._last_metrics_emit = now
 
+    def _effective_tx_gap_ms(self, min_gap_ms: int = 0) -> int:
+        return max(
+            0,
+            int(getattr(self.protocol, "inter_frame_delay_ms", 0)),
+            int(min_gap_ms),
+        )
+
+    def _respect_inter_frame_delay(self, min_gap_ms: int = 0) -> None:
+        """Honor protocol.inter_frame_delay_ms before consecutive TX frames."""
+        delay_ms = self._effective_tx_gap_ms(min_gap_ms)
+        if delay_ms <= 0 or self._last_tx_time <= 0.0:
+            return
+        remaining = (delay_ms / 1000.0) - (time.monotonic() - self._last_tx_time)
+        if remaining > 0:
+            time.sleep(remaining)
+
+    def _write_serial(self, data: bytes, *, min_gap_ms: int = 0) -> int:
+        """Write to the serial port, applying the configured TX gap."""
+        if self._serial is None:
+            return 0
+        self._respect_inter_frame_delay(min_gap_ms)
+        written = self._serial.write(data)
+        self._last_tx_time = time.monotonic()
+        self.wire_recorded.emit("TX", data, datetime.now())
+        return written
+
+    def _drain_pending_rx(self) -> List[ParsedPacket]:
+        """Parse and emit bytes already waiting before the next TX.
+
+        Some request/response devices can leave late frames in the driver
+        buffer. Draining them before the next poll keeps latency accounting
+        tied to the request that is about to be sent, while still delivering
+        the stale-but-valid data to the UI.
+        """
+        if self._serial is None:
+            return []
+        w = self._serial.in_waiting
+        if w <= 0:
+            return []
+        data = self._serial.read(w)
+        self._rx_bytes += len(data)
+        self._last_rx_time = time.monotonic()
+        self._watchdog_fired = False
+        self._parser.feed(data)
+        extracted = self._parser.extract_all()
+        if extracted:
+            self._accumulate(extracted)
+            self._emit_metrics_throttled()
+        return extracted
+
+    def _reset_rx_state_for_polling_start(self) -> None:
+        """Drop stale bytes/parser fragments when Auto-Fetch is started."""
+        self._parser = create_parser(self.protocol)
+        self._batch.clear()
+        self._in_flight.clear()
+        if self._serial is not None:
+            try:
+                self._serial.reset_input_buffer()
+            except (AttributeError, serial.SerialException, OSError):
+                # Some test doubles or drivers may not expose/reset this.
+                self._drain_pending_rx()
+        self._last_rx_time = time.monotonic()
+        self._watchdog_fired = False
+
     # ------------------------------------------------------------------
     # Thread run loop
     # ------------------------------------------------------------------
@@ -436,7 +521,7 @@ class PollingWorker(QThread):
                 if not self._priority_tx_queue.empty():
                     tx_data = self._priority_tx_queue.get()
                     if self._serial:
-                        self._serial.write(tx_data)
+                        self._write_serial(tx_data)
                         self.tx_recorded.emit(tx_data)
                         if self.protocol.parser_type == "modbus_rtu":
                             self._await_modbus_response(tx_data, target_id=None)
@@ -449,6 +534,12 @@ class PollingWorker(QThread):
                     polling_enabled = self._polling_global_enabled
                     pipelining = self._pipelining_enabled
                     pipe_depth = self._pipeline_depth
+                    flush_rx_before_polling = self._flush_rx_before_polling
+                    if flush_rx_before_polling:
+                        self._flush_rx_before_polling = False
+
+                if flush_rx_before_polling:
+                    self._reset_rx_state_for_polling_start()
 
                 polled = False
                 # Polling gate: hold off until the device has either sent us
@@ -598,7 +689,8 @@ class PollingWorker(QThread):
             from ..protocol.packet_builder import build_modbus_packet
             try:
                 req = build_modbus_packet(self.protocol, target_id, b"")
-                self._serial.write(req)
+                self._drain_pending_rx()
+                self._write_serial(req, min_gap_ms=POLL_TX_GAP_FLOOR_MS)
                 self.tx_recorded.emit(req)
                 self._await_modbus_response(req, target_id, timeout_ms)
             except ValueError as exc:
@@ -607,7 +699,8 @@ class PollingWorker(QThread):
             from ..protocol.packet_builder import build_packet
             try:
                 req = build_packet(self.protocol, target_id, b"")
-                self._serial.write(req)
+                self._drain_pending_rx()
+                self._write_serial(req, min_gap_ms=POLL_TX_GAP_FLOOR_MS)
                 self.tx_recorded.emit(req)
                 self._await_response(timeout_ms, target_id)
             except ValueError as exc:
@@ -671,7 +764,8 @@ class PollingWorker(QThread):
             return False
         if self._serial is None:
             return False
-        self._serial.write(req)
+        self._drain_pending_rx()
+        self._write_serial(req)
         self.tx_recorded.emit(req)
         tx_time = time.monotonic()
         self._in_flight.append({
@@ -813,7 +907,8 @@ class PollingWorker(QThread):
           surface it (e.g. "avg poll latency 12 ms").
         """
         tx_time = time.monotonic()
-        end_time = tx_time + (timeout_ms / 1000.0)
+        effective_timeout_ms = max(0, int(timeout_ms)) + POLL_RESPONSE_GRACE_MS
+        end_time = tx_time + (effective_timeout_ms / 1000.0)
         packet_found = False
 
         while time.monotonic() < end_time and not self._stop_event.is_set():
@@ -824,7 +919,7 @@ class PollingWorker(QThread):
             if not self._priority_tx_queue.empty() and self._serial:
                 try:
                     tx_data = self._priority_tx_queue.get_nowait()
-                    self._serial.write(tx_data)
+                    self._write_serial(tx_data)
                     self.tx_recorded.emit(tx_data)
                 except queue.Empty:
                     pass

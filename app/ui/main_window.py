@@ -99,7 +99,7 @@ _WINDOW_STATE_VERSION = 1
 # Bumped when default QSettings values change so users get migrated to
 # the new defaults without losing values they explicitly customised. The
 # migration runs once on launch; see _migrate_settings.
-_SETTINGS_MIGRATION_VERSION = 1
+_SETTINGS_MIGRATION_VERSION = 2
 
 
 def _migrate_settings(settings) -> None:
@@ -137,6 +137,14 @@ def _migrate_settings(settings) -> None:
                 old_depth = 2
             if old_depth == 2:
                 settings.setValue("poll/pipeline_depth", 8)
+
+    # v1 -> v2: real hardware testing showed many framed UART devices process
+    # one command at a time and delay/drop overlapped polls. Return Auto-Fetch
+    # to the hardware-safe sequential default; users can still opt back into
+    # pipelining from the dialog for firmware that supports it.
+    if stored_version < 2:
+        settings.setValue("poll/pipelining", False)
+        settings.setValue("poll/pipeline_depth", 1)
 
     settings.setValue("settings/migration_version", _SETTINGS_MIGRATION_VERSION)
 
@@ -1004,6 +1012,7 @@ class MainWindow(
             self._serial.metrics_updated.connect(self._on_metrics_updated)
             self._serial.error_occurred.connect(self._on_serial_error)
             self._serial.tx_recorded.connect(self._on_tx_recorded)
+            self._serial.wire_recorded.connect(self._on_wire_recorded)
             self._serial.connection_lost.connect(self._on_connection_lost)
             self._serial.device_timeout.connect(self._on_device_timeout)
             self._serial.open()
@@ -1151,9 +1160,16 @@ class MainWindow(
 
     def _on_tx_recorded(self, packet: bytes) -> None:
         self._tx_bytes += len(packet)
+        self._refresh_counts_label()
+
+    def _on_wire_recorded(self, direction: str, packet: bytes, timestamp: datetime) -> None:
+        direction = direction.upper()
         if self._raw_logger:
-            self._raw_logger.log("TX", packet)
-        self._console.appendPlainText(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, TX, {packet.hex(' ').upper()}")
+            self._raw_logger.log(direction, packet, timestamp=timestamp)
+        self._console.appendPlainText(
+            f"{timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, "
+            f"{direction}, {packet.hex(' ').upper()}"
+        )
 
 
     def _log_flush_interval(self) -> float:
@@ -1251,11 +1267,6 @@ class MainWindow(
         # which dominates the per-packet UI cost at 1 kHz. Same UX
         # contract as the plot — re-opening shows fresh content from
         # re-open time forward.
-        console_dock = getattr(self, "_console_dock", None)
-        if console_dock is None or console_dock.isVisible():
-            self._console_buffer.append(self._format_console_row(packet))
-        if self._raw_logger:
-            self._raw_logger.log("RX", packet.raw, delta_t_ms=self._delta_t_ms)
         if not packet.ok:
             # Worker is the single source of truth for the CRC error count
             # and pushes it via metrics_updated → _on_metrics_updated.

@@ -265,3 +265,43 @@ def test_enqueue_priority_tx_emits_error_on_full_queue():
     assert worker._priority_tx_queue.full()
     assert len(emitted) == 1
     assert "TX queue full" in emitted[0]
+
+
+def test_pipeline_depth_one_forces_sequential_mode():
+    """Depth 1 must use the normal request/response polling path."""
+    sched = PollingScheduleSpec(target_id=0x10, interval_ms=10, timeout_ms=5)
+    worker = _make_worker([sched])
+
+    worker.set_pipelining(True, depth=1)
+
+    assert worker._pipelining_enabled is False
+    assert worker._pipeline_depth == 1
+
+
+def test_polling_start_flushes_stale_rx_and_parser_state():
+    """Starting Auto-Fetch should not let old buffered frames satisfy the first poll."""
+    sched = PollingScheduleSpec(target_id=0x10, interval_ms=10, timeout_ms=5)
+    worker = _make_worker([sched])
+    worker.set_polling_global(False)
+    worker._parser.feed(b"\xAA\x55")
+    worker._batch.append((object(), None))
+    worker._in_flight.append({"target_id": 0x10, "tx_time": 1.0, "deadline": 2.0})
+    worker._serial.reset_input_buffer = MagicMock()
+
+    worker.set_polling_global(True)
+    assert worker._flush_rx_before_polling is True
+
+    worker._reset_rx_state_for_polling_start()
+
+    worker._serial.reset_input_buffer.assert_called_once()
+    assert worker._parser.buffered_bytes == 0
+    assert worker._batch == []
+    assert worker._in_flight == []
+
+
+def test_polling_tx_gap_floor_overrides_fast_protocol_delay():
+    """Polling uses the hardware-proven minimum gap even if config says 10 ms."""
+    sched = PollingScheduleSpec(target_id=0x10, interval_ms=10, timeout_ms=5)
+    worker = _make_worker([sched])
+
+    assert worker._effective_tx_gap_ms(100) == 100

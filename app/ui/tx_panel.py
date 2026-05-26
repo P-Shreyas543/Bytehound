@@ -153,11 +153,6 @@ class TxPanelMixin:
             self._popup_warning("TX command", "Connect a serial port before sending.")
             return
         self._serial.enqueue_priority_tx(packet)
-        self._tx_bytes += len(packet)
-        if self._raw_logger:
-            self._raw_logger.log("TX", packet)
-        self._console.appendPlainText(f"{datetime.now().strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, TX, {packet.hex(' ').upper()}")
-        self._update_counts()
         self._log_activity(
             f"[ACTION] TX command sent: {self._tx_command_combo.currentText()} "
             f"(raw=0x{packet.hex().upper()})"
