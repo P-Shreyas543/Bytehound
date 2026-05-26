@@ -156,6 +156,7 @@
             <li><a href="#section-4">4. Logging and Data Analysis</a>
                 <ul class="sub-menu">
                     <li><a href="#recording-logs">Recording Logs</a></li>
+                    <li><a href="#logging-settings">Logging Settings</a></li>
                     <li><a href="#analysis-suite">The Analysis Suite</a></li>
                 </ul>
             </li>
@@ -174,6 +175,7 @@
                 <ul class="sub-menu">
                     <li><a href="#theme-switching">Switching Light / Dark Theme</a></li>
                     <li><a href="#check-for-updates">Check for Updates</a></li>
+                    <li><a href="#diagnostics">Diagnostics &amp; Troubleshooting</a></li>
                 </ul>
             </li>
         </ul>
@@ -208,6 +210,7 @@
 
     <h3 id="active-polling">Active Polling (Auto-Fetch)</h3>
     <p>If your hardware only sends data when <em>asked</em> (request/response protocol), connect first, then use the <strong>Start Auto-Fetch</strong> toolbar button. A dialog lets you choose which configured targets are active. The background worker then sends requests based on your config's <code>polling_schedule</code> sheet.</p>
+    <p><strong>Pipelining and Timings:</strong> The Auto-Fetch dialog also allows you to configure <strong>Pipeline poll requests</strong>. By default, Bytehound sends one request and waits for its response (sequential). Pipelining allows multiple in-flight requests (controlled by <em>Max in-flight</em>), dramatically increasing throughput on hardware that supports it. You can also tune the <strong>TX gap</strong> (default 100 ms) which enforces a safe minimum spacing between consecutive outgoing polls.</p>
     <p>When Auto-Fetch is active, the button text changes to <strong>Stop Auto-Fetch</strong> and turns <span style="color:#e91e8c"><strong>pink</strong></span>. Click it again to stop. If your device streams data on its own, leave Auto-Fetch off.</p>
 
     <!-- Section 2 -->
@@ -280,6 +283,7 @@
     <h4>Controls</h4>
     <ul>
         <li><strong>⏸ Pause / ▶ Live</strong> button (or <kbd>Space</kbd>): Toggles freeze/scroll. Clicking <strong>▶ Live</strong> re-fits the Y axis and snaps X back to <code>0 → now</code>.</li>
+        <li><strong>Time Mode dropdown</strong>: Switch the X-axis labels between <strong>Elapsed</strong> (mm:ss since session start) and <strong>Clock</strong> (HH:MM:SS local wall-clock time). Your choice is saved between sessions.</li>
         <li><strong>Scroll wheel</strong>: Zoom in/out on time axis → enters Explore mode.</li>
         <li><strong>Click + drag</strong>: Pan the view → enters Explore mode.</li>
     </ul>
@@ -470,6 +474,13 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
     <div class="note">
         The raw CSV is flushed periodically (default 0.5 s, configurable under <strong>Tools → Logging Settings</strong>) and once more on close. The decoded <code>.xlsx</code> is buffered in memory and saved on <strong>Stop Logging</strong> — if the app crashes before Stop, the decoded workbook is lost. A session config snapshot is saved beside the log so the same decoder can be re-applied later.
     </div>
+
+    <h3 id="logging-settings">Logging Settings</h3>
+    <p>Under <strong>Tools → Logging Settings</strong>, you can configure application-level diagnostic logging and data flushing:</p>
+    <ul>
+        <li><strong>Log level</strong>: Sets the verbosity of Bytehound's internal rotating log file (<code>bytehound.log</code>). <code>INFO</code> is the default; use <code>DEBUG</code> if you are troubleshooting parse failures or protocol issues.</li>
+        <li><strong>Flush interval</strong>: Controls how frequently the raw <code>*_raw.csv</code> telemetry log writes to disk. The default is <code>0.5 s</code>. Set to <code>0.0</code> to flush on every write, which ensures no raw data is lost if the app crashes, though it may cause a slight performance penalty on slower disks. (Decoded <code>.xlsx</code> logs are always kept in memory and only written on Stop.)</li>
+    </ul>
 
     <h3 id="analysis-suite">The Analysis Suite</h3>
     <p>For deep-diving into saved test data and comparing multiple runs. The window is non-modal, so you can keep it open while the main app is running.</p>
@@ -975,6 +986,9 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
     <div class="warning">
         If you see <em>"Failed to check for updates: connection timed out"</em>, the manifest server is unreachable from this machine. Check your firewall / proxy settings, or simply skip the update — the app continues to work normally.
     </div>
+
+    <h3 id="diagnostics">Diagnostics &amp; Troubleshooting</h3>
+    <p>If you encounter issues, use <strong>Help → Copy Diagnostics</strong>. This generates a complete snapshot of your session state—including OS details, Bytehound version, Qt/Python versions, active config path, connection status, packet counters, and the tail of the internal application log. You can paste this directly into a bug report to provide all necessary context in one step without needing to manually hunt down the log file.</p>
 
 </div>
 
