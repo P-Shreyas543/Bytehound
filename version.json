@@ -8,5 +8,5 @@
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
     "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.3.0/Bytehound_Setup_0.3.0.exe",
     "release_notes": "Major Feature Milestone - Visualization & Analysis Suite.\n\nNew Features:\n  - Multi-Axis Live Plots: Secondary Y-axis automatically scales signals with different units (e.g. Voltage vs RPM).\n  - Custom Math Channels: Define ad-hoc formulas (e.g. Power = [Voltage] * [Current] / 1000) inside the Analysis Suite.\n  - Decimated Export: Downsample massive CSV exports for efficient storage sharing.\n  - Headless CLI Validator: Run 'python -m app.main --validate config.yaml' for CI/CD checks.\n\nPerformance & Architecture:\n  - Zero-Copy Parsers: Pre-compiled struct parsers prevent memory allocation in the hot telemetry loop.\n  - Background Updates: Application updates now download asynchronously without blocking the UI.\n  - Architectural decoupling of the Telemetry Pipeline and GUI MainWindow.\n  - Hex-safe configuration loaders for YAML and JSON.",
-    "sha256": "f04f627fa119ba130b7c781978e385996a651a0ea97de1587ba74377f8bdce63"
+    "sha256": "50fcfa7fabc763e240f7d83cf1b15d8772b46d4ab9c7899847a1fff2d534ed32"
 }
