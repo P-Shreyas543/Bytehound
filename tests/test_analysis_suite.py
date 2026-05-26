@@ -250,3 +250,33 @@ def test_linear_interpolation_in_cursor_readout():
     y = np.array([0.0, 100.0, 50.0])
     assert np.interp(5.0, x, y) == 50.0
     assert np.interp(15.0, x, y) == 75.0
+
+
+def test_math_channels_settings_persistence(monkeypatch):
+    class MockSettings:
+        def __init__(self):
+            self.data = {}
+        def value(self, key, default=None):
+            return self.data.get(key, default)
+        def setValue(self, key, value):
+            self.data[key] = value
+
+    win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
+    win._qsettings = MockSettings()
+    win._math_channels = {}
+    win._logs = {}
+    
+    monkeypatch.setattr("PySide6.QtWidgets.QInputDialog.getItem", lambda *args, **kwargs: ("Power", True))
+    monkeypatch.setattr(win, "_rebuild_param_list", lambda: None)
+    monkeypatch.setattr(win, "_rebuild_plots", lambda: None)
+    class MockStatus:
+        def showMessage(self, text, timeout=0):
+            pass
+    win._status = MockStatus()
+
+    win._math_channels["Power"] = "[Voltage] * [Current]"
+    win._qsettings.setValue("analysis/math_channels", win._math_channels)
+    win._remove_custom_math_channel()
+    
+    assert "Power" not in win._math_channels
+    assert win._qsettings.value("analysis/math_channels") == {}

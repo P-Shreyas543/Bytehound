@@ -193,7 +193,11 @@ class AnalysisSuiteWindow(QMainWindow):
         self._persisted_cursors = self._qsettings.value(
             "analysis/cursor_positions", [])
 
-        self._math_channels: dict[str, str] = {} # Custom math channel definitions
+        persisted_math = self._qsettings.value("analysis/math_channels")
+        if isinstance(persisted_math, dict):
+            self._math_channels = {str(k): str(v) for k, v in persisted_math.items()}
+        else:
+            self._math_channels = {}
         
         # Log sidebar UI elements
         self._log_entries_ui: dict[str, dict] = {}  # log_id → {checkbox, spin, container, ...}
@@ -528,6 +532,7 @@ class AnalysisSuiteWindow(QMainWindow):
         tools_menu.addAction("Clear All Cursors", self._clear_all_cursors)
         tools_menu.addSeparator()
         tools_menu.addAction("Custom Math Channel...", self._add_custom_math_channel, QKeySequence("M"))
+        tools_menu.addAction("Remove Custom Math Channel...", self._remove_custom_math_channel)
 
         # ── Scatter ──────────────────────────────────────────────────
         scatter_menu = mb.addMenu("Scatter")
@@ -668,6 +673,7 @@ class AnalysisSuiteWindow(QMainWindow):
             return
             
         self._math_channels[name] = expr.strip()
+        self._qsettings.setValue("analysis/math_channels", self._math_channels)
         
         for log in self._logs.values():
             self._compute_math_channels(log)
@@ -675,6 +681,28 @@ class AnalysisSuiteWindow(QMainWindow):
         self._rebuild_param_list()
         self._rebuild_plots()
         self._status.showMessage(f"Added Math Channel: {name}", 5000)
+
+    def _remove_custom_math_channel(self):
+        from PySide6.QtWidgets import QMessageBox
+        if not self._math_channels:
+            QMessageBox.information(self, "Remove Math Channel", "No custom math channels exist.")
+            return
+            
+        items = list(self._math_channels.keys())
+        item, ok = QInputDialog.getItem(self, "Remove Math Channel", "Select channel to remove:", items, 0, False)
+        if not ok or not item:
+            return
+            
+        del self._math_channels[item]
+        self._qsettings.setValue("analysis/math_channels", self._math_channels)
+        
+        for log in self._logs.values():
+            if item in log.columns:
+                del log.columns[item]
+                
+        self._rebuild_param_list()
+        self._rebuild_plots()
+        self._status.showMessage(f"Removed Math Channel: {item}", 5000)
 
     def _compute_math_channels(self, log: LogEntry):
         def diff_func(y):
