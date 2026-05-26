@@ -269,3 +269,203 @@ def test_fit_panel_y_now_with_seeded_data(window: MainWindow) -> None:
 
     window._fit_panel_y_now(panel)
     window._throttled_y_autofit()
+
+
+# ----------------------------------------------------------------------
+# Regression guards for release-readiness changes.
+# ----------------------------------------------------------------------
+
+
+def test_central_stack_toggles_on_config_load(window: MainWindow) -> None:
+    """Central widget swaps between empty-state and table on config presence.
+
+    Regression guard: future changes to ``_refresh_action_state`` or the
+    central-widget construction must keep the two-page swap working.
+    """
+    assert hasattr(window, "_central_stack"), "central stack not built"
+    assert window._central_stack.count() == 2
+
+    # Force no-config and verify the empty-state page wins.
+    window._config = None
+    window._refresh_action_state()
+    assert window._central_stack.currentIndex() == 0
+
+    # Loading the canonical config should flip to the table page.
+    _load_canonical_or_skip(window)
+    window._refresh_action_state()
+    assert window._central_stack.currentIndex() == 1
+
+
+def test_plot_state_button_tristate_transitions(window: MainWindow) -> None:
+    """Live -> Paused -> Live -> Explore (pan) -> Live transitions.
+
+    Regression guard for the unified plot state button. The old two-button
+    design had subtle race conditions on signal blocking; the new single
+    button must remain coherent across both click and pan-induced flips.
+    """
+    assert hasattr(window, "_plot_state_btn"), "plot state button not built"
+    assert not hasattr(window, "_pause_btn"), "old pause button still present"
+    assert not hasattr(window, "_plot_mode_btn"), "old plot-mode button still present"
+
+    # Starts Live.
+    assert window._plot_live is True
+    assert "Live" in window._plot_state_btn.text()
+
+    # Click pauses.
+    window._on_plot_state_btn_clicked()
+    assert window._plot_live is False
+    assert "Paused" in window._plot_state_btn.text()
+
+    # Click resumes.
+    window._on_plot_state_btn_clicked()
+    assert window._plot_live is True
+    assert "Live" in window._plot_state_btn.text()
+
+    # Pan-induced flip renders as Explore, not Paused.
+    window._set_plot_live(False, source="pan")
+    assert window._plot_live is False
+    assert "Explore" in window._plot_state_btn.text()
+
+    # Click from Explore returns to Live.
+    window._on_plot_state_btn_clicked()
+    assert window._plot_live is True
+    assert "Live" in window._plot_state_btn.text()
+
+
+def test_copy_diagnostics_produces_useful_text(window: MainWindow) -> None:
+    """Help -> Copy Diagnostics writes a multi-section snapshot to clipboard.
+
+    Pins the section headers the user is expected to paste into a bug
+    report. If any are renamed/removed this test fires as a reminder to
+    update the triage docs alongside the code.
+    """
+    from PySide6.QtWidgets import QApplication
+
+    QApplication.clipboard().setText("")  # known-empty baseline
+    window._on_copy_diagnostics()
+    text = QApplication.clipboard().text()
+    for marker in (
+        "diagnostics",
+        "Runtime",
+        "Session",
+        "OS:",
+        "Python:",
+        "PySide6:",
+        "Qt:",
+        "Connection:",
+        "Logging:",
+    ):
+        assert marker in text, f"Missing diagnostics section: {marker!r}"
+
+
+def test_settings_migration_bumps_pipelining_defaults(qapp) -> None:
+    """Existing users with pipelining off + depth=2 (the old defaults)
+    get auto-upgraded to pipelining on + depth=8 the next time the app
+    starts. Users who customised either key keep their value."""
+    from PySide6.QtCore import QSettings
+    from app.ui.main_window import APP_ORG, APP_NAME, _migrate_settings
+
+    s = QSettings(APP_ORG, APP_NAME)
+    saved = {
+        k: s.value(k) for k in (
+            "poll/pipelining", "poll/pipeline_depth", "settings/migration_version"
+        )
+    }
+    try:
+        # Simulate an existing install with the OLD defaults explicitly stored.
+        s.setValue("poll/pipelining", False)
+        s.setValue("poll/pipeline_depth", 2)
+        s.remove("settings/migration_version")
+        s.sync()
+
+        _migrate_settings(s)
+
+        assert s.value("poll/pipelining", type=bool) is True, \
+            "pipelining should auto-flip True on first launch"
+        assert int(s.value("poll/pipeline_depth")) == 8, \
+            "depth=2 should auto-bump to 8 on first launch"
+        # Re-running must be a no-op.
+        s.setValue("poll/pipeline_depth", 4)  # user picks something specific
+        _migrate_settings(s)
+        assert int(s.value("poll/pipeline_depth")) == 4, \
+            "user's custom depth must not be re-overwritten on a 2nd run"
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                s.remove(k)
+            else:
+                s.setValue(k, v)
+        s.sync()
+
+
+def test_settings_migration_respects_user_customisation(qapp) -> None:
+    """A user who saved depth=4 (NOT the old default 2) must keep depth=4
+    after the migration runs — only the *exact* old default gets bumped."""
+    from PySide6.QtCore import QSettings
+    from app.ui.main_window import APP_ORG, APP_NAME, _migrate_settings
+
+    s = QSettings(APP_ORG, APP_NAME)
+    saved = {
+        k: s.value(k) for k in (
+            "poll/pipelining", "poll/pipeline_depth", "settings/migration_version"
+        )
+    }
+    try:
+        s.setValue("poll/pipelining", True)   # already on
+        s.setValue("poll/pipeline_depth", 4)  # deliberate non-default
+        s.remove("settings/migration_version")
+        s.sync()
+
+        _migrate_settings(s)
+
+        assert int(s.value("poll/pipeline_depth")) == 4, \
+            "user's depth=4 must not be clobbered by migration"
+        assert s.value("poll/pipelining", type=bool) is True
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                s.remove(k)
+            else:
+                s.setValue(k, v)
+        s.sync()
+
+
+def test_window_state_schema_version_discards_stale_blobs(qapp) -> None:
+    """A mismatched ``_WINDOW_STATE_VERSION`` clears the persisted blobs.
+
+    Regression guard for the schema-versioning safety net: future code
+    that bumps the constant must continue to fall through to defaults
+    instead of restoring incompatible state.
+    """
+    from PySide6.QtCore import QSettings
+    from app.ui.main_window import APP_ORG, APP_NAME, _WINDOW_STATE_VERSION
+
+    s = QSettings(APP_ORG, APP_NAME)
+    # Preserve the user's real values so the test doesn't reset their layout.
+    saved = {
+        k: s.value(k) for k in
+        ("window/geometry", "window/state", "window/state_version")
+    }
+    try:
+        s.setValue("window/geometry", b"not-a-real-blob")
+        s.setValue("window/state", b"not-a-real-blob")
+        s.setValue("window/state_version", _WINDOW_STATE_VERSION - 1)
+        s.sync()
+
+        w = MainWindow()
+        try:
+            # _restore_window_state runs during __init__; stale blobs gone.
+            assert s.value("window/geometry") in (None, ""), \
+                "stale geometry not cleared on schema mismatch"
+            assert s.value("window/state") in (None, ""), \
+                "stale state not cleared on schema mismatch"
+        finally:
+            w.close()
+    finally:
+        # Restore user values so subsequent runs aren't affected.
+        for k, v in saved.items():
+            if v is None:
+                s.remove(k)
+            else:
+                s.setValue(k, v)
+        s.sync()

@@ -78,12 +78,11 @@ class ConfigLoaderMixin:
                     return
                 except ConfigError:
                     continue
-        resources_dir = Path(__file__).resolve().parents[1] / "resources"
-        default_path = resources_dir / "config_template"
-        try:
-            self._load_config_from_path(default_path)
-        except ConfigError as exc:
-            self._set_status(f"Default config failed: {exc}")
+        # No usable recent config — leave _config=None so the central
+        # widget shows the first-run empty state with Import Config /
+        # Export Template buttons. The bundled template is still
+        # reachable from File → Export Template.
+        self._set_status("No configuration loaded")
 
     def _on_load_config(self) -> None:
         self._log_activity("[ACTION] Load configuration (dialog opened)")

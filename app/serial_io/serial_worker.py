@@ -52,6 +52,16 @@ WATCHDOG_TIMEOUT = 3.0   # seconds of silence before emitting device_timeout
 # elapses (whichever comes second).
 POLLING_BOOT_GRACE = 2.5
 
+# Auto-disable a poll schedule after this many consecutive timeouts.
+# Rationale: with N enabled schedules in serial mode, every silent target
+# burns its full timeout_ms each cycle. A config with 10 targets at 500 ms
+# timeout and only 1 responsive target means the responsive one only gets
+# served every ~4.5 s. After ~5 misses the silent target has clearly gone
+# AWOL — drop it from the rotation so the responsive ones get serviced.
+# The schedule can be re-enabled from the poll-config dialog when the
+# user wants to retry it. Reset on any successful response.
+CONSECUTIVE_TIMEOUT_DISABLE_THRESHOLD = 5
+
 # OS error codes that indicate a physical disconnect on Windows.
 _DISCONNECT_WINERRORS = {5, 22, 31, 1167}
 
@@ -100,7 +110,23 @@ class PollingWorker(QThread):
         self._decode_config: Optional[FrameConfig] = decode_config
 
         self._schedules = [
-            {"spec": s, "next_run": time.monotonic(), "enabled": s.enabled}
+            {
+                "spec": s,
+                "next_run": time.monotonic(),
+                "enabled": s.enabled,
+                # Consecutive timeouts since last successful response.
+                # Reset on success; threshold-based auto-disable lives in
+                # _record_poll_timeout / _record_poll_success.
+                "consecutive_timeouts": 0,
+                # Sticky flag set the first time the device returns a valid
+                # response for this target_id. Once true, auto-disable
+                # never fires for the schedule — late/slow responses are a
+                # device-pacing problem, not a "wrong target" problem.
+                # Lets us be aggressive about disabling targets the device
+                # genuinely doesn't recognise without ever killing one
+                # that's just slow.
+                "ever_responded": False,
+            }
             for s in schedules
         ]
         # Round-robin cursor into _schedules. The polling loop scans starting
@@ -114,6 +140,19 @@ class PollingWorker(QThread):
         self._serial: serial.Serial | None = None
         self._stop_event = threading.Event()          # thread-safe shutdown flag
         self._polling_global_enabled = False
+
+        # Pipelined polling: when enabled, the loop sends up to
+        # _pipeline_depth poll requests without waiting for each response,
+        # then matches replies by frame_id as they arrive. Cuts cycle time
+        # on devices with slow turnaround (the wait time becomes parallel
+        # rather than serial). Disabled by default; protocols that can't
+        # tag responses (Modbus RTU) silently force it off — see
+        # set_pipelining().
+        self._pipelining_enabled: bool = False
+        self._pipeline_depth: int = 2
+        # In-flight poll bookkeeping. Only mutated on the worker thread.
+        # Each entry: {"target_id": int, "tx_time": float, "deadline": float}
+        self._in_flight: List[dict] = []
 
         # Bounded queue so a buggy UI loop pushing TX commands faster than
         # the worker can drain them cannot grow without limit and OOM.
@@ -212,6 +251,32 @@ class PollingWorker(QThread):
         with QMutexLocker(self._mutex):
             self._polling_global_enabled = enabled
 
+    def set_pipelining(self, enabled: bool, depth: int = 2) -> None:
+        """Enable/disable pipelined polling.
+
+        In pipelined mode the worker sends up to ``depth`` poll requests
+        without waiting for each response, then matches replies by
+        ``frame_id`` as they stream in. Cuts the total cycle time when the
+        device's per-request turnaround is the bottleneck.
+
+        Modbus RTU is silently forced off — its responses don't carry a
+        register-address tag we can use to demux out-of-order replies.
+        """
+        if self.protocol.parser_type == "modbus_rtu" and enabled:
+            self.error_occurred.emit(
+                "Pipelined polling is not supported for Modbus RTU; ignored."
+            )
+            enabled = False
+        depth = max(1, min(int(depth), 8))
+        with QMutexLocker(self._mutex):
+            self._pipelining_enabled = enabled
+            self._pipeline_depth = depth
+            if not enabled:
+                # Drop tracking; any actual on-wire frames already sent will
+                # arrive late and be emitted as normal traffic, just without
+                # a latency sample.
+                self._in_flight.clear()
+
     def reset_metrics(self) -> None:
         """Zero the worker-owned counters (timeouts / crc_errors / rx_bytes).
 
@@ -239,6 +304,11 @@ class PollingWorker(QThread):
                     # surfaced again instead of staying silent.
                     if enabled:
                         s.pop("_failed_reported", None)
+                        # Re-enabling after an auto-disable gives the schedule
+                        # a fresh budget — otherwise it would re-disable on
+                        # the very next timeout. The user explicitly asked to
+                        # retry; honour that.
+                        s["consecutive_timeouts"] = 0
                         # Reset the run timer so a re-enabled schedule waits
                         # one full interval before firing. The original code
                         # left next_run at the (long past) time.time() from
@@ -289,6 +359,14 @@ class PollingWorker(QThread):
         the worker thread so the GUI thread receives ``(packet, decoded)``
         tuples and skips its decode call. Bad-CRC packets carry ``None``
         for the decoded slot since the payload isn't trustworthy.
+
+        Every valid packet whose ``frame_id`` matches a known schedule
+        resets that schedule's consecutive-timeout counter — this
+        rescues slow devices whose response time straddles ``timeout_ms``
+        (e.g. a 500 ms timeout with a 510 ms-typical response). Without
+        this reset, ~half the responses would arrive after their
+        in-flight deadline expired and the schedule would auto-disable
+        even though the device is actually answering.
         """
         cfg = self._decode_config
         for p in packets:
@@ -296,6 +374,9 @@ class PollingWorker(QThread):
                 self._crc_errors += 1
                 self._batch.append((p, None))
                 continue
+            # Any valid response counts as a "the device is alive" signal —
+            # reset the counter even if the in-flight entry already expired.
+            self._record_poll_success(p.frame_id)
             if cfg is None:
                 decoded = None
             else:
@@ -366,6 +447,8 @@ class PollingWorker(QThread):
                 # 2. Handle Polling Engine
                 with QMutexLocker(self._mutex):
                     polling_enabled = self._polling_global_enabled
+                    pipelining = self._pipelining_enabled
+                    pipe_depth = self._pipeline_depth
 
                 polled = False
                 # Polling gate: hold off until the device has either sent us
@@ -376,26 +459,47 @@ class PollingWorker(QThread):
                 # answer, timeouts accumulate, and we never get out.
                 grace_expired = (time.monotonic() - self._open_time) > POLLING_BOOT_GRACE
                 if polling_enabled and (self._rx_bytes > 0 or grace_expired):
-                    now = time.monotonic()
-                    n = len(self._schedules)
-                    # Round-robin: start scanning at _sched_cursor and wrap.
-                    # Each successful poll advances the cursor by one, so the
-                    # next iteration begins with the *following* schedule —
-                    # not the head of the list. Guarantees every enabled
-                    # schedule that is due gets visited in turn even when
-                    # some entries are slow (full-timeout) and others fast.
-                    for offset in range(n):
-                        idx = (self._sched_cursor + offset) % n
-                        sched = self._schedules[idx]
-                        if sched["enabled"] and now >= sched["next_run"]:
-                            self._do_poll(sched)
-                            sched["next_run"] = time.monotonic() + (sched["spec"].interval_ms / 1000.0)
-                            self._sched_cursor = (idx + 1) % n
-                            polled = True
-                            break
+                    if pipelining:
+                        # Pipelined: fire as many due polls as the depth budget
+                        # allows; responses are matched by frame_id in the RX
+                        # drain below.
+                        self._expire_in_flight()
+                        while len(self._in_flight) < pipe_depth:
+                            sched = self._pick_due_schedule_for_pipeline()
+                            if sched is None:
+                                break
+                            if self._send_polling_tx_nowait(sched):
+                                sched["next_run"] = (
+                                    time.monotonic()
+                                    + (sched["spec"].interval_ms / 1000.0)
+                                )
+                                polled = True
+                            else:
+                                break
+                    else:
+                        now = time.monotonic()
+                        n = len(self._schedules)
+                        # Round-robin: start scanning at _sched_cursor and wrap.
+                        # Each successful poll advances the cursor by one, so the
+                        # next iteration begins with the *following* schedule —
+                        # not the head of the list. Guarantees every enabled
+                        # schedule that is due gets visited in turn even when
+                        # some entries are slow (full-timeout) and others fast.
+                        for offset in range(n):
+                            idx = (self._sched_cursor + offset) % n
+                            sched = self._schedules[idx]
+                            if sched["enabled"] and now >= sched["next_run"]:
+                                self._do_poll(sched)
+                                sched["next_run"] = time.monotonic() + (sched["spec"].interval_ms / 1000.0)
+                                self._sched_cursor = (idx + 1) % n
+                                polled = True
+                                break
 
-                # 3. Drain incoming data (continuous / framed protocols)
-                if not polled and self._serial:
+                # 3. Drain incoming data. In pipelined mode we ALWAYS drain so
+                # responses to in-flight requests are matched promptly; in
+                # serial mode _do_poll already drained during _await_response,
+                # so we skip when we just polled to avoid a redundant read.
+                if self._serial and (pipelining or not polled):
                     w = self._serial.in_waiting
                     if w > 0:
                         data = self._serial.read(w)
@@ -403,7 +507,10 @@ class PollingWorker(QThread):
                         self._last_rx_time = time.monotonic()
                         self._watchdog_fired = False
                         self._parser.feed(data)
-                        self._accumulate(self._parser.extract_all())
+                        extracted = self._parser.extract_all()
+                        if pipelining and self._in_flight and extracted:
+                            self._match_in_flight_responses(extracted)
+                        self._accumulate(extracted)
                         self._emit_metrics_throttled()
 
                 # Always check the watchdog at the end of the iteration. If we
@@ -428,14 +535,20 @@ class PollingWorker(QThread):
                 # latency is not at risk.
                 sleep_s = 0.005
                 if not polled and self._schedules:
-                    next_due_iter = (
-                        s["next_run"] for s in self._schedules if s["enabled"]
-                    )
-                    next_due = min(next_due_iter, default=None)
-                    if next_due is not None:
-                        until_due = next_due - time.monotonic()
-                        if until_due > 0.02:
-                            sleep_s = 0.02
+                    # In pipelined mode, an in-flight request means a reply
+                    # may land at any moment — keep the wakeup tight so RX
+                    # drains promptly. Only doze if both nothing is in flight
+                    # AND the next schedule deadline is comfortably away.
+                    can_doze = not (pipelining and self._in_flight)
+                    if can_doze:
+                        next_due_iter = (
+                            s["next_run"] for s in self._schedules if s["enabled"]
+                        )
+                        next_due = min(next_due_iter, default=None)
+                        if next_due is not None:
+                            until_due = next_due - time.monotonic()
+                            if until_due > 0.02:
+                                sleep_s = 0.02
                 time.sleep(sleep_s)
 
             except serial.SerialException as exc:
@@ -503,6 +616,141 @@ class PollingWorker(QThread):
                 # Without this guard, polling kept retrying every interval and
                 # silently failed forever.
                 self._disable_failed_schedule(sched, exc)
+
+    # ------------------------------------------------------------------
+    # Pipelined polling helpers
+    # ------------------------------------------------------------------
+
+    def _expire_in_flight(self) -> None:
+        """Drop in-flight requests whose deadline has passed and count them
+        as timeouts. Called once per loop iteration in pipelined mode."""
+        if not self._in_flight:
+            return
+        now = time.monotonic()
+        kept: List[dict] = []
+        for item in self._in_flight:
+            if now >= item["deadline"]:
+                self._timeouts += 1
+                self._record_poll_timeout(item["target_id"])
+            else:
+                kept.append(item)
+        self._in_flight = kept
+
+    def _pick_due_schedule_for_pipeline(self) -> Optional[dict]:
+        """Round-robin pick of the next due schedule whose target_id is not
+        already in flight (prevents queuing two requests for the same id and
+        making latency matching ambiguous)."""
+        if not self._schedules:
+            return None
+        now = time.monotonic()
+        in_flight_ids = {it["target_id"] for it in self._in_flight}
+        n = len(self._schedules)
+        for offset in range(n):
+            idx = (self._sched_cursor + offset) % n
+            sched = self._schedules[idx]
+            if (
+                sched["enabled"]
+                and now >= sched["next_run"]
+                and sched["spec"].target_id not in in_flight_ids
+            ):
+                self._sched_cursor = (idx + 1) % n
+                return sched
+        return None
+
+    def _send_polling_tx_nowait(self, sched: dict) -> bool:
+        """Build and write a poll request without awaiting the response.
+        Records the request in _in_flight. Returns False if the build failed
+        (schedule gets auto-disabled in that case)."""
+        from ..protocol.packet_builder import build_packet
+        target_id = sched["spec"].target_id
+        timeout_ms = sched["spec"].timeout_ms
+        try:
+            req = build_packet(self.protocol, target_id, b"")
+        except ValueError as exc:
+            self._disable_failed_schedule(sched, exc)
+            return False
+        if self._serial is None:
+            return False
+        self._serial.write(req)
+        self.tx_recorded.emit(req)
+        tx_time = time.monotonic()
+        self._in_flight.append({
+            "target_id": target_id,
+            "tx_time": tx_time,
+            "deadline": tx_time + (timeout_ms / 1000.0),
+        })
+        return True
+
+    def _match_in_flight_responses(self, packets: Iterable[ParsedPacket]) -> None:
+        """For each valid packet, clear the oldest matching in-flight entry
+        and emit poll_latency. Unmatched packets stay in the batch as
+        normal traffic."""
+        if not self._in_flight:
+            return
+        now = time.monotonic()
+        for p in packets:
+            if not p.ok:
+                continue
+            for i, item in enumerate(self._in_flight):
+                if item["target_id"] == p.frame_id:
+                    latency_ms = (now - item["tx_time"]) * 1000.0
+                    try:
+                        self.poll_latency.emit(p.frame_id, latency_ms)
+                    except Exception:
+                        _LOG.debug("poll_latency emit failed", exc_info=True)
+                    self._record_poll_success(p.frame_id)
+                    del self._in_flight[i]
+                    break
+
+    def _find_schedule_by_target(self, target_id: int) -> Optional[dict]:
+        """Locate a schedule by target_id, or None. O(n) — n is small."""
+        for s in self._schedules:
+            if s["spec"].target_id == target_id:
+                return s
+        return None
+
+    def _record_poll_timeout(self, target_id: Optional[int]) -> None:
+        """Bump the per-schedule consecutive-timeout counter and auto-disable
+        once the threshold is crossed, BUT only for targets the device
+        has never responded to.
+
+        Why the ever_responded guard: a slow device may take several
+        seconds to send its first response for a given target_id (e.g.
+        an MCU that queues poll responses behind other work). With
+        pipeline_depth=2 and a 500 ms timeout, several timeouts can
+        accumulate before the first late response arrives — auto-disable
+        would falsely kill a working schedule. Once we've ever heard
+        from this target, treat it as "device-paced" and let the
+        late-response reset in ``_accumulate`` keep the counter sane.
+        """
+        if target_id is None:
+            return
+        sched = self._find_schedule_by_target(target_id)
+        if sched is None or not sched.get("enabled"):
+            return
+        sched["consecutive_timeouts"] = sched.get("consecutive_timeouts", 0) + 1
+        if sched.get("ever_responded", False):
+            return  # device just slow on this target — don't disable.
+        if sched["consecutive_timeouts"] >= CONSECUTIVE_TIMEOUT_DISABLE_THRESHOLD:
+            with QMutexLocker(self._mutex):
+                sched["enabled"] = False
+                sched["consecutive_timeouts"] = 0  # reset for next enable
+            self.error_occurred.emit(
+                f"Polling for 0x{target_id:X} auto-disabled after "
+                f"{CONSECUTIVE_TIMEOUT_DISABLE_THRESHOLD} consecutive timeouts "
+                f"with no response ever received. "
+                f"Re-enable from Configure Poll Schedule once the device is "
+                f"answering this target."
+            )
+
+    def _record_poll_success(self, target_id: int) -> None:
+        """Reset the consecutive-timeout counter and mark the target as having
+        ever responded — the ever_responded flag is the auto-disable guard
+        that protects slow-but-working targets from being killed."""
+        sched = self._find_schedule_by_target(target_id)
+        if sched is not None:
+            sched["consecutive_timeouts"] = 0
+            sched["ever_responded"] = True
 
     def _disable_failed_schedule(self, sched: dict, exc: BaseException) -> None:
         """Disable a schedule that cannot build its request, reporting once.
@@ -617,7 +865,10 @@ class PollingWorker(QThread):
 
         if not packet_found:
             self._timeouts += 1
+            self._record_poll_timeout(target_id)
         else:
+            if target_id is not None:
+                self._record_poll_success(target_id)
             # Latency = round-trip time from TX to the matching response.
             latency_ms = (time.monotonic() - tx_time) * 1000.0
             try:

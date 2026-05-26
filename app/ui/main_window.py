@@ -44,7 +44,6 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QAbstractItemView,
-    QFrame,
     QInputDialog,
     QMainWindow,
     QMenu,
@@ -89,6 +88,57 @@ except ImportError:  # pragma: no cover
 APP_ORG  = "Bytehound"
 APP_NAME = "Bytehound"
 APP_DISPLAY_NAME = "Bytehound"
+
+# Bump whenever a dock objectName, toolbar objectName, or addDockWidget
+# topology changes. saveState() encodes widgets by objectName; restoring
+# state from a different schema produces stranded docks at the edges of
+# the window. On mismatch we drop the stored state and fall back to the
+# default layout — users see one layout reset, not a broken window.
+_WINDOW_STATE_VERSION = 1
+
+# Bumped when default QSettings values change so users get migrated to
+# the new defaults without losing values they explicitly customised. The
+# migration runs once on launch; see _migrate_settings.
+_SETTINGS_MIGRATION_VERSION = 1
+
+
+def _migrate_settings(settings) -> None:
+    """One-time per-version migrations of stored user settings.
+
+    Idempotent. Skips entirely if the stored migration version is already
+    >= the current target. Each step only rewrites a key when its stored
+    value matches the OLD default we're trying to retire — so users who
+    deliberately set the key to something else are left alone.
+    """
+    try:
+        stored_version = int(settings.value("settings/migration_version", 0))
+    except (TypeError, ValueError):
+        stored_version = 0
+    if stored_version >= _SETTINGS_MIGRATION_VERSION:
+        return
+
+    # v0 -> v1: bump poll-pipeline defaults so the dialog opens with the
+    # values that actually serve a multi-target config (depth=8, on).
+    # Only flips values that still match the old defaults — users who
+    # set pipelining off on purpose, or chose a different depth, keep
+    # their choice.
+    if stored_version < 1:
+        if settings.contains("poll/pipelining"):
+            try:
+                old = settings.value("poll/pipelining", False, type=bool)
+            except TypeError:
+                old = False
+            if old is False:
+                settings.setValue("poll/pipelining", True)
+        if settings.contains("poll/pipeline_depth"):
+            try:
+                old_depth = int(settings.value("poll/pipeline_depth", 2))
+            except (TypeError, ValueError):
+                old_depth = 2
+            if old_depth == 2:
+                settings.setValue("poll/pipeline_depth", 8)
+
+    settings.setValue("settings/migration_version", _SETTINGS_MIGRATION_VERSION)
 
 
 def _project_root() -> Path:
@@ -288,6 +338,7 @@ class MainWindow(
         self._raw_logger: Optional[RawLogger] = None
         self._decoded_logger: Optional[DecodedLogger] = None
         self._settings = QSettings(APP_ORG, APP_NAME)
+        _migrate_settings(self._settings)
         self._apply_logging_level(str(self._settings.value("logging/level", "INFO")))
         self._tx_field_inputs: Dict[str, QLineEdit] = {}
         self._seen_decode_warnings: set[tuple[int, str, int]] = set()
@@ -408,7 +459,7 @@ class MainWindow(
 
     def _on_info(self) -> None:
         import json as _json
-        _vpath = Path(__file__).resolve().parents[2] / "version.json"
+        _vpath = _project_root() / "version.json"
         try:
             _v = _json.loads(_vpath.read_text(encoding="utf-8"))
         except Exception:
@@ -448,6 +499,93 @@ class MainWindow(
         self._log_activity("[ACTION] View documentation")
         docs_path = Path(__file__).resolve().parents[1] / "resources" / "index.html"
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(docs_path)))
+
+    def _on_copy_diagnostics(self) -> None:
+        """Copy a bug-report-ready snapshot to the clipboard.
+
+        Includes app/runtime versions, OS, current config, connection +
+        logging state, session counters, and the tail of bytehound.log.
+        Goal: a user can paste this directly into an issue without us
+        asking three follow-up questions.
+        """
+        import platform
+        try:
+            from PySide6 import __version__ as _pyside_version
+        except Exception:
+            _pyside_version = "unknown"
+        try:
+            from PySide6.QtCore import qVersion
+            _qt_version = qVersion()
+        except Exception:
+            _qt_version = "unknown"
+
+        conn = "disconnected"
+        port_info = ""
+        if self._serial is not None and self._serial.is_open:
+            conn = "connected"
+            port_info = (
+                f"  Port: {self._serial.settings.port} @ "
+                f"{self._serial.settings.baud_rate} "
+                f"{self._serial.settings.data_bits}{self._serial.settings.parity}"
+                f"{self._serial.settings.stop_bits:g}"
+            )
+
+        log_path = self._find_log_file_path()
+        log_tail = self._read_log_tail(log_path, lines=200) if log_path else "(log file not found)"
+
+        diag = [
+            f"=== {APP_DISPLAY_NAME} v{self._version} diagnostics ===",
+            f"Captured: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
+            "",
+            "--- Runtime ---",
+            f"OS:      {platform.system()} {platform.release()} ({platform.version()})",
+            f"Python:  {sys.version.split()[0]}",
+            f"PySide6: {_pyside_version}",
+            f"Qt:      {_qt_version}",
+            f"Frozen:  {getattr(sys, 'frozen', False)}",
+            "",
+            "--- Session ---",
+            f"Config:      {self._config_path or '(none loaded)'}",
+            f"Connection:  {conn}",
+        ]
+        if port_info:
+            diag.append(port_info)
+        diag += [
+            f"Logging:     {'active' if self._logging else 'stopped'}",
+            f"Started:     {self._session_started.strftime('%Y-%m-%d %H:%M:%S')}",
+            f"Frames RX:   {self._packet_count}",
+            f"CRC errors:  {self._error_count}",
+            f"Timeouts:    {self._timeouts}",
+            f"RX bytes:    {self._rx_bytes}",
+            f"TX bytes:    {self._tx_bytes}",
+            "",
+            f"--- Log file: {log_path or '(not configured)'} ---",
+            log_tail,
+        ]
+        QApplication.clipboard().setText("\n".join(diag))
+        self._toast("Diagnostics copied to clipboard")
+        self._log_activity("[ACTION] Copied diagnostics to clipboard")
+
+    @staticmethod
+    def _find_log_file_path() -> Optional[Path]:
+        """Locate the RotatingFileHandler's file from the root logger."""
+        import logging as _logging
+        for handler in _logging.getLogger().handlers:
+            base = getattr(handler, "baseFilename", None)
+            if base:
+                return Path(base)
+        return None
+
+    @staticmethod
+    def _read_log_tail(path: Path, *, lines: int) -> str:
+        """Return the last ``lines`` lines of *path*, or an error placeholder."""
+        try:
+            with path.open("r", encoding="utf-8", errors="replace") as fp:
+                # deque(maxlen=...) keeps memory bounded for huge log files.
+                tail = deque(fp, maxlen=lines)
+            return "".join(tail).rstrip()
+        except OSError as exc:
+            return f"(could not read log file: {exc})"
 
 
 
@@ -640,8 +778,21 @@ class MainWindow(
     def _save_window_state(self) -> None:
         self._settings.setValue("window/geometry", self.saveGeometry())
         self._settings.setValue("window/state", self.saveState())
+        self._settings.setValue("window/state_version", _WINDOW_STATE_VERSION)
 
     def _restore_window_state(self) -> None:
+        stored_version = self._settings.value("window/state_version", 0)
+        try:
+            stored_version = int(stored_version)
+        except (TypeError, ValueError):
+            stored_version = 0
+        if stored_version != _WINDOW_STATE_VERSION:
+            # Schema drift (or first launch after an upgrade that bumped
+            # the version). Discard the stale blobs and let the default
+            # layout from __init__ stand.
+            self._settings.remove("window/geometry")
+            self._settings.remove("window/state")
+            return
         geometry = self._settings.value("window/geometry")
         state = self._settings.value("window/state")
         if geometry:
@@ -661,19 +812,6 @@ class MainWindow(
                 self.setGeometry(new_x, new_y, new_w, new_h)
         if state:
             self.restoreState(state)
-
-    def _card(self, title: str, parent: QWidget) -> tuple[QFrame, QVBoxLayout]:
-        frame = QFrame(parent)
-        frame.setProperty("card", True)
-        layout = QVBoxLayout(frame)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(8)
-        title_label = QLabel(title, frame)
-        title_label.setProperty("cardTitle", True)
-        layout.addWidget(title_label)
-        return frame, layout
-
-
 
     # ------------------------------------------------------------------
     # Grid management
@@ -718,7 +856,7 @@ class MainWindow(
 
         hint = QLabel("• already assigned to a panel", dlg)
         hint.setObjectName("hintLabel")
-        hint.setStyleSheet("font-size:11px;")
+        hint.setStyleSheet("font-size:9pt;")
         layout.addWidget(hint)
 
         btns = QDialogButtonBox(
@@ -1221,7 +1359,7 @@ class MainWindow(
                 inp.setToolTip(f"Float  [{flo:g} … {fhi:g}]")
 
             btn = QPushButton("Write")
-            btn.setFixedWidth(56)
+            btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
             btn.clicked.connect(lambda _, inp=inp, s=s: self._on_editor_write(s, inp.text()))
             # Allow pressing Enter in the input to trigger write
             inp.returnPressed.connect(lambda inp=inp, s=s: self._on_editor_write(s, inp.text()))
@@ -1420,49 +1558,6 @@ class MainWindow(
 
 
     # ------------------------------------------------------------------
-    # Pause / Live toggle button
-    # ------------------------------------------------------------------
-
-    def _restyle_pause_btn(self, paused: bool) -> None:
-        """Recolour the toggle so the current mode reads at a glance."""
-        if paused:
-            text = "▶ Live"
-            bg = "#16A34A"   # green = "click to go Live"
-        else:
-            text = "⏸ Pause"
-            bg = "#D97706"   # amber = "click to pause"
-        self._pause_btn.setText(text)
-        self._pause_btn.setStyleSheet(
-            f"QPushButton {{ background:{bg}; color:#fff; border:none;"
-            f"               padding:4px 10px; border-radius:4px; font-weight:bold; }}"
-            f"QPushButton:hover {{ filter: brightness(1.1); }}"
-        )
-
-    def _on_pause_toggled(self, checked: bool) -> None:
-        """Space-bar / button toggle: Pause = freeze view, Live = resume scroll."""
-        going_live = not checked
-        self._set_plot_live(going_live)
-        if going_live:
-            # Re-enable Y auto-range on panels that want it (pan/zoom during
-            # Pause turned it off). X is left for _redraw_plot to handle so the
-            # data-aware [oldest_x, current_t] window logic stays in one place.
-            if pg is not None and self._plot_panels:
-                self._plot_range_changing = True
-                try:
-                    for panel in self._plot_panels:
-                        vb = panel.plot_item.getViewBox()
-                        if vb is not None and panel.y_scale_mode != "manual":
-                            # Trigger an immediate one-shot fit; the 2 Hz
-                            # timer handles steady-state.
-                            self._fit_panel_y_now(panel)
-                finally:
-                    self._plot_range_changing = False
-            self._log_activity("[ACTION] Plot resumed Live")
-            self._redraw_plot()
-        else:
-            self._log_activity("[ACTION] Plot Paused")
-
-    # ------------------------------------------------------------------
     # Hover crosshair + value readout
     # ------------------------------------------------------------------
 
@@ -1526,6 +1621,13 @@ class MainWindow(
         # Logging requires an active connection; _set_connection_ui controls this.
         # Only set enabled=True here if we're currently connected.
         self._logging_action.setEnabled(ready and self._serial is not None)
+        # Flip the central stack: empty-state when no config, table view
+        # once one is loaded. Guarded for the brief window during __init__
+        # where _refresh_action_state can fire before _build_main_layout
+        # has created the stack.
+        stack = getattr(self, "_central_stack", None)
+        if stack is not None:
+            stack.setCurrentIndex(1 if ready else 0)
 
     def _set_connection_ui(self, connected: bool) -> None:
         self._connect_action.setText("Disconnect" if connected else "Connect")
@@ -1584,7 +1686,7 @@ class MainWindow(
                 f"  color: {fg};"
                 f"  padding: 8px 14px;"
                 f"  border-radius: 6px;"
-                f"  font-size: 12px;"
+                f"  font-size: 9pt;"
                 f"}}"
             )
             toast.hide()

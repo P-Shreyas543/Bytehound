@@ -41,6 +41,8 @@ class PollingSessionMixin:
             enabled_ids = dlg.get_enabled_ids()
             for sched in self._config.polling_schedules:
                 self._serial.toggle_schedule(sched.target_id, sched.target_id in enabled_ids)
+            pipe_enabled, pipe_depth = dlg.get_pipelining()
+            self._serial.set_pipelining(pipe_enabled, pipe_depth)
             # Refresh the sidebar read-only list
             self._update_poll_status_sidebar(enabled_ids)
         else:
@@ -65,9 +67,11 @@ class PollingSessionMixin:
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         enabled_ids = dlg.get_enabled_ids()
+        pipe_enabled, pipe_depth = dlg.get_pipelining()
         if self._serial:
             for sched in self._config.polling_schedules:
                 self._serial.toggle_schedule(sched.target_id, sched.target_id in enabled_ids)
+            self._serial.set_pipelining(pipe_enabled, pipe_depth)
         self._update_poll_status_sidebar(enabled_ids)
         self._log_activity(
             f"[ACTION] Poll Schedule updated ({len(enabled_ids)} target(s) enabled)"

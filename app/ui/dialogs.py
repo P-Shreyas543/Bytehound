@@ -4,8 +4,8 @@ from typing import Tuple
 
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
-    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton,
+    QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
+    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QSpinBox,
     QVBoxLayout, QWidget
 )
 
@@ -195,6 +195,38 @@ class PollingConfigDialog(QDialog):
         btn_row.addWidget(none_btn)
         layout.addLayout(btn_row)
 
+        # Pipelining row — keeps multiple poll requests in flight to cut
+        # cycle time on slow-turnaround devices. Defaults to ON with depth
+        # 8: with N enabled schedules and a device whose response time
+        # equals the configured interval (the common case for a
+        # request/response MCU), depth=8 lets each target be polled at
+        # ~configured interval. The previous default (off / depth 2) made
+        # 10-target configs run 5× slower than configured. Users on
+        # devices that can't handle parallel requests can still uncheck.
+        self._pipeline_chk = QCheckBox("Pipeline poll requests", self)
+        self._pipeline_chk.setToolTip(
+            "Send up to N polls without waiting for each response. Replies "
+            "are matched by frame_id. Disable if the device drops or "
+            "corrupts overlapping requests. Not available for Modbus RTU."
+        )
+        saved_pipe = settings.value("poll/pipelining", True, type=bool)
+        self._pipeline_chk.setChecked(bool(saved_pipe))
+
+        self._pipeline_depth = QSpinBox(self)
+        self._pipeline_depth.setRange(1, 16)
+        self._pipeline_depth.setValue(int(settings.value("poll/pipeline_depth", 8)))
+        self._pipeline_depth.setToolTip("Max number of in-flight poll requests.")
+        self._pipeline_depth.setEnabled(self._pipeline_chk.isChecked())
+        self._pipeline_chk.toggled.connect(self._pipeline_depth.setEnabled)
+
+        pipe_row = QHBoxLayout()
+        pipe_row.setSpacing(8)
+        pipe_row.addWidget(self._pipeline_chk)
+        pipe_row.addStretch(1)
+        pipe_row.addWidget(QLabel("Max in-flight:", self))
+        pipe_row.addWidget(self._pipeline_depth)
+        layout.addLayout(pipe_row)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             self,
@@ -215,6 +247,8 @@ class PollingConfigDialog(QDialog):
             target_id = item.data(Qt.ItemDataRole.UserRole)
             key = f"poll/enabled/0x{target_id:04X}"
             self._settings.setValue(key, item.checkState() == Qt.CheckState.Checked)
+        self._settings.setValue("poll/pipelining", self._pipeline_chk.isChecked())
+        self._settings.setValue("poll/pipeline_depth", int(self._pipeline_depth.value()))
         self.accept()
 
     def get_enabled_ids(self) -> set:
@@ -225,6 +259,10 @@ class PollingConfigDialog(QDialog):
             if item.checkState() == Qt.CheckState.Checked:
                 result.add(item.data(Qt.ItemDataRole.UserRole))
         return result
+
+    def get_pipelining(self) -> Tuple[bool, int]:
+        """Return (enabled, max_in_flight) for pipelined polling."""
+        return self._pipeline_chk.isChecked(), int(self._pipeline_depth.value())
 
 
 class LoggingSettingsDialog(QDialog):

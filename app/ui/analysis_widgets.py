@@ -331,7 +331,7 @@ class StatisticsPanel(QWidget):
 
         self._info = QLabel("Load logs and check parameters to see statistics.")
         self._info.setWordWrap(True)
-        self._info.setStyleSheet("color: palette(mid); font-size: 11px; padding: 2px;")
+        self._info.setStyleSheet("color: palette(mid); font-size: 9pt; padding: 2px;")
         layout.addWidget(self._info)
 
         self._table = QTableWidget(0, len(self.STATS_COLUMNS))

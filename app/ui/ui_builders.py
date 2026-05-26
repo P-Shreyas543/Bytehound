@@ -36,6 +36,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
+    QStackedWidget,
     QStatusBar,
     QTableView,
     QTableWidget,
@@ -161,6 +162,13 @@ class UIBuildersMixin:
         self._update_action = QAction(_icon("mdi6.cloud-download-outline", _ic), "Check for Updates", self)
         self._update_action.triggered.connect(self._on_check_updates)
 
+        # Triage helper — copies version, OS, Qt, config + recent log lines
+        # to the clipboard so bug reporters can paste a complete picture in
+        # one step. Avoids the back-and-forth of "what version are you on?
+        # what OS? can you find the log file?".
+        self._diagnostics_action = QAction(_icon("mdi6.clipboard-text-outline", _ic), "Copy Diagnostics", self)
+        self._diagnostics_action.triggered.connect(self._on_copy_diagnostics)
+
         # chart-multiple distinguishes the offline "Analysis Suite" (which
         # overlays many recordings) from the Live Plot panel which uses
         # plain chart-line.
@@ -208,6 +216,7 @@ class UIBuildersMixin:
         help_menu = menubar.addMenu("&Help")
         help_menu.addAction(self._docs_action)
         help_menu.addAction(self._update_action)
+        help_menu.addAction(self._diagnostics_action)
         help_menu.addSeparator()
         help_menu.addAction(self._info_action)
 
@@ -249,8 +258,14 @@ class UIBuildersMixin:
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
+        # Late import to avoid the main_window <-> ui_builders cycle.
+        # _find_logo also handles frozen-build asset placement (branding/
+        # next to Bytehound.exe), which a raw parents[2] lookup does not.
+        from .main_window import _find_logo
         self._logo_button = QPushButton()
-        self._logo_button.setIcon(QIcon(str(Path(__file__).resolve().parents[2] / "logo_rec.png")))
+        logo_path = _find_logo("logo_rec.png")
+        if logo_path is not None:
+            self._logo_button.setIcon(QIcon(str(logo_path)))
         self._logo_button.setFlat(True)
         toolbar.addWidget(self._logo_button)
 
@@ -341,7 +356,13 @@ class UIBuildersMixin:
         center_layout.addLayout(top_row)
         center_layout.addWidget(self._table)
 
-        self.setCentralWidget(center_widget)
+        # Two-page stack: empty-state for first launch / no config loaded,
+        # full table view once a config is present. _refresh_action_state
+        # flips the page so the swap is automatic on load + on disconnect.
+        self._central_stack = QStackedWidget(self)
+        self._central_stack.addWidget(self._build_empty_state())  # index 0
+        self._central_stack.addWidget(center_widget)               # index 1
+        self.setCentralWidget(self._central_stack)
 
         # Connection dock REMOVED — Connect button opens ConnectionDialog popup.
         # Poll Configure accessible via Device menu.
@@ -439,6 +460,93 @@ class UIBuildersMixin:
 
         self._populate_view_menu()
 
+    def _build_empty_state(self) -> QWidget:
+        """Friendly first-run / no-config-loaded view shown in the central area.
+
+        Orients new users in five seconds: a headline that names the
+        missing prerequisite, a one-line explanation, and two buttons
+        that invoke the most likely next actions (import a config, or
+        export a blank template to fill out). Both buttons reuse the
+        existing QActions so keyboard shortcuts and behaviour stay in
+        lockstep with the menu/toolbar.
+        """
+        from .theming import resolve_theme
+        _saved_theme = str(self._settings.value("ui/theme", "dark"))
+        _ic = "#F8FAFC" if resolve_theme(_saved_theme) == "dark" else "#1F2937"
+
+        outer = QWidget(self)
+        outer.setObjectName("emptyState")
+        v = QVBoxLayout(outer)
+        v.setContentsMargins(40, 40, 40, 40)
+        v.setSpacing(16)
+        v.addStretch(1)
+
+        # Decorative big icon — only shown if qtawesome is available
+        # (_icon degrades to an empty QIcon if not). pixmap() handles
+        # the empty case by simply producing a null pixmap (no crash).
+        icon_label = QLabel(outer)
+        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        big_icon = _icon("mdi6.import", _ic).pixmap(96, 96)
+        if not big_icon.isNull():
+            icon_label.setPixmap(big_icon)
+            v.addWidget(icon_label)
+
+        headline = QLabel("No configuration loaded", outer)
+        headline.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        # Larger than ambient. Kept in pt so OS text-scaling works.
+        headline.setStyleSheet("font-size: 16pt; font-weight: 600;")
+        v.addWidget(headline)
+
+        subtitle = QLabel(
+            "Bytehound needs a frame-decoding config to know how to read "
+            "your serial data.\nImport an existing config or export a blank "
+            "template to fill out.",
+            outer,
+        )
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        subtitle.setWordWrap(True)
+        subtitle.setStyleSheet("font-size: 11pt;")
+        v.addWidget(subtitle)
+
+        buttons = QHBoxLayout()
+        buttons.setSpacing(12)
+        buttons.addStretch(1)
+
+        import_btn = QPushButton(
+            _icon("mdi6.folder-upload-outline", _ic),
+            "  Import Config…",
+            outer,
+        )
+        import_btn.setMinimumHeight(36)
+        import_btn.setMinimumWidth(180)
+        import_btn.clicked.connect(self._load_config_action.trigger)
+        buttons.addWidget(import_btn)
+
+        template_btn = QPushButton(
+            _icon("mdi6.file-export-outline", _ic),
+            "  Export Template…",
+            outer,
+        )
+        template_btn.setMinimumHeight(36)
+        template_btn.setMinimumWidth(180)
+        template_btn.clicked.connect(self._export_template_action.trigger)
+        buttons.addWidget(template_btn)
+
+        buttons.addStretch(1)
+        v.addLayout(buttons)
+
+        hint = QLabel(
+            "Tip: also accessible from File → Import Config (Ctrl+O)",
+            outer,
+        )
+        hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        hint.setEnabled(False)
+        hint.setStyleSheet("font-size: 10pt;")
+        v.addWidget(hint)
+
+        v.addStretch(2)
+        return outer
+
     def _build_left_panel(self) -> None:
         """Initialise sidebar-only widgets (not visible anywhere in the UI).
         These attributes are read by _on_load_recent_config, _populate_polling_list, etc.
@@ -456,7 +564,7 @@ class UIBuildersMixin:
     def _build_plot_tab(self) -> QWidget:
         outer = QWidget(self)
         root_layout = QVBoxLayout(outer)
-        root_layout.setContentsMargins(4, 4, 4, 4)
+        # Outer margins are applied by _pad_dock_content on the dock host.
         root_layout.setSpacing(4)
 
         # ── Top control bar ────────────────────────────────────────────────
@@ -465,7 +573,7 @@ class UIBuildersMixin:
 
         hint = QLabel("Right-click a row → Add to Plot   ·   Space = Pause/Live")
         hint.setEnabled(False)
-        hint.setStyleSheet("font-size: 11px;")
+        hint.setStyleSheet("font-size: 9pt;")
         # Ignored horizontal policy lets the long hint text clip when the user
         # shrinks the window (e.g. snapping to a 50% screen split). Without
         # this, the label's full-text sizeHint forced the entire plot dock
@@ -478,7 +586,7 @@ class UIBuildersMixin:
         self._hover_label = QLabel("", outer)
         self._hover_label.setObjectName("hoverReadout")
         self._hover_label.setStyleSheet(
-            "font-family: Consolas, monospace; font-size: 11px; padding: 0 6px;"
+            "font-family: Consolas, monospace; font-size: 9pt; padding: 0 6px;"
         )
         # 280px was the old minimum — too wide to fit a 50/50 split. The
         # readout content ("T+10s 3.45V") rarely needs more than ~150px;
@@ -530,7 +638,7 @@ class UIBuildersMixin:
         self._plot_window_combo = QComboBox(outer)
         self._plot_window_combo.setFixedHeight(24)
         self._plot_window_combo.setStyleSheet(
-            "QComboBox { font-size: 11px; padding: 0 6px; min-width: 70px; }"
+            "QComboBox { font-size: 9pt; padding: 0 6px; min-width: 70px; }"
         )
         for short, full, _seconds in self._plot_window_options:
             # Show "5m" in the closed combo, "5m — Last 5 minutes" in the
@@ -544,30 +652,17 @@ class UIBuildersMixin:
         self._plot_window_combo.currentIndexChanged.connect(self._on_plot_window_changed)
         controls.addWidget(self._plot_window_combo)
 
-        # Pause / Live toggle — checkable, color-coded so users see the
-        # current mode at a glance. Clicking Live also re-fits Y auto-range
-        # and snaps X back to (0, now), so it doubles as a reset.
-        self._pause_btn = QPushButton("⏸ Pause", outer)
-        self._pause_btn.setCheckable(True)
-        self._pause_btn.setToolTip(
-            "Pause: freeze the x-axis at the current view (Space).\n"
-            "Live:  scroll the x-axis to keep up with new data."
-        )
-        self._pause_btn.toggled.connect(self._on_pause_toggled)
-        self._pause_btn.setShortcut(QKeySequence(Qt.Key.Key_Space))
-        self._restyle_pause_btn(False)
-        controls.addWidget(self._pause_btn)
-
-        self._plot_mode_btn = QToolButton(outer)
-        self._plot_mode_btn.setAutoRaise(True)
-        self._plot_mode_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._plot_mode_btn.setToolTip(
-            "Live: X-axis always shows the full session from t=0 to now.\n"
-            "Explore: You panned or zoomed — view is frozen.\n"
-            "Click to resume Live."
-        )
-        self._plot_mode_btn.clicked.connect(self._on_plot_mode_clicked)
-        controls.addWidget(self._plot_mode_btn)
+        # Unified tri-state plot button: Live / Explore / Paused. The button
+        # face always shows the current state; clicking transitions according
+        # to a state machine documented on _on_plot_state_btn_clicked. Replaces
+        # the previous two-button Pause + mode-indicator pair, which had
+        # confusing semantic overlap (both showed "what state is the plot in"
+        # but only one was clickable in each direction).
+        self._plot_state_btn = QPushButton("⏵ Live", outer)
+        self._plot_state_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._plot_state_btn.setShortcut(QKeySequence(Qt.Key.Key_Space))
+        self._plot_state_btn.clicked.connect(self._on_plot_state_btn_clicked)
+        controls.addWidget(self._plot_state_btn)
 
         # Session clock — updates every second via _flush_ui
         self._session_clock_label = QLabel("⏱ 0:00:00", outer)
@@ -577,14 +672,14 @@ class UIBuildersMixin:
         # rule in _QSS_DARK_OVERRIDES / _QSS_LIGHT_OVERRIDES) so theme switches are
         # crisp. Previous palette(placeholderText) approach cached the resolved
         # colour on first paint and stayed stale after a qdarktheme palette swap.
-        self._session_clock_label.setStyleSheet("font-size:11px; padding-left:8px;")
+        self._session_clock_label.setStyleSheet("font-size:9pt; padding-left:8px;")
         self._session_clock_label.setMinimumWidth(70)
         controls.addWidget(self._session_clock_label)
 
         # Update-rate readout — packets/sec coming in. Computed by _flush_ui.
         self._rate_label = QLabel("0 Hz", outer)
         self._rate_label.setObjectName("auxReadout")
-        self._rate_label.setStyleSheet("font-size:11px; padding-left:8px;")
+        self._rate_label.setStyleSheet("font-size:9pt; padding-left:8px;")
         self._rate_label.setMinimumWidth(50)
         self._rate_label.setToolTip("Incoming packet rate (averaged over the last second).")
         controls.addWidget(self._rate_label)
@@ -630,7 +725,6 @@ class UIBuildersMixin:
     def _build_bitfield_tab(self) -> QWidget:
         outer = QWidget(self)
         v = QVBoxLayout(outer)
-        v.setContentsMargins(4, 4, 4, 4)
         v.setSpacing(4)
 
         bar = QHBoxLayout()
@@ -661,7 +755,6 @@ class UIBuildersMixin:
     def _build_enum_tab(self) -> QWidget:
         outer = QWidget(self)
         v = QVBoxLayout(outer)
-        v.setContentsMargins(4, 4, 4, 4)
         v.setSpacing(4)
 
         bar = QHBoxLayout()
@@ -685,7 +778,7 @@ class UIBuildersMixin:
     def _build_editor_tab(self) -> QWidget:
         outer = QWidget(self)
         vlay = QVBoxLayout(outer)
-        vlay.setContentsMargins(4, 4, 4, 4)
+        vlay.setSpacing(4)
 
         info = QLabel(
             "🔒 Only signals marked  read–write (RW) or write-only (W)  in the config "
@@ -693,7 +786,7 @@ class UIBuildersMixin:
         )
         info.setObjectName("hintLabel")
         info.setWordWrap(True)
-        info.setStyleSheet("font-size:11px; padding-bottom:4px;")
+        info.setStyleSheet("font-size:9pt; padding-bottom:4px;")
         vlay.addWidget(info)
 
         self._editor_table = QTableWidget(0, 4, outer)

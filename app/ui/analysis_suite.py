@@ -390,7 +390,7 @@ class AnalysisSuiteWindow(QMainWindow):
             "Tip: Ctrl/Shift-click parameters → Group · Right-click for more"
         )
         tip.setWordWrap(True)
-        tip.setStyleSheet("color: palette(mid); font-size: 11px; padding: 2px 0;")
+        tip.setStyleSheet("color: palette(mid); font-size: 9pt; padding: 2px 0;")
         param_layout.addWidget(tip)
 
         side_layout.addWidget(param_group, 2)

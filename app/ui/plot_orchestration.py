@@ -118,9 +118,23 @@ class PlotOrchestrationMixin:
             panel.plot_item.setLabel("bottom", label)
         self._redraw_plot()
 
-    def _on_plot_mode_clicked(self) -> None:
-        if not self._plot_live:
+    def _on_plot_state_btn_clicked(self) -> None:
+        """Tri-state transition driven by the plot state button.
+
+        State machine:
+            Live    --click-->  Paused      (user explicitly freezes)
+            Paused  --click-->  Live        (resume streaming)
+            Explore --click-->  Live        (return to following data)
+
+        Pan/zoom on the plot still flips Live -> Explore implicitly via
+        the viewbox X-range handler; that path doesn't go through here.
+        """
+        if self._plot_live:
+            self._set_plot_live(False, source="button")
+            self._log_activity("[ACTION] Plot Paused")
+        else:
             self._set_plot_live(True, source="button")
+            self._log_activity("[ACTION] Plot resumed Live")
             self._redraw_plot()
 
     def _on_plot_y_range_changed(self, panel_idx: int, y_range) -> None:
@@ -522,7 +536,7 @@ class PlotOrchestrationMixin:
         hl.setContentsMargins(2, 2, 2, 2)
         hl.setSpacing(4)
         lbl = QLabel(f"P{panel_idx + 1}:")
-        lbl.setStyleSheet("font-weight:bold; font-size:11px;")
+        lbl.setStyleSheet("font-weight:bold; font-size:9pt;")
         hl.addWidget(lbl)
 
         panel = self._plot_panels[panel_idx] if panel_idx < len(self._plot_panels) else None
@@ -532,7 +546,7 @@ class PlotOrchestrationMixin:
         signals_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         signals_btn.setFixedHeight(24)
         signals_btn.setStyleSheet(
-            "QToolButton { font-size:11px; padding: 0 8px; }"
+            "QToolButton { font-size:9pt; padding: 0 8px; }"
             "QToolButton::menu-indicator { subcontrol-position: right center; }"
         )
         signals_btn.setToolTip(
@@ -544,7 +558,7 @@ class PlotOrchestrationMixin:
 
         add_btn = QPushButton("+ Add")
         add_btn.setFixedHeight(24)
-        add_btn.setStyleSheet("font-size:11px; padding: 0 6px;")
+        add_btn.setStyleSheet("font-size:9pt; padding: 0 6px;")
         add_btn.clicked.connect(lambda _, i=panel_idx: self._on_panel_add_signal(i))
         hl.addWidget(add_btn)
         # Per-panel Y-scale mode. Fit/Loose/Expand/Manual — see _Y_SCALE_MODES.
@@ -552,7 +566,7 @@ class PlotOrchestrationMixin:
         # don't make it breathe on every redraw.
         y_scale_cb = QComboBox()
         y_scale_cb.setFixedHeight(24)
-        y_scale_cb.setStyleSheet("QComboBox { font-size: 11px; padding: 0 4px; }")
+        y_scale_cb.setStyleSheet("QComboBox { font-size: 9pt; padding: 0 4px; }")
         current_mode = panel.y_scale_mode if panel else "fit"
         for mode_key, label, tip in _Y_SCALE_MODES:
             y_scale_cb.addItem(label, mode_key)
@@ -615,10 +629,10 @@ class PlotOrchestrationMixin:
         rl.setContentsMargins(6, 2, 6, 2)
         rl.setSpacing(8)
         dot = QLabel("●", row)
-        dot.setStyleSheet(f"color:{color}; font-size:14px;")
+        dot.setStyleSheet(f"color:{color}; font-size:10pt;")
         rl.addWidget(dot)
         name = QLabel(f"0x{key[0]:04X} · {key[1]}", row)
-        name.setStyleSheet("font-size:11px;")
+        name.setStyleSheet("font-size:9pt;")
         name.setMinimumWidth(180)
         rl.addWidget(name, 1)
         remove = QToolButton(row)
@@ -626,7 +640,7 @@ class PlotOrchestrationMixin:
         remove.setAutoRaise(True)
         remove.setToolTip("Remove this signal from the panel")
         remove.setStyleSheet(
-            "QToolButton { font-size:11px; padding: 0 6px; color:#b04a4a; }"
+            "QToolButton { font-size:9pt; padding: 0 6px; color:#b04a4a; }"
             "QToolButton:hover { color:#ff5555; }"
         )
 
@@ -800,31 +814,56 @@ class PlotOrchestrationMixin:
             self._log_activity("[ACTION] Plot switched to Explore mode (user pan/zoom)")
 
     def _set_plot_live(self, live: bool, *, source: str = "") -> None:
-        """Single source of truth for ``_plot_live`` + Pause button + mode label.
+        """Single source of truth for ``_plot_live`` + the tri-state button.
 
         Every code path that wants to flip the plot between Live and
-        Explore/Pause goes through here so the three pieces of UI state
-        cannot drift. ``source`` is "pan" when the change was triggered by a
-        user pan/zoom (so the mode label can mention how to get back); any
-        other value renders as plain Paused.
+        Explore/Pause goes through here so internal state and UI cannot
+        drift. ``source`` is "pan" when the change was triggered by a
+        user pan/zoom (renders as Explore); any other source for a
+        non-live transition renders as Paused.
+
+        When transitioning to Live, re-fit Y axes that were disturbed by
+        pan/zoom during the previous freeze. X-axis range is left to
+        _redraw_plot so the data-aware window logic stays centralised.
         """
+        was_live = self._plot_live
         self._plot_live = live
-        paused = not live
-        if hasattr(self, "_pause_btn"):
-            self._pause_btn.blockSignals(True)
-            self._pause_btn.setChecked(paused)
-            self._pause_btn.blockSignals(False)
-            self._restyle_pause_btn(paused)
-        if hasattr(self, "_plot_mode_btn"):
-            if live:
-                self._plot_mode_btn.setText("📊 Live")
-                self._plot_mode_btn.setEnabled(False)
-            elif source == "pan":
-                self._plot_mode_btn.setText("🔍 Explore")
-                self._plot_mode_btn.setEnabled(True)
-            else:
-                self._plot_mode_btn.setText("⏸ Paused")
-                self._plot_mode_btn.setEnabled(True)
+        if live and not was_live and pg is not None and self._plot_panels:
+            self._plot_range_changing = True
+            try:
+                for panel in self._plot_panels:
+                    vb = panel.plot_item.getViewBox()
+                    if vb is not None and panel.y_scale_mode != "manual":
+                        self._fit_panel_y_now(panel)
+            finally:
+                self._plot_range_changing = False
+        if not hasattr(self, "_plot_state_btn"):
+            return
+        if live:
+            label, bg, tip = (
+                "⏵ Live",
+                "#16A34A",
+                "Streaming — click to pause (Space).",
+            )
+        elif source == "pan":
+            label, bg, tip = (
+                "🔍 Explore",
+                "#2563EB",
+                "View frozen — you panned/zoomed. Click to resume Live (Space).",
+            )
+        else:
+            label, bg, tip = (
+                "⏸ Paused",
+                "#D97706",
+                "Paused — click to resume Live (Space).",
+            )
+        self._plot_state_btn.setText(label)
+        self._plot_state_btn.setToolTip(tip)
+        self._plot_state_btn.setStyleSheet(
+            f"QPushButton {{ background:{bg}; color:#fff; border:none;"
+            f"               padding:4px 12px; border-radius:4px; font-weight:bold; }}"
+            f"QPushButton:hover {{ filter: brightness(1.1); }}"
+        )
 
     def _on_plot_mouse_moved(self, evt, pi) -> None:
         """Handle a rate-limited mouse-move on one panel's scene. Updates the

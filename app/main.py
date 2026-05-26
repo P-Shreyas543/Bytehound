@@ -85,14 +85,69 @@ def configure_logging(level: int = logging.INFO) -> None:
         root.warning("File logging disabled: could not create log file.")
 
     def _handle_uncaught(exc_type, exc, tb):
+        # Always log first — the dialog is best-effort, the log file is
+        # the durable record. Re-raising in either step would lose info.
         logging.getLogger("bytehound").error(
             "Uncaught exception",
             exc_info=(exc_type, exc, tb),
         )
+        # Show a modal crash dialog if a Qt app is running so the user
+        # sees what happened and can copy the traceback. Wrapped in a
+        # broad try because an excepthook that raises is worse than one
+        # that's silent.
+        try:
+            _show_crash_dialog(exc_type, exc, tb)
+        except Exception:
+            logging.getLogger("bytehound").exception(
+                "Crash dialog itself failed; original exception still logged above."
+            )
         sys.__excepthook__(exc_type, exc, tb)
 
     sys.excepthook = _handle_uncaught
     _LOGGING_CONFIGURED = True
+
+
+def _show_crash_dialog(exc_type, exc, tb) -> None:
+    """Modal crash dialog with copy-to-clipboard. No-op if no QApplication.
+
+    Called from sys.excepthook, so it must never raise. The caller wraps
+    this in its own try/except as a defence-in-depth layer.
+    """
+    import traceback
+    try:
+        from PySide6.QtWidgets import QApplication, QMessageBox
+    except Exception:
+        return
+    app = QApplication.instance()
+    if app is None:
+        return  # Crash happened before/after the app — terminal output only.
+
+    tb_text = "".join(traceback.format_exception(exc_type, exc, tb))
+    short = f"{exc_type.__name__}: {exc}"
+
+    box = QMessageBox()
+    box.setIcon(QMessageBox.Icon.Critical)
+    box.setWindowTitle(f"{APP_NAME} — Unexpected Error")
+    box.setText("An unexpected error occurred and the operation could not complete.")
+    box.setInformativeText(
+        f"{short}\n\nThe full traceback has been written to bytehound.log. "
+        "Click 'Copy Details' to copy it to your clipboard for a bug report."
+    )
+    box.setDetailedText(tb_text)
+    # ActionRole keeps the dialog open after click so the user can copy
+    # AND read the dialog. Close button explicitly dismisses.
+    copy_btn = box.addButton("Copy Details", QMessageBox.ButtonRole.ActionRole)
+    close_btn = box.addButton(QMessageBox.StandardButton.Close)
+    box.setDefaultButton(close_btn)
+
+    while True:
+        box.exec()
+        clicked = box.clickedButton()
+        if clicked is copy_btn:
+            QApplication.clipboard().setText(tb_text)
+            # Loop so Copy doesn't dismiss — the user can then click Close.
+            continue
+        break
 
 
 def _run_app() -> int:
