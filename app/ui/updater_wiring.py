@@ -24,18 +24,20 @@ class UpdaterWiringMixin:
 
     def _on_check_updates(self) -> None:
         self._log_activity("[ACTION] Check for updates")
+        self._update_action.setEnabled(False)
         self._update_checker = UpdateChecker()
         self._update_checker.update_available.connect(self._on_update_available)
         self._update_checker.up_to_date.connect(
-            lambda: self._popup_information("Updater", "You are on the latest version.")
+            lambda: (self._update_action.setEnabled(True), self._popup_information("Updater", "You are on the latest version."))
         )
         self._update_checker.error.connect(
-            lambda e: self._popup_warning("Updater", f"Failed to check for updates:\n{e}")
+            lambda e: (self._update_action.setEnabled(True), self._popup_warning("Updater", f"Failed to check for updates:\n{e}"))
         )
         self._update_checker.start()
         self._set_status("Checking for updates...")
 
     def _on_update_available(self, version: str, url: str, release_notes: str, sha256: str) -> None:
+        self._update_action.setEnabled(True)
         reply = self._popup_question(
             "Update Available",
             (

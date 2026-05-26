@@ -121,6 +121,10 @@ class UpdateDownloader(QThread):
                         if total_size > 0:
                             self.progress.emit(downloaded, total_size)
             if self.isInterruptionRequested():
+                try:
+                    os.remove(self.dest_path)
+                except OSError:
+                    pass
                 return
 
             if self.expected_sha256:

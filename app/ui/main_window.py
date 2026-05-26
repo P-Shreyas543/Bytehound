@@ -441,6 +441,17 @@ class MainWindow(
                 QApplication.clipboard().setText(text)
                 self._log_activity(f"[ACTION] Copy value: {text}")
 
+    def _on_copy_table(self) -> None:
+        """Copy the entire telemetry table as tab-separated text."""
+        from .telemetry_model import COLUMN_HEADERS, NUM_COLS
+        lines = ["\t".join(COLUMN_HEADERS)]
+        for row in range(self._table_model.row_count()):
+            cells = [self._table_model.cell_text(row, col) for col in range(NUM_COLS)]
+            lines.append("\t".join(cells))
+        QApplication.clipboard().setText("\n".join(lines))
+        self._toast(f"Copied {self._table_model.row_count()} rows")
+        self._log_activity("[ACTION] Copy table snapshot")
+
     def _on_info(self) -> None:
         import json as _json
         _vpath = _project_root() / "version.json"
@@ -991,6 +1002,7 @@ class MainWindow(
             self._serial.device_timeout.connect(self._on_device_timeout)
             self._serial.open()
             self._serial.set_polling_global(self._polling_action.isChecked())
+            self._session_started = datetime.now()
             self._ui_timer.start()
 
             self._set_connection_ui(True)
@@ -1129,9 +1141,6 @@ class MainWindow(
         self._error_count = crc
         self._refresh_counts_label()
 
-    def _update_counts(self) -> None:
-        self._refresh_counts_label()
-
     def _on_tx_recorded(self, packet: bytes) -> None:
         self._tx_bytes += len(packet)
         self._refresh_counts_label()
@@ -1216,7 +1225,7 @@ class MainWindow(
         self._table_model.clear_live_columns()
         self._seen_decode_warnings.clear()
         self._redraw_plot()
-        self._update_counts()
+        self._refresh_counts_label()
         self._set_status("Cleared decoded values and console")
         self._log_activity("[ACTION] Cleared console and decoded values")
 
@@ -1586,15 +1595,6 @@ class MainWindow(
 
 
 
-    def _set_cell(self, row: int, col: int, text: str) -> None:
-        item = QTableWidgetItem(text)
-        if col in (3, 5, 6):
-            item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        elif col == 8:
-            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-
-        self._table.setItem(row, col, item)
-
     # ------------------------------------------------------------------
     # Misc helpers
     # ------------------------------------------------------------------
@@ -1681,6 +1681,7 @@ class MainWindow(
             self._toast_timer.timeout.connect(toast.hide)
 
         toast.setText(text)
+        toast.setMaximumWidth(int(self.width() * 0.7))
         toast.adjustSize()
         # Anchor near the bottom-right of the main window, above the status
         # bar. Re-position on every show so the toast still appears in the
@@ -1699,13 +1700,6 @@ class MainWindow(
             return
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self._activity_log.appendPlainText(f"{timestamp}  {text}")
-
-    def _format_console_row(self, packet: ParsedPacket) -> str:
-        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
-        hex_text = packet.raw.hex(" ").upper()
-        if packet.ok:
-            return f"{timestamp}, RX, {hex_text}"
-        return f"{timestamp}, ERR, {packet.error or 'unknown'}, {hex_text}"
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._log_activity("[SESSION] Close requested by user")
@@ -1751,6 +1745,4 @@ class MainWindow(
     # writer-thread queue couldn't be flushed within the bounded
     # logger.close() join.
     # ------------------------------------------------------------------
-    _DRAIN_CAP_SECONDS = 60.0
-    _DRAIN_POLL_MS = 200
 

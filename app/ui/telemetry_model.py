@@ -4,7 +4,7 @@ This model separates data storage from rendering, enabling the MainWindow
 to batch-update multiple rows in a single model transaction rather than
 re-painting the entire table on every packet received.
 
-Column layout mirrors `_COLUMNS` in main_window.py:
+Column layout defined by ``COLUMNS`` below:
     0  Frame      (frame_id as hex)
     1  Group
     2  Variable   (signal name)

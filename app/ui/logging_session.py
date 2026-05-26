@@ -30,6 +30,9 @@ from .widgets import _BTN_PINK, _BTN_YELLOW
 class LoggingSessionMixin:
     """MainWindow mixin holding logging start/stop/error methods."""
 
+    _DRAIN_CAP_SECONDS = 60.0
+    _DRAIN_POLL_MS = 200
+
     def _on_logging_settings(self) -> None:
         self._log_activity("[ACTION] Open Logging Settings dialog")
         dlg = LoggingSettingsDialog(self._settings, parent=self)

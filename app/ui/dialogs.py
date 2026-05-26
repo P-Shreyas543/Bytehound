@@ -209,7 +209,9 @@ class PollingConfigDialog(QDialog):
             "are matched by frame_id. Disable if the device drops or "
             "corrupts overlapping requests. Not available for Modbus RTU."
         )
-        self._pipeline_chk.setChecked(False)
+        self._pipeline_chk.setChecked(
+            settings.value("poll/pipelining", False, type=bool)
+        )
 
         self._pipeline_depth = QSpinBox(self)
         self._pipeline_depth.setRange(1, 16)

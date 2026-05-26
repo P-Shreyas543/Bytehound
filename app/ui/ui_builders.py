@@ -148,6 +148,10 @@ class UIBuildersMixin:
         self._copy_value_action.setShortcut("Ctrl+Shift+C")
         self._copy_value_action.triggered.connect(self._on_copy_value)
 
+        self._copy_table_action = QAction(_icon("mdi6.table-arrow-right", _ic), "Copy Table Snapshot", self)
+        self._copy_table_action.setShortcut("Ctrl+Shift+T")
+        self._copy_table_action.triggered.connect(self._on_copy_table)
+
         self._exit_action = QAction(_icon("mdi6.exit-to-app", _ic), "Exit", self)
         self._exit_action.setShortcut(QKeySequence("Ctrl+Q"))
         self._exit_action.triggered.connect(self.close)
@@ -196,6 +200,7 @@ class UIBuildersMixin:
 
         edit_menu = menubar.addMenu("&Edit")
         edit_menu.addAction(self._copy_value_action)
+        edit_menu.addAction(self._copy_table_action)
         edit_menu.addAction(self._clear_action)
         _add_sep()
 

@@ -636,6 +636,7 @@ class ThemingMixin:
             (self._export_template_action,  "mdi6.file-export-outline"),
             (self._clear_action,            "mdi6.broom"),
             (self._copy_value_action,       "mdi6.content-copy"),
+            (self._copy_table_action,       "mdi6.table-arrow-right"),
             (self._exit_action,             "mdi6.exit-to-app"),
             (self._info_action,             "mdi6.information-outline"),
             (self._analysis_action,         "mdi6.chart-multiple"),
