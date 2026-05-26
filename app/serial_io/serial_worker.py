@@ -74,6 +74,13 @@ POLL_RESPONSE_GRACE_MS = 50
 # Keep polling conservative; manual priority TX still uses protocol settings.
 POLL_TX_GAP_FLOOR_MS = 100
 
+# Default TX-gap floor for pipelined polling. Lower-bound only — the user
+# can tune it down via Configure Poll Schedule if their device tolerates
+# tighter spacing. 100 ms matches the proven-working value from real
+# hardware testing on a multi-target BMS; smaller gaps (25-75 ms) caused
+# the device to drop the poll immediately after a successful response.
+POLL_PIPELINE_TX_GAP_FLOOR_MS = 100
+
 # OS error codes that indicate a physical disconnect on Windows.
 _DISCONNECT_WINERRORS = {5, 22, 31, 1167}
 
@@ -165,6 +172,12 @@ class PollingWorker(QThread):
         # set_pipelining().
         self._pipelining_enabled: bool = False
         self._pipeline_depth: int = 2
+        # Minimum spacing between pipelined TXs. ``None`` means "use the
+        # module default ``POLL_PIPELINE_TX_GAP_FLOOR_MS``"; a number lets
+        # the UI override the floor per session. Devices that don't drop
+        # frames at the default 30 ms can tune this down for higher
+        # throughput; flaky ones can tune it up.
+        self._pipeline_tx_gap_ms: Optional[int] = None
         # In-flight poll bookkeeping. Only mutated on the worker thread.
         # Each entry: {"target_id": int, "tx_time": float, "deadline": float}
         self._in_flight: List[dict] = []
@@ -268,8 +281,24 @@ class PollingWorker(QThread):
                 self._flush_rx_before_polling = True
                 self._in_flight.clear()
             self._polling_global_enabled = enabled
+        if enabled:
+            effective_gap = (
+                self._pipeline_tx_gap_ms
+                if self._pipeline_tx_gap_ms is not None
+                else POLL_PIPELINE_TX_GAP_FLOOR_MS
+            )
+            _LOG.info(
+                "Polling started: pipelining=%s depth=%d tx_gap=%dms timeout_disable_threshold=%d",
+                self._pipelining_enabled, self._pipeline_depth,
+                effective_gap, CONSECUTIVE_TIMEOUT_DISABLE_THRESHOLD,
+            )
 
-    def set_pipelining(self, enabled: bool, depth: int = 2) -> None:
+    def set_pipelining(
+        self,
+        enabled: bool,
+        depth: int = 2,
+        gap_ms: Optional[int] = None,
+    ) -> None:
         """Enable/disable pipelined polling.
 
         In pipelined mode the worker sends up to ``depth`` poll requests
@@ -277,10 +306,15 @@ class PollingWorker(QThread):
         ``frame_id`` as they stream in. Cuts the total cycle time when the
         device's per-request turnaround is the bottleneck.
 
+        ``gap_ms`` overrides the default per-TX spacing
+        (``POLL_PIPELINE_TX_GAP_FLOOR_MS``). Pass ``None`` to use the
+        default. Tune it up if the device drops frames at the default
+        spacing, down for higher throughput on hardware that can take it.
+
         Modbus RTU is silently forced off — its responses don't carry a
         register-address tag we can use to demux out-of-order replies.
         """
-        depth = max(1, min(int(depth), 8))
+        depth = max(1, min(int(depth), 16))
         if depth <= 1:
             enabled = False
         if self.protocol.parser_type == "modbus_rtu" and enabled:
@@ -291,11 +325,22 @@ class PollingWorker(QThread):
         with QMutexLocker(self._mutex):
             self._pipelining_enabled = enabled
             self._pipeline_depth = depth
+            if gap_ms is not None:
+                self._pipeline_tx_gap_ms = max(0, int(gap_ms))
             if not enabled:
                 # Drop tracking; any actual on-wire frames already sent will
                 # arrive late and be emitted as normal traffic, just without
                 # a latency sample.
                 self._in_flight.clear()
+        effective_gap = (
+            self._pipeline_tx_gap_ms
+            if self._pipeline_tx_gap_ms is not None
+            else POLL_PIPELINE_TX_GAP_FLOOR_MS
+        )
+        _LOG.info(
+            "Pipelining set: enabled=%s depth=%d tx_gap=%dms",
+            enabled, depth, effective_gap,
+        )
 
     def reset_metrics(self) -> None:
         """Zero the worker-owned counters (timeouts / crc_errors / rx_bytes).
@@ -446,7 +491,12 @@ class PollingWorker(QThread):
         )
 
     def _respect_inter_frame_delay(self, min_gap_ms: int = 0) -> None:
-        """Honor protocol.inter_frame_delay_ms before consecutive TX frames."""
+        """Honor protocol.inter_frame_delay_ms before consecutive TX frames.
+
+        Gap is measured from the previous TX (not from RX). Codex's
+        polling investigation showed this is the cadence the BMS
+        firmware expects — keeping it stable here.
+        """
         delay_ms = self._effective_tx_gap_ms(min_gap_ms)
         if delay_ms <= 0 or self._last_tx_time <= 0.0:
             return
@@ -684,13 +734,23 @@ class PollingWorker(QThread):
     def _do_poll(self, sched: dict) -> None:
         target_id = sched["spec"].target_id
         timeout_ms = sched["spec"].timeout_ms
+        # Honour the user-configured tx-gap setting if they've set one
+        # via the Configure Poll Schedule dialog; otherwise fall back to
+        # the serial-mode floor. Lets the dialog spinbox tune both modes
+        # without a rebuild, which matters for diagnosing devices whose
+        # response rate is sensitive to TX cadence.
+        gap_ms = (
+            self._pipeline_tx_gap_ms
+            if self._pipeline_tx_gap_ms is not None
+            else POLL_TX_GAP_FLOOR_MS
+        )
 
         if self.protocol.parser_type == "modbus_rtu":
             from ..protocol.packet_builder import build_modbus_packet
             try:
                 req = build_modbus_packet(self.protocol, target_id, b"")
                 self._drain_pending_rx()
-                self._write_serial(req, min_gap_ms=POLL_TX_GAP_FLOOR_MS)
+                self._write_serial(req, min_gap_ms=gap_ms)
                 self.tx_recorded.emit(req)
                 self._await_modbus_response(req, target_id, timeout_ms)
             except ValueError as exc:
@@ -700,7 +760,7 @@ class PollingWorker(QThread):
             try:
                 req = build_packet(self.protocol, target_id, b"")
                 self._drain_pending_rx()
-                self._write_serial(req, min_gap_ms=POLL_TX_GAP_FLOOR_MS)
+                self._write_serial(req, min_gap_ms=gap_ms)
                 self.tx_recorded.emit(req)
                 self._await_response(timeout_ms, target_id)
             except ValueError as exc:
@@ -716,7 +776,12 @@ class PollingWorker(QThread):
 
     def _expire_in_flight(self) -> None:
         """Drop in-flight requests whose deadline has passed and count them
-        as timeouts. Called once per loop iteration in pipelined mode."""
+        as timeouts. Called once per loop iteration in pipelined mode.
+
+        Logs parser buffer state at DEBUG level on each expiration so a
+        bytehound.log review can show whether the response arrived as a
+        bad-CRC fragment or never reached the parser at all.
+        """
         if not self._in_flight:
             return
         now = time.monotonic()
@@ -725,6 +790,13 @@ class PollingWorker(QThread):
             if now >= item["deadline"]:
                 self._timeouts += 1
                 self._record_poll_timeout(item["target_id"])
+                _LOG.debug(
+                    "Poll timeout 0x%04X: in_flight=%d parser_buf=%d serial_waiting=%d",
+                    item["target_id"],
+                    len(self._in_flight) - 1,
+                    getattr(self._parser, "buffered_bytes", -1),
+                    self._serial.in_waiting if self._serial else -1,
+                )
             else:
                 kept.append(item)
         self._in_flight = kept
@@ -752,8 +824,26 @@ class PollingWorker(QThread):
 
     def _send_polling_tx_nowait(self, sched: dict) -> bool:
         """Build and write a poll request without awaiting the response.
-        Records the request in _in_flight. Returns False if the build failed
-        (schedule gets auto-disabled in that case)."""
+        Records the request in _in_flight. Returns False on either:
+        (a) build failed (schedule gets auto-disabled), or
+        (b) gap-floor hasn't elapsed yet (caller should drain RX and
+            retry on the next loop iteration).
+
+        Critically, this method does NOT sleep to honour the gap. The
+        gap is enforced by REFUSING to TX, not by blocking. That keeps
+        the outer run loop free to drain RX continuously during the
+        wait — important on Windows USB CDC where in_waiting may not
+        report bytes until something actively reads. Previously a 30 ms
+        gap could swallow an in-flight response because the worker was
+        asleep when the response landed.
+
+        Honours ``POLL_PIPELINE_TX_GAP_FLOOR_MS`` between TXs — the probe
+        showed 10 ms back-to-back spacing can drop the BMS reply even
+        though 25 ms is reliable. Without this floor the pipelined path
+        was firing at the protocol's bare ``inter_frame_delay_ms`` (10 ms
+        in the user's config), which produced the intermittent 0x9001
+        timeouts in production logs.
+        """
         from ..protocol.packet_builder import build_packet
         target_id = sched["spec"].target_id
         timeout_ms = sched["spec"].timeout_ms
@@ -765,7 +855,12 @@ class PollingWorker(QThread):
         if self._serial is None:
             return False
         self._drain_pending_rx()
-        self._write_serial(req)
+        gap_ms = (
+            self._pipeline_tx_gap_ms
+            if self._pipeline_tx_gap_ms is not None
+            else POLL_PIPELINE_TX_GAP_FLOOR_MS
+        )
+        self._write_serial(req, min_gap_ms=gap_ms)
         self.tx_recorded.emit(req)
         tx_time = time.monotonic()
         self._in_flight.append({
@@ -961,6 +1056,12 @@ class PollingWorker(QThread):
         if not packet_found:
             self._timeouts += 1
             self._record_poll_timeout(target_id)
+            _LOG.debug(
+                "Poll timeout 0x%04X (serial): parser_buf=%d serial_waiting=%d",
+                target_id if target_id is not None else -1,
+                getattr(self._parser, "buffered_bytes", -1),
+                self._serial.in_waiting if self._serial else -1,
+            )
         else:
             if target_id is not None:
                 self._record_poll_success(target_id)

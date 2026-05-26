@@ -303,8 +303,15 @@ def _interval_stats(tx_log, proto) -> dict[int, dict]:
     return stats
 
 
-def _build_worker_with_perfect_mcu(*, pipeline_depth: int):
-    """PollingWorker driven against a simulator that mirrors the user's MCU."""
+def _build_worker_with_perfect_mcu(*, pipeline_depth: int, gap_ms: int = 30):
+    """PollingWorker driven against a simulator that mirrors the user's MCU.
+
+    ``gap_ms`` defaults to 30 here because these tests focus on depth
+    scaling and the per-target cadence math; the production default
+    (100 ms) is a separate concern verified by the live hardware tests
+    in the user's app. Caller can pass any gap to exercise specific
+    scenarios.
+    """
     cfg = load_config(USER_CONFIG)
     proto = cfg.protocol
     settings = SerialSettings(port="COM_TEST", baud_rate=115200, timeout_ms=50)
@@ -316,7 +323,7 @@ def _build_worker_with_perfect_mcu(*, pipeline_depth: int):
     worker.start = MagicMock()
     worker._open_time = time.monotonic() - (POLLING_BOOT_GRACE + 1.0)
     worker.set_polling_global(True)
-    worker.set_pipelining(True, depth=pipeline_depth)
+    worker.set_pipelining(True, depth=pipeline_depth, gap_ms=gap_ms)
     return worker, sim, cfg
 
 

@@ -41,9 +41,12 @@ class PollingSessionMixin:
             enabled_ids = dlg.get_enabled_ids()
             for sched in self._config.polling_schedules:
                 self._serial.toggle_schedule(sched.target_id, sched.target_id in enabled_ids)
-            pipe_enabled, pipe_depth = dlg.get_pipelining()
-            self._serial.set_pipelining(pipe_enabled, pipe_depth)
-            mode = f"pipelined, max in-flight {pipe_depth}" if pipe_enabled else "sequential, one request in flight"
+            pipe_enabled, pipe_depth, pipe_gap_ms = dlg.get_pipelining()
+            self._serial.set_pipelining(pipe_enabled, pipe_depth, gap_ms=pipe_gap_ms)
+            if pipe_enabled:
+                mode = f"pipelined, max in-flight {pipe_depth}, TX gap {pipe_gap_ms} ms"
+            else:
+                mode = "sequential, one request in flight"
             self._log_activity(f"[ACTION] Auto-Fetch mode: {mode}")
             # Refresh the sidebar read-only list
             self._update_poll_status_sidebar(enabled_ids)
@@ -69,12 +72,15 @@ class PollingSessionMixin:
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         enabled_ids = dlg.get_enabled_ids()
-        pipe_enabled, pipe_depth = dlg.get_pipelining()
+        pipe_enabled, pipe_depth, pipe_gap_ms = dlg.get_pipelining()
         if self._serial:
             for sched in self._config.polling_schedules:
                 self._serial.toggle_schedule(sched.target_id, sched.target_id in enabled_ids)
-            self._serial.set_pipelining(pipe_enabled, pipe_depth)
-            mode = f"pipelined, max in-flight {pipe_depth}" if pipe_enabled else "sequential, one request in flight"
+            self._serial.set_pipelining(pipe_enabled, pipe_depth, gap_ms=pipe_gap_ms)
+            if pipe_enabled:
+                mode = f"pipelined, max in-flight {pipe_depth}, TX gap {pipe_gap_ms} ms"
+            else:
+                mode = "sequential, one request in flight"
             self._log_activity(f"[ACTION] Poll Schedule mode: {mode}")
         self._update_poll_status_sidebar(enabled_ids)
         self._log_activity(

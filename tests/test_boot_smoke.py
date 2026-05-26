@@ -426,6 +426,46 @@ def test_settings_migration_resets_old_pipeline_customisation_once(qapp) -> None
         s.sync()
 
 
+def test_settings_migration_bumps_tx_gap_from_30_to_100(qapp) -> None:
+    """Users sitting on the original 30 ms TX-gap default get bumped to 100 ms.
+
+    Real-hardware testing showed 30 ms drops every other poll on a BMS that
+    needs ≥ 100 ms between TXs. Users who explicitly chose a non-30 value
+    (e.g. 50 or 200) keep their choice.
+    """
+    from PySide6.QtCore import QSettings
+    from app.ui.main_window import APP_ORG, APP_NAME, _migrate_settings
+
+    s = QSettings(APP_ORG, APP_NAME)
+    saved = {
+        k: s.value(k) for k in (
+            "poll/pipeline_tx_gap_ms", "settings/migration_version"
+        )
+    }
+    try:
+        # Sitting on the old default — should be bumped.
+        s.setValue("poll/pipeline_tx_gap_ms", 30)
+        s.remove("settings/migration_version")
+        s.sync()
+        _migrate_settings(s)
+        assert int(s.value("poll/pipeline_tx_gap_ms")) == 100
+
+        # Explicitly customised — should NOT be touched.
+        s.setValue("poll/pipeline_tx_gap_ms", 50)
+        s.remove("settings/migration_version")
+        s.sync()
+        _migrate_settings(s)
+        assert int(s.value("poll/pipeline_tx_gap_ms")) == 50, \
+            "user-chosen 50 ms must survive the migration"
+    finally:
+        for k, v in saved.items():
+            if v is None:
+                s.remove(k)
+            else:
+                s.setValue(k, v)
+        s.sync()
+
+
 def test_window_state_schema_version_discards_stale_blobs(qapp) -> None:
     """A mismatched ``_WINDOW_STATE_VERSION`` clears the persisted blobs.
 

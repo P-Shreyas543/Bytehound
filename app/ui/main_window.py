@@ -106,9 +106,7 @@ def _migrate_settings(settings) -> None:
     """One-time per-version migrations of stored user settings.
 
     Idempotent. Skips entirely if the stored migration version is already
-    >= the current target. Each step only rewrites a key when its stored
-    value matches the OLD default we're trying to retire — so users who
-    deliberately set the key to something else are left alone.
+    >= the current target.
     """
     try:
         stored_version = int(settings.value("settings/migration_version", 0))
@@ -117,34 +115,23 @@ def _migrate_settings(settings) -> None:
     if stored_version >= _SETTINGS_MIGRATION_VERSION:
         return
 
-    # v0 -> v1: bump poll-pipeline defaults so the dialog opens with the
-    # values that actually serve a multi-target config (depth=8, on).
-    # Only flips values that still match the old defaults — users who
-    # set pipelining off on purpose, or chose a different depth, keep
-    # their choice.
-    if stored_version < 1:
-        if settings.contains("poll/pipelining"):
-            try:
-                old = settings.value("poll/pipelining", False, type=bool)
-            except TypeError:
-                old = False
-            if old is False:
-                settings.setValue("poll/pipelining", True)
-        if settings.contains("poll/pipeline_depth"):
-            try:
-                old_depth = int(settings.value("poll/pipeline_depth", 2))
-            except (TypeError, ValueError):
-                old_depth = 2
-            if old_depth == 2:
-                settings.setValue("poll/pipeline_depth", 8)
-
-    # v1 -> v2: real hardware testing showed many framed UART devices process
-    # one command at a time and delay/drop overlapped polls. Return Auto-Fetch
-    # to the hardware-safe sequential default; users can still opt back into
-    # pipelining from the dialog for firmware that supports it.
+    # v0/v1 -> v2: reset polling to hardware-safe sequential defaults.
+    # An earlier release shipped with auto-bumped pipelining=on/depth=8,
+    # which broke devices that process one command at a time. Bump the
+    # tx_gap from the original 30 ms default to 100 ms — real-hardware
+    # testing on a multi-target BMS showed 30 ms drops every other poll
+    # and 100 ms is the smallest gap that holds. Users who set a specific
+    # gap other than 30 keep their choice.
     if stored_version < 2:
         settings.setValue("poll/pipelining", False)
         settings.setValue("poll/pipeline_depth", 1)
+        if settings.contains("poll/pipeline_tx_gap_ms"):
+            try:
+                old_gap = int(settings.value("poll/pipeline_tx_gap_ms", 30))
+            except (TypeError, ValueError):
+                old_gap = 30
+            if old_gap == 30:
+                settings.setValue("poll/pipeline_tx_gap_ms", 100)
 
     settings.setValue("settings/migration_version", _SETTINGS_MIGRATION_VERSION)
 

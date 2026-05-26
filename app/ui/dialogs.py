@@ -10,7 +10,11 @@ from PySide6.QtWidgets import (
 )
 
 from ..decoder.types import SerialDefaults
-from ..serial_io.serial_worker import SerialSettings, available_ports
+from ..serial_io.serial_worker import (
+    POLL_PIPELINE_TX_GAP_FLOOR_MS,
+    SerialSettings,
+    available_ports,
+)
 
 
 class ConnectionDialog(QDialog):
@@ -214,12 +218,32 @@ class PollingConfigDialog(QDialog):
         self._pipeline_depth.setEnabled(self._pipeline_chk.isChecked())
         self._pipeline_chk.toggled.connect(self._pipeline_depth.setEnabled)
 
+        # Per-TX spacing floor — applies to BOTH sequential and pipelined
+        # polling. Default 100 ms because real-hardware testing on a
+        # multi-target BMS showed anything smaller (25-75 ms) caused the
+        # device to drop polls fired too soon after its previous response.
+        # Some devices may tolerate less; tune downward if your hardware
+        # is reliable at faster cadence.
+        self._pipeline_gap_ms = QSpinBox(self)
+        self._pipeline_gap_ms.setRange(0, 500)
+        self._pipeline_gap_ms.setSuffix(" ms")
+        self._pipeline_gap_ms.setValue(int(settings.value(
+            "poll/pipeline_tx_gap_ms", POLL_PIPELINE_TX_GAP_FLOOR_MS
+        )))
+        self._pipeline_gap_ms.setToolTip(
+            "Minimum spacing between consecutive polls. Applies to both "
+            "sequential and pipelined modes. 100 ms is the safe default; "
+            "tune down only if your device tolerates faster cadence."
+        )
+
         pipe_row = QHBoxLayout()
         pipe_row.setSpacing(8)
         pipe_row.addWidget(self._pipeline_chk)
         pipe_row.addStretch(1)
         pipe_row.addWidget(QLabel("Max in-flight:", self))
         pipe_row.addWidget(self._pipeline_depth)
+        pipe_row.addWidget(QLabel("TX gap:", self))
+        pipe_row.addWidget(self._pipeline_gap_ms)
         layout.addLayout(pipe_row)
 
         buttons = QDialogButtonBox(
@@ -244,6 +268,7 @@ class PollingConfigDialog(QDialog):
             self._settings.setValue(key, item.checkState() == Qt.CheckState.Checked)
         self._settings.setValue("poll/pipelining", self._pipeline_chk.isChecked())
         self._settings.setValue("poll/pipeline_depth", int(self._pipeline_depth.value()))
+        self._settings.setValue("poll/pipeline_tx_gap_ms", int(self._pipeline_gap_ms.value()))
         self.accept()
 
     def get_enabled_ids(self) -> set:
@@ -255,10 +280,11 @@ class PollingConfigDialog(QDialog):
                 result.add(item.data(Qt.ItemDataRole.UserRole))
         return result
 
-    def get_pipelining(self) -> Tuple[bool, int]:
-        """Return (enabled, max_in_flight) for pipelined polling."""
+    def get_pipelining(self) -> Tuple[bool, int, int]:
+        """Return (enabled, max_in_flight, tx_gap_ms) for pipelined polling."""
         depth = int(self._pipeline_depth.value())
-        return self._pipeline_chk.isChecked() and depth > 1, depth
+        gap_ms = int(self._pipeline_gap_ms.value())
+        return self._pipeline_chk.isChecked() and depth > 1, depth, gap_ms
 
 
 class LoggingSettingsDialog(QDialog):
