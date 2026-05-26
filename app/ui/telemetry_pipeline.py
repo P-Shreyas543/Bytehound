@@ -5,7 +5,7 @@ import time
 import struct
 from datetime import datetime
 from collections import deque
-from typing import Optional, Dict, List, Tuple
+from typing import Optional, Dict, List, Tuple, Deque
 
 from ..decoder.frame_decoder import DecodedFrame, DecodedSignal, decode_frame
 from ..protocol.packet_parser import ParsedPacket
