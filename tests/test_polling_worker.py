@@ -254,7 +254,7 @@ def test_enqueue_priority_tx_emits_error_on_full_queue():
     sched = PollingScheduleSpec(target_id=0x10, interval_ms=10, timeout_ms=5)
     worker = _make_worker([sched])
     emitted: list[str] = []
-    worker.error_occurred.connect(lambda msg: emitted.append(msg))
+    worker.warning_occurred.connect(lambda msg: emitted.append(msg))
 
     # The queue size is 256 (declared in PollingWorker.__init__). Push 257 to
     # force one overflow.

@@ -1011,6 +1011,7 @@ class MainWindow(
             self._serial.packets_received.connect(self._on_packets_received)
             self._serial.metrics_updated.connect(self._on_metrics_updated)
             self._serial.error_occurred.connect(self._on_serial_error)
+            self._serial.warning_occurred.connect(self._on_serial_warning)
             self._serial.tx_recorded.connect(self._on_tx_recorded)
             self._serial.wire_recorded.connect(self._on_wire_recorded)
             self._serial.connection_lost.connect(self._on_connection_lost)
@@ -1033,6 +1034,9 @@ class MainWindow(
     def _on_serial_error(self, err: str) -> None:
         self._log_activity(f"Serial Error: {err}")
         self._disconnect(reason=f"Error: {err}")
+
+    def _on_serial_warning(self, msg: str) -> None:
+        self._log_activity(f"[WARN] {msg}")
 
 
 

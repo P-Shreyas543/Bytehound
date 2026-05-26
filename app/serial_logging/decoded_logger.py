@@ -131,6 +131,7 @@ class DecodedLogger:
         flush_interval: float = 0.5,
         metadata: Mapping[str, str] | None = None,
         on_error: ErrorCallback | None = None,
+        on_warning: Callable[[str], None] | None = None,
     ) -> None:
         self.path = Path(path)
         self._config = config
@@ -138,6 +139,7 @@ class DecodedLogger:
         self._data_ws = None
         self._metadata = dict(metadata) if metadata else {}
         self._on_error = on_error
+        self._on_warning = on_warning
         self._disabled = False
 
         (
@@ -170,6 +172,7 @@ class DecodedLogger:
         self._error_lock = threading.Lock()
         self._pending_error: Optional[str] = None
         self._dropped_count = 0  # rows dropped because the queue was full
+        self._last_drop_warning_time = 0.0
 
     def __enter__(self) -> "DecodedLogger":
         self.open()
@@ -223,6 +226,7 @@ class DecodedLogger:
         # exclusively by the writer.
         self._stop_event.clear()
         self._dropped_count = 0
+        self._last_drop_warning_time = 0.0
         self._writer_thread = threading.Thread(
             target=self._writer_loop,
             name=f"DecodedLoggerWriter[{self.path.name}]",
@@ -275,11 +279,11 @@ class DecodedLogger:
                     break
 
         if self._dropped_count:
-            _LOG.warning(
-                "DecodedLogger dropped %d row(s) at %s — writer could not keep up",
-                self._dropped_count,
-                self.path.name,
-            )
+            msg = f"DecodedLogger dropped {self._dropped_count} row(s) at {self.path.name} — writer could not keep up."
+            _LOG.warning(msg)
+            if self._on_warning is not None:
+                self._on_warning(msg)
+            self._dropped_count = 0
         # Surface any writer-thread error to the on_error callback on the
         # calling thread.
         self._pump_pending_error()
@@ -411,6 +415,13 @@ class DecodedLogger:
             # Writer is wedged or saturated. Drop rather than block the GUI
             # thread; the dropped count is logged on close().
             self._dropped_count += 1
+            now = time.monotonic()
+            if now - self._last_drop_warning_time > 2.0:
+                self._last_drop_warning_time = now
+                msg = f"DecodedLogger queue is full — dropping log frames. Total dropped: {self._dropped_count}"
+                _LOG.warning(msg)
+                if self._on_warning is not None:
+                    self._on_warning(msg)
 
     # ------------------------------------------------------------------
     # Writer thread

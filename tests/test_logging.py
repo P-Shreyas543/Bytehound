@@ -611,3 +611,63 @@ def test_decoded_logger_temporary_file_recovery(tmp_path):
     wb.close()
 
     assert len(data_rows) == 2  # header + 1 cycle row
+
+
+def test_raw_logger_queue_saturation_warning(tmp_path):
+    import queue
+    log_path = tmp_path / "raw_sat.csv"
+    warnings = []
+    
+    def on_warn(msg):
+        warnings.append(msg)
+        
+    logger = RawLogger(log_path, on_warning=on_warn)
+    logger.open()
+    
+    # Restrict queue size to 1 to force overflow easily
+    logger._queue = queue.Queue(maxsize=1)
+    
+    # Call log multiple times to trigger overflow and rate-limited warning
+    logger.log("TX", b"\x11\x22")
+    logger.log("TX", b"\x33\x44")
+    logger.log("TX", b"\x55\x66")
+    
+    assert logger._dropped_count > 0
+    assert len(warnings) >= 1
+    assert "RawLogger queue is full" in warnings[0]
+    
+    logger.close()
+    assert any("dropped" in w for w in warnings)
+
+
+def test_decoded_logger_queue_saturation_warning(tmp_path):
+    import queue
+    from app.decoder.frame_decoder import DecodedFrame
+    
+    log_path = tmp_path / "decoded_sat.xlsx"
+    config = _make_test_config()
+    warnings = []
+    
+    def on_warn(msg):
+        warnings.append(msg)
+        
+    logger = DecodedLogger(log_path, config, on_warning=on_warn)
+    logger.open()
+    
+    # Restrict queue size to 1 to force overflow
+    logger._queue = queue.Queue(maxsize=1)
+    logger._cycle_frame_ids = [0x0100]
+    logger._trigger_id = 0x0100
+    logger._cycle_buffer[0x0100] = {0: "data"}
+    
+    frame = DecodedFrame(frame_id=0x0100, frame_name="FrameA", signals=[])
+    logger.log_frame(frame, 1.0)
+    logger.log_frame(frame, 1.0)
+    logger.log_frame(frame, 1.0)
+    
+    assert logger._dropped_count > 0
+    assert len(warnings) >= 1
+    assert "DecodedLogger queue is full" in warnings[0]
+    
+    logger.close()
+    assert any("dropped" in w for w in warnings)

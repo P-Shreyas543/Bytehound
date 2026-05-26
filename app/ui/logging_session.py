@@ -123,6 +123,7 @@ class LoggingSessionMixin:
                 flush_interval=flush_interval,
                 metadata=metadata,
                 on_error=self._on_logger_error,
+                on_warning=self._log_activity,
                 hex_format=self._config.protocol.raw_log_format if self._config else "hex",
             )
             if raw_path
@@ -136,6 +137,7 @@ class LoggingSessionMixin:
                 flush_interval=flush_interval,
                 metadata=metadata,
                 on_error=self._on_logger_error,
+                on_warning=self._log_activity,
             )
         else:
             self._decoded_logger = None

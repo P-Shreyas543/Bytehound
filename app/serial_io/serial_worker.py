@@ -100,6 +100,7 @@ class PollingWorker(QThread):
     packets_received = Signal(list)
     metrics_updated = Signal(int, int, int)   # timeouts, crc_errors, rx_bytes
     error_occurred = Signal(str)
+    warning_occurred = Signal(str)
     tx_recorded = Signal(bytes)
     wire_recorded = Signal(str, bytes, object)  # direction, raw bytes, datetime
 
@@ -271,7 +272,7 @@ class PollingWorker(QThread):
             # commands faster than the wire can carry them. Better to lose one
             # command than silently grow memory unbounded. ASCII-only so the
             # message renders cleanly on Windows' cp1252 console.
-            self.error_occurred.emit(
+            self.warning_occurred.emit(
                 "TX queue full - command dropped (UI is sending faster than the link can sustain)."
             )
 
@@ -318,7 +319,7 @@ class PollingWorker(QThread):
         if depth <= 1:
             enabled = False
         if self.protocol.parser_type == "modbus_rtu" and enabled:
-            self.error_occurred.emit(
+            self.warning_occurred.emit(
                 "Pipelined polling is not supported for Modbus RTU; ignored."
             )
             enabled = False
@@ -714,7 +715,7 @@ class PollingWorker(QThread):
                     # blip stopped polling forever until the user manually
                     # reconnected. Stay alive; let the watchdog or the user
                     # diagnose if it persists.
-                    self.error_occurred.emit(str(exc))
+                    self.warning_occurred.emit(f"Transient serial error: {exc}")
                     time.sleep(0.05)
                     continue
 
@@ -723,7 +724,7 @@ class PollingWorker(QThread):
                 # etc.). Report it, log a short cool-down, and keep running.
                 # Killing the thread silently disabled polling — far worse than
                 # surfacing a transient error and continuing.
-                self.error_occurred.emit(f"Worker recovered from: {exc!r}")
+                self.warning_occurred.emit(f"Worker recovered from: {exc!r}")
                 time.sleep(0.05)
                 continue
 

@@ -33,7 +33,8 @@ class PollingSessionMixin:
                 self._popup_warning("Auto-Fetch", "Please connect to a device first.")
                 self._polling_action.setChecked(False)
                 return
-            dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self)
+            is_modbus = (self._config.protocol.parser_type == "modbus_rtu") if self._config else False
+            dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self, is_modbus=is_modbus)
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 self._polling_action.setChecked(False)
                 return
@@ -68,7 +69,8 @@ class PollingSessionMixin:
         if self._config is None:
             self._popup_warning("Poll Schedule", "Load a configuration first.")
             return
-        dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self)
+        is_modbus = (self._config.protocol.parser_type == "modbus_rtu") if self._config else False
+        dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self, is_modbus=is_modbus)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         enabled_ids = dlg.get_enabled_ids()

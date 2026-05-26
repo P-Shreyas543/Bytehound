@@ -57,6 +57,7 @@ class RawLogger:
         flush_interval: float = _FLUSH_INTERVAL,
         metadata: Mapping[str, str] | None = None,
         on_error: ErrorCallback | None = None,
+        on_warning: Callable[[str], None] | None = None,
         hex_format: str = "hex",
     ) -> None:
         self.path = Path(path)
@@ -66,6 +67,7 @@ class RawLogger:
         self._flush_interval = float(flush_interval)
         self._metadata = dict(metadata) if metadata else {}
         self._on_error = on_error
+        self._on_warning = on_warning
         self._disabled = False
         if hex_format not in {"hex", "compact"}:
             raise ValueError(f"hex_format must be 'hex' or 'compact' (got {hex_format!r})")
@@ -80,6 +82,7 @@ class RawLogger:
         self._error_lock = threading.Lock()
         self._pending_error: Optional[str] = None
         self._dropped_count = 0  # rows dropped because the queue was full
+        self._last_drop_warning_time = 0.0
 
     def __enter__(self) -> "RawLogger":
         self.open()
@@ -128,6 +131,8 @@ class RawLogger:
                 pass
 
         self._stop_event.clear()
+        self._dropped_count = 0
+        self._last_drop_warning_time = 0.0
         self._writer_thread = threading.Thread(
             target=self._writer_loop,
             name=f"RawLoggerWriter[{self.path.name}]",
@@ -153,6 +158,13 @@ class RawLogger:
                 self._writer_thread = None
         self._fp = None
         self._writer = None
+
+        if self._dropped_count > 0:
+            msg = f"RawLogger closed with {self._dropped_count} dropped row(s) due to queue saturation."
+            _LOG.warning(msg)
+            if self._on_warning is not None:
+                self._on_warning(msg)
+            self._dropped_count = 0
 
     # ------------------------------------------------------------------
     # Drain observation (used by MainWindow.closeEvent to avoid losing
@@ -216,6 +228,13 @@ class RawLogger:
                 # how many we dropped so the writer thread can log a warning
                 # when it next gets to run.
                 self._dropped_count += 1
+                now = time.monotonic()
+                if now - self._last_drop_warning_time > 2.0:
+                    self._last_drop_warning_time = now
+                    msg = f"RawLogger queue is full — dropping log rows. Total dropped: {self._dropped_count}"
+                    _LOG.warning(msg)
+                    if self._on_warning is not None:
+                        self._on_warning(msg)
         except Exception as exc:
             self._handle_error("write", exc)
 

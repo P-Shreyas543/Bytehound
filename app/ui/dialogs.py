@@ -161,12 +161,13 @@ class PollingConfigDialog(QDialog):
     ``QSettings`` so they survive between sessions.
     """
 
-    def __init__(self, schedules, settings: QSettings, parent=None) -> None:
+    def __init__(self, schedules, settings: QSettings, parent=None, is_modbus: bool = False) -> None:
         super().__init__(parent)
         self.setWindowTitle("Configure Poll Schedule")
         self.setMinimumWidth(320)
         self._settings = settings
         self._schedules = schedules
+        self._is_modbus = is_modbus
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -219,6 +220,20 @@ class PollingConfigDialog(QDialog):
         self._pipeline_depth.setToolTip("Max number of in-flight poll requests.")
         self._pipeline_depth.setEnabled(self._pipeline_chk.isChecked())
         self._pipeline_chk.toggled.connect(self._pipeline_depth.setEnabled)
+
+        if self._is_modbus:
+            self._pipeline_chk.setChecked(False)
+            self._pipeline_chk.setEnabled(False)
+            self._pipeline_chk.setToolTip(
+                "Pipelined polling is disabled for Modbus RTU. Modbus RTU "
+                "responses do not carry transaction tags to match them back to "
+                "requests, requiring strictly sequential polling."
+            )
+            self._pipeline_depth.setEnabled(False)
+            self._pipeline_depth.setValue(1)
+            self._pipeline_depth.setToolTip(
+                "Modbus RTU requires sequential polling (max 1 in-flight)."
+            )
 
         # Per-TX spacing floor — applies to BOTH sequential and pipelined
         # polling. Default 100 ms because real-hardware testing on a
@@ -284,8 +299,10 @@ class PollingConfigDialog(QDialog):
 
     def get_pipelining(self) -> Tuple[bool, int, int]:
         """Return (enabled, max_in_flight, tx_gap_ms) for pipelined polling."""
-        depth = int(self._pipeline_depth.value())
         gap_ms = int(self._pipeline_gap_ms.value())
+        if self._is_modbus:
+            return False, 1, gap_ms
+        depth = int(self._pipeline_depth.value())
         return self._pipeline_chk.isChecked() and depth > 1, depth, gap_ms
 
 
