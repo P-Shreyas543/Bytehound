@@ -132,7 +132,7 @@ class UIBuildersMixin:
         self._logging_action.setShortcut("Ctrl+L")
         self._logging_action.triggered.connect(self._on_toggle_logging)
 
-        self._load_config_action = QAction(_icon("mdi6.folder-upload-outline", _ic), "Import Config", self)
+        self._load_config_action = QAction(_icon("mdi6.file-import-outline", _ic), "Import Config", self)
         self._load_config_action.setShortcut(QKeySequence("Ctrl+O"))
         self._load_config_action.triggered.connect(self._on_load_config)
 
@@ -507,7 +507,7 @@ class UIBuildersMixin:
         buttons.addStretch(1)
 
         import_btn = QPushButton(
-            _icon("mdi6.folder-upload-outline", _ic),
+            _icon("mdi6.file-import-outline", _ic),
             "  Import Config…",
             outer,
         )

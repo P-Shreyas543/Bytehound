@@ -649,7 +649,7 @@ class MainWindow(
             (self._bitfields_dock,  "Bitfields",        "mdi6.toggle-switch-outline"),
             (self._enums_dock,      "Enums",            "mdi6.format-list-bulleted-type"),
             (self._tx_dock,         "TX Commands",      "mdi6.send-outline"),
-            (self._editor_dock,     "Parameter Editor", "mdi6.tune-vertical"),
+            (self._editor_dock,     "Parameter Editor", "mdi6.playlist-edit"),
             (self._console_dock,    "Raw Console",      "mdi6.console-line"),
             (self._activity_dock,   "Activity Log",     "mdi6.text-box-outline"),
         ):
