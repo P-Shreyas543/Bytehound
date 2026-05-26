@@ -56,9 +56,12 @@ blocking the GUI; the dropped count is logged on close().
 
 from __future__ import annotations
 
+import csv
+import json
 import logging
 import queue
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
@@ -155,6 +158,7 @@ class DecodedLogger:
 
         # Kept for API compatibility; xlsx output cannot flush incrementally.
         self._flush_interval = float(flush_interval)
+        self._last_flush = 0.0
 
         # Writer-thread plumbing. The queue is created at module-construct
         # time so callers can bind their own bound size before open(); the
@@ -188,22 +192,35 @@ class DecodedLogger:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
-        wb = Workbook(write_only=True)
-        meta_ws = wb.create_sheet(title=self.METADATA_SHEET)
-        meta_ws.append(["Key", "Value"])
-        for key in sorted(self._metadata):
-            value = str(self._metadata[key]).replace("\n", " ").strip()
-            meta_ws.append([key, value])
+        self._tmp_data_path = self.path.parent / (self.path.name + ".tmp_data")
+        self._tmp_meta_path = self.path.parent / (self.path.name + ".tmp_meta")
 
-        data_ws = wb.create_sheet(title=self.DATA_SHEET)
-        data_ws.append(self._columns)
+        # Write metadata JSON
+        try:
+            with self._tmp_meta_path.open("w", encoding="utf-8") as f:
+                json.dump(self._metadata, f)
+        except Exception as exc:
+            self._handle_error("open", exc)
+            return
 
-        self._workbook = wb
-        self._data_ws = data_ws
+        # Open temp CSV file
+        try:
+            self._fp = self._tmp_data_path.open("w", encoding="utf-8", newline="")
+            self._writer = csv.writer(self._fp)
+            self._writer.writerow(self._columns)
+            self._fp.flush()
+        except Exception as exc:
+            self._handle_error("open", exc)
+            return
 
-        # Spawn the writer thread. After this point the workbook is owned
-        # exclusively by the writer; the calling thread must not touch
-        # _data_ws.append / _workbook.save / _workbook.close itself.
+        self._last_flush = time.monotonic()
+
+        # Dummy references for public API state checking
+        self._workbook = True
+        self._data_ws = True
+
+        # Spawn the writer thread. After this point the CSV file is owned
+        # exclusively by the writer.
         self._stop_event.clear()
         self._dropped_count = 0
         self._writer_thread = threading.Thread(
@@ -400,17 +417,15 @@ class DecodedLogger:
     # ------------------------------------------------------------------
 
     def _writer_loop(self) -> None:
-        """Drain queued rows and append them to the Data sheet.
+        """Drain queued rows and write them to the temporary CSV file.
 
         After the stop sentinel arrives (or the stop event is set), drains
-        any remaining queued rows, saves the workbook to disk, and closes
-        it. The Workbook is owned by this thread only — the calling thread
-        must not touch ``_data_ws`` / ``_workbook`` after open() returns.
-        Errors are recorded into ``_pending_error`` for the calling thread
-        to surface via ``_pump_pending_error``.
+        any remaining queued rows, compiles the Excel workbook on disk, and
+        closes it. The CSV file handles are owned by this thread only during
+        the logging session.
         """
-        wb = self._workbook
-        ws = self._data_ws
+        writer = self._writer
+        fp = self._fp
         try:
             while not self._stop_event.is_set():
                 try:
@@ -419,8 +434,9 @@ class DecodedLogger:
                     continue
                 if item is _WRITER_STOP:
                     break
-                if not self._write_one(ws, item):
+                if not self._write_one(writer, item):
                     return
+                self._maybe_periodic_flush(fp)
             # Drain anything still buffered between the stop signal and the
             # join() — even if rows arrived after the sentinel they were
             # legitimate cycle emits and the user expects them on disk.
@@ -431,32 +447,160 @@ class DecodedLogger:
                     break
                 if item is _WRITER_STOP:
                     continue
-                if not self._write_one(ws, item):
+                if not self._write_one(writer, item):
                     return
+                self._maybe_periodic_flush(fp)
         finally:
-            self._save_and_close_workbook(wb)
+            self._save_and_close_workbook(writer, fp)
 
-    def _write_one(self, ws, row: list) -> bool:
-        if ws is None:
+    def _write_one(self, writer, row: list) -> bool:
+        if writer is None:
             return False
         try:
-            ws.append(row)
+            writer.writerow(row)
             return True
         except Exception as exc:
             self._record_error("write", exc)
             return False
 
-    def _save_and_close_workbook(self, wb) -> None:
-        if wb is None:
+    def _maybe_periodic_flush(self, fp) -> None:
+        if fp is None:
             return
+        if self._flush_interval <= 0:
+            try:
+                fp.flush()
+                self._last_flush = time.monotonic()
+            except Exception as exc:
+                self._record_error("flush", exc)
+            return
+        now = time.monotonic()
+        if now - self._last_flush >= self._flush_interval:
+            try:
+                fp.flush()
+                self._last_flush = now
+            except Exception as exc:
+                self._record_error("flush", exc)
+
+    def _save_and_close_workbook(self, writer, fp) -> None:
+        if fp is not None:
+            try:
+                fp.flush()
+            except Exception as exc:
+                self._record_error("flush", exc)
+            try:
+                fp.close()
+            except Exception:
+                pass
+
+        # Compile the final .xlsx workbook from temporary CSV/JSON files.
+        self._compile_workbook()
+
+    def _compile_workbook(self) -> None:
+        if not hasattr(self, "_tmp_data_path") or not self._tmp_data_path.exists():
+            return
+
+        wb = Workbook(write_only=True)
         try:
+            meta_ws = wb.create_sheet(title=self.METADATA_SHEET)
+            meta_ws.append(["Key", "Value"])
+            metadata = {}
+            if self._tmp_meta_path.exists():
+                try:
+                    with self._tmp_meta_path.open("r", encoding="utf-8") as f:
+                        metadata = json.load(f)
+                except Exception:
+                    metadata = self._metadata
+            for key in sorted(metadata):
+                value = str(metadata[key]).replace("\n", " ").strip()
+                meta_ws.append([key, value])
+
+            data_ws = wb.create_sheet(title=self.DATA_SHEET)
+            with self._tmp_data_path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    typed_row = []
+                    for cell in row:
+                        if cell == "":
+                            typed_row.append("")
+                        else:
+                            try:
+                                if "." in cell or "e" in cell.lower():
+                                    typed_row.append(float(cell))
+                                else:
+                                    typed_row.append(int(cell))
+                            except ValueError:
+                                typed_row.append(cell)
+                    data_ws.append(typed_row)
+
             wb.save(self.path)
         except Exception as exc:
-            self._record_error("save", exc)
+            self._record_error("compile", exc)
+        finally:
+            try:
+                wb.close()
+            except Exception:
+                pass
+            if self.path.exists() and self.path.stat().st_size > 0:
+                try:
+                    self._tmp_data_path.unlink(missing_ok=True)
+                    self._tmp_meta_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+    @classmethod
+    def recover_temp_files(cls, data_path: Path, meta_path: Path, target_path: Path) -> None:
+        """Build the final xlsx file from leftover temp files."""
+        if not data_path.exists():
+            return
+
+        import json
+        import csv
+        from openpyxl import Workbook
+
+        wb = Workbook(write_only=True)
         try:
-            wb.close()
-        except Exception:
-            pass
+            meta_ws = wb.create_sheet(title="Metadata")
+            meta_ws.append(["Key", "Value"])
+            metadata = {}
+            if meta_path.exists():
+                with meta_path.open("r", encoding="utf-8") as f:
+                    metadata = json.load(f)
+            for key in sorted(metadata):
+                value = str(metadata[key]).replace("\n", " ").strip()
+                meta_ws.append([key, value])
+
+            data_ws = wb.create_sheet(title="Data")
+            with data_path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.reader(f)
+                for row in reader:
+                    typed_row = []
+                    for cell in row:
+                        if cell == "":
+                            typed_row.append("")
+                        else:
+                            try:
+                                if "." in cell or "e" in cell.lower():
+                                    typed_row.append(float(cell))
+                                else:
+                                    typed_row.append(int(cell))
+                            except ValueError:
+                                typed_row.append(cell)
+                    data_ws.append(typed_row)
+
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            wb.save(target_path)
+
+            # Clean up temp files
+            data_path.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
+        except Exception as exc:
+            _LOG.error("Failed to recover decoded log from %s: %s", data_path, exc, exc_info=True)
+            raise exc
+        finally:
+            try:
+                wb.close()
+            except Exception:
+                pass
 
     def _record_error(self, context: str, exc: Exception) -> None:
         _LOG.error("DecodedLogger %s error (writer thread)", context, exc_info=True)

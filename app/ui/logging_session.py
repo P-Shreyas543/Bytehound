@@ -267,6 +267,79 @@ class LoggingSessionMixin:
         finally:
             dlg.close()
 
+    def _check_and_recover_temp_logs(self) -> None:
+        """Scan the default log directory for orphaned .tmp_data files and offer to recover them."""
+        from .main_window import APP_NAME
+        default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
+        if not default_dir.exists():
+            return
+
+        tmp_files = list(default_dir.glob("*.tmp_data"))
+        if not tmp_files:
+            return
+
+        # We found crashed/unfinished logs! Ask the user if they want to recover them.
+        from PySide6.QtWidgets import QMessageBox
+        reply = QMessageBox.question(
+            self,
+            "Recover Log Files",
+            f"Bytehound detected {len(tmp_files)} unsaved decoded log file(s) from a previous session.\n"
+            "Would you like to recover them now?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if reply != QMessageBox.StandardButton.Yes:
+            # User chose not to recover. Ask if we should discard them.
+            discard = QMessageBox.question(
+                self,
+                "Discard Temp Files",
+                "Would you like to delete these temporary files to free up space?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if discard == QMessageBox.StandardButton.Yes:
+                for tmp_data in tmp_files:
+                    tmp_meta = tmp_data.with_suffix(".tmp_meta")
+                    try:
+                        tmp_data.unlink(missing_ok=True)
+                        tmp_meta.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+            return
+
+        # User chose to recover!
+        progress = QProgressDialog(
+            "Recovering log files...",
+            "Cancel",
+            0,
+            len(tmp_files),
+            self,
+        )
+        progress.setWindowTitle("Recovering Logs")
+        progress.setWindowModality(Qt.WindowModality.WindowModal)
+        progress.show()
+
+        recovered_count = 0
+        for i, tmp_data in enumerate(tmp_files):
+            if progress.wasCanceled():
+                break
+            progress.setValue(i)
+            # Reconstruct the target path by stripping ".tmp_data"
+            target_path = tmp_data.parent / tmp_data.name[:-9]
+            tmp_meta = tmp_data.with_suffix(".tmp_meta")
+            try:
+                DecodedLogger.recover_temp_files(tmp_data, tmp_meta, target_path)
+                recovered_count += 1
+            except Exception as exc:
+                logging.getLogger("bytehound").error("Failed to recover %s: %s", tmp_data.name, exc, exc_info=True)
+
+        progress.setValue(len(tmp_files))
+        QMessageBox.information(
+            self,
+            "Recovery Complete",
+            f"Successfully recovered {recovered_count} log file(s)."
+        )
+
 
 def _format_number(value) -> str:
     if isinstance(value, float):

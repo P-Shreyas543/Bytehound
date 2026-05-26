@@ -532,3 +532,82 @@ def test_decoded_logger_persists_workbook_when_close_join_times_out(tmp_path):
     assert len(data_rows) == N + 1, (
         f"Expected {N + 1} rows on disk after slow-drain shutdown, got {len(data_rows)}"
     )
+
+
+def test_decoded_logger_temporary_file_recovery(tmp_path):
+    config = _make_test_config()
+    path = tmp_path / "crash_test.xlsx"
+
+    metadata = {"app": "Bytehound", "test": "recovery"}
+    dl = DecodedLogger(path, config, metadata=metadata)
+    dl.open()
+
+    def _frame_a(elapsed_idx: int) -> DecodedFrame:
+        return DecodedFrame(
+            frame_id=0x0100, frame_name="FrameA",
+            signals=[
+                DecodedSignal(frame_id=0x0100, frame_name="FrameA",
+                              signal_name="Cell_V1", raw_value=3850 + elapsed_idx,
+                              scaled_value=3.85 + elapsed_idx * 0.001, unit="V",
+                              status="ok", group="Cells"),
+                DecodedSignal(frame_id=0x0100, frame_name="FrameA",
+                              signal_name="Pack_I", raw_value=121, scaled_value=12.1,
+                              unit="", status="ok"),
+            ],
+        )
+
+    def _frame_b() -> DecodedFrame:
+        return DecodedFrame(
+            frame_id=0x0200, frame_name="FrameB",
+            signals=[
+                DecodedSignal(frame_id=0x0200, frame_name="FrameB",
+                              signal_name="Pack_V", raw_value=482, scaled_value=48.2,
+                              unit="V", status="ok"),
+            ],
+        )
+
+    # Log one cycle
+    dl.log_frame(_frame_a(1), 1000)
+    dl.log_frame(_frame_b(), 1100)
+
+    # Wait for the item to be processed from the queue
+    import time
+    for _ in range(50):
+        if dl._queue.qsize() == 0:
+            break
+        time.sleep(0.05)
+
+    # Patch _compile_workbook to be a no-op to simulate a crash/interruption
+    dl._compile_workbook = lambda: None
+    dl.close()
+
+    tmp_data = path.with_suffix(path.suffix + ".tmp_data")
+    tmp_meta = path.with_suffix(path.suffix + ".tmp_meta")
+
+    # Check that temp files exist but target .xlsx does not
+    assert tmp_data.exists()
+    assert tmp_meta.exists()
+    assert not path.exists()
+
+    # Perform recovery
+    DecodedLogger.recover_temp_files(tmp_data, tmp_meta, path)
+
+    # Verify temp files deleted
+    assert not tmp_data.exists()
+    assert not tmp_meta.exists()
+    assert path.exists()
+
+    # Verify data content
+    wb = load_workbook(path, read_only=True)
+    assert wb.sheetnames == [DecodedLogger.METADATA_SHEET, DecodedLogger.DATA_SHEET]
+
+    meta_rows = list(wb[DecodedLogger.METADATA_SHEET].iter_rows(values_only=True))
+    assert meta_rows[0] == ("Key", "Value")
+    meta_dict = dict(meta_rows[1:])
+    assert meta_dict["app"] == "Bytehound"
+    assert meta_dict["test"] == "recovery"
+
+    data_rows = list(wb[DecodedLogger.DATA_SHEET].iter_rows(values_only=True))
+    wb.close()
+
+    assert len(data_rows) == 2  # header + 1 cycle row

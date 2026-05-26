@@ -412,6 +412,7 @@ class MainWindow(
         self._default_state = self.saveState()
         self._default_geometry = self.saveGeometry()
         self._restore_window_state()
+        self._check_and_recover_temp_logs()
 
         self._log_activity(f"[SESSION] Started {APP_DISPLAY_NAME} v{self._version}")
 
