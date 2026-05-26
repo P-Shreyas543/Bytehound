@@ -149,12 +149,14 @@ class _CheckableGroupCombo(QPushButton):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("checkableGroupCombo")
         self.setMinimumWidth(160)
-        self.setText("All groups")
+        self.setText("All groups  ▾")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
         # Popup container ──────────────────────────────────────
         self._popup = QFrame(self.window(), Qt.WindowType.Popup)
+        self._popup.setObjectName("checkableGroupPopup")
         self._popup.setFrameShape(QFrame.Shape.StyledPanel)
         self._popup.setFrameShadow(QFrame.Shadow.Raised)
         layout = QVBoxLayout(self._popup)
@@ -254,11 +256,11 @@ class _CheckableGroupCombo(QPushButton):
         ]
         total = self._list.count() - 1   # excluding "All groups" row
         if total == 0 or len(checked) == total:
-            self.setText("All groups")
+            self.setText("All groups  ▾")
         elif len(checked) == 1:
-            self.setText(checked[0])
+            self.setText(f"{checked[0]}  ▾")
         else:
-            self.setText(f"{len(checked)} groups")
+            self.setText(f"{len(checked)} groups  ▾")
 
 
 class _StatusBadgeDelegate(QStyledItemDelegate):

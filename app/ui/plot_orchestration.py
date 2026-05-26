@@ -608,7 +608,10 @@ class PlotOrchestrationMixin:
         or remove), so there's no separate refresh path.
         """
         menu = QMenu(parent)
-        menu.setStyleSheet("QMenu { padding: 4px; }")
+        menu.setStyleSheet(
+            "QMenu { padding: 4px; }"
+            "QWidget { background: transparent; }"
+        )
         if panel_idx >= len(self._plot_panels):
             return menu
         panel = self._plot_panels[panel_idx]
@@ -640,7 +643,7 @@ class PlotOrchestrationMixin:
         dot.setStyleSheet(f"color:{color}; font-size:10pt;")
         rl.addWidget(dot)
         name = QLabel(f"0x{key[0]:04X} · {key[1]}", row)
-        name.setStyleSheet("font-size:9pt;")
+        name.setStyleSheet("font-size:9pt; color: palette(text);")
         name.setMinimumWidth(180)
         rl.addWidget(name, 1)
         remove = QToolButton(row)

@@ -140,6 +140,14 @@ QDockWidget::title {
 /* 3. Toolbar icon contrast */
 QToolBar QToolButton {
     color: #F8FAFC;
+    background-color: transparent;
+    border: none;
+}
+QToolBar QToolButton:hover {
+    background-color: #334155;
+}
+QToolBar QToolButton:pressed {
+    background-color: #0F172A;
 }
 
 /* 4. Central panel: also make its direct QWidget children (layout containers)
@@ -228,6 +236,96 @@ QTabBar::tab:hover:!selected {
     background-color: #273549;
     color: #F8FAFC;
 }
+
+/* 11. PlainTextEdit, ListWidget, TreeWidget, and TableWidget */
+QPlainTextEdit, QListWidget, QTreeWidget, QTableWidget {
+    background-color: #0F172A;
+    color: #F8FAFC;
+    border: 1px solid #334155;
+    border-radius: 4px;
+}
+QListWidget::item, QTreeWidget::item, QTreeWidgetItem {
+    padding: 6px 8px;
+    border-radius: 3px;
+    color: #F8FAFC;
+}
+QListWidget::item:hover, QTreeWidget::item:hover {
+    background-color: #1E293B;
+}
+QListWidget::item:selected, QTreeWidget::item:selected {
+    background-color: #2563EB;
+    color: #F8FAFC;
+}
+
+/* 12. Group Boxes */
+QGroupBox {
+    color: #F8FAFC;
+    border: 1px solid #334155;
+    border-radius: 6px;
+    margin-top: 16px;
+    font-weight: bold;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 12px;
+    padding: 0 4px;
+    color: #38BDF8;
+}
+
+/* 13. Sleek modern buttons */
+QPushButton, QToolButton {
+    background-color: #1E293B;
+    color: #F8FAFC;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    padding: 5px 12px;
+    font-weight: 500;
+}
+QPushButton:hover, QToolButton:hover {
+    background-color: #334155;
+    border-color: #475569;
+}
+QPushButton:pressed, QToolButton:pressed {
+    background-color: #0F172A;
+}
+QPushButton:disabled, QToolButton:disabled {
+    background-color: #1E293B;
+    color: #64748B;
+    border-color: #1E293B;
+}
+
+/* 14. Splitters */
+QSplitter::handle {
+    background-color: #0F172A;
+}
+QSplitter::handle:horizontal {
+    width: 4px;
+}
+QSplitter::handle:vertical {
+    height: 4px;
+}
+
+/* 15. Checkable Group Combo */
+QPushButton#checkableGroupCombo {
+    background-color: #0F172A;
+    color: #F8FAFC;
+    border: 1px solid #334155;
+    padding: 4px 8px;
+    border-radius: 3px;
+    text-align: left;
+}
+QPushButton#checkableGroupCombo:hover {
+    background-color: #1E293B;
+}
+QPushButton#checkableGroupCombo:pressed {
+    background-color: #0F172A;
+}
+QFrame#checkableGroupPopup {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 4px;
+}
 """
 
 
@@ -273,6 +371,14 @@ QDockWidget::title {
 /* 3. Toolbar icon contrast on light bg */
 QToolBar QToolButton {
     color: #1F2937;
+    background-color: transparent;
+    border: none;
+}
+QToolBar QToolButton:hover {
+    background-color: #E2E8F0;
+}
+QToolBar QToolButton:pressed {
+    background-color: #CBD5E1;
 }
 
 /* 4. Input controls */
@@ -355,6 +461,96 @@ QTabBar::tab:selected {
 }
 QTabBar::tab:hover:!selected {
     background-color: #E5E7EB;
+}
+
+/* 10. PlainTextEdit, ListWidget, TreeWidget, and TableWidget */
+QPlainTextEdit, QListWidget, QTreeWidget, QTableWidget {
+    background-color: #FFFFFF;
+    color: #1F2937;
+    border: 1px solid #D1D5DB;
+    border-radius: 4px;
+}
+QListWidget::item, QTreeWidget::item, QTreeWidgetItem {
+    padding: 6px 8px;
+    border-radius: 3px;
+    color: #1F2937;
+}
+QListWidget::item:hover, QTreeWidget::item:hover {
+    background-color: #F3F4F6;
+}
+QListWidget::item:selected, QTreeWidget::item:selected {
+    background-color: #2563EB;
+    color: #FFFFFF;
+}
+
+/* 11. Group Boxes */
+QGroupBox {
+    color: #1F2937;
+    border: 1px solid #D1D5DB;
+    border-radius: 6px;
+    margin-top: 16px;
+    font-weight: bold;
+}
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    left: 12px;
+    padding: 0 4px;
+    color: #2563EB;
+}
+
+/* 12. Sleek modern buttons */
+QPushButton, QToolButton {
+    background-color: #FFFFFF;
+    color: #1F2937;
+    border: 1px solid #CBD5E1;
+    border-radius: 4px;
+    padding: 5px 12px;
+    font-weight: 500;
+}
+QPushButton:hover, QToolButton:hover {
+    background-color: #F1F5F9;
+    border-color: #94A3B8;
+}
+QPushButton:pressed, QToolButton:pressed {
+    background-color: #E2E8F0;
+}
+QPushButton:disabled, QToolButton:disabled {
+    background-color: #F1F5F9;
+    color: #94A3B8;
+    border-color: #E2E8F0;
+}
+
+/* 13. Splitters */
+QSplitter::handle {
+    background-color: #F1F5F9;
+}
+QSplitter::handle:horizontal {
+    width: 4px;
+}
+QSplitter::handle:vertical {
+    height: 4px;
+}
+
+/* 14. Checkable Group Combo */
+QPushButton#checkableGroupCombo {
+    background-color: #FFFFFF;
+    color: #1F2937;
+    border: 1px solid #D1D5DB;
+    padding: 4px 8px;
+    border-radius: 3px;
+    text-align: left;
+}
+QPushButton#checkableGroupCombo:hover {
+    background-color: #F1F5F9;
+}
+QPushButton#checkableGroupCombo:pressed {
+    background-color: #FFFFFF;
+}
+QFrame#checkableGroupPopup {
+    background-color: #FFFFFF;
+    border: 1px solid #D1D5DB;
+    border-radius: 4px;
 }
 """
 

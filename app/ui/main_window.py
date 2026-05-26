@@ -603,6 +603,19 @@ class MainWindow(
         btn = self._toolbar.widgetForAction(action)
         if not isinstance(btn, QToolButton):
             return
+
+        from .theming import resolve_theme
+        theme = str(self._settings.value("ui/theme", "dark"))
+        effective = resolve_theme(theme)
+        if effective == "dark":
+            disabled_bg = "#1E293B"
+            disabled_fg = "#64748B"
+            disabled_border = "1px solid #334155"
+        else:
+            disabled_bg = "#E2E8F0"
+            disabled_fg = "#94A3B8"
+            disabled_border = "1px solid #CBD5E1"
+
         btn.setStyleSheet(
             f"""
             QToolButton {{
@@ -616,9 +629,9 @@ class MainWindow(
             QToolButton:hover   {{ background-color: {bg}; }}
             QToolButton:pressed {{ background-color: {bg}; }}
             QToolButton:disabled {{
-                background-color: {bg};
-                color: #AAAAAA;
-                border: 2px dashed #AAAAAA;
+                background-color: {disabled_bg};
+                color: {disabled_fg};
+                border: {disabled_border};
             }}
             """
         )
