@@ -79,8 +79,9 @@ def test_arrays_since_returns_window_only():
     for i in range(10):
         buf.append(float(i), float(i) * 10)
     xs, ys = buf.arrays_since(4.0)
-    assert list(xs) == [4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
-    assert list(ys) == [40.0, 50.0, 60.0, 70.0, 80.0, 90.0]
+    # Includes the preceding sample (3.0) to prevent visual gaps.
+    assert list(xs) == [3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0]
+    assert list(ys) == [30.0, 40.0, 50.0, 60.0, 70.0, 80.0, 90.0]
 
 
 def test_arrays_since_none_returns_full_series():
@@ -101,9 +102,10 @@ def test_arrays_since_skips_old_chunks():
     # Pick t_min inside the partial (third) chunk.
     t_min = float(2 * chunk + 10)
     xs, ys = buf.arrays_since(t_min)
-    assert xs[0] == t_min
+    # Includes the preceding sample (t_min - 1) to prevent visual gaps.
+    assert xs[0] == t_min - 1.0
     assert xs[-1] == float(2 * chunk + 49)
-    assert len(xs) == 40
+    assert len(xs) == 41
 
 
 def test_arrays_since_inside_middle_chunk():
@@ -116,7 +118,8 @@ def test_arrays_since_inside_middle_chunk():
     # chunk + partial third.
     t_min = float(chunk - 3)
     xs, _ = buf.arrays_since(t_min)
-    assert xs[0] == t_min
+    # Includes the preceding sample (t_min - 1) to prevent visual gaps.
+    assert xs[0] == t_min - 1.0
     assert xs[-1] == float(2 * chunk + 4)
     # Strictly increasing.
     assert np.all(np.diff(xs) == 1.0)

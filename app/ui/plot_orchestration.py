@@ -230,8 +230,10 @@ class PlotOrchestrationMixin:
                 padding = 0.25 if mode == "loose" else 0.05
                 if cur_range and len(cur_range) == 2:
                     span = max(y_max - y_min, 1e-9)
-                    if (abs(cur_range[0] - y_min) / span < 0.01
-                            and abs(cur_range[1] - y_max) / span < 0.01):
+                    expected_min = y_min - span * padding
+                    expected_max = y_max + span * padding
+                    if (abs(cur_range[0] - expected_min) / span < 0.01
+                            and abs(cur_range[1] - expected_max) / span < 0.01):
                         return
             target_vb.setYRange(y_min, y_max, padding=padding)
 

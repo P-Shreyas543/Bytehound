@@ -635,9 +635,11 @@ class UIBuildersMixin:
             "QComboBox { font-size: 9pt; padding: 0 6px; min-width: 70px; }"
         )
         for short, full, _seconds in self._plot_window_options:
-            # Show "5m" in the closed combo, "5m — Last 5 minutes" in the
-            # dropdown so users can scan the full descriptions on open.
-            self._plot_window_combo.addItem(f"{short} — {full}")
+            # Show the short label in the combo itself, and set the full description
+            # as a tooltip on the item. This keeps the combo box very narrow
+            # to prevent layout clipping while preserving the descriptive text.
+            self._plot_window_combo.addItem(short)
+            self._plot_window_combo.setItemData(self._plot_window_combo.count() - 1, full, Qt.ItemDataRole.ToolTipRole)
         self._plot_window_combo.setCurrentIndex(selected_idx)
         self._plot_window_combo.setToolTip(
             "How much history to show in Live mode. "

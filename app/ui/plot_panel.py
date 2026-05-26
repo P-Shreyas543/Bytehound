@@ -242,8 +242,8 @@ class TimeSeriesBuffer:
     def arrays_since(self, t_min: Optional[float]) -> Tuple[np.ndarray, np.ndarray]:
         """Return (xs, ys) for samples with x >= t_min, oldest → newest.
 
-        Skips whole chunks whose last x is below ``t_min`` so a 10-minute
-        window read over a 2-hour buffer touches only the trailing chunks.
+        To prevent visual gaps at the left edge of the plot window, the single
+        sample immediately preceding ``t_min`` (if one exists) is also included.
         ``t_min=None`` (or non-finite) returns the full series.
         """
         if t_min is None or not math.isfinite(t_min):
@@ -252,17 +252,21 @@ class TimeSeriesBuffer:
         if self._chunks_last_x and self._chunks_last_x[-1] < t_min and self._cur_fill:
             xs = self._cur_x[: self._cur_fill]
             ys = self._cur_y[: self._cur_fill]
-            # Trim the partial chunk too.
             start = int(np.searchsorted(xs, t_min, side="left"))
-            return xs[start:], ys[start:]
+            if start > 0:
+                return xs[start - 1 :], ys[start - 1 :]
+            last_frozen_x = self._chunks_x[-1][-1:]
+            last_frozen_y = self._chunks_y[-1][-1:]
+            return np.concatenate((last_frozen_x, xs)), np.concatenate((last_frozen_y, ys))
         if not self._chunks_x:
             if self._cur_fill == 0:
                 return _EMPTY_F64, _EMPTY_F64
             xs = self._cur_x[: self._cur_fill]
             ys = self._cur_y[: self._cur_fill]
             start = int(np.searchsorted(xs, t_min, side="left"))
+            start = max(0, start - 1)
             return xs[start:], ys[start:]
-        # Find first chunk whose last_x >= t_min via bisect.
+        # Find first chunk whose last_x >= t_min via bisection.
         last_x_arr = np.asarray(self._chunks_last_x)
         chunk_idx = int(np.searchsorted(last_x_arr, t_min, side="left"))
         if chunk_idx >= len(self._chunks_x):
@@ -272,12 +276,26 @@ class TimeSeriesBuffer:
             xs = self._cur_x[: self._cur_fill]
             ys = self._cur_y[: self._cur_fill]
             start = int(np.searchsorted(xs, t_min, side="left"))
-            return xs[start:], ys[start:]
+            if start > 0:
+                return xs[start - 1 :], ys[start - 1 :]
+            last_frozen_x = self._chunks_x[-1][-1:]
+            last_frozen_y = self._chunks_y[-1][-1:]
+            return np.concatenate((last_frozen_x, xs)), np.concatenate((last_frozen_y, ys))
         head_x = self._chunks_x[chunk_idx]
         head_y = self._chunks_y[chunk_idx]
         start_in_head = int(np.searchsorted(head_x, t_min, side="left"))
-        parts_x = [head_x[start_in_head:]]
-        parts_y = [head_y[start_in_head:]]
+        if start_in_head > 0:
+            parts_x = [head_x[start_in_head - 1 :]]
+            parts_y = [head_y[start_in_head - 1 :]]
+        else:
+            if chunk_idx > 0:
+                prev_x = self._chunks_x[chunk_idx - 1][-1:]
+                prev_y = self._chunks_y[chunk_idx - 1][-1:]
+                parts_x = [prev_x, head_x]
+                parts_y = [prev_y, head_y]
+            else:
+                parts_x = [head_x]
+                parts_y = [head_y]
         for i in range(chunk_idx + 1, len(self._chunks_x)):
             parts_x.append(self._chunks_x[i])
             parts_y.append(self._chunks_y[i])
