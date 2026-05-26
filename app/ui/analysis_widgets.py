@@ -215,10 +215,9 @@ class CursorReadoutPanel(QGroupBox):
                 for param in params_for_cursor(cursor):
                     if param not in log.columns:
                         continue
-                    idx = int(np.clip(np.searchsorted(x, t), 0, len(x) - 1))
-                    v = log.columns[param][idx]
+                    v = float(np.interp(t, x, log.columns[param]))
                     if np.isfinite(v):
-                        vals[(log.id, param)] = float(v)
+                        vals[(log.id, param)] = v
             return vals
 
         delta_map: dict[tuple[str, str], float] = {}
@@ -241,8 +240,7 @@ class CursorReadoutPanel(QGroupBox):
                 for param in params_for_cursor(cursor):
                     if param not in log.columns:
                         continue
-                    idx = int(np.clip(np.searchsorted(x, t), 0, len(x) - 1))
-                    v = log.columns[param][idx]
+                    v = float(np.interp(t, x, log.columns[param]))
                     value_text = self._fmt_val(v)
                     unit = _parse_unit(param) or ""
                     short = self._strip_param_label(param)

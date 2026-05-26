@@ -224,3 +224,29 @@ def test_curve_visuals_unknown_param_does_not_crash():
     color, style = _curve_visuals(["A", "B"], "C-not-in-group", 0, "#fff")
     assert color in _PARAM_COLORS
     assert style == Qt.SolidLine
+
+
+def test_math_channels_derivative_and_integral():
+    from app.ui.log_io import LogEntry
+    win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
+    win._math_channels = {
+        "Speed_Deriv": "diff([Speed])",
+        "Speed_Int": "integral([Speed])"
+    }
+    log = LogEntry(
+        id="test_log",
+        elapsed=np.array([0.0, 1.0, 2.0, 3.0]),
+        columns={
+            "Speed": np.array([0.0, 10.0, 20.0, 30.0])
+        }
+    )
+    win._compute_math_channels(log)
+    assert np.allclose(log.columns["Speed_Deriv"], [10.0, 10.0, 10.0, 10.0])
+    assert np.allclose(log.columns["Speed_Int"], [0.0, 5.0, 20.0, 45.0])
+
+
+def test_linear_interpolation_in_cursor_readout():
+    x = np.array([0.0, 10.0, 20.0])
+    y = np.array([0.0, 100.0, 50.0])
+    assert np.interp(5.0, x, y) == 50.0
+    assert np.interp(15.0, x, y) == 75.0

@@ -660,7 +660,10 @@ class AnalysisSuiteWindow(QMainWindow):
         name = name.strip()
         
         # Check if already exists in loaded logs? Overwriting is fine.
-        expr, ok = QInputDialog.getText(self, "Math Channel", "Formula (e.g. [Voltage] * [Current] / 1000):")
+        expr, ok = QInputDialog.getText(
+            self, "Math Channel",
+            "Formula (e.g. [Voltage] * [Current] / 1000, diff([Speed]), integral([Power])/3600):"
+        )
         if not ok or not expr.strip():
             return
             
@@ -674,12 +677,38 @@ class AnalysisSuiteWindow(QMainWindow):
         self._status.showMessage(f"Added Math Channel: {name}", 5000)
 
     def _compute_math_channels(self, log: LogEntry):
+        def diff_func(y):
+            if len(log.elapsed) <= 1:
+                return np.zeros_like(y)
+            return np.gradient(y, log.elapsed)
+
+        def integral_func(y):
+            if len(log.elapsed) <= 1:
+                return np.zeros_like(y)
+            dt = np.diff(log.elapsed)
+            y_avg = 0.5 * (y[:-1] + y[1:])
+            integrand = y_avg * dt
+            return np.insert(np.cumsum(integrand), 0, 0.0)
+
         for name, expr in self._math_channels.items():
             py_expr = re.sub(r'\[(.*?)\]', r'data["\1"]', expr)
             try:
                 # Evaluate expression vectorised over numpy arrays.
                 # All signals for a log are already uniform length from log_io!
-                res = eval(py_expr, {"__builtins__": None, "np": np}, {"data": log.columns})
+                res = eval(
+                    py_expr,
+                    {
+                        "__builtins__": None,
+                        "np": np,
+                        "diff": diff_func,
+                        "deriv": diff_func,
+                        "derivative": diff_func,
+                        "integral": integral_func,
+                        "int": integral_func,
+                        "cumsum": integral_func,
+                    },
+                    {"data": log.columns}
+                )
                 log.columns[name] = res
             except Exception as e:
                 _log.warning(f"Math channel '{name}' failed to compute for log {log.name}: {e}")
@@ -2304,9 +2333,7 @@ class AnalysisSuiteWindow(QMainWindow):
                     x = entry.elapsed + entry.time_offset
                     if len(x) == 0:
                         continue
-                    idx = np.searchsorted(x, t)
-                    idx = min(idx, len(x) - 1)
-                    yv = entry.columns[param][idx]
+                    yv = float(np.interp(t, x, entry.columns[param]))
                     if np.isnan(yv):
                         continue
                     # Match the dot color to the actual curve color so the
