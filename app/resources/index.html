@@ -143,6 +143,7 @@
                     <li><a href="#raw-console">Raw Console</a></li>
                     <li><a href="#activity-log">Activity Log</a></li>
                     <li><a href="#status-bar">Status Bar (bottom-right counters)</a></li>
+                    <li><a href="#keyboard-shortcuts">Keyboard Shortcuts</a></li>
                 </ul>
             </li>
             <li><a href="#section-3">3. Controlling Your Hardware</a>
@@ -228,7 +229,7 @@
         <tr><td>Status</td><td>Color-coded pill: OK, warnings, decode errors, enum labels, or active bitfield names</td></tr>
         <tr><td>Updated</td><td>Timestamp of last received packet for this signal</td></tr>
     </table>
-    <p><strong>Right-click</strong> any row to add that signal to the Live Plot or copy its value to clipboard.</p>
+    <p><strong>Right-click</strong> any row to add that signal to the Live Plot or copy its value to clipboard. Use <strong>Edit → Copy Table Snapshot</strong> (<kbd>Ctrl+Shift+T</kbd>) to copy the full table as tab-separated text — paste directly into Excel or Sheets for a quick bench snapshot without setting up full logging.</p>
 
     <h3 id="live-plot">Live Plot (Multi-Grid)</h3>
     <p>The Live Plot panel provides a fully flexible, multi-panel oscilloscope-style view of your telemetry data.</p>
@@ -300,7 +301,7 @@
     <p>The <strong>Activity Log</strong> tracks major application events: configurations loaded, connections established or lost, logging start/stop, and any error popups. Useful for post-mortem analysis of a test session.</p>
 
     <h3 id="status-bar">Status Bar (bottom-right counters)</h3>
-    <p>A single-line live readout sits in the bottom-right of the window with six fixed-width counters. They are updated continuously while connected and reset whenever a new config is loaded or you click <strong>Edit → Clear Console / Log</strong>. Reading them at a glance tells you whether the link is healthy and how the device is responding.</p>
+    <p>A single-line live readout sits in the bottom-right of the window with six fixed-width counters. They are updated continuously while connected and reset whenever you connect, load a new config, or click <strong>Edit → Clear Console / Log</strong>. The session clock (<code>⏱</code>) counts from the moment you connect — not from config load — so it always reflects actual device uptime. Reading the counters at a glance tells you whether the link is healthy and how the device is responding.</p>
     <pre>Frames:   1234  |  Errors:  0  |  Timeouts:  0  |  RX:   12.3 KB  |  TX:    1.2 KB  |  Lat:    9.8 ms</pre>
     <table>
         <tr><th>Counter</th><th>What it means</th><th>What to watch for</th></tr>
@@ -338,6 +339,24 @@
     <div class="note">
         <strong>Errors vs decode errors.</strong> The <strong>Errors</strong> counter only tracks wire-level CRC failures. Configuration-level problems — for example a frame ID with no matching <code>variables</code> row, a payload shorter than the configured signal layout, or an unsupported data type — are reported in the <strong>Raw Console</strong> as <code>[decode] …</code> lines and are not counted here.
     </div>
+
+    <h3 id="keyboard-shortcuts">Keyboard Shortcuts</h3>
+    <p>All shortcuts are visible in the menu bar next to each action. Here is the complete reference:</p>
+    <table>
+        <tr><th>Shortcut</th><th>Action</th><th>Notes</th></tr>
+        <tr><td><kbd>F9</kbd></td><td>Connect / Disconnect</td><td>Toggles the serial connection.</td></tr>
+        <tr><td><kbd>F10</kbd></td><td>Start / Stop Auto-Fetch</td><td>Opens the poll config dialog on first use.</td></tr>
+        <tr><td><kbd>Ctrl+L</kbd></td><td>Start / Stop Logging</td><td>Requires an active connection.</td></tr>
+        <tr><td><kbd>Ctrl+O</kbd></td><td>Import Config</td><td>Opens a file picker for <code>.xlsx</code> or CSV folder.</td></tr>
+        <tr><td><kbd>Ctrl+E</kbd></td><td>Export Template</td><td>Saves a blank config workbook.</td></tr>
+        <tr><td><kbd>Ctrl+K</kbd></td><td>Clear Console / Log</td><td>Resets all counters, clears decoded values and console.</td></tr>
+        <tr><td><kbd>Ctrl+Shift+C</kbd></td><td>Copy Value</td><td>Copies the selected table cell's value.</td></tr>
+        <tr><td><kbd>Ctrl+Shift+T</kbd></td><td>Copy Table Snapshot</td><td>Copies the full telemetry table as tab-separated text.</td></tr>
+        <tr><td><kbd>Ctrl+T</kbd></td><td>Analysis Suite</td><td>Opens the offline Analysis Suite window.</td></tr>
+        <tr><td><kbd>Ctrl+Q</kbd></td><td>Exit</td><td>Prompts if logging is active.</td></tr>
+        <tr><td><kbd>F1</kbd></td><td>View Documentation</td><td>Opens this manual in your browser.</td></tr>
+        <tr><td><kbd>Space</kbd></td><td>Pause / Resume Live Plot</td><td>Toggles between Live and Explore modes.</td></tr>
+    </table>
 
     <!-- Section 3 -->
     <h2 id="section-3">3. Controlling Your Hardware</h2>
@@ -946,8 +965,8 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
         <li>Read the local <code>version.json</code>, contact its configured update manifest over HTTPS, and compare the published version against your installed version.</li>
         <li>If you are already on the latest build, show a brief <em>You are on the latest version</em> confirmation.</li>
         <li>If a newer version is available, show the version number and release notes and ask whether you want to install it.</li>
-        <li>On confirmation, download the installer to your system temp folder with a progress dialog. You can cancel while the download is running.</li>
-        <li>Verify the installer <strong>SHA-256 checksum</strong> against the manifest before launching. If the digest does not match, or if the manifest does not provide a checksum, the install is refused; mismatched downloads are deleted.</li>
+        <li>On confirmation, download the installer to your system temp folder with a progress dialog. You can cancel while the download is running — the partial file is automatically cleaned up.</li>
+        <li>Verify the installer <strong>SHA-256 checksum</strong> against the manifest before launching. If the digest does not match, or if the manifest does not provide a checksum, the install is refused; mismatched or partial downloads are deleted.</li>
         <li>After the download is verified, ask one more time before launching the installer in silent mode. The app then exits so the installer can replace the running executable. When the installer finishes, relaunch Bytehound manually.</li>
     </ol>
     <div class="note">
