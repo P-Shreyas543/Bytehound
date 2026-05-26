@@ -193,6 +193,8 @@ class AnalysisSuiteWindow(QMainWindow):
         self._persisted_cursors = self._qsettings.value(
             "analysis/cursor_positions", [])
 
+        self._math_channels: dict[str, str] = {} # Custom math channel definitions
+        
         # Log sidebar UI elements
         self._log_entries_ui: dict[str, dict] = {}  # log_id → {checkbox, spin, container, ...}
 
@@ -524,6 +526,8 @@ class AnalysisSuiteWindow(QMainWindow):
                              self._add_horizontal_cursor_at_mouse, QKeySequence("H"))
         tools_menu.addSeparator()
         tools_menu.addAction("Clear All Cursors", self._clear_all_cursors)
+        tools_menu.addSeparator()
+        tools_menu.addAction("Custom Math Channel...", self._add_custom_math_channel, QKeySequence("M"))
 
         # ── Scatter ──────────────────────────────────────────────────
         scatter_menu = mb.addMenu("Scatter")
@@ -637,6 +641,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self._logs[log_id] = entry
         self._push_recent_file(path)
         self._add_log_to_sidebar(entry)
+        self._compute_math_channels(entry)
         self._rebuild_param_list()
         self._rebuild_plots()
         self._status.showMessage(
@@ -647,6 +652,37 @@ class AnalysisSuiteWindow(QMainWindow):
         QApplication.restoreOverrideCursor()  # restore on error too
         _log.error("Log load failed: path=%s err=%s", path, msg)
         self._popup_warning("Load Error", f"Could not load:\n{path}\n\n{msg}")
+
+    def _add_custom_math_channel(self):
+        name, ok = QInputDialog.getText(self, "Math Channel", "Channel Name (e.g. Power):")
+        if not ok or not name.strip():
+            return
+        name = name.strip()
+        
+        # Check if already exists in loaded logs? Overwriting is fine.
+        expr, ok = QInputDialog.getText(self, "Math Channel", "Formula (e.g. [Voltage] * [Current] / 1000):")
+        if not ok or not expr.strip():
+            return
+            
+        self._math_channels[name] = expr.strip()
+        
+        for log in self._logs.values():
+            self._compute_math_channels(log)
+            
+        self._rebuild_param_list()
+        self._rebuild_plots()
+        self._status.showMessage(f"Added Math Channel: {name}", 5000)
+
+    def _compute_math_channels(self, log: LogEntry):
+        for name, expr in self._math_channels.items():
+            py_expr = re.sub(r'\[(.*?)\]', r'data["\1"]', expr)
+            try:
+                # Evaluate expression vectorised over numpy arrays.
+                # All signals for a log are already uniform length from log_io!
+                res = eval(py_expr, {"__builtins__": None, "np": np}, {"data": log.columns})
+                log.columns[name] = res
+            except Exception as e:
+                _log.warning(f"Math channel '{name}' failed to compute for log {log.name}: {e}")
 
     def _add_log_to_sidebar(self, entry: LogEntry):
         """Add a log entry as an inline row: [checkbox] [color swatch] name [offset spin]"""

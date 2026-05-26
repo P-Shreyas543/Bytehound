@@ -54,6 +54,10 @@ class PlotPanel:
     legend:        Optional[object] = None
     time_axis:     Optional[object] = None
     index:         int = 0
+    right_vb:      Optional[object] = None
+    right_axis:    Optional[object] = None
+    left_unit:     Optional[str] = None
+    right_unit:    Optional[str] = None
 
 
 # Width of the live plot's X view before any data has arrived AND the minimum

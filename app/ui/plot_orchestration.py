@@ -188,8 +188,9 @@ class PlotOrchestrationMixin:
         # zooming out of a long-running session doesn't squash the y-axis
         # against historical outliers the user can no longer see.
         t_min = self._visible_window_t_min()
-        y_min: float | None = None
-        y_max: float | None = None
+        left_min, left_max = None, None
+        right_min, right_max = None, None
+
         for key in panel.assigned_keys:
             buf = self._plot_history.get(key)
             if buf is None or len(buf) == 0:
@@ -199,37 +200,44 @@ class PlotOrchestrationMixin:
                 continue
             local_min = float(np.nanmin(ys))
             local_max = float(np.nanmax(ys))
-            if y_min is None or local_min < y_min:
-                y_min = local_min
-            if y_max is None or local_max > y_max:
-                y_max = local_max
-        if y_min is None or y_max is None:
-            return
-        if y_min == y_max:
-            pad = max(abs(y_min) * 0.05, 1.0)
-            y_min -= pad
-            y_max += pad
+            
+            unit = self._signal_unit_map.get(key, "").strip() if hasattr(self, "_signal_unit_map") else ""
+            if panel.left_unit is None or unit == panel.left_unit:
+                if left_min is None or local_min < left_min: left_min = local_min
+                if left_max is None or local_max > left_max: left_max = local_max
+            elif panel.right_unit is not None:
+                if right_min is None or local_min < right_min: right_min = local_min
+                if right_max is None or local_max > right_max: right_max = local_max
 
-        cur_range = vb.viewRange()[1]
-        if mode == "expand" and cur_range and len(cur_range) == 2:
-            # Grow-only: union the new data bounds with the current view so
-            # the axis never shrinks. setYRange below is called with padding=0
-            # so repeated growths don't compound padding.
-            cur_y_min, cur_y_max = float(cur_range[0]), float(cur_range[1])
-            new_y_min = min(cur_y_min, y_min)
-            new_y_max = max(cur_y_max, y_max)
-            if new_y_min == cur_y_min and new_y_max == cur_y_max:
-                return  # data still inside current bounds — no repaint
-            y_min, y_max = new_y_min, new_y_max
-            padding = 0.0
-        else:
-            padding = 0.25 if mode == "loose" else 0.05
-            if cur_range and len(cur_range) == 2:
-                span = max(y_max - y_min, 1e-9)
-                if (abs(cur_range[0] - y_min) / span < 0.01
-                        and abs(cur_range[1] - y_max) / span < 0.01):
-                    return  # bounds unchanged — skip the repaint
-        vb.setYRange(y_min, y_max, padding=padding)
+        def _apply_range(target_vb, y_min, y_max):
+            if y_min is None or y_max is None:
+                return
+            if y_min == y_max:
+                pad = max(abs(y_min) * 0.05, 1.0)
+                y_min -= pad
+                y_max += pad
+
+            cur_range = target_vb.viewRange()[1]
+            if mode == "expand" and cur_range and len(cur_range) == 2:
+                cur_y_min, cur_y_max = float(cur_range[0]), float(cur_range[1])
+                new_y_min = min(cur_y_min, y_min)
+                new_y_max = max(cur_y_max, y_max)
+                if new_y_min == cur_y_min and new_y_max == cur_y_max:
+                    return
+                y_min, y_max = new_y_min, new_y_max
+                padding = 0.0
+            else:
+                padding = 0.25 if mode == "loose" else 0.05
+                if cur_range and len(cur_range) == 2:
+                    span = max(y_max - y_min, 1e-9)
+                    if (abs(cur_range[0] - y_min) / span < 0.01
+                            and abs(cur_range[1] - y_max) / span < 0.01):
+                        return
+            target_vb.setYRange(y_min, y_max, padding=padding)
+
+        _apply_range(vb, left_min, left_max)
+        if panel.right_vb is not None:
+            _apply_range(panel.right_vb, right_min, right_max)
 
     def _persist_plot_y_range(self, panel_idx: int) -> None:
         if panel_idx >= len(self._plot_panels):
@@ -1015,10 +1023,57 @@ class PlotOrchestrationMixin:
                 continue
             active_keys = set(panel.assigned_keys)
 
+            # Determine left and right units
+            left_unit = None
+            right_unit = None
+            for key in panel.assigned_keys:
+                unit = self._signal_unit_map.get(key, "").strip() if hasattr(self, "_signal_unit_map") else ""
+                if left_unit is None:
+                    left_unit = unit
+                elif unit != left_unit and right_unit is None:
+                    right_unit = unit
+            
+            panel.left_unit = left_unit
+            panel.right_unit = right_unit
+
+            pi.setLabel('left', text=left_unit if left_unit else "")
+
+            if right_unit is not None:
+                if panel.right_vb is None:
+                    panel.right_vb = pg.ViewBox()
+                    pi.scene().addItem(panel.right_vb)
+                    pi.showAxis('right')
+                    ax = pi.getAxis('right')
+                    ax.linkToView(panel.right_vb)
+                    panel.right_vb.setXLink(pi.vb)
+                    panel.right_axis = ax
+
+                    from .theming import resolve_theme
+                    theme = resolve_theme(str(self._settings.value("ui/theme", "dark")))
+                    fg = "#CBD5E1" if theme == "dark" else "#475569"
+                    pen = pg.mkPen(fg)
+                    ax.setPen(pen)
+                    ax.setTextPen(pen)
+
+                    def updateViews(pi=pi, vb=panel.right_vb):
+                        vb.setGeometry(pi.vb.sceneBoundingRect())
+                        vb.linkedViewChanged(pi.vb, vb.XAxis)
+                    
+                    pi.vb.sigResized.connect(updateViews)
+                    updateViews()
+                
+                panel.right_axis.setLabel(text=right_unit)
+                panel.right_axis.show()
+            elif panel.right_axis is not None:
+                panel.right_axis.hide()
+
             # Remove curves for keys no longer assigned
             for key in list(panel.curves):
                 if key not in active_keys:
-                    pi.removeItem(panel.curves.pop(key))
+                    curve = panel.curves.pop(key)
+                    pi.removeItem(curve)
+                    if panel.right_vb is not None:
+                        panel.right_vb.removeItem(curve)
 
             for local_idx, key in enumerate(panel.assigned_keys):
                 buf = self._plot_history.get(key)
@@ -1031,15 +1086,28 @@ class PlotOrchestrationMixin:
                 color = palette[(color_offset + local_idx) % len(palette)]
                 label = f"0x{key[0]:04X} {key[1]}"
 
+                unit = self._signal_unit_map.get(key, "").strip() if hasattr(self, "_signal_unit_map") else ""
+                is_right = (right_unit is not None and unit != left_unit)
+                target_vb = panel.right_vb if is_right else pi.vb
+
                 curve = panel.curves.get(key)
                 if curve is None:
-                    curve = pi.plot(name=label, pen=pg.mkPen(color, width=1.8))
+                    curve = pg.PlotDataItem(name=label, pen=pg.mkPen(color, width=1.8))
                     _configure_live_curve(curve)
                     panel.curves[key] = curve
                     curve.__bh_color = color  # type: ignore[attr-defined]
-                elif getattr(curve, "__bh_color", None) != color:
-                    curve.setPen(pg.mkPen(color, width=1.8))
-                    curve.__bh_color = color  # type: ignore[attr-defined]
+                    target_vb.addItem(curve)
+                    if pi.legend is not None:
+                        pi.legend.addItem(curve, name=label)
+                else:
+                    if curve.getViewBox() != target_vb:
+                        if curve.getViewBox() is not None:
+                            curve.getViewBox().removeItem(curve)
+                        target_vb.addItem(curve)
+
+                    if getattr(curve, "__bh_color", None) != color:
+                        curve.setPen(pg.mkPen(color, width=1.8))
+                        curve.__bh_color = color  # type: ignore[attr-defined]
 
                 # Skip setData when this curve hasn't changed since the last
                 # redraw. Signature mixes length, right-most timestamp, and
