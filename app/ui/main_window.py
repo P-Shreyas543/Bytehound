@@ -219,18 +219,7 @@ from ..serial_logging.raw_logger import RawLogger
 from ..protocol.packet_parser import create_parser, ParserProtocol, ParsedPacket
 from ..serial_io.serial_worker import PollingWorker
 
-_COLUMNS = (
-    ("Frame",     100),
-    ("Group",      90),
-    ("Variable",  190),
-    ("Start B.",   60),
-    ("Data Type",  75),
-    ("Raw",        95),
-    ("Value",      95),
-    ("Unit",       55),
-    ("Status",     70),
-    ("Updated",   110),
-)
+
 
 # ---------------------------------------------------------------------------
 # QSS stylesheets
@@ -894,9 +883,7 @@ class MainWindow(
 
 
 
-    def _mouseMoved(self, evt):
-        """Crosshair handler — disabled in multi-panel mode (panels use their own)."""
-        pass
+
 
 
 
@@ -1509,7 +1496,7 @@ class MainWindow(
             if signal.raw_value is None:
                 continue
 
-            raw_text = "-" if signal.raw_value is None else _format_number(signal.raw_value)
+            raw_text = _format_number(signal.raw_value)
             value_text = "-" if signal.scaled_value is None else _format_number(signal.scaled_value)
             self._table_model.stage_live_cells(
                 key,

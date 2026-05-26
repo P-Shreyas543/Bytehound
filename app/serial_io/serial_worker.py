@@ -175,7 +175,7 @@ class PollingWorker(QThread):
         # Minimum spacing between pipelined TXs. ``None`` means "use the
         # module default ``POLL_PIPELINE_TX_GAP_FLOOR_MS``"; a number lets
         # the UI override the floor per session. Devices that don't drop
-        # frames at the default 30 ms can tune this down for higher
+        # frames at the default 100 ms can tune this down for higher
         # throughput; flaky ones can tune it up.
         self._pipeline_tx_gap_ms: Optional[int] = None
         # In-flight poll bookkeeping. Only mutated on the worker thread.
