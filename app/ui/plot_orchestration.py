@@ -851,21 +851,24 @@ class PlotOrchestrationMixin:
         if not hasattr(self, "_plot_state_btn"):
             return
         if live:
-            label, bg, tip = (
+            label, bg, bg_hover, tip = (
                 "⏵ Live",
                 "#16A34A",
+                "#22C55E",
                 "Streaming — click to pause (Space).",
             )
         elif source == "pan":
-            label, bg, tip = (
+            label, bg, bg_hover, tip = (
                 "🔍 Explore",
                 "#2563EB",
+                "#3B82F6",
                 "View frozen — you panned/zoomed. Click to resume Live (Space).",
             )
         else:
-            label, bg, tip = (
+            label, bg, bg_hover, tip = (
                 "⏸ Paused",
                 "#D97706",
+                "#F59E0B",
                 "Paused — click to resume Live (Space).",
             )
         self._plot_state_btn.setText(label)
@@ -873,7 +876,7 @@ class PlotOrchestrationMixin:
         self._plot_state_btn.setStyleSheet(
             f"QPushButton {{ background:{bg}; color:#fff; border:none;"
             f"               padding:4px 12px; border-radius:4px; font-weight:bold; }}"
-            f"QPushButton:hover {{ filter: brightness(1.1); }}"
+            f"QPushButton:hover {{ background:{bg_hover}; }}"
         )
 
     def _on_plot_mouse_moved(self, evt, pi) -> None:
