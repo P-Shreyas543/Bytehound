@@ -84,11 +84,28 @@ def load_config(path: str | Path) -> FrameConfig:
     if source.is_file() and source.suffix.lower() in {".xlsx", ".xlsm"}:
         tables = _read_excel_tables(source)
         base_label = source.name
+    elif source.is_file() and source.suffix.lower() == ".json":
+        import json
+        with source.open("r", encoding="utf-8") as fp:
+            tables = json.load(fp)
+        for key in tables:
+            tables[key] = [{k: hex(v) if k in {"id_or_address", "frame_id", "frame_id_hex"} and isinstance(v, int) and not isinstance(v, bool) else str(v) for k, v in row.items()} for row in tables[key]]
+        base_label = source.name
+    elif source.is_file() and source.suffix.lower() in {".yaml", ".yml"}:
+        try:
+            import yaml
+        except ImportError as exc:
+            raise ConfigError("YAML config requires pyyaml") from exc
+        with source.open("r", encoding="utf-8") as fp:
+            tables = yaml.safe_load(fp)
+        for key in tables:
+            tables[key] = [{k: hex(v) if k in {"id_or_address", "frame_id", "frame_id_hex"} and isinstance(v, int) and not isinstance(v, bool) else str(v) for k, v in row.items()} for row in tables[key]]
+        base_label = source.name
     elif source.is_dir():
         tables = _read_csv_tables(source)
         base_label = str(source)
     else:
-        raise ConfigError(f"Config path does not exist: {source}")
+        raise ConfigError(f"Config path does not exist or format unsupported: {source}")
 
     protocol = _parse_protocol(_required_table(tables, "protocol", _PROTOCOL_REQUIRED))
 

@@ -244,6 +244,78 @@ def test_apply_decoded_with_synthetic_frame(window: MainWindow) -> None:
     assert row is not None, "row should exist after _apply_decoded"
 
 
+def test_auto_pause_trigger_logic(window: MainWindow, monkeypatch) -> None:
+    from app.decoder.frame_decoder import DecodedFrame, DecodedSignal
+    
+    config = _load_canonical_or_skip(window)
+    spec = config.all_signals[0]
+    
+    # Mock to prevent QFileDialog hanging
+    monkeypatch.setattr(window, "_on_toggle_logging", lambda: None)
+    
+    window._plot_live = True
+    window._plot_trigger = {
+        "param": spec.signal_name,
+        "op": ">",
+        "value": 1.0,
+        "pause": True,
+        "log": True,
+    }
+    
+    signal = DecodedSignal(
+        frame_id=spec.frame_id,
+        frame_name=spec.frame_name,
+        signal_name=spec.signal_name,
+        raw_value=1500,
+        scaled_value=1.5, # > 1.0, should trigger!
+        unit=spec.unit,
+        status="ok",
+        group=spec.group,
+        display_value="1.5 V",
+    )
+    decoded = DecodedFrame(
+        frame_id=spec.frame_id,
+        frame_name=spec.frame_name,
+        signals=[signal],
+    )
+    
+    window._apply_decoded(decoded)
+    
+    assert window._plot_trigger is None, "Trigger should be disarmed after hitting"
+    assert window._plot_live is False, "Plot should have auto-paused"
+
+
+def test_fault_alarm_logic(window: MainWindow) -> None:
+    from app.decoder.frame_decoder import DecodedFrame, DecodedSignal
+    
+    config = _load_canonical_or_skip(window)
+    spec = config.all_signals[0]
+    
+    signal = DecodedSignal(
+        frame_id=spec.frame_id,
+        frame_name=spec.frame_name,
+        signal_name=spec.signal_name,
+        raw_value=1,
+        scaled_value=1,
+        unit=spec.unit,
+        status="ok",
+        group=spec.group,
+        display_value="FAULT (ON)",
+        enum_label="Battery Fault Detected" # "Fault" in string should trigger alarm
+    )
+    decoded = DecodedFrame(
+        frame_id=spec.frame_id,
+        frame_name=spec.frame_name,
+        signals=[signal],
+    )
+    
+    window._apply_decoded(decoded)
+    
+    key = (spec.frame_id, spec.signal_name)
+    assert hasattr(window, "_seen_faults")
+    assert key in window._seen_faults, "Fault should have been logged in _seen_faults"
+
+
 def test_fit_panel_y_now_with_seeded_data(window: MainWindow) -> None:
     """Exercise ``_fit_panel_y_now`` with a panel + history actually populated.
 

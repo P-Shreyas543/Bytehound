@@ -669,6 +669,12 @@ class UIBuildersMixin:
         self._plot_state_btn.clicked.connect(self._on_plot_state_btn_clicked)
         controls.addWidget(self._plot_state_btn)
 
+        self._trigger_btn = QPushButton("Trigger...", outer)
+        self._trigger_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._trigger_btn.setToolTip("Configure auto-pause trigger")
+        self._trigger_btn.clicked.connect(self._on_plot_trigger_clicked)
+        controls.addWidget(self._trigger_btn)
+
         # Session clock — updates every second via _flush_ui
         self._session_clock_label = QLabel("⏱ 0:00:00", outer)
         self._session_clock_label.setObjectName("auxReadout")

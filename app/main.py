@@ -181,11 +181,28 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Run under cProfile and dump a .prof file on exit (for diagnosing CPU usage).",
     )
+    parser.add_argument(
+        "--validate",
+        type=str,
+        metavar="CONFIG_FILE",
+        help="Validate a config file without opening the GUI and exit. Returns 0 if valid, 1 otherwise.",
+    )
     args, remaining = parser.parse_known_args(argv)
     # Strip our own flags so Qt sees a clean argv.
     sys.argv = [sys.argv[0], *remaining]
 
     configure_logging()
+
+    if args.validate:
+        try:
+            from app.decoder.config_loader import load_config
+            config = load_config(args.validate)
+            print(f"OK: Config {args.validate} is valid.")
+            print(f"Loaded {len(config.all_signals)} signals across {len(config.frames)} frames.")
+            return 0
+        except Exception as e:
+            print(f"ERROR: Config validation failed for {args.validate}\n{e}", file=sys.stderr)
+            return 1
 
     if not args.profile:
         return _run_app()

@@ -1415,6 +1415,20 @@ class AnalysisSuiteWindow(QMainWindow):
             self._popup_information("Nothing to Export", "No samples in range.")
             return
 
+        rate, ok = QInputDialog.getInt(
+            self,
+            "Decimate Export",
+            "Export 1 out of every N samples?\n(1 = export every sample)",
+            value=1,
+            minValue=1,
+            maxValue=100000,
+        )
+        if not ok:
+            return
+        
+        if rate > 1:
+            merged = merged[::rate]
+
         # Build the data matrix: cols = ['time', curve1, curve2, …]
         headers = ["time"]
         data_cols: list[np.ndarray] = []

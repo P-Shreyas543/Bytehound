@@ -142,6 +142,7 @@
                     <li><a href="#enums">Enums Panel</a></li>
                     <li><a href="#raw-console">Raw Console</a></li>
                     <li><a href="#activity-log">Activity Log</a></li>
+                    <li><a href="#fault-alarms">Fault Alarms</a></li>
                     <li><a href="#status-bar">Status Bar (bottom-right counters)</a></li>
                     <li><a href="#keyboard-shortcuts">Keyboard Shortcuts</a></li>
                 </ul>
@@ -169,6 +170,8 @@
                     <li><a href="#config-fields">tx_command_fields</a></li>
                     <li><a href="#config-polling">polling_schedule</a></li>
                     <li><a href="#config-protocol">protocol</a></li>
+                    <li><a href="#yaml-json-configs">YAML and JSON Configuration</a></li>
+                    <li><a href="#validator-cli">Config Validator CLI</a></li>
                 </ul>
             </li>
             <li><a href="#section-6">6. Appearance &amp; Updates</a>
@@ -288,6 +291,14 @@
         <li><strong>Click + drag</strong>: Pan the view → enters Explore mode.</li>
     </ul>
 
+    <h4>Trigger Configuration (Auto-Pause &amp; Logging)</h4>
+    <p>Click the <strong>Trigger...</strong> button on the Live Plot toolbar to define an automatic action based on a signal's value crossing a threshold. When the configured condition (e.g., <code>Cell Voltage &gt; 4.2</code>) is met in incoming telemetry:</p>
+    <ul>
+        <li><strong>Pause Plot</strong>: Automatically freezes the plot (switches to Explore mode) so you don't lose the event off the left edge of the screen.</li>
+        <li><strong>Start Logging</strong>: Automatically begins recording a Raw + Decoded telemetry session, capturing the event as it happens without manual intervention.</li>
+    </ul>
+    <p>The trigger disarms automatically after firing once. A <span style="color:#e91e8c"><strong>pink</strong></span> active state on the Trigger button indicates it is armed.</p>
+
     <div class="note">
         In Live mode the X-axis is anchored at <strong>0 seconds</strong> (session start) and expands to the current elapsed time. Plot samples are kept in a bounded in-memory history (default 6,000 points per signal), so very long sessions may show older time ranges with sparse or no plotted points even though the axis still starts at zero.
     </div>
@@ -303,6 +314,9 @@
 
     <h3 id="activity-log">Activity Log</h3>
     <p>The <strong>Activity Log</strong> tracks major application events: configurations loaded, connections established or lost, logging start/stop, and any error popups. Useful for post-mortem analysis of a test session.</p>
+
+    <h3 id="fault-alarms">Fault Alarms</h3>
+    <p>Bytehound monitors all incoming decoded signals for the words <code>fault</code> or <code>error</code> (case-insensitive) in their Enum Labels or Bitfield states. If a fault is detected (e.g., a bit named "Overvoltage Fault" flips to ON), Bytehound automatically logs an <code>[ALARM]</code> entry to the Activity Log and the Raw Console. This requires no setup—as long as your Variables configuration includes Enums or Bitfields with those keywords, the application will catch them.</p>
 
     <h3 id="status-bar">Status Bar (bottom-right counters)</h3>
     <p>A single-line live readout sits in the bottom-right of the window with six fixed-width counters. They are updated continuously while connected and reset whenever you connect, load a new config, or click <strong>Edit → Clear Console / Log</strong>. The session clock (<code>⏱</code>) counts from the moment you connect — not from config load — so it always reflects actual device uptime. Reading the counters at a glance tells you whether the link is healthy and how the device is responding.</p>
@@ -552,7 +566,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
     <h4>Export and sessions</h4>
     <ul>
         <li><strong>Sessions:</strong> <strong>File -&gt; Save Session</strong> stores layout, checked params, cursors, and view range; <strong>Load Session...</strong> restores them.</li>
-        <li><strong>CSV export:</strong> <strong>File -&gt; Export Visible Data as CSV...</strong> writes a wide table over the current X-range.</li>
+        <li><strong>CSV export:</strong> <strong>File -&gt; Export Visible Data as CSV...</strong> writes a wide table over the current X-range. If the exported range is very dense (e.g. over 100,000 points), Bytehound will automatically prompt you to apply a decimation factor to keep the CSV file small and Excel-friendly.</li>
         <li><strong>Images/PDF:</strong> <strong>File -&gt; Export Plots as Image...</strong> or <strong>Export Plots as PDF...</strong>.</li>
         <li><strong>Per-plot export:</strong> right-click a subplot to export its visible range or copy the plot image.</li>
         <li><strong>Folders:</strong> <strong>File -&gt; Open Data Logs Folder</strong> and <strong>Open Analysis Folder</strong> jump to the saved output locations.</li>
@@ -565,7 +579,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         <li><strong>View:</strong> auto-fit Y, reset zoom, switch Cursors/Statistics tab, set smoothing window, toggle wall-clock time.</li>
         <li><strong>Layout:</strong> group/ungroup parameters, add a new empty subplot.</li>
         <li><strong>Tools:</strong> add or clear vertical/horizontal cursors.</li>
-        <li><strong>Scatter:</strong> open the X-Y Plotter.</li>
+        <li><strong>Scatter:</strong> open the X-Y Plotter. The Plotter allows you to plot any two signals against each other (e.g., Voltage vs Current) across the visible time range, automatically applying 1D linear regression (best-fit line) and calculating the R-squared correlation coefficient.</li>
     </ul>
 
     <div class="note">
@@ -598,6 +612,14 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
     <div class="note">
         <strong>Quick start:</strong> Click <strong>File → Export Template</strong>, save the <code>.xlsx</code> file, open it in Excel, fill in the sheets described below, save, then click <strong>File → Import Config</strong> to load it. Changes take effect immediately.
     </div>
+
+    <h4 id="yaml-json-configs">YAML and JSON Configuration Support</h4>
+    <p>In addition to <code>.xlsx</code> files, Bytehound natively supports loading protocol configurations from <code>.yaml</code> and <code>.json</code> formats. This is ideal for version-controlling your telemetry maps in Git and integrating them into automated CI/CD pipelines. The JSON/YAML files must define a top-level dictionary with keys matching the Excel sheet names (e.g., <code>{"protocol": [...], "variables": [...]}</code>). Missing keys are treated as empty sheets.</p>
+
+    <h4 id="validator-cli">Config Validator CLI</h4>
+    <p>Bytehound can be run headlessly in your CI/CD pipeline to validate configuration syntax without launching the GUI. Simply execute:</p>
+    <pre><code>Bytehound.exe --validate config.yaml</code></pre>
+    <p>If the configuration schema is perfect (valid byte orders, correct types, no missing required fields), the CLI will print a success summary and exit with code <code>0</code>. If there are schema errors, it prints the errors and exits with code <code>1</code>, failing the build pipeline instantly.</p>
 
     <p>The workbook contains the following sheets <em>in this order</em>. Each section below matches one sheet tab.</p>
 

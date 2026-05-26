@@ -165,6 +165,8 @@ def _find_logo(name: str) -> Optional[Path]:
     return None
 
 
+from .parameter_editor import ParameterEditorMixin
+from .telemetry_pipeline import TelemetryPipelineMixin
 from app.ui.widgets import (
     TitleBarThemeFilter,
     _BTN_GREEN,
@@ -273,6 +275,8 @@ class MainWindow(
     TxPanelMixin,
     UpdaterWiringMixin,
     PopupsMixin,
+    TelemetryPipelineMixin,
+    ParameterEditorMixin,
     QMainWindow,
 ):
     def _make_history_buffer(self) -> "TimeSeriesBuffer":
@@ -380,8 +384,9 @@ class MainWindow(
         self._log_started_perf: Optional[float] = None
         # Plot view mode: True = Live (auto-expand 0→now), False = Explore (user panned)
         self._plot_live: bool = True
+        self._plot_trigger: Optional[dict] = None
         self._plot_range_changing: bool = False   # re-entrancy guard for setXRange calls
-
+        self._seen_faults: set[Tuple[int, str]] = set()
 
         # Packet queue + 60 Hz throttle timer
         # Bounded deque prevents OOM if the Qt event loop stalls (e.g. user
@@ -1019,85 +1024,7 @@ class MainWindow(
         self._log_activity(f"Serial Error: {err}")
         self._disconnect(reason=f"Error: {err}")
 
-    def _on_packets_received(self, batch: list) -> None:
-        """Slot called by the worker's batch signal. Queues for the 60Hz UI timer.
 
-        The underlying deque is bounded (maxlen=10_000) so a stalled Qt event
-        loop cannot cause an OOM crash — oldest packets are silently dropped.
-        """
-        self._pending_packets.extend(batch)
-
-    def _flush_ui(self) -> None:
-        """Drain the pending packet queue and refresh the UI at 60 Hz.
-
-        The session clock and rate label are updated on EVERY tick (even when
-        no packets arrived) so the clock doesn't freeze during device timeouts.
-        """
-        # Update the session elapsed clock unconditionally (cheap string op).
-        if self._session_started is not None and hasattr(self, '_session_clock_label'):
-            elapsed = int((datetime.now() - self._session_started).total_seconds())
-            h, rem = divmod(elapsed, 3600)
-            m, s = divmod(rem, 60)
-            self._session_clock_label.setText(f"\u23f1 {h}:{m:02d}:{s:02d}")
-
-        # --- Drain packet queue ---
-        # Atomic swap: replace the shared deque with a fresh one so the worker
-        # thread's extend() never races with our iteration.  CPython's GIL
-        # makes a single attribute assignment atomic.
-        pending = self._pending_packets
-        self._pending_packets = deque(maxlen=10_000)
-        if not pending:
-            return
-
-        packets = list(pending)
-        # Buffer all per-packet console rows so we can emit ONE
-        # appendPlainText per flush instead of one per packet. At 1 kHz RX
-        # this drops the Qt block-layout cost by ~50x.
-        self._console_buffer: List[str] = []
-        # Worker pushes (ParsedPacket, DecodedFrame|None) tuples; legacy
-        # bare-ParsedPacket items are normalised here so _handle_packet
-        # doesn't have to branch.
-        for item in packets:
-            if isinstance(item, tuple):
-                packet, pre_decoded = item
-            else:
-                packet, pre_decoded = item, None
-            self._handle_packet(packet, pre_decoded=pre_decoded)
-        if self._console_buffer:
-            self._console.appendPlainText("\n".join(self._console_buffer))
-            self._console_buffer.clear()
-        # Counts label is rebuilt once per flush — the worker pushes the
-        # authoritative wire-level counters via metrics_updated at ~10 Hz,
-        # and _handle_packet only mutates the UI-side _packet_count. One
-        # refresh per flush is plenty and saves ~50 string rebuilds/batch.
-        self._refresh_counts_label()
-        # Commit all staged model cell updates in ONE dataChanged per row.
-        self._table_model.commit_staged()
-        # Redraw the plot once for the entire batch.
-        now = time.monotonic()
-        if (now - self._plot_last_redraw) >= self._plot_redraw_interval_s:
-            self._redraw_plot()
-            self._plot_last_redraw = now
-        # Invalidate the hover crosshair cache now that plot_history has changed
-        if hasattr(self, "_hover_cache"):
-            self._hover_cache.clear()
-
-        # Packet rate readout in the plot toolbar — refreshed at most ~4 Hz
-        # so the label doesn't flicker. Uses a 1-second sliding-sum window.
-        if hasattr(self, "_rate_label"):
-            now = time.monotonic()
-            if not hasattr(self, "_rate_window"):
-                self._rate_window: Deque[Tuple[float, int]] = deque()
-                self._rate_last_redraw = now
-            self._rate_window.append((now, len(packets)))
-            # Drop entries older than 1 second.
-            cutoff = now - 1.0
-            while self._rate_window and self._rate_window[0][0] < cutoff:
-                self._rate_window.popleft()
-            if (now - self._rate_last_redraw) >= 0.25:
-                hz = sum(c for _, c in self._rate_window)
-                self._rate_label.setText(f"{hz} Hz")
-                self._rate_last_redraw = now
 
     def _on_connection_lost(self) -> None:
         """Called when the worker detects a physical USB unplug."""
@@ -1234,55 +1161,6 @@ class MainWindow(
     # ------------------------------------------------------------------
 
 
-    def _handle_packet(
-        self,
-        packet: ParsedPacket,
-        pre_decoded: Optional[DecodedFrame] = None,
-    ) -> None:
-        self._packet_count += 1
-        now = time.perf_counter()
-        if self._last_packet_perf is not None:
-            self._delta_t_ms = (now - self._last_packet_perf) * 1000.0
-        self._last_packet_perf = now
-        # Buffer the console line. _flush_ui appends them all in one shot.
-        # Skip the whole console pipeline when the dock is hidden: the
-        # datetime.strftime + hex.upper formatting is ~10 µs per packet
-        # which dominates the per-packet UI cost at 1 kHz. Same UX
-        # contract as the plot — re-opening shows fresh content from
-        # re-open time forward.
-        if not packet.ok:
-            # Worker is the single source of truth for the CRC error count
-            # and pushes it via metrics_updated → _on_metrics_updated.
-            return
-
-        # Reset LED to green when data is flowing again after a timeout.
-        if self._serial is not None:
-            current_tooltip = self._led_label.toolTip()
-            if current_tooltip == "Connected (No Data)":
-                self._led_label.setStyleSheet("color: #66BB6A;")
-                self._led_label.setToolTip("Connected")
-                self._set_status("Connected")
-
-        assert self._config is not None
-        # The worker thread already decoded for us so the GUI thread doesn't
-        # block on decode work. The rare worker-decode-error fallback path
-        # goes through decode_frame here.
-        decoded = pre_decoded if pre_decoded is not None else decode_frame(
-            self._config, packet.frame_id, packet.payload
-        )
-        self._apply_decoded(decoded)
-        if self._decoded_logger:
-            # Use the monotonic clock for elapsed_ms — wall-clock arithmetic
-            # would skip or go backward if the system clock is corrected by
-            # NTP during the session. Fall back to a freshly-sampled baseline
-            # only if logging started before _log_started_perf was captured
-            # (defensive — should not happen with the current Start path).
-            if self._log_started_perf is not None:
-                elapsed_ms = int((time.perf_counter() - self._log_started_perf) * 1000)
-            else:
-                t0 = self._log_started or self._session_started
-                elapsed_ms = int((datetime.now() - t0).total_seconds() * 1000)
-            self._decoded_logger.log_frame(decoded, elapsed_ms)
 
     # ------------------------------------------------------------------
     # Table, tabs, and plot maintenance
@@ -1292,240 +1170,11 @@ class MainWindow(
 
 
 
-    def _populate_editor_table(self) -> None:
-        self._editor_table.setRowCount(0)
-        # Index: signal_name -> list of value-cell QTableWidgetItem refs.
-        # _apply_decoded looks rows up by name on every decoded signal of
-        # every packet; a linear scan over rowCount() was O(rows * packets *
-        # signals_per_packet) per UI flush. A dict turns that into O(1).
-        self._editor_value_items: Dict[str, List[QTableWidgetItem]] = {}
-        if not self._config:
-            return
-        # Filter out signals on rx-only frames — direction='rx' means we are
-        # never supposed to TX to that frame, so the Parameter Editor must
-        # not even surface those signals as writable. Unknown frames default
-        # to rxtx (auto-created entries) so they stay visible.
-        frames = self._config.frames
-        rw_signals = [
-            s for s in self._config.all_signals
-            if s.read_write in ("W", "RW")
-            and (frames.get(s.frame_id) is None or frames[s.frame_id].is_tx_capable)
-        ]
-        if not rw_signals:
-            # Nothing writable — insert a single informational row
-            self._editor_table.insertRow(0)
-            lbl = QTableWidgetItem("No writable signals defined in this config (all are read-only).")
-            lbl.setFlags(Qt.ItemFlag.NoItemFlags)
-            self._editor_table.setItem(0, 0, lbl)
-            self._editor_table.setSpan(0, 0, 1, 4)
-            return
-        _INT_TYPES = {"uint8", "int8", "uint16", "int16", "uint32", "int32"}
-        for s in rw_signals:
-            row = self._editor_table.rowCount()
-            self._editor_table.insertRow(row)
-            self._editor_table.setItem(row, 0, QTableWidgetItem(f"0x{s.frame_id:04X}"))
-            self._editor_table.setItem(row, 1, QTableWidgetItem(s.signal_name))
-
-            curr_val = QTableWidgetItem("-")
-            curr_val.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self._editor_table.setItem(row, 2, curr_val)
-            self._editor_value_items.setdefault(s.signal_name, []).append(curr_val)
-
-            widget = QWidget()
-            layout = QHBoxLayout(widget)
-            layout.setContentsMargins(2, 1, 2, 1)
-            inp = QLineEdit()
-            inp.setPlaceholderText("enter value…")
-
-            lo = s.min_value
-            hi = s.max_value
-            if s.data_type in _INT_TYPES:
-                ilo = int(lo) if lo is not None else -2_147_483_648
-                ihi = int(hi) if hi is not None else  2_147_483_647
-                inp.setValidator(QIntValidator(ilo, ihi))
-                inp.setToolTip(f"Integer  [{ilo} … {ihi}]")
-            else:
-                flo = lo if lo is not None else -1e18
-                fhi = hi if hi is not None else  1e18
-                _dv = QDoubleValidator(flo, fhi, 6)
-                _dv.setLocale(QLocale(QLocale.Language.C))
-                inp.setValidator(_dv)
-                inp.setToolTip(f"Float  [{flo:g} … {fhi:g}]")
-
-            btn = QPushButton("Write")
-            btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-            btn.clicked.connect(lambda _, inp=inp, s=s: self._on_editor_write(s, inp.text()))
-            # Allow pressing Enter in the input to trigger write
-            inp.returnPressed.connect(lambda inp=inp, s=s: self._on_editor_write(s, inp.text()))
-            layout.addWidget(inp)
-            layout.addWidget(btn)
-            self._editor_table.setCellWidget(row, 3, widget)
-
-    def _on_editor_write(self, signal, text: str) -> None:
-        if not self._serial or not self._serial.is_open:
-            self._popup_warning("Write", "Not connected")
-            return
-        try:
-            val = float(text)
-            if signal.min_value is not None and val < signal.min_value:
-                raise ValueError(f"Min value is {signal.min_value}")
-            if signal.max_value is not None and val > signal.max_value:
-                raise ValueError(f"Max value is {signal.max_value}")
-        except ValueError as e:
-            self._popup_warning("Invalid Input", str(e))
-            return
-
-        from ..protocol.packet_builder import build_packet
-        import struct
-
-        try:
-            # Step 1: reverse scale/offset → raw = (user_value - offset) / scale
-            raw = (val - signal.offset) / signal.scale
-
-            # Step 2: encode raw into bytes per data_type and byte_order
-            byteorder: str = signal.endianness   # "little" | "big"
-            dt: str = signal.data_type            # "uint8", "int16", "float32", etc.
-
-            if "float" in dt:
-                fmt = ("<" if byteorder == "little" else ">") + (
-                    "f" if signal.byte_length == 4 else "d"
-                )
-                encoded = struct.pack(fmt, float(raw))
-            elif "int" in dt:
-                signed = dt.startswith("int")
-                encoded = round(raw).to_bytes(signal.byte_length, byteorder, signed=signed)
-            else:
-                raise ValueError(f"Unsupported data_type for write: {dt!r}")
-
-            if len(encoded) != signal.byte_length:
-                raise ValueError(
-                    f"Encoded value is {len(encoded)} bytes but signal expects {signal.byte_length}"
-                )
-
-            # Step 3: place encoded bytes at start_byte in a zero-padded payload
-            payload = bytearray(signal.end_byte)
-            payload[signal.start_byte:signal.end_byte] = encoded
-
-            # Step 4: wrap in the full packet envelope (header + CRC + footer)
-            pkt = build_packet(self._config.protocol, signal.frame_id, bytes(payload))
-
-        except (OverflowError, struct.error, ValueError) as exc:
-            self._popup_warning("Write Error", str(exc))
-            return
-
-        self._serial.enqueue_priority_tx(pkt)
-        self._log_activity(
-            f"Write: {signal.signal_name} = {val} {signal.unit}  "
-            f"(raw=0x{pkt.hex().upper()})"
-        )
 
 
 
-    def _add_signal_row(
-        self,
-        row: int,  # kept for API compatibility but ignored (model appends)
-        frame_id: int,
-        signal_name: str,
-        group: str,
-        start_byte: int,
-        data_type: str,
-        unit: str,
-        is_calculated: bool = False,
-    ) -> None:
-        """Add a new row to the telemetry model (called for runtime-discovered signals)."""
-        key = (frame_id, signal_name)
-        self._signal_unit_map[key] = unit
-        self._table_model.add_row(
-            key=key,
-            frame_hex=f"0x{frame_id:04X}",
-            group=group or "-",
-            signal_name=signal_name,
-            start_byte=str(start_byte),
-            data_type=data_type or "-",
-            unit=unit,
-            is_calculated=is_calculated,
-        )
 
-    def _apply_decoded(self, decoded: DecodedFrame) -> None:
-        if decoded.error is not None:
-            # Decode-time issues (e.g. "no signals configured for frame_id …")
-            # are surfaced in the console for the user to investigate. They are
-            # NOT counted in the status-bar "Errors" tally — that field tracks
-            # wire-level CRC failures only.
-            self._console.appendPlainText(f"[decode] {decoded.error}")
-            return
-        for w in decoded.warnings:
-            key = (w.frame_id, w.kind, w.offset if w.offset is not None else -1)
-            if key in self._seen_decode_warnings:
-                continue
-            self._seen_decode_warnings.add(key)
-            tail = f"  tail@byte{w.offset}: {w.extra_hex}" if w.extra_hex else ""
-            self._log_activity(f"[DECODE WARN] {w.message}{tail}")
-            self._console.appendPlainText(f"[decode warning] {w.message}")
 
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
-        # Skip per-signal work whose target dock is hidden. Each visibility
-        # check is a single Qt property read; doing them ONCE up here lets
-        # the inner loop branch directly on cached bools.
-        plot_dock = getattr(self, "_plot_dock", None)
-        plot_visible = plot_dock is None or plot_dock.isVisible()
-        bf_dock = getattr(self, "_bitfields_dock", None)
-        en_dock = getattr(self, "_enums_dock", None)
-        bf_visible = bf_dock is None or bf_dock.isVisible()
-        en_visible = en_dock is None or en_dock.isVisible()
-        # When both detail docks are hidden, _update_detail_tabs is pure
-        # waste: it allocates QTableWidgetItems that no one will see.
-        # Configs with many bitfields paid this every packet.
-        detail_tabs_visible = bf_visible or en_visible
-        elapsed = (
-            (datetime.now() - self._session_started).total_seconds()
-            if plot_visible
-            else 0.0
-        )
-        for signal in [*decoded.signals, *decoded.calculations]:
-            key = (signal.frame_id, signal.signal_name)
-            # If the key isn't in the model yet, add it (calculated / late-arriving signals)
-            if self._table_model.row_for_key(key) is None:
-                spec = next(
-                    (s for s in self._config.all_signals
-                     if s.frame_id == signal.frame_id and s.signal_name == signal.signal_name),
-                    None,
-                )
-                self._add_signal_row(
-                    0,  # ignored by model-backed version
-                    signal.frame_id,
-                    signal.signal_name,
-                    signal.group,
-                    spec.start_byte if spec else 0,
-                    spec.data_type if spec else "-",
-                    signal.unit,
-                    signal.is_calculated,
-                )
-
-            if signal.raw_value is None:
-                continue
-
-            raw_text = _format_number(signal.raw_value)
-            value_text = "-" if signal.scaled_value is None else _format_number(signal.scaled_value)
-            self._table_model.stage_live_cells(
-                key,
-                raw=raw_text,
-                value=signal.display_value or value_text,
-                status=self._status_text(signal),
-                updated=timestamp,
-            )
-            if detail_tabs_visible:
-                self._update_detail_tabs(signal, bf_visible=bf_visible, en_visible=en_visible)
-            # O(1) editor-row lookup via the index built in
-            # _populate_editor_table. setdefault on a missing config keeps
-            # this branch a no-op when the editor table isn't initialised.
-            for val_item in getattr(self, "_editor_value_items", {}).get(
-                signal.signal_name, ()
-            ):
-                val_item.setText(signal.display_value or value_text)
-
-            if plot_visible and signal.scaled_value is not None and signal.status == "ok":
-                self._plot_history[key].append(elapsed, signal.scaled_value)
             # Per-signal decode failures (e.g. "Payload too short") are visible
             # via the row's status pill; we deliberately do NOT increment the
             # status-bar Errors counter for them — that field is reserved for
@@ -1533,13 +1182,6 @@ class MainWindow(
         # NOTE: _redraw_plot() is intentionally NOT called here.
         # It is called once per batch in _flush_ui() to avoid per-packet redraws.
 
-    def _status_text(self, signal: DecodedSignal) -> str:
-        if signal.enum_label:
-            return f"{signal.status}: {signal.enum_label}"
-        if signal.bit_values:
-            active = [name for name, active_state in signal.bit_values.items() if active_state]
-            return f"{signal.status}: {', '.join(active) if active else 'None'}"
-        return signal.status
 
 
 
@@ -1554,6 +1196,33 @@ class MainWindow(
     # ------------------------------------------------------------------
     # Hover crosshair + value readout
     # ------------------------------------------------------------------
+
+    def _on_plot_trigger_clicked(self) -> None:
+        if not self._config:
+            self._popup_warning("Trigger", "Load a configuration first.")
+            return
+        if self._plot_trigger is not None:
+            # Currently armed; disarm it.
+            self._plot_trigger = None
+            if hasattr(self, "_trigger_btn"):
+                self._trigger_btn.setText("Trigger...")
+                self._trigger_btn.setStyleSheet("")
+            return
+
+        from .dialogs import PlotTriggerDialog
+        signals = [s.signal_name for s in self._config.all_signals]
+        # Add calc groups to available triggers
+        for calc in self._config.calc_groups:
+            signals.append(f"{calc.group} {calc.stat}")
+        
+        dlg = PlotTriggerDialog(signals, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._plot_trigger = dlg.get_trigger()
+            self._set_plot_live(True, source="trigger")  # Ensure we are live to catch it
+            if hasattr(self, "_trigger_btn"):
+                self._trigger_btn.setText("Armed")
+                self._trigger_btn.setStyleSheet("color: #e91e8c; font-weight: bold;")
+                self._trigger_btn.setToolTip(f"Armed: {self._plot_trigger['param']} {self._plot_trigger['op']} {self._plot_trigger['value']}")
 
     def _on_table_context_menu(self, pos) -> None:
         index = self._table.indexAt(pos)

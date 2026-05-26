@@ -437,3 +437,62 @@ class YRangeDialog(QDialog):
 
     def get_range(self) -> Tuple[float, float]:
         return float(self._min_spin.value()), float(self._max_spin.value())
+
+
+class PlotTriggerDialog(QDialog):
+    """Modal dialog to configure an auto-pause trigger for the live plot."""
+
+    def __init__(self, signals: list[str], parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Configure Auto-Pause Trigger")
+        self.setMinimumWidth(320)
+
+        layout = QVBoxLayout(self)
+        
+        desc = QLabel("Automatically trigger actions when a parameter crosses a threshold.", self)
+        desc.setWordWrap(True)
+        layout.addWidget(desc)
+
+        form = QFormLayout()
+
+        self._param_combo = QComboBox(self)
+        self._param_combo.addItems(sorted(signals))
+        
+        self._op_combo = QComboBox(self)
+        self._op_combo.addItems([">", "<", "==", ">=", "<=", "!="])
+        
+        self._val_spin = QDoubleSpinBox(self)
+        self._val_spin.setRange(-1e9, 1e9)
+        self._val_spin.setDecimals(4)
+        self._val_spin.setValue(0.0)
+
+        form.addRow("Parameter:", self._param_combo)
+        form.addRow("Operator:", self._op_combo)
+        form.addRow("Threshold:", self._val_spin)
+        
+        self._action_pause = QCheckBox("Pause Live Plot", self)
+        self._action_pause.setChecked(True)
+        self._action_log = QCheckBox("Start Logging", self)
+        
+        form.addRow("Action:", self._action_pause)
+        form.addRow("", self._action_log)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Arm Trigger")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def get_trigger(self) -> dict:
+        return {
+            "param": self._param_combo.currentText(),
+            "op": self._op_combo.currentText(),
+            "value": self._val_spin.value(),
+            "pause": self._action_pause.isChecked(),
+            "log": self._action_log.isChecked(),
+        }
