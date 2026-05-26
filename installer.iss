@@ -20,7 +20,6 @@
   #error MyAppVersion not defined. Run `python build.py` to regenerate installer_version.iss before compiling installer.iss directly.
 #endif
 #define MyAppExe       "Bytehound.exe"
-#define MyAppIcon      "branding\logo_sq.ico"
 #define MyDistDir      "dist\Bytehound"
 
 [Setup]
@@ -43,13 +42,9 @@ DisableProgramGroupPage   = yes
 ; ── Installer output ────────────────────────────────────────────────────────
 OutputDir                 = installer_output
 OutputBaseFilename        = Bytehound_Setup_{#MyAppVersion}
-SetupIconFile             = {#MyAppIcon}
-; Point UninstallDisplayIcon at the standalone .ico (copied to {app} below)
-; rather than the exe. The exe also has the icon embedded via Bytehound.spec,
-; but pointing at the .ico is a belt-and-braces safeguard: if a future spec
-; change ever drops the embedded icon, the Programs & Features entry still
-; shows the right logo instead of a generic floppy/blank-app glyph.
-UninstallDisplayIcon      = {app}\logo_sq.ico
+; SetupIconFile             = {#MyAppIcon}
+; Point UninstallDisplayIcon at the exe
+UninstallDisplayIcon      = {app}\{#MyAppExe}
 UninstallDisplayName      = {#MyAppName} v{#MyAppVersion}
 
 ; ── Compression – everything bundled, zero internet needed ──────────────────
@@ -105,11 +100,6 @@ Name: "startmenu";     Description: "Create a &Start Menu entry";   GroupDescrip
 Source: "{#MyDistDir}\*";        DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; \
                                  Excludes: "opengl32sw.dll,translations\*,*WebEngine*,*.pdb,*.pyi,*\__pycache__\*,*\tests\*"
 
-; ── Branding assets at exe root ──────────────────────────────────────────────
-Source: "branding\logo_sq.ico";  DestDir: "{app}"; Flags: ignoreversion
-Source: "branding\logo_sq.png";  DestDir: "{app}"; Flags: ignoreversion
-Source: "branding\logo_rec.png"; DestDir: "{app}"; Flags: ignoreversion
-
 ; ── version.json – update checker reads this from install dir ────────────────
 Source: "version.json";          DestDir: "{app}"; Flags: ignoreversion
 
@@ -118,13 +108,11 @@ Source: "version.json";          DestDir: "{app}"; Flags: ignoreversion
 ; survive auto-updates. Renaming the shortcut on every release breaks pins.
 Name: "{autodesktop}\{#MyAppName}"; \
       Filename: "{app}\{#MyAppExe}"; \
-      IconFilename: "{app}\logo_sq.ico"; \
       Tasks: desktopicon
 
 ; Start Menu
 Name: "{group}\{#MyAppName}"; \
       Filename: "{app}\{#MyAppExe}"; \
-      IconFilename: "{app}\logo_sq.ico"; \
       Tasks: startmenu
 
 Name: "{group}\Uninstall {#MyAppName}"; \

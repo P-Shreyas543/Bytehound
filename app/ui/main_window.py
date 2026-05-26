@@ -303,10 +303,6 @@ class MainWindow(
         # tuned in _build_plot_tab (hover/hint width relaxation).
         self.setMinimumSize(640, 480)
 
-        icon_path = _find_logo("logo_sq.ico") or _find_logo("logo_sq.png")
-        if icon_path is not None:
-            self.setWindowIcon(QIcon(str(icon_path)))
-
         self._config: Optional[FrameConfig] = None
         self._config_path: Optional[Path] = None
         self._parser: Optional[ParserProtocol] = None

@@ -113,7 +113,6 @@ exe = EXE(
     # is shown — taskbar, alt-tab, file explorer, and the Programs &
     # Features uninstall entry (which reads its icon from this exe via
     # UninstallDisplayIcon in installer.iss).
-    icon='branding/logo_sq.ico',
 )
 coll = COLLECT(
     exe,

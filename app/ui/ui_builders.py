@@ -263,17 +263,6 @@ class UIBuildersMixin:
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
-        # Late import to avoid the main_window <-> ui_builders cycle.
-        # _find_logo also handles frozen-build asset placement (branding/
-        # next to Bytehound.exe), which a raw parents[2] lookup does not.
-        from .main_window import _find_logo
-        self._logo_button = QPushButton()
-        logo_path = _find_logo("logo_rec.png")
-        if logo_path is not None:
-            self._logo_button.setIcon(QIcon(str(logo_path)))
-        self._logo_button.setFlat(True)
-        toolbar.addWidget(self._logo_button)
-
         self.addToolBar(toolbar)
 
     def _promote_dock_to_window(self, dock, floating: bool) -> None:
