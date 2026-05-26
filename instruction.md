@@ -1236,6 +1236,22 @@ Flags: `--no-clean`, `--no-zip`. Output:
 `dist/Bytehound/Bytehound.exe` and
 `installer_output/Bytehound_Setup_<version>.exe`.
 
+### Release smoke test (frozen build)
+
+Before tagging a release, run the frozen build on a **clean Windows VM**
+(no repo checkout, no Python installed) and verify:
+
+- **Config template path:** File → Export Template succeeds and writes a
+  workbook generated from `app/resources/config_template/`.
+- **Version manifest:** Help → About shows the expected version from
+  `version.json` (and `Copy Diagnostics` reports `Frozen: True`).
+- **Docs bundle:** Help → View Documentation opens the packaged
+  `app/resources/index.html`.
+- **Logging location:** a log file is created at
+  `%APPDATA%\Bytehound\logs\bytehound.log` on first launch.
+- **COM enumeration:** Connection dialog opens and populates the port list
+  without errors (a device is not required, just the scan).
+
 ### Inno Setup (`installer.iss`)
 
 Targets Inno Setup 6. Notes:
