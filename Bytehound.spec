@@ -1,5 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
+import re
+
 from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
@@ -41,13 +43,20 @@ excluded_modules = {
     'QtQuickVectorImageHelpers', 'QtStateMachine', 'QtStateMachineQml', 'QtWebViewQuick'
 }
 
+# Match excluded names only at word boundaries so a substring like 'scipy'
+# does not eat numpy's bundled libscipy_openblas64_*.dll (which would kill
+# numpy's C-extensions at runtime with "DLL load failed").
+_excludes_pattern = re.compile(
+    r'\b(' + '|'.join(re.escape(m) for m in excluded_modules) + r')',
+    re.IGNORECASE,
+)
+
 def is_excluded(item_name: str) -> bool:
-    # Normalize by converting to lowercase and removing '6'
-    normalized = item_name.lower().replace('qt6', 'qt')
-    for m in excluded_modules:
-        if m.lower() in normalized:
-            return True
-    return False
+    if not item_name:
+        return False
+    # Normalize Qt6.* -> Qt.* so the same exclude entry catches both spellings.
+    normalized = item_name.replace('Qt6', 'Qt').replace('qt6', 'qt')
+    return bool(_excludes_pattern.search(normalized))
 
 # Filter collected PySide6/shiboken6 files
 for src, dst in raw_datas:
