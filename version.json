@@ -1,12 +1,12 @@
 {
-    "version": "0.3.0",
+    "version": "0.3.1",
     "Developer": "Shreyas P",
-    "build_date": "2026-05-26",
+    "build_date": "2026-05-27",
     "license": "MIT",
     "homepage": "https://github.com/P-Shreyas543/Bytehound",
     "issue_url": "https://github.com/P-Shreyas543/Bytehound/issues",
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
-    "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.3.0/Bytehound_Setup_0.3.0.exe",
-    "release_notes": "Major Feature Milestone - Visualization & Analysis Suite.\n\nNew Features:\n  - Multi-Axis Live Plots: Secondary Y-axis automatically scales signals with different units (e.g. Voltage vs RPM).\n  - Custom Math Channels: Define ad-hoc formulas (e.g. Power = [Voltage] * [Current] / 1000) inside the Analysis Suite.\n  - Decimated Export: Downsample massive CSV exports for efficient storage sharing.\n  - Headless CLI Validator: Run 'python -m app.main --validate config.yaml' for CI/CD checks.\n\nPerformance & Architecture:\n  - Zero-Copy Parsers: Pre-compiled struct parsers prevent memory allocation in the hot telemetry loop.\n  - Background Updates: Application updates now download asynchronously without blocking the UI.\n  - Architectural decoupling of the Telemetry Pipeline and GUI MainWindow.\n  - Hex-safe configuration loaders for YAML and JSON.",
+    "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.3.1/Bytehound_Setup_0.3.1.exe",
+    "release_notes": "Minor Feature Release - Connection & Import Enhancements.\n\nNew Features:\n  - Auto-Reconnect: Retries lost serial connections with exponential backoff (1s to 16s).\n  - Custom Import Schema: Custom sheet names, elapsed time column mapping, and microsecond/unit scaling for log imports.\n  - Memory Cap Settings: Custom limit on historical samples stored in the live plotter to control memory footprint.\n  - Saturation Warning Badge: Status bar badge indicating queue saturation or packet drops (dismissible via click).\n  - Title Bar Accent Matching: Dynamically styles native title bars to match active Windows/theme accent colors.",
     "sha256": "9f82fe060655d44c07a15f873c9d742f3a0d2c9613464a29744c992a2f6eec4f"
 }
