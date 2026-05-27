@@ -108,6 +108,7 @@ exe = EXE(
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon='branding/logo.ico',
     # Embed the logo as the exe's icon resource. Without this, Windows
     # falls back to a generic application icon everywhere the exe icon
     # is shown — taskbar, alt-tab, file explorer, and the Programs &

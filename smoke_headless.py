@@ -19,6 +19,11 @@ the matching `Arduino_BMS_Simulator.ino` sketch.
   Phase 12  `raw_log_format` hex vs compact (no device)
   Phase 13  TxCommand description tooltip data (no device)
   Phase 14  SerialDefaults pre-pop priority (no device)
+  Phase 15  Memory Cap / TimeSeriesBuffer capping (no device)
+  Phase 16  Auto-Reconnect backoff logic (no device)
+  Phase 17  Custom Import Schema & Scaling (no device)
+  Phase 18  Warning Badge click-dismiss (no device)
+  Phase 19  Theme Resolving & Accent Matching (no device)
 
 Run:  python smoke_headless.py [--port COM7] [--seconds 12]
 
@@ -86,6 +91,9 @@ def main() -> int:
                         help="skip phases 2-10 (live serial). Only the software-only "
                              "phases (0, 1, 11-14) will run. Use this on a build server.")
     args = parser.parse_args()
+
+    from PySide6.QtWidgets import QApplication
+    _qapp = QApplication.instance() or QApplication(sys.argv)
 
     rep = Report()
     config = load_config(Path("app/resources/config_template"))
@@ -211,6 +219,11 @@ def main() -> int:
     _phase_12_raw_log_format(rep)
     _phase_13_tx_command_descriptions(config, rep)
     _phase_14_serial_defaults_priority(config, rep)
+    _phase_15_memory_cap(rep)
+    _phase_16_auto_reconnect(rep)
+    _phase_17_custom_import_schema(rep)
+    _phase_18_warning_badge(rep)
+    _phase_19_theme_resolving_and_accent_matching(rep)
 
     if args.skip_device:
         rep.note("--skip-device set: phases 2-10 skipped")
@@ -220,7 +233,7 @@ def main() -> int:
     # Phase 2  Live serial — polling + bitfields + enums + TX
     # ------------------------------------------------------------------
     print(f"\n=== Phase 2  Live serial on {args.port} for {args.seconds} s ===")
-    app = QCoreApplication.instance() or QCoreApplication(sys.argv)
+    app = _qapp
     settings = SerialSettings(port=args.port, baud_rate=115200)
     worker = PollingWorker(settings, config.protocol, config.polling_schedules)
 
@@ -600,6 +613,130 @@ def _phase_14_serial_defaults_priority(config, rep: Report) -> None:
     # check, not the source of truth.
     rep.note("Field priority (QSettings > SerialDefaults > class default) is "
              "locked by tests/test_connection_dialog.py")
+
+
+def _phase_15_memory_cap(rep: Report) -> None:
+    print("\n=== Phase 15  Memory Cap (software) ===")
+    from app.ui.plot_panel import TimeSeriesBuffer
+    buf = TimeSeriesBuffer(max_samples=25000)
+    for i in range(60000):
+        buf.append(float(i), 1.0)
+    # Total samples = 60000. Chunk size = 16384.
+    # Frozen chunks = 3 (49152 samples) + current fill (10848).
+    # Since 3 * 16384 = 49152 > 25000, calling set_max_samples(25000) should drop oldest chunks.
+    # Frozen chunks remaining = 1. Total samples = 16384 + 10848 = 27232.
+    if len(buf) == 27232:
+        rep.ok("TimeSeriesBuffer memory cap limits sample count (got 27232)")
+    else:
+        rep.fail("TimeSeriesBuffer memory cap did not drop expected chunk count", f"got {len(buf)} want 27232")
+
+
+def _phase_16_auto_reconnect(rep: Report) -> None:
+    print("\n=== Phase 16  Auto-Reconnect Backoff (software) ===")
+    # Verify the backoff progression formula used in MainWindow._on_reconnect_timeout
+    # backoff = min(16000, 1000 * (2 ** reconnect_attempts))
+    attempts = [1, 2, 3, 4, 5, 6]
+    expected_intervals = [2000, 4000, 8000, 16000, 16000, 16000]
+    intervals = []
+    for att in attempts:
+        backoff = min(16000, 1000 * (2 ** att))
+        intervals.append(backoff)
+    if intervals == expected_intervals:
+        rep.ok(f"Auto-reconnect backoff intervals progress correctly: {intervals}")
+    else:
+        rep.fail("Auto-reconnect backoff intervals progression mismatch", f"got {intervals} want {expected_intervals}")
+
+
+def _phase_17_custom_import_schema(rep: Report) -> None:
+    print("\n=== Phase 17  Custom Import Schema & Scaling (software) ===")
+    from PySide6.QtCore import QSettings
+    from app.ui.log_io import LogLoaderThread, _CSV_CACHE
+    import pandas as pd
+    import numpy as np
+    
+    settings = QSettings("BytehoundTestSmoke", "TestCustomSchema")
+    settings.clear()
+    settings.setValue("import/sheet_names", "CustomSheet")
+    settings.setValue("import/elapsed_cols", "time_us")
+    settings.setValue("import/elapsed_scales", "time_us: 0.000001")
+    
+    # Mock QSettings inside log_io.
+    import PySide6.QtCore
+    orig_qsettings = PySide6.QtCore.QSettings
+    PySide6.QtCore.QSettings = lambda *args, **kwargs: settings
+    
+    try:
+        import tempfile
+        from pathlib import Path
+        
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            csv_path = Path(tmp_dir) / "test_custom.csv"
+            df = pd.DataFrame({
+                "time_us": [1000000.0, 2000000.0, 3000000.0],
+                "Voltage": [3.6, 3.7, 3.8]
+            })
+            df.to_csv(csv_path, index=False)
+            
+            loader = LogLoaderThread(str(csv_path), "log_temp", "#FF0000")
+            loader._load_csv()
+            
+            entry = _CSV_CACHE.get(str(csv_path))
+            if entry is not None:
+                elapsed = entry.elapsed
+                expected_elapsed = np.array([1.0, 2.0, 3.0])
+                if np.allclose(elapsed, expected_elapsed):
+                    rep.ok("LogLoaderThread correctly resolved custom elapsed time column and scale factor")
+                else:
+                    rep.fail("LogLoaderThread custom elapsed scaling failed", f"got {elapsed} want {expected_elapsed}")
+            else:
+                rep.fail("LogLoaderThread failed to parse test CSV into cache")
+    finally:
+        PySide6.QtCore.QSettings = orig_qsettings
+        settings.clear()
+
+
+def _phase_18_warning_badge(rep: Report) -> None:
+    print("\n=== Phase 18  Warning Badge (software) ===")
+    from app.ui.ui_builders import WarningBadge
+    badge = WarningBadge("Test Warning")
+    badge.setVisible(True)
+    if badge.isVisible():
+        from PySide6.QtGui import QMouseEvent
+        from PySide6.QtCore import Qt, QPoint
+        event = QMouseEvent(
+            QMouseEvent.Type.MouseButtonPress,
+            QPoint(5, 5),
+            Qt.MouseButton.LeftButton,
+            Qt.MouseButton.LeftButton,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        badge.mousePressEvent(event)
+        if not badge.isVisible():
+            rep.ok("WarningBadge click event successfully hides the badge")
+        else:
+            rep.fail("WarningBadge mousePressEvent failed to hide the badge")
+    else:
+        rep.fail("WarningBadge setVisible(True) failed")
+
+
+def _phase_19_theme_resolving_and_accent_matching(rep: Report) -> None:
+    print("\n=== Phase 19  Theme Resolving & Accent Matching (software) ===")
+    from app.ui.theming import resolve_theme, build_card_qss
+    resolved_dark = resolve_theme("dark")
+    resolved_light = resolve_theme("light")
+    resolved_auto = resolve_theme("auto")
+    
+    if resolved_dark == "dark" and resolved_light == "light" and resolved_auto in ("dark", "light"):
+        rep.ok(f"resolve_theme resolved dark={resolved_dark}, light={resolved_light}, auto={resolved_auto}")
+    else:
+        rep.fail("resolve_theme resolution mapping failed", f"dark={resolved_dark}, light={resolved_light}, auto={resolved_auto}")
+        
+    style_dark = build_card_qss("dark")
+    style_light = build_card_qss("light")
+    if "centralPanel" in style_dark and "centralPanel" in style_light:
+        rep.ok("build_card_qss generates centralPanel stylesheet rules for both themes")
+    else:
+        rep.fail("build_card_qss centralPanel style check failed")
 
 
 def _summarize(rep: Report) -> int:

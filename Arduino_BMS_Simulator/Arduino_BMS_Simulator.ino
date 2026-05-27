@@ -4,6 +4,11 @@
 // Protocol: AA 55 | Frame ID (2 LE) | Length (1) | Payload | CRC16 (2 LE) | EE
 // CRC16 Modbus over header..payload (poly 0x8005 reflected, init 0xFFFF)
 //
+// Compatible with Bytehound v0.3.1 features:
+//   - Auto-Reconnect: Simulates disconnect behaviors via 0x1004 go_silent.
+//   - Memory Cap & Warnings: Telemetry packet streams are compatible with host-side
+//     memory caps and queue saturation indicators.
+//
 // Streams three telemetry frames and reacts to several TX commands.
 //
 //   RX (board -> PC):

@@ -42,7 +42,7 @@ DisableProgramGroupPage   = yes
 ; ── Installer output ────────────────────────────────────────────────────────
 OutputDir                 = installer_output
 OutputBaseFilename        = Bytehound_Setup_{#MyAppVersion}
-; SetupIconFile             = {#MyAppIcon}
+SetupIconFile             = branding\logo.ico
 ; Point UninstallDisplayIcon at the exe
 UninstallDisplayIcon      = {app}\{#MyAppExe}
 UninstallDisplayName      = {#MyAppName} v{#MyAppVersion}
