@@ -14,7 +14,8 @@
       "Bash(python -m pip show pyqt-darktheme)",
       "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
       "Bash(python -m pip install pyqtdarktheme)",
-      "Bash(python -c \"import qdarktheme; print\\('OK'\\)\")"
+      "Bash(python -c \"import qdarktheme; print\\('OK'\\)\")",
+      "Bash(git config *)"
     ]
   }
 }
