@@ -233,12 +233,11 @@ class PollingWorker(QThread):
             bytesize=self.settings.data_bits,
             stopbits=self.settings.stop_bits,
             parity=self.settings.parity,
-            # Fix (review comment 3): explicitly bound read() to timeout_ms
-            # (default 50 ms). This guarantees the run loop checks _stop_event
-            # at least every 50 ms so closeEvent's wait(2000) can never hang
-            # beyond one read-timeout cycle after stop() is called.
-            timeout=self.settings.timeout_ms / 1000.0,
-            write_timeout=self.settings.timeout_ms / 1000.0,
+            # Hardcode OS read timeout to 50ms so the run loop frequently checks
+            # _stop_event. The user's protocol timeout is enforced logically.
+            # Prevents main-thread close() from crashing if protocol timeout > 2s.
+            timeout=0.05,
+            write_timeout=0.05,
         )
         self._stop_event.clear()
         self._last_rx_time = time.monotonic()
@@ -256,14 +255,7 @@ class PollingWorker(QThread):
         """Stop the thread and release the COM port.  Blocks up to 2 s."""
         self.stop()
         self.wait(2000)
-        if self._serial is not None:
-            try:
-                self._serial.close()
-            except Exception:
-                # Driver/handle is already gone in most cases; log so a
-                # persistent close failure is at least visible in bytehound.log.
-                _LOG.warning("Serial close failed", exc_info=True)
-            self._serial = None
+        # Do not close from main thread - let the run loop clean it up.
 
     def enqueue_priority_tx(self, data: bytes) -> None:
         try:
@@ -281,7 +273,6 @@ class PollingWorker(QThread):
         with QMutexLocker(self._mutex):
             if enabled and not self._polling_global_enabled:
                 self._flush_rx_before_polling = True
-                self._in_flight.clear()
             self._polling_global_enabled = enabled
         if enabled:
             effective_gap = (
@@ -330,10 +321,8 @@ class PollingWorker(QThread):
             if gap_ms is not None:
                 self._pipeline_tx_gap_ms = max(0, int(gap_ms))
             if not enabled:
-                # Drop tracking; any actual on-wire frames already sent will
-                # arrive late and be emitted as normal traffic, just without
-                # a latency sample.
-                self._in_flight.clear()
+                # Worker will clear _in_flight during reset
+                self._flush_rx_before_polling = True
         effective_gap = (
             self._pipeline_tx_gap_ms
             if self._pipeline_tx_gap_ms is not None
@@ -565,6 +554,12 @@ class PollingWorker(QThread):
         finally:
             # Flush anything still in the batch before the thread dies.
             self._flush_batch()
+            if self._serial is not None:
+                try:
+                    self._serial.close()
+                except Exception:
+                    pass
+                self._serial = None
 
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -573,13 +568,15 @@ class PollingWorker(QThread):
                 if not self._priority_tx_queue.empty():
                     tx_data = self._priority_tx_queue.get()
                     if self._serial:
-                        self._write_serial(tx_data)
+                        # Honour gap in priority TX to prevent dropping polls!
+                        gap_ms = (self._pipeline_tx_gap_ms if self._pipeline_tx_gap_ms is not None else POLL_TX_GAP_FLOOR_MS)
+                        self._write_serial(tx_data, min_gap_ms=gap_ms)
                         self.tx_recorded.emit(tx_data)
                         if self.protocol.parser_type == "modbus_rtu":
                             self._await_modbus_response(tx_data, target_id=None)
                         else:
                             time.sleep(0.01)
-                    continue
+                    # Removed `continue` so RX can drain immediately after priority TX!
 
                 # 2. Handle Polling Engine
                 with QMutexLocker(self._mutex):
@@ -622,21 +619,21 @@ class PollingWorker(QThread):
                     else:
                         now = time.monotonic()
                         n = len(self._schedules)
-                        # Round-robin: start scanning at _sched_cursor and wrap.
-                        # Each successful poll advances the cursor by one, so the
-                        # next iteration begins with the *following* schedule —
-                        # not the head of the list. Guarantees every enabled
-                        # schedule that is due gets visited in turn even when
-                        # some entries are slow (full-timeout) and others fast.
-                        for offset in range(n):
-                            idx = (self._sched_cursor + offset) % n
-                            sched = self._schedules[idx]
-                            if sched["enabled"] and now >= sched["next_run"]:
-                                self._do_poll(sched)
-                                sched["next_run"] = time.monotonic() + (sched["spec"].interval_ms / 1000.0)
-                                self._sched_cursor = (idx + 1) % n
-                                polled = True
-                                break
+                        # Snapshot the due schedule under the lock, then release
+                        # before _do_poll which blocks for up to timeout_ms.
+                        chosen_sched = None
+                        with QMutexLocker(self._mutex):
+                            for offset in range(n):
+                                idx = (self._sched_cursor + offset) % n
+                                sched = self._schedules[idx]
+                                if sched["enabled"] and now >= sched["next_run"]:
+                                    chosen_sched = sched
+                                    self._sched_cursor = (idx + 1) % n
+                                    break
+                        if chosen_sched is not None:
+                            self._do_poll(chosen_sched)
+                            chosen_sched["next_run"] = time.monotonic() + (chosen_sched["spec"].interval_ms / 1000.0)
+                            polled = True
 
                 # 3. Drain incoming data. In pipelined mode we ALWAYS drain so
                 # responses to in-flight requests are matched promptly; in
@@ -684,10 +681,11 @@ class PollingWorker(QThread):
                     # AND the next schedule deadline is comfortably away.
                     can_doze = not (pipelining and self._in_flight)
                     if can_doze:
-                        next_due_iter = (
-                            s["next_run"] for s in self._schedules if s["enabled"]
-                        )
-                        next_due = min(next_due_iter, default=None)
+                        with QMutexLocker(self._mutex):
+                            next_due_iter = (
+                                s["next_run"] for s in self._schedules if s["enabled"]
+                            )
+                            next_due = min(next_due_iter, default=None)
                         if next_due is not None:
                             until_due = next_due - time.monotonic()
                             if until_due > 0.02:
@@ -723,8 +721,7 @@ class PollingWorker(QThread):
             except Exception as exc:
                 # Non-serial exception (parse error, ValueError in build_packet,
                 # etc.). Report it, log a short cool-down, and keep running.
-                # Killing the thread silently disabled polling — far worse than
-                # surfacing a transient error and continuing.
+                _LOG.exception("Worker recovered from unexpected error")
                 self.warning_occurred.emit(f"Worker recovered from: {exc!r}")
                 time.sleep(0.05)
                 continue
@@ -862,7 +859,14 @@ class PollingWorker(QThread):
             if self._pipeline_tx_gap_ms is not None
             else POLL_PIPELINE_TX_GAP_FLOOR_MS
         )
-        self._write_serial(req, min_gap_ms=gap_ms)
+        
+        # Check gap manually instead of sleeping
+        delay_ms = self._effective_tx_gap_ms(gap_ms)
+        if delay_ms > 0 and self._last_tx_time > 0:
+            if (time.monotonic() - self._last_tx_time) < (delay_ms / 1000.0):
+                return False
+
+        self._write_serial(req, min_gap_ms=0)
         self.tx_recorded.emit(req)
         tx_time = time.monotonic()
         self._in_flight.append({

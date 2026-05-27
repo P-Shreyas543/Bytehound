@@ -211,7 +211,7 @@ def _format_serial_open_error(port: str, exc: BaseException) -> str:
     return f"{friendly}\nDetails: {raw}"
 
 from .telemetry_model import TelemetryTableModel, COLUMNS as _MODEL_COLUMNS
-from .dialogs import ConnectionDialog, LoggingSettingsDialog, PollingConfigDialog
+from .dialogs import ConnectionDialog, LoggingSettingsDialog, PollingConfigDialog, AboutDialog
 from ..decoder.config_loader import ConfigError, load_config
 from ..decoder.frame_decoder import DecodedFrame, DecodedSignal, decode_frame
 from ..decoder.template_io import export_excel_template, snapshot_config
@@ -468,36 +468,12 @@ class MainWindow(
             _v = _json.loads(_vpath.read_text(encoding="utf-8"))
         except Exception:
             _v = {}
-        version    = _v.get("version",    self._version)
-        developer  = _v.get("Developer",  "Shreyas P")
-        build_date = _v.get("build_date", "")
-        license_   = _v.get("license",    "MIT")
-        homepage   = _v.get("homepage",   "")
-        issue_url  = _v.get("issue_url",  "")
-
-        lines = [
-            f"<b>{APP_DISPLAY_NAME}</b>",
-            "",
-            f"Version:&nbsp;&nbsp;&nbsp;{version}",
-            f"Developer:&nbsp;{developer}",
-        ]
-        if build_date:
-            lines.append(f"Build Date:&nbsp;{build_date}")
-        lines += [
-            "",
-            "Serial Data Logger and Visualizer.",
-            "Configuration-driven decoding.",
-            "",
-            f"Released under the {license_} License.",
-        ]
-        if homepage or issue_url:
-            lines.append("")
-            if homepage:
-                lines.append(f'<a href="{homepage}">View on GitHub</a>')
-            if issue_url:
-                lines.append(f'<a href="{issue_url}">Report an Issue</a>')
-
-        self._popup_about("About Bytehound", "<br>".join(lines))
+        
+        logo_path = _find_logo("logo_sq.png") or _find_logo("logo.png")
+        
+        self._log_activity("[ACTION] Open About Dialog")
+        dlg = AboutDialog(_v, logo_path, self)
+        dlg.exec()
 
     def _on_view_docs(self) -> None:
         self._log_activity("[ACTION] View documentation")

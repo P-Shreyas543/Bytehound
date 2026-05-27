@@ -150,9 +150,12 @@ def main() -> int:
     worker.set_polling_global(False)
     boot_ms = int(args.boot_delay * 1000)
 
+    reset_sent_idx = [0]
+
     def send_reset():
         try:
             worker.enqueue_priority_tx(build_tx_command(config, "Reset Faults", {}))
+            reset_sent_idx[0] = len(pack_voltages)
             rep.note(f"Reset Faults queued at t={(boot_ms + 1000) / 1000:.1f}s")
         except Exception as e:
             rep.note(f"Reset Faults build failed: {e}")
@@ -199,7 +202,8 @@ def main() -> int:
     # After Reset Faults, the simulator re-seeds pack_voltage_cv to 5000
     # (= 50.00 V). Within a couple of telemetry ticks (100 ms each) we
     # should see a reading at or below 50.5 V again.
-    if any(v <= 50.5 for v in pack_voltages[-20:]):
+    post_reset_voltages = pack_voltages[reset_sent_idx[0]:]
+    if any(v <= 50.5 for v in post_reset_voltages):
         rep.ok("Pack Voltage observed at or below 50.5 V after Reset Faults (simulator reseeded)")
     else:
         rep.fail("Pack Voltage did not drop back near 50 V after Reset Faults")

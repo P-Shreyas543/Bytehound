@@ -1,6 +1,7 @@
 """Configuration dialogs for the Serial monitor app."""
 
 from typing import Tuple
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import (
@@ -680,3 +681,91 @@ class SchemaMapperDialog(QDialog):
         s.setValue("import/elapsed_cols", self._cols_edit.text().strip())
         s.setValue("import/elapsed_scales", self._scale_edit.toPlainText().strip())
         self.accept()
+
+
+class AboutDialog(QDialog):
+    """Industry-standard About dialog for Bytehound."""
+
+    def __init__(self, version_info: dict, logo_path: str | Path | None, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("About Bytehound")
+        self.setModal(True)
+        self.setFixedSize(480, 240)
+        
+        # Remove help button from title bar
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+        # Main horizontal layout
+        main_layout = QHBoxLayout(self)
+        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setSpacing(20)
+
+        # Left Column: Logo
+        logo_label = QLabel(self)
+        if logo_path:
+            from PySide6.QtGui import QPixmap
+            pixmap = QPixmap(str(logo_path))
+            if not pixmap.isNull():
+                # Scale logo smoothly
+                logo_label.setPixmap(pixmap.scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
+            else:
+                logo_label.setText("🐶")
+                logo_label.setStyleSheet("font-size: 48px;")
+        else:
+            logo_label.setText("🐶")
+            logo_label.setStyleSheet("font-size: 48px;")
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        main_layout.addWidget(logo_label)
+
+        # Right Column: Details
+        details_widget = QWidget(self)
+        details_layout = QVBoxLayout(details_widget)
+        details_layout.setContentsMargins(0, 0, 0, 0)
+        details_layout.setSpacing(6)
+
+        # App Name & version
+        app_name = QLabel("Bytehound", self)
+        app_name.setStyleSheet("font-size: 16pt; font-weight: bold;")
+        details_layout.addWidget(app_name)
+
+        version = version_info.get("version", "0.0.0")
+        build_date = version_info.get("build_date", "")
+        version_text = f"Version {version}"
+        if build_date:
+            version_text += f" ({build_date})"
+        version_label = QLabel(version_text, self)
+        version_label.setStyleSheet("font-size: 9.5pt; color: gray;")
+        details_layout.addWidget(version_label)
+
+        # Publisher section (name and webpage link)
+        publisher = version_info.get("publisher", "Bytehound Open Source Community")
+        pub_webpage = version_info.get("publisher_webpage", "https://github.com/P-Shreyas543/Bytehound")
+        publisher_label = QLabel(self)
+        publisher_label.setText(f"Published by: <b>{publisher}</b><br><a href='{pub_webpage}'>{pub_webpage}</a>")
+        publisher_label.setOpenExternalLinks(True)
+        publisher_label.setStyleSheet("font-size: 9.5pt;")
+        details_layout.addWidget(publisher_label)
+
+        # Developer and license info
+        dev = version_info.get("Developer", "Shreyas P")
+        lic = version_info.get("license", "MIT")
+        info_label = QLabel(self)
+        info_label.setText(f"Developer: <b>{dev}</b> &nbsp;&nbsp;|&nbsp;&nbsp; License: <b>{lic}</b>")
+        info_label.setTextFormat(Qt.TextFormat.RichText)
+        info_label.setStyleSheet("font-size: 9pt;")
+        details_layout.addWidget(info_label)
+
+        # Add description / other details
+        desc_label = QLabel("Serial Data Logger, Parser and Visualizer.", self)
+        desc_label.setStyleSheet("font-size: 9pt; color: gray;")
+        details_layout.addWidget(desc_label)
+
+        details_layout.addStretch()
+
+        # OK button
+        button_box = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok, self)
+        button_box.accepted.connect(self.accept)
+        details_layout.addWidget(button_box)
+
+        main_layout.addWidget(details_widget, 1)
+

@@ -15,6 +15,7 @@ import logging
 import multiprocessing
 import os
 import pstats
+import signal
 import sys
 from datetime import datetime
 from pathlib import Path
@@ -34,6 +35,7 @@ from app.ui.main_window import MainWindow, APP_ORG, APP_NAME, TitleBarThemeFilte
 _LOG_MAX_BYTES = 5 * 1024 * 1024
 _LOG_BACKUP_COUNT = 3
 _LOGGING_CONFIGURED = False
+_CRASH_DIALOG_OPEN = False
 
 
 def _fallback_log_dir() -> Path:
@@ -85,6 +87,10 @@ def configure_logging(level: int = logging.INFO) -> None:
         root.warning("File logging disabled: could not create log file.")
 
     def _handle_uncaught(exc_type, exc, tb):
+        if issubclass(exc_type, KeyboardInterrupt):
+            sys.__excepthook__(exc_type, exc, tb)
+            return
+
         # Always log first — the dialog is best-effort, the log file is
         # the durable record. Re-raising in either step would lose info.
         logging.getLogger("bytehound").error(
@@ -113,6 +119,11 @@ def _show_crash_dialog(exc_type, exc, tb) -> None:
     Called from sys.excepthook, so it must never raise. The caller wraps
     this in its own try/except as a defence-in-depth layer.
     """
+    global _CRASH_DIALOG_OPEN
+    if _CRASH_DIALOG_OPEN:
+        return
+    _CRASH_DIALOG_OPEN = True
+
     import traceback
     try:
         from PySide6.QtWidgets import QApplication, QMessageBox
@@ -140,14 +151,17 @@ def _show_crash_dialog(exc_type, exc, tb) -> None:
     close_btn = box.addButton(QMessageBox.StandardButton.Close)
     box.setDefaultButton(close_btn)
 
-    while True:
-        box.exec()
-        clicked = box.clickedButton()
-        if clicked is copy_btn:
-            QApplication.clipboard().setText(tb_text)
-            # Loop so Copy doesn't dismiss — the user can then click Close.
-            continue
-        break
+    try:
+        while True:
+            box.exec()
+            clicked = box.clickedButton()
+            if clicked is copy_btn:
+                QApplication.clipboard().setText(tb_text)
+                # Loop so Copy doesn't dismiss — the user can then click Close.
+                continue
+            break
+    finally:
+        _CRASH_DIALOG_OPEN = False
 
 
 def _run_app() -> int:
@@ -156,6 +170,10 @@ def _run_app() -> int:
     icon_path = _find_logo("logo_sq.ico") or _find_logo("logo_sq.png")
     if icon_path is not None:
         app.setWindowIcon(QIcon(str(icon_path)))
+
+    # Allow Ctrl+C to cleanly kill the application from the terminal.
+    # Otherwise, PySide6 swallows the KeyboardInterrupt in its C++ event loop.
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     settings = QSettings(APP_ORG, APP_NAME)
     saved_theme = str(settings.value("ui/theme", "dark"))

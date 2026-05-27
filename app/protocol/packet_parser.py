@@ -187,6 +187,7 @@ class _Unframer:
                 self._esc_pending = True
             else:
                 self._cur.append(b)
+        _trim_if_overflow(self._cur, "Unframer")
 
     def _feed_hdlc(self, data: bytes) -> None:
         for b in data:
@@ -199,6 +200,7 @@ class _Unframer:
                 self._esc_pending = True
             else:
                 self._cur.append(b)
+        _trim_if_overflow(self._cur, "Unframer")
 
     def _feed_cobs(self, data: bytes) -> None:
         for b in data:
@@ -213,6 +215,7 @@ class _Unframer:
                     self._cur.clear()
             else:
                 self._cur.append(b)
+        _trim_if_overflow(self._cur, "Unframer")
 
 
 def encode_length_field(payload_size: int, protocol: "ProtocolConfig") -> int:

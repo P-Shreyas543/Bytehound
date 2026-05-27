@@ -90,6 +90,12 @@ def main() -> int:
     parser.add_argument("--skip-device", action="store_true",
                         help="skip phases 2-10 (live serial). Only the software-only "
                              "phases (0, 1, 11-14) will run. Use this on a build server.")
+    parser.add_argument("--pipelining", action="store_true",
+                        help="enable pipelined polling mode to speed up the polling cadence")
+    parser.add_argument("--pipeline-depth", type=int, default=2,
+                        help="pipeline depth for pipelined polling (number of concurrent requests)")
+    parser.add_argument("--pipeline-gap", type=int, default=30,
+                        help="inter-frame delay (ms) for pipelined polling")
     args = parser.parse_args()
 
     from PySide6.QtWidgets import QApplication
@@ -236,6 +242,8 @@ def main() -> int:
     app = _qapp
     settings = SerialSettings(port=args.port, baud_rate=115200)
     worker = PollingWorker(settings, config.protocol, config.polling_schedules)
+    if args.pipelining:
+        worker.set_pipelining(True, depth=args.pipeline_depth, gap_ms=args.pipeline_gap)
 
     Path("scratch").mkdir(exist_ok=True)
     raw_path = Path("scratch/test_raw.csv")

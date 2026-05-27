@@ -790,15 +790,28 @@ class PlotOrchestrationMixin:
             panel.assigned_keys.remove(key)
             if key in panel.curves:
                 curve = panel.curves.pop(key)
-                panel.plot_item.removeItem(curve)
+                try:
+                    curve.clear()
+                except Exception:
+                    pass
+                try:
+                    panel.plot_item.removeItem(curve)
+                except Exception:
+                    pass
                 # Removing from the plot does NOT remove the legend row in
                 # pyqtgraph — leave this out and the legend keeps a phantom
                 # entry, then re-adding the same signal stacks a second row
                 # for the same name. Drop both the curve and the legend row.
                 if panel.right_vb is not None:
-                    panel.right_vb.removeItem(curve)
+                    try:
+                        panel.right_vb.removeItem(curve)
+                    except Exception:
+                        pass
                 if panel.legend is not None:
-                    panel.legend.removeItem(curve)
+                    try:
+                        panel.legend.removeItem(curve)
+                    except Exception:
+                        pass
             self._sync_plot_keys()
             self._persist_panel_assignments()
             self._rebuild_panel_strips()
@@ -1062,7 +1075,7 @@ class PlotOrchestrationMixin:
                     pi.showAxis('right')
                     ax = pi.getAxis('right')
                     ax.linkToView(panel.right_vb)
-                    panel.right_vb.setXLink(pi.vb)
+                    panel.right_vb.setXLink(pi.getViewBox())
                     panel.right_axis = ax
 
                     from .theming import resolve_theme
@@ -1072,11 +1085,14 @@ class PlotOrchestrationMixin:
                     ax.setPen(pen)
                     ax.setTextPen(pen)
 
-                    def updateViews(*args, target_pi=pi, target_vb=panel.right_vb):
-                        target_vb.setGeometry(target_pi.vb.sceneBoundingRect())
-                        target_vb.linkedViewChanged(target_pi.vb, target_vb.XAxis)
+                    def updateViews(dummy_arg=None, target_pi=pi, target_vb=panel.right_vb):
+                        if target_vb is not None and target_pi is not None:
+                            vb = target_pi.getViewBox()
+                            if vb is not None:
+                                target_vb.setGeometry(vb.sceneBoundingRect())
+                                target_vb.linkedViewChanged(vb, target_vb.XAxis)
                     
-                    pi.vb.sigResized.connect(updateViews)
+                    pi.getViewBox().sigResized.connect(updateViews)
                     updateViews()
                 
                 panel.right_axis.setLabel(text=right_unit)
@@ -1088,15 +1104,28 @@ class PlotOrchestrationMixin:
             for key in list(panel.curves):
                 if key not in active_keys:
                     curve = panel.curves.pop(key)
-                    pi.removeItem(curve)
+                    try:
+                        curve.clear()
+                    except Exception:
+                        pass
+                    try:
+                        pi.removeItem(curve)
+                    except Exception:
+                        pass
                     if panel.right_vb is not None:
-                        panel.right_vb.removeItem(curve)
+                        try:
+                            panel.right_vb.removeItem(curve)
+                        except Exception:
+                            pass
                     # Legend rows aren't auto-removed with the curve — clear
                     # the entry here too so any future path that drops a key
                     # without going through _remove_signal_from_panel still
                     # leaves a clean legend behind.
                     if panel.legend is not None:
-                        panel.legend.removeItem(curve)
+                        try:
+                            panel.legend.removeItem(curve)
+                        except Exception:
+                            pass
 
             for local_idx, key in enumerate(panel.assigned_keys):
                 buf = self._plot_history.get(key)
@@ -1111,25 +1140,62 @@ class PlotOrchestrationMixin:
 
                 unit = self._signal_unit_map.get(key, "").strip() if hasattr(self, "_signal_unit_map") else ""
                 is_right = (right_unit is not None and unit != left_unit)
-                target_vb = panel.right_vb if is_right else pi.vb
+                target_vb = panel.right_vb if is_right else pi.getViewBox()
 
                 curve = panel.curves.get(key)
+                
+                if curve is not None:
+                    try:
+                        old_vb = curve.getViewBox()
+                        if old_vb != target_vb:
+                            if old_vb is not None:
+                                try:
+                                    curve.clear()
+                                except Exception:
+                                    pass
+                                try:
+                                    if hasattr(old_vb, "removeItem"):
+                                        old_vb.removeItem(curve)
+                                except Exception:
+                                    pass
+                            try:
+                                pi.getViewBox().removeItem(curve)
+                            except Exception:
+                                pass
+                            if panel.right_vb is not None:
+                                try:
+                                    panel.right_vb.removeItem(curve)
+                                except Exception:
+                                    pass
+                            if panel.legend is not None:
+                                try:
+                                    panel.legend.removeItem(curve)
+                                except Exception:
+                                    pass
+                            curve = None
+                    except Exception:
+                        curve = None
+
                 if curve is None:
                     curve = pg.PlotDataItem(name=label, pen=pg.mkPen(color, width=1.8))
                     _configure_live_curve(curve)
                     panel.curves[key] = curve
                     curve.__bh_color = color  # type: ignore[attr-defined]
-                    target_vb.addItem(curve)
-                    if pi.legend is not None:
-                        pi.legend.addItem(curve, name=label)
-                else:
-                    if curve.getViewBox() != target_vb:
-                        if curve.getViewBox() is not None:
-                            curve.getViewBox().removeItem(curve)
+                    try:
                         target_vb.addItem(curve)
-
+                    except Exception:
+                        pass
+                    if pi.legend is not None:
+                        try:
+                            pi.legend.addItem(curve, name=label)
+                        except Exception:
+                            pass
+                else:
                     if getattr(curve, "__bh_color", None) != color:
-                        curve.setPen(pg.mkPen(color, width=1.8))
+                        try:
+                            curve.setPen(pg.mkPen(color, width=1.8))
+                        except Exception:
+                            pass
                         curve.__bh_color = color  # type: ignore[attr-defined]
 
                 # Skip setData when this curve hasn't changed since the last
@@ -1140,10 +1206,14 @@ class PlotOrchestrationMixin:
                 signature = (xs_len, last_x, window_t_min)
                 if getattr(curve, "__bh_last_sig", None) == signature:
                     continue
-                curve.__bh_last_sig = signature  # type: ignore[attr-defined]
 
                 if buf is None or xs_len == 0:
-                    x_values, y_values = _EMPTY_F64, _EMPTY_F64
+                    try:
+                        curve.clear()
+                    except Exception:
+                        pass
+                    curve.__bh_last_sig = signature  # type: ignore[attr-defined]
+                    continue
                 elif window_t_min is not None:
                     # Feed only samples inside the visible window; whole
                     # chunks below the window are skipped by arrays_since().
@@ -1151,11 +1221,18 @@ class PlotOrchestrationMixin:
                 else:
                     x_values, y_values = buf.arrays()
 
-                curve.setData(
-                    x_values, y_values,
-                    autoDownsample=True,
-                    clipToView=True,
-                )
+                try:
+                    curve.setData(
+                        x_values, y_values,
+                        autoDownsample=True,
+                        clipToView=True,
+                    )
+                    curve.__bh_last_sig = signature  # type: ignore[attr-defined]
+                except Exception:
+                    # If Pyqtgraph throws an exception (e.g. mid-layout caching bug),
+                    # catch it so we don't break the loop, and don't cache the signature
+                    # so we retry next frame.
+                    pass
 
             color_offset += len(panel.assigned_keys)
 

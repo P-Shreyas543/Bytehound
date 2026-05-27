@@ -1,6 +1,8 @@
 {
     "version": "0.3.1",
     "Developer": "Shreyas P",
+    "publisher": "Bytehound Open Source Community",
+    "publisher_webpage": "https://github.com/P-Shreyas543/Bytehound",
     "build_date": "2026-05-27",
     "license": "MIT",
     "homepage": "https://github.com/P-Shreyas543/Bytehound",
@@ -8,5 +10,5 @@
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
     "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.3.1/Bytehound_Setup_0.3.1.exe",
     "release_notes": "Minor Feature Release - Connection & Import Enhancements.\n\nNew Features:\n  - Auto-Reconnect: Retries lost serial connections with exponential backoff (1s to 16s).\n  - Custom Import Schema: Custom sheet names, elapsed time column mapping, and microsecond/unit scaling for log imports.\n  - Memory Cap Settings: Custom limit on historical samples stored in the live plotter to control memory footprint.\n  - Saturation Warning Badge: Status bar badge indicating queue saturation or packet drops (dismissible via click).\n  - Title Bar Accent Matching: Dynamically styles native title bars to match active Windows/theme accent colors.",
-    "sha256": "1e04b90c11c6e357c4b8f02f28dae7476fab083bc37a142bd9d568ff1ba6af58"
+    "sha256": "13c9d1b06d61677c0de57853841f62e2a0c66eb0d8081e281f203f045923502a"
 }
