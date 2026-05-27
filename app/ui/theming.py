@@ -22,7 +22,7 @@ try:
 except ImportError:  # pragma: no cover
     qdarktheme = None
 
-from .widgets import _apply_windows_dark_titlebar, _icon
+from .widgets import _apply_windows_dark_titlebar, _apply_windows_accent_titlebar, _icon
 
 
 _PLOT_PALETTE_DARK = (
@@ -728,8 +728,13 @@ class ThemingMixin:
         from PySide6.QtWidgets import QApplication
         # Schedule title-bar update via singleShot so the native HWND is stable.
         dark = (effective == "dark")
+        from PySide6.QtGui import QPalette
+        accent = QApplication.palette().color(QPalette.ColorRole.Highlight)
         for w in QApplication.topLevelWidgets():
-            QTimer.singleShot(0, lambda _w=w, _d=dark: _apply_windows_dark_titlebar(_w, _d))
+            QTimer.singleShot(0, lambda _w=w, _d=dark, _a=accent: (
+                _apply_windows_dark_titlebar(_w, _d),
+                _apply_windows_accent_titlebar(_w, _a)
+            ))
         # Status-badge colours come from a custom delegate that reads the
         # current theme on every paint. Force a repaint of the table viewport
         # so the badges pick up the new colour pair immediately, without

@@ -93,6 +93,7 @@ class SerialSettings:
     stop_bits: float = 1
     parity: str = "N"
     timeout_ms: int = 50
+    auto_reconnect: bool = False
 
 
 class PollingWorker(QThread):

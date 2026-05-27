@@ -5,8 +5,8 @@ from typing import Tuple
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
-    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QPushButton, QSpinBox,
-    QVBoxLayout, QWidget
+    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit,
+    QPushButton, QSpinBox, QVBoxLayout, QWidget
 )
 
 from ..decoder.types import SerialDefaults
@@ -79,12 +79,15 @@ class ConnectionDialog(QDialog):
         self._timeout_combo = QComboBox(self)
         self._timeout_combo.addItems(["20", "50", "100", "250", "500", "1000"])
 
+        self._auto_reconnect_chk = QCheckBox("Auto-reconnect on disconnect", self)
+
         form.addRow("Port", port_row)
         form.addRow("Baud rate", self._baud_combo)
         form.addRow("Data bits", self._data_bits_combo)
         form.addRow("Stop bits", self._stop_bits_combo)
         form.addRow("Parity", self._parity_combo)
         form.addRow("Timeout (ms)", self._timeout_combo)
+        form.addRow("", self._auto_reconnect_chk)
         layout.addLayout(form)
 
         buttons = QDialogButtonBox(
@@ -131,15 +134,20 @@ class ConnectionDialog(QDialog):
         self._stop_bits_combo.setCurrentText(str(s.value("conn/stop_bits", f"{cd.stop_bits:g}")))
         self._parity_combo.setCurrentText(str(s.value("conn/parity", cd.parity)))
         self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", str(cd.timeout_ms))))
+        
+        # Auto-reconnect default is False
+        auto_rec_val = s.value("conn/auto_reconnect", "false")
+        self._auto_reconnect_chk.setChecked(str(auto_rec_val).lower() == "true")
 
     def _on_accept(self) -> None:
         s = self._settings
-        s.setValue("conn/port",       self._port_combo.currentData(Qt.ItemDataRole.UserRole) or "")
-        s.setValue("conn/baud",       self._baud_combo.currentText())
-        s.setValue("conn/data_bits",  self._data_bits_combo.currentText())
-        s.setValue("conn/stop_bits",  self._stop_bits_combo.currentText())
-        s.setValue("conn/parity",     self._parity_combo.currentText())
-        s.setValue("conn/timeout_ms", self._timeout_combo.currentText())
+        s.setValue("conn/port",           self._port_combo.currentData(Qt.ItemDataRole.UserRole) or "")
+        s.setValue("conn/baud",           self._baud_combo.currentText())
+        s.setValue("conn/data_bits",      self._data_bits_combo.currentText())
+        s.setValue("conn/stop_bits",      self._stop_bits_combo.currentText())
+        s.setValue("conn/parity",         self._parity_combo.currentText())
+        s.setValue("conn/timeout_ms",     self._timeout_combo.currentText())
+        s.setValue("conn/auto_reconnect", "true" if self._auto_reconnect_chk.isChecked() else "false")
         self.accept()
 
     def get_settings(self) -> "SerialSettings":
@@ -150,6 +158,7 @@ class ConnectionDialog(QDialog):
             stop_bits=float(self._stop_bits_combo.currentText()),
             parity=self._parity_combo.currentText(),
             timeout_ms=int(self._timeout_combo.currentText()),
+            auto_reconnect=self._auto_reconnect_chk.isChecked(),
         )
 
 
@@ -513,3 +522,161 @@ class PlotTriggerDialog(QDialog):
             "pause": self._action_pause.isChecked(),
             "log": self._action_log.isChecked(),
         }
+
+
+class PlotSettingsDialog(QDialog):
+    """Modal dialog for configuring live plot memory history and defaults."""
+
+    def __init__(self, settings: QSettings, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Plot Settings")
+        self.setMinimumWidth(340)
+        self._settings = settings
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self._cap_chk = QCheckBox("Cap live plot memory history", self)
+        self._cap_spin = QSpinBox(self)
+        self._cap_spin.setRange(1000, 10_000_000)
+        self._cap_spin.setSingleStep(10000)
+        self._cap_spin.setSuffix(" samples")
+        
+        # Link checkbox to spinbox enabled state
+        self._cap_chk.toggled.connect(self._cap_spin.setEnabled)
+
+        self._window_combo = QComboBox(self)
+        self._window_combo.addItems([
+            "30 seconds", "1 minute", "2 minutes", "5 minutes",
+            "10 minutes", "30 minutes", "All session"
+        ])
+
+        form.addRow(self._cap_chk)
+        form.addRow("Memory cap limit", self._cap_spin)
+        form.addRow("Default display window", self._window_combo)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._restore_from_settings()
+
+    def _restore_from_settings(self) -> None:
+        s = self._settings
+        raw_cap = s.value("plot/history_max_samples", 0)
+        try:
+            cap_val = int(raw_cap)
+        except (TypeError, ValueError):
+            cap_val = 0
+
+        if cap_val > 0:
+            self._cap_chk.setChecked(True)
+            self._cap_spin.setEnabled(True)
+            self._cap_spin.setValue(cap_val)
+        else:
+            self._cap_chk.setChecked(False)
+            self._cap_spin.setEnabled(False)
+            self._cap_spin.setValue(100_000)
+
+        window_s = s.value("plot/window_seconds", 300)
+        try:
+            w_val = int(window_s)
+        except (TypeError, ValueError):
+            w_val = 300
+
+        mapping = {30: 0, 60: 1, 120: 2, 300: 3, 600: 4, 1800: 5, 0: 6}
+        self._window_combo.setCurrentIndex(mapping.get(w_val, 3))
+
+    def _on_accept(self) -> None:
+        s = self._settings
+        cap_val = self._cap_spin.value() if self._cap_chk.isChecked() else 0
+        s.setValue("plot/history_max_samples", cap_val)
+
+        window_mapping = {0: 30, 1: 60, 2: 120, 3: 300, 4: 600, 5: 1800, 6: 0}
+        w_val = window_mapping.get(self._window_combo.currentIndex(), 300)
+        s.setValue("plot/window_seconds", w_val)
+
+        self.accept()
+
+    def get_values(self) -> tuple[int, int]:
+        cap_val = self._cap_spin.value() if self._cap_chk.isChecked() else 0
+        window_mapping = {0: 30, 1: 60, 2: 120, 3: 300, 4: 600, 5: 1800, 6: 0}
+        w_val = window_mapping.get(self._window_combo.currentIndex(), 300)
+        return cap_val, w_val
+
+
+class SchemaMapperDialog(QDialog):
+    """Modal dialog for configuring sheet names and elapsed column mappings for log import."""
+
+    def __init__(self, settings: QSettings, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Import Schema Mapper")
+        self.setMinimumWidth(400)
+        self._settings = settings
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        header = QLabel(
+            "Configure column/sheet headers for importing custom log files:",
+            self
+        )
+        header.setWordWrap(True)
+        layout.addWidget(header)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self._sheets_edit = QLineEdit(self)
+        self._sheets_edit.setToolTip("Comma-separated list of sheet names to try first (e.g. Data,Record,Sheet1).")
+        
+        self._cols_edit = QLineEdit(self)
+        self._cols_edit.setToolTip("Comma-separated list of elapsed time column names (e.g. Elapsed (s),elapsed_ms,.elapsed_ms).")
+
+        self._scale_edit = QPlainTextEdit(self)
+        self._scale_edit.setPlaceholderText("col_name_1: scale_1\ncol_name_2: scale_2")
+        self._scale_edit.setMaximumHeight(80)
+        self._scale_edit.setToolTip("Scale factor to seconds (e.g. elapsed_ms: 0.001 to convert ms to seconds).")
+
+        form.addRow("Sheet Names", self._sheets_edit)
+        form.addRow("Time Columns", self._cols_edit)
+        form.addRow("Time Scale Mapping", self._scale_edit)
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Save")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+        self._restore_from_settings()
+
+    def _restore_from_settings(self) -> None:
+        s = self._settings
+        sheets = s.value("import/sheet_names", "Data,Record")
+        self._sheets_edit.setText(str(sheets))
+
+        cols = s.value("import/elapsed_cols", "Elapsed (s),elapsed_ms")
+        self._cols_edit.setText(str(cols))
+
+        scale_val = s.value("import/elapsed_scales", "Elapsed (s): 1.0\nelapsed_ms: 0.001")
+        self._scale_edit.setPlainText(str(scale_val))
+
+    def _on_accept(self) -> None:
+        s = self._settings
+        s.setValue("import/sheet_names", self._sheets_edit.text().strip())
+        s.setValue("import/elapsed_cols", self._cols_edit.text().strip())
+        s.setValue("import/elapsed_scales", self._scale_edit.toPlainText().strip())
+        self.accept()

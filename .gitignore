@@ -58,3 +58,7 @@ sign-password.txt
 
 # Model artifacts and generated screenshots
 artifacts/
+
+# Tooling and caches
+.ruff_cache/
+innosetup-*.exe

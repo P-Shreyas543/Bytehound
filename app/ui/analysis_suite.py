@@ -533,6 +533,8 @@ class AnalysisSuiteWindow(QMainWindow):
         tools_menu.addSeparator()
         tools_menu.addAction("Custom Math Channel...", self._add_custom_math_channel, QKeySequence("M"))
         tools_menu.addAction("Remove Custom Math Channel...", self._remove_custom_math_channel)
+        tools_menu.addSeparator()
+        tools_menu.addAction("Import Schema Mapper...", self._configure_import_schema)
 
         # ── Scatter ──────────────────────────────────────────────────
         scatter_menu = mb.addMenu("Scatter")
@@ -703,6 +705,13 @@ class AnalysisSuiteWindow(QMainWindow):
         self._rebuild_param_list()
         self._rebuild_plots()
         self._status.showMessage(f"Removed Math Channel: {item}", 5000)
+
+    def _configure_import_schema(self):
+        from .dialogs import SchemaMapperDialog
+        from PySide6.QtWidgets import QDialog
+        dlg = SchemaMapperDialog(self._qsettings, parent=self)
+        if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._status.showMessage("Import schema mapping configuration saved.", 5000)
 
     def _compute_math_channels(self, log: LogEntry):
         def diff_func(y):

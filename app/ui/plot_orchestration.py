@@ -1177,3 +1177,30 @@ class PlotOrchestrationMixin:
             finally:
                 self._plot_range_changing = False
 
+    def _on_plot_settings(self) -> None:
+        self._log_activity("[ACTION] Open Plot Settings dialog")
+        from .dialogs import PlotSettingsDialog
+        from PySide6.QtWidgets import QDialog
+        dlg = PlotSettingsDialog(self._settings, parent=self)
+        if dlg.exec() != QDialog.DialogCode.Accepted:
+            return
+        cap_val, window_s = dlg.get_values()
+        
+        # Apply cap to existing plot buffers
+        self._plot_history_max_samples = cap_val if cap_val > 0 else None
+        for buf in self._plot_history.values():
+            buf.set_max_samples(self._plot_history_max_samples)
+            
+        # Apply display window
+        self._plot_window_seconds = window_s if window_s > 0 else None
+        
+        # Force a redraw to update display window immediately
+        self._redraw_plot()
+        
+        self._set_status(
+            f"Plot settings updated: memory cap {cap_val or 'Unlimited'}, display window {window_s or 'All'}"
+        )
+        self._log_activity(
+            f"[INFO] Plot settings updated: max_samples={cap_val}, window_s={window_s}"
+        )
+

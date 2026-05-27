@@ -219,7 +219,7 @@ from ..decoder.types import FrameConfig
 from ..serial_logging.decoded_logger import DecodedLogger
 from ..serial_logging.raw_logger import RawLogger
 from ..protocol.packet_parser import create_parser, ParserProtocol, ParsedPacket
-from ..serial_io.serial_worker import PollingWorker
+from ..serial_io.serial_worker import PollingWorker, SerialSettings
 
 
 
@@ -392,6 +392,13 @@ class MainWindow(
         self._ui_timer = QTimer(self)
         self._ui_timer.setInterval(16)  # ~60 Hz
         self._ui_timer.timeout.connect(self._flush_ui)
+
+        # Reconnect timer for exponential backoff on USB disconnect
+        self._reconnect_timer = QTimer(self)
+        self._reconnect_timer.setSingleShot(True)
+        self._reconnect_timer.timeout.connect(self._on_reconnect_timeout)
+        self._reconnect_attempts = 0
+        self._saved_settings: Optional[SerialSettings] = None
 
         # 2 Hz Y-axis autofit. Y-autorange on every packet costs ~10s of profile
         # time at 100 Hz; throttling to 500 ms is visually indistinguishable for
@@ -970,6 +977,53 @@ class MainWindow(
             self._serial = None
         self._set_connection_ui(False)
         self._set_status(reason)
+        if hasattr(self, "_warning_badge") and self._warning_badge is not None:
+            self._warning_badge.setVisible(False)
+        if hasattr(self, "_reconnect_timer") and self._reconnect_timer.isActive():
+            self._reconnect_timer.stop()
+
+    def _attempt_connect(self, settings: SerialSettings, is_retry: bool = False) -> bool:
+        self._seen_decode_warnings.clear()
+        if hasattr(self, "_warning_badge") and self._warning_badge is not None:
+            self._warning_badge.setVisible(False)
+        try:
+            self._serial = PollingWorker(
+                settings,
+                self._config.protocol,
+                self._config.polling_schedules,
+                decode_config=self._config,
+            )
+            self._serial.packets_received.connect(self._on_packets_received)
+            self._serial.metrics_updated.connect(self._on_metrics_updated)
+            self._serial.error_occurred.connect(self._on_serial_error)
+            self._serial.warning_occurred.connect(self._on_serial_warning)
+            self._serial.tx_recorded.connect(self._on_tx_recorded)
+            self._serial.wire_recorded.connect(self._on_wire_recorded)
+            self._serial.connection_lost.connect(self._on_connection_lost)
+            self._serial.device_timeout.connect(self._on_device_timeout)
+            self._serial.open()
+            self._serial.set_polling_global(self._polling_action.isChecked())
+            self._session_started = datetime.now()
+            self._ui_timer.start()
+
+            self._set_connection_ui(True)
+            self._set_status(f"Connected to {settings.port}")
+            self._log_activity(f"Connected to {settings.port} @ {settings.baud_rate}")
+            self._saved_settings = settings
+            self._reconnect_attempts = 0
+            if hasattr(self, "_reconnect_timer") and self._reconnect_timer.isActive():
+                self._reconnect_timer.stop()
+            return True
+        except Exception as exc:
+            self._serial = None
+            if is_retry:
+                self._log_activity(f"[WARN] Reconnection attempt failed for {settings.port}: {exc}")
+            else:
+                self._popup_critical(
+                    "Connection Error",
+                    _format_serial_open_error(getattr(settings, "port", ""), exc),
+                )
+            return False
 
     def _on_toggle_connect(self) -> None:
         self._log_activity(
@@ -1000,36 +1054,7 @@ class MainWindow(
             self._popup_warning("Connect", "No port selected. Please plug in a device and refresh.")
             return
 
-        self._seen_decode_warnings.clear()
-        try:
-            self._serial = PollingWorker(
-                settings,
-                self._config.protocol,
-                self._config.polling_schedules,
-                decode_config=self._config,
-            )
-            self._serial.packets_received.connect(self._on_packets_received)
-            self._serial.metrics_updated.connect(self._on_metrics_updated)
-            self._serial.error_occurred.connect(self._on_serial_error)
-            self._serial.warning_occurred.connect(self._on_serial_warning)
-            self._serial.tx_recorded.connect(self._on_tx_recorded)
-            self._serial.wire_recorded.connect(self._on_wire_recorded)
-            self._serial.connection_lost.connect(self._on_connection_lost)
-            self._serial.device_timeout.connect(self._on_device_timeout)
-            self._serial.open()
-            self._serial.set_polling_global(self._polling_action.isChecked())
-            self._session_started = datetime.now()
-            self._ui_timer.start()
-
-            self._set_connection_ui(True)
-            self._set_status(f"Connected to {settings.port}")
-            self._log_activity(f"Connected to {settings.port} @ {settings.baud_rate}")
-        except Exception as exc:
-            self._serial = None
-            self._popup_critical(
-                "Connection Error",
-                _format_serial_open_error(getattr(settings, "port", ""), exc),
-            )
+        self._attempt_connect(settings)
 
     def _on_serial_error(self, err: str) -> None:
         self._log_activity(f"Serial Error: {err}")
@@ -1044,6 +1069,32 @@ class MainWindow(
         """Called when the worker detects a physical USB unplug."""
         self._disconnect(reason="USB device disconnected")
         self._log_activity("[WARN] Connection lost — USB device was disconnected")
+
+        # Trigger exponential backoff auto-reconnect if enabled
+        if self._saved_settings and getattr(self._saved_settings, "auto_reconnect", False):
+            self._reconnect_attempts = 0
+            self._log_activity("[INFO] Auto-reconnect is enabled. Scheduling reconnection in 1.0s...")
+            self._reconnect_timer.start(1000)
+
+    def _on_reconnect_timeout(self) -> None:
+        if not self._saved_settings:
+            return
+
+        self._reconnect_attempts += 1
+        self._log_activity(f"[INFO] Auto-reconnect attempt {self._reconnect_attempts} for {self._saved_settings.port}...")
+
+        if self._serial is not None and self._serial.is_open:
+            self._reconnect_attempts = 0
+            return
+
+        success = self._attempt_connect(self._saved_settings, is_retry=True)
+        if success:
+            self._log_activity("[INFO] Auto-reconnect successful!")
+        else:
+            # Exponential backoff: 1s, 2s, 4s, 8s, up to 16s
+            backoff = min(16000, 1000 * (2 ** self._reconnect_attempts))
+            self._log_activity(f"[INFO] Scheduling next reconnect attempt in {backoff / 1000:.0f} seconds...")
+            self._reconnect_timer.start(backoff)
 
     def _on_device_timeout(self) -> None:
         """Called when the device is connected but has sent no data for ≥ 3 s."""
@@ -1383,6 +1434,11 @@ class MainWindow(
             return
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self._activity_log.appendPlainText(f"{timestamp}  {text}")
+        
+        lower_text = text.lower()
+        if "queue full" in lower_text or "saturated" in lower_text or "dropped" in lower_text:
+            if hasattr(self, "_warning_badge") and self._warning_badge is not None:
+                self._warning_badge.setVisible(True)
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._log_activity("[SESSION] Close requested by user")

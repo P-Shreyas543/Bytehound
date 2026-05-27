@@ -71,6 +71,13 @@ from .widgets import (
 )
 
 
+class WarningBadge(QLabel):
+    """Subclass of QLabel that dismisses/hides itself when clicked."""
+    def mousePressEvent(self, event) -> None:
+        self.setVisible(False)
+        super().mousePressEvent(event)
+
+
 class UIBuildersMixin:
     """MainWindow mixin holding _build_ui and tab/menu/toolbar builders."""
 
@@ -84,12 +91,22 @@ class UIBuildersMixin:
         self._led_label.setStyleSheet("color: #ef5350;")
         self._led_label.setToolTip("Disconnected")
         self._status_label = QLabel("")
+        
+        self._warning_badge = WarningBadge("⚠️ Queue Saturated")
+        self._warning_badge.setStyleSheet(
+            "background-color: #F59E0B; color: #000000; font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 8pt;"
+        )
+        self._warning_badge.setToolTip("TX Queue or Raw Log Queue is saturated. Commands/logs are being dropped. Click to dismiss.")
+        self._warning_badge.setCursor(Qt.PointingHandCursor)
+        self._warning_badge.setVisible(False)
+
         self._counts_label = QLabel("")
         self._counts_label.setFont(QFont("Consolas", 9))
         self._counts_label.setStyleSheet("padding: 0 8px; letter-spacing: 0.5px;")
         bar = QStatusBar(self)
         bar.addWidget(self._led_label)
         bar.addWidget(self._status_label, 1)
+        bar.addPermanentWidget(self._warning_badge)
         bar.addPermanentWidget(self._counts_label)
         self.setStatusBar(bar)
 
@@ -183,6 +200,9 @@ class UIBuildersMixin:
         self._logging_settings_action = QAction(_icon("mdi6.tune-vertical", _ic), "Logging Settings...", self)
         self._logging_settings_action.triggered.connect(self._on_logging_settings)
 
+        self._plot_settings_action = QAction(_icon("mdi6.chart-line", _ic), "Plot Settings...", self)
+        self._plot_settings_action.triggered.connect(self._on_plot_settings)
+
     def _build_menus(self) -> None:
         menubar = self.menuBar()
 
@@ -216,6 +236,7 @@ class UIBuildersMixin:
         tools_menu = menubar.addMenu("&Tools")
         tools_menu.addAction(self._analysis_action)
         tools_menu.addAction(self._logging_settings_action)
+        tools_menu.addAction(self._plot_settings_action)
         _add_sep()
 
         help_menu = menubar.addMenu("&Help")

@@ -86,6 +86,29 @@ class LogLoaderThread(QThread):
         except Exception as exc:
             self.error.emit(self._path, str(exc))
 
+    def _get_schema_settings(self):
+        from PySide6.QtCore import QSettings
+        from .analysis_theme import APP_ORG, APP_NAME
+        s = QSettings(APP_ORG, APP_NAME)
+        
+        sheets_raw = s.value("import/sheet_names", "Data,Record")
+        sheet_candidates = [x.strip() for x in str(sheets_raw).split(",") if x.strip()]
+        
+        cols_raw = s.value("import/elapsed_cols", "Elapsed (s),elapsed_ms")
+        col_candidates = [x.strip() for x in str(cols_raw).split(",") if x.strip()]
+        
+        scales_raw = s.value("import/elapsed_scales", "Elapsed (s): 1.0\nelapsed_ms: 0.001")
+        scale_mapping = {}
+        for line in str(scales_raw).split("\n"):
+            if ":" in line:
+                k, v = line.split(":", 1)
+                try:
+                    scale_mapping[k.strip()] = float(v.strip())
+                except ValueError:
+                    pass
+                    
+        return sheet_candidates, col_candidates, scale_mapping
+
     def _load_csv(self):
         """Parse a legacy _decoded.csv file (pre-xlsx Bytehound versions)."""
         import pandas as pd
@@ -100,8 +123,19 @@ class LogLoaderThread(QThread):
             return
 
         first_ts_posix: float | None = None
+        sheet_candidates, col_candidates, scale_mapping = self._get_schema_settings()
 
-        if "elapsed_ms" in df.columns:
+        elapsed_col = None
+        elapsed_scale = 1.0
+        for col in col_candidates:
+            if col in df.columns:
+                elapsed_col = col
+                elapsed_scale = scale_mapping.get(col, 1.0)
+                break
+
+        if elapsed_col:
+            elapsed_arr = (pd.to_numeric(df[elapsed_col], errors='coerce').fillna(0) * elapsed_scale).to_numpy(dtype=np.float64)
+        elif "elapsed_ms" in df.columns:
             elapsed_arr = (pd.to_numeric(df["elapsed_ms"], errors='coerce').fillna(0) / 1000.0).to_numpy(dtype=np.float64)
         elif "timestamp" in df.columns:
             ts_series = pd.to_datetime(df["timestamp"], errors='coerce')
@@ -113,7 +147,7 @@ class LogLoaderThread(QThread):
             first_ts_posix = first_ts.timestamp()
             elapsed_arr = (ts_series - first_ts).dt.total_seconds().fillna(0).to_numpy(dtype=np.float64)
         else:
-            self.error.emit(self._path, "No timestamp or elapsed_ms column found.")
+            self.error.emit(self._path, f"No configured time column (checked {col_candidates}) or timestamp column found.")
             return
 
         data_columns = [c for c in df.columns if c not in {"timestamp", "elapsed_ms"} and not _is_time_like_param(c)]
@@ -147,9 +181,16 @@ class LogLoaderThread(QThread):
     def _load_xlsx(self):
         """Parse a .xlsx file. Supports three schemas using high-performance pandas."""
         import pandas as pd
+        sheet_candidates, col_candidates, scale_mapping = self._get_schema_settings()
         try:
             xls = pd.ExcelFile(self._path)
-            sheet = 'Data' if 'Data' in xls.sheet_names else ('Record' if 'Record' in xls.sheet_names else xls.sheet_names[0])
+            sheet = None
+            for cand in sheet_candidates:
+                if cand in xls.sheet_names:
+                    sheet = cand
+                    break
+            if not sheet:
+                sheet = 'Data' if 'Data' in xls.sheet_names else ('Record' if 'Record' in xls.sheet_names else xls.sheet_names[0])
             df = pd.read_excel(xls, sheet_name=sheet)
         except Exception as e:
             self.error.emit(self._path, f"Failed to parse Excel: {e}")
@@ -173,6 +214,13 @@ class LogLoaderThread(QThread):
                 elapsed_scale = 1e-3
             elif h.endswith(".frame_id"):
                 frame_block_id_cols.add(h)
+
+        if not elapsed_col:
+            for col in col_candidates:
+                if col in headers:
+                    elapsed_col = col
+                    elapsed_scale = scale_mapping.get(col, 1.0)
+                    break
 
         if not elapsed_col:
             for h in headers:

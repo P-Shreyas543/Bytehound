@@ -134,6 +134,52 @@ def _apply_windows_dark_titlebar(widget, dark: bool) -> None:
         pass
 
 
+def _apply_windows_accent_titlebar(widget, color) -> None:
+    """Apply custom title bar caption and border colors to match the theme accent.
+
+    Only effective on Windows 11+.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        hwnd = int(widget.winId())
+        
+        # Windows COLORREF is 0x00BBGGRR
+        bgr_color = (color.blue() << 16) | (color.green() << 8) | color.red()
+        value = ctypes.c_int(bgr_color)
+        
+        # DWMWA_CAPTION_COLOR = 35
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            35,
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+        
+        # DWMWA_BORDER_COLOR = 34
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            34,
+            ctypes.byref(value),
+            ctypes.sizeof(value),
+        )
+        
+        # Set text color to white/black for contrast
+        # DWMWA_TEXT_COLOR = 36
+        luminance = (0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()) / 255.0
+        text_color_val = 0x00FFFFFF if luminance < 0.5 else 0x00000000
+        text_value = ctypes.c_int(text_color_val)
+        ctypes.windll.dwmapi.DwmSetWindowAttribute(
+            hwnd,
+            36,
+            ctypes.byref(text_value),
+            ctypes.sizeof(text_value),
+        )
+    except Exception:
+        pass
+
+
 class _CheckableGroupCombo(QPushButton):
     """A button that opens a checkable list of group names.
 
@@ -345,8 +391,15 @@ class TitleBarThemeFilter(QObject):
             try:
                 if hasattr(obj, "isWindow") and obj.isWindow() and hasattr(obj, "winId"):
                     from .theming import resolve_theme
+                    from PySide6.QtGui import QPalette
+                    from PySide6.QtWidgets import QApplication
+                    
                     theme = str(self._settings.value("ui/theme", "dark"))
-                    _apply_windows_dark_titlebar(obj, dark=(resolve_theme(theme) == "dark"))
+                    is_dark = (resolve_theme(theme) == "dark")
+                    _apply_windows_dark_titlebar(obj, dark=is_dark)
+                    
+                    accent = QApplication.palette().color(QPalette.ColorRole.Highlight)
+                    _apply_windows_accent_titlebar(obj, accent)
             except Exception:
                 pass
         return False
