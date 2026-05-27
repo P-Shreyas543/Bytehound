@@ -130,7 +130,9 @@ class LoggingSessionMixin:
             else None
         )
         if decoded_path:
-            assert self._config is not None
+            if self._config is None:
+                self._popup_critical("Start Logging", "No configuration loaded.")
+                return
             self._decoded_logger = DecodedLogger(
                 decoded_path,
                 self._config,

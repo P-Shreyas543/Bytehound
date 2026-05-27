@@ -135,7 +135,7 @@ class ConnectionDialog(QDialog):
         self._stop_bits_combo.setCurrentText(str(s.value("conn/stop_bits", f"{cd.stop_bits:g}")))
         self._parity_combo.setCurrentText(str(s.value("conn/parity", cd.parity)))
         self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", str(cd.timeout_ms))))
-        
+
         # Auto-reconnect default is False
         auto_rec_val = s.value("conn/auto_reconnect", "false")
         self._auto_reconnect_chk.setChecked(str(auto_rec_val).lower() == "true")
@@ -475,7 +475,7 @@ class PlotTriggerDialog(QDialog):
         self.setMinimumWidth(320)
 
         layout = QVBoxLayout(self)
-        
+
         desc = QLabel("Automatically trigger actions when a parameter crosses a threshold.", self)
         desc.setWordWrap(True)
         layout.addWidget(desc)
@@ -484,10 +484,10 @@ class PlotTriggerDialog(QDialog):
 
         self._param_combo = QComboBox(self)
         self._param_combo.addItems(sorted(signals))
-        
+
         self._op_combo = QComboBox(self)
         self._op_combo.addItems([">", "<", "==", ">=", "<=", "!="])
-        
+
         self._val_spin = QDoubleSpinBox(self)
         self._val_spin.setRange(-1e9, 1e9)
         self._val_spin.setDecimals(4)
@@ -496,11 +496,11 @@ class PlotTriggerDialog(QDialog):
         form.addRow("Parameter:", self._param_combo)
         form.addRow("Operator:", self._op_combo)
         form.addRow("Threshold:", self._val_spin)
-        
+
         self._action_pause = QCheckBox("Pause Live Plot", self)
         self._action_pause.setChecked(True)
         self._action_log = QCheckBox("Start Logging", self)
-        
+
         form.addRow("Action:", self._action_pause)
         form.addRow("", self._action_log)
 
@@ -545,7 +545,7 @@ class PlotSettingsDialog(QDialog):
         self._cap_spin.setRange(1000, 10_000_000)
         self._cap_spin.setSingleStep(10000)
         self._cap_spin.setSuffix(" samples")
-        
+
         # Link checkbox to spinbox enabled state
         self._cap_chk.toggled.connect(self._cap_spin.setEnabled)
 
@@ -639,7 +639,7 @@ class SchemaMapperDialog(QDialog):
 
         self._sheets_edit = QLineEdit(self)
         self._sheets_edit.setToolTip("Comma-separated list of sheet names to try first (e.g. Data,Record,Sheet1).")
-        
+
         self._cols_edit = QLineEdit(self)
         self._cols_edit.setToolTip("Comma-separated list of elapsed time column names (e.g. Elapsed (s),elapsed_ms,.elapsed_ms).")
 
@@ -691,7 +691,7 @@ class AboutDialog(QDialog):
         self.setWindowTitle("About Bytehound")
         self.setModal(True)
         self.setFixedSize(480, 240)
-        
+
         # Remove help button from title bar
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 

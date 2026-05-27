@@ -1,18 +1,11 @@
 """Auto-extracted mixin."""
 
 from __future__ import annotations
-import time
 import struct
-from datetime import datetime
-from collections import deque
-from typing import Optional, Dict, List, Tuple
+from typing import Dict, List
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QTableWidgetItem, QPushButton, QSizePolicy
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtCore import QLocale, Qt
-from ..decoder.frame_decoder import DecodedFrame, DecodedSignal
-from ..protocol.packet_parser import ParsedPacket
-from .dialogs import PlotTriggerDialog
-from .logging_session import _format_number
 
 
 class ParameterEditorMixin:
@@ -102,7 +95,6 @@ class ParameterEditorMixin:
             return
 
         from ..protocol.packet_builder import build_packet
-        import struct
 
         try:
             # Step 1: reverse scale/offset → raw = (user_value - offset) / scale

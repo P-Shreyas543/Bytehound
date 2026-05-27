@@ -167,17 +167,17 @@ class XYPlotWindow(QDialog):
                 xm, ym = x[mask], y[mask]
                 poly = np.polyfit(xm, ym, 1)
                 y_fit = np.polyval(poly, xm)
-                
+
                 # Calculate R-squared
                 y_mean = np.mean(ym)
                 ss_tot = np.sum((ym - y_mean)**2)
                 ss_res = np.sum((ym - y_fit)**2)
                 r_squared = 1 - (ss_res / ss_tot) if ss_tot != 0 else 0
-                
+
                 # Sort X for plotting a continuous line
                 sort_idx = np.argsort(xm)
                 reg_pen = pg.mkPen(entry.color, width=2, style=Qt.PenStyle.DashLine)
-                
+
                 reg_name = f"{entry.name} fit (R²={r_squared:.3f})"
                 reg_line = pg.PlotDataItem(xm[sort_idx], y_fit[sort_idx], pen=reg_pen, name=reg_name)
                 self._plot.addItem(reg_line)

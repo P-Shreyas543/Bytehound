@@ -45,14 +45,11 @@ from PySide6.QtWidgets import (
 # Helper modules — see file docstring above for the full split rationale.
 from .analysis_theme import (
     APP_NAME, APP_ORG, CURSOR_COLORS, LOG_COLORS, SELECTED_CURSOR_COLOR,
-    THEME, _parse_unit, get_analysis_dir, get_datalogs_dir,
+    THEME, get_analysis_dir, get_datalogs_dir,
 )
 from .analysis_widgets import CursorReadoutPanel, StatisticsPanel, TimeAxisItem
 from .log_io import (
     LogEntry, LogLoaderThread, _CSV_CACHE,
-    # Re-exported for backwards compatibility — tests and external callers
-    # historically imported these from this module.
-    _is_time_like_param, _test_name_from_path,
 )
 from .xy_plot import XYPlotWindow
 
@@ -175,6 +172,11 @@ class AnalysisSuiteWindow(QMainWindow):
         self._recent_files: list[str] = []
         # Settings (window geometry, recent files, theme prefs, etc.)
         self._qsettings = QSettings(APP_ORG, APP_NAME)
+        # Legacy compat: _plot_height was used by an older slider-based UI.
+        # Session files may still contain it; default to DEFAULT_PLOT_HEIGHT.
+        self._plot_height = int(
+            self._qsettings.value("analysis/plot_height", DEFAULT_PLOT_HEIGHT)
+        )
         # Guard: True while we're programmatically populating the tree so the
         # model's rowsInserted signal (used to detect drag-drop) doesn't
         # mistake our own inserts for user drops.
@@ -198,7 +200,7 @@ class AnalysisSuiteWindow(QMainWindow):
             self._math_channels = {str(k): str(v) for k, v in persisted_math.items()}
         else:
             self._math_channels = {}
-        
+
         # Log sidebar UI elements
         self._log_entries_ui: dict[str, dict] = {}  # log_id → {checkbox, spin, container, ...}
 
@@ -665,7 +667,7 @@ class AnalysisSuiteWindow(QMainWindow):
         if not ok or not name.strip():
             return
         name = name.strip()
-        
+
         # Check if already exists in loaded logs? Overwriting is fine.
         expr, ok = QInputDialog.getText(
             self, "Math Channel",
@@ -673,13 +675,13 @@ class AnalysisSuiteWindow(QMainWindow):
         )
         if not ok or not expr.strip():
             return
-            
+
         self._math_channels[name] = expr.strip()
         self._qsettings.setValue("analysis/math_channels", self._math_channels)
-        
+
         for log in self._logs.values():
             self._compute_math_channels(log)
-            
+
         self._rebuild_param_list()
         self._rebuild_plots()
         self._status.showMessage(f"Added Math Channel: {name}", 5000)
@@ -689,19 +691,19 @@ class AnalysisSuiteWindow(QMainWindow):
         if not self._math_channels:
             QMessageBox.information(self, "Remove Math Channel", "No custom math channels exist.")
             return
-            
+
         items = list(self._math_channels.keys())
         item, ok = QInputDialog.getItem(self, "Remove Math Channel", "Select channel to remove:", items, 0, False)
         if not ok or not item:
             return
-            
+
         del self._math_channels[item]
         self._qsettings.setValue("analysis/math_channels", self._math_channels)
-        
+
         for log in self._logs.values():
             if item in log.columns:
                 del log.columns[item]
-                
+
         self._rebuild_param_list()
         self._rebuild_plots()
         self._status.showMessage(f"Removed Math Channel: {item}", 5000)
@@ -1527,7 +1529,7 @@ class AnalysisSuiteWindow(QMainWindow):
         )
         if not ok:
             return
-        
+
         if rate > 1:
             merged = merged[::rate]
 
@@ -2064,6 +2066,13 @@ class AnalysisSuiteWindow(QMainWindow):
     # Crosshair / mouse tracking
     # ──────────────────────────────────────────────────────────────────
     def _on_mouse_moved(self, evt, pw: pg.PlotWidget):
+        try:
+            self._on_mouse_moved_inner(evt, pw)
+        except Exception:
+            # At 60 fps, one bad event must not kill the crosshair permanently.
+            pass
+
+    def _on_mouse_moved_inner(self, evt, pw: pg.PlotWidget):
         pos = evt[0]
         if not pw.sceneBoundingRect().contains(pos):
             if pw in self._crosshair_lines:
@@ -2300,11 +2309,17 @@ class AnalysisSuiteWindow(QMainWindow):
             return
         self._v_cursors.remove(cdata)
         for pw, line in cdata['lines'].items():
-            pw.removeItem(line)
+            try:
+                pw.removeItem(line)
+            except Exception:
+                pass
         # Remove tracking dots
         if cid in self._cursor_dots:
             for dot in self._cursor_dots.pop(cid):
-                dot['pw'].removeItem(dot['item'])
+                try:
+                    dot['pw'].removeItem(dot['item'])
+                except Exception:
+                    pass
         # Reset selection
         if self._selected_v_cursor == cid:
             self._selected_v_cursor = ''
@@ -2462,7 +2477,10 @@ class AnalysisSuiteWindow(QMainWindow):
         if cursor_index < 0 or cursor_index >= len(self._h_cursors):
             return
         hc = self._h_cursors.pop(cursor_index)
-        hc['plot_widget'].removeItem(hc['line'])
+        try:
+            hc['plot_widget'].removeItem(hc['line'])
+        except Exception:
+            pass
         if self._selected_h_cursor == cursor_index:
             self._selected_h_cursor = -1
         elif self._selected_h_cursor > cursor_index:
@@ -2473,19 +2491,28 @@ class AnalysisSuiteWindow(QMainWindow):
         # Vertical
         for cdata in self._v_cursors:
             for pw, line in cdata['lines'].items():
-                pw.removeItem(line)
+                try:
+                    pw.removeItem(line)
+                except Exception:
+                    pass
         self._v_cursors.clear()
         self._selected_v_cursor = ''
 
         # Cursor dots
         for _cid, dots in self._cursor_dots.items():
             for dot in dots:
-                dot['pw'].removeItem(dot['item'])
+                try:
+                    dot['pw'].removeItem(dot['item'])
+                except Exception:
+                    pass
         self._cursor_dots.clear()
 
         # Horizontal
         for hc in self._h_cursors:
-            hc['plot_widget'].removeItem(hc['line'])
+            try:
+                hc['plot_widget'].removeItem(hc['line'])
+            except Exception:
+                pass
         self._h_cursors.clear()
         self._selected_h_cursor = -1
 
@@ -2618,7 +2645,9 @@ class AnalysisSuiteWindow(QMainWindow):
         # Restore plot height
         ph = data.get('plot_height', DEFAULT_PLOT_HEIGHT)
         self._plot_height = max(MIN_PLOT_HEIGHT, min(MAX_PLOT_HEIGHT, ph))
-        self._height_slider.setValue(self._plot_height)
+        # _height_slider removed in grid-layout refactor; skip silently.
+        if hasattr(self, "_height_slider"):
+            self._height_slider.setValue(self._plot_height)
 
         session_params = set(data.get('parameters', []))
         # v4+ stores the layout; older versions only stored flat 'parameters'.
@@ -2751,10 +2780,20 @@ class AnalysisSuiteWindow(QMainWindow):
     # Utility actions
     # ──────────────────────────────────────────────────────────────────
     def _open_datalogs_folder(self):
-        os.startfile(get_datalogs_dir())
+        d = get_datalogs_dir()
+        try:
+            os.makedirs(d, exist_ok=True)
+            os.startfile(d)
+        except Exception as exc:
+            self._popup_warning("Open Folder", f"Could not open:\n{d}\n\n{exc}")
 
     def _open_analysis_folder(self):
-        os.startfile(get_analysis_dir())
+        d = get_analysis_dir()
+        try:
+            os.makedirs(d, exist_ok=True)
+            os.startfile(d)
+        except Exception as exc:
+            self._popup_warning("Open Folder", f"Could not open:\n{d}\n\n{exc}")
 
     def _open_xy_plotter(self):
         if self._xy_window is not None and self._xy_window.isVisible():
@@ -2888,6 +2927,8 @@ class AnalysisSuiteWindow(QMainWindow):
     # Cleanup & persistence
     # ──────────────────────────────────────────────────────────────────
     def closeEvent(self, event):
+        # Stop debounce timer FIRST so it can't fire during teardown.
+        self._stats_timer.stop()
         # Persist UI state
         try:
             qs = self._qsettings

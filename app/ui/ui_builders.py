@@ -15,24 +15,20 @@ loaded they exist.
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Dict, Optional
+from typing import Dict
 
-from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
-from PySide6.QtGui import QAction, QActionGroup, QDesktopServices, QFont, QIcon, QKeySequence, QPixmap
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QAction, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDockWidget,
-    QFormLayout,
-    QFrame,
     QHBoxLayout,
     QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
-    QMenu,
     QPlainTextEdit,
     QPushButton,
     QSizePolicy,
@@ -40,7 +36,6 @@ from PySide6.QtWidgets import (
     QStatusBar,
     QTableView,
     QTableWidget,
-    QTableWidgetItem,
     QToolBar,
     QToolButton,
     QVBoxLayout,
@@ -62,7 +57,6 @@ from .plot_panel import GRID_LAYOUTS
 from .telemetry_model import TelemetryTableModel, COLUMNS as _MODEL_COLUMNS
 from .widgets import (
     _BTN_GREEN,
-    _BTN_PINK,
     _BTN_YELLOW,
     _CheckableGroupCombo,
     _StatusBadgeDelegate,
@@ -91,7 +85,7 @@ class UIBuildersMixin:
         self._led_label.setStyleSheet("color: #ef5350;")
         self._led_label.setToolTip("Disconnected")
         self._status_label = QLabel("")
-        
+
         self._warning_badge = WarningBadge("⚠️ Queue Saturated")
         self._warning_badge.setStyleSheet(
             "background-color: #F59E0B; color: #000000; font-weight: bold; padding: 2px 6px; border-radius: 4px; font-size: 8pt;"

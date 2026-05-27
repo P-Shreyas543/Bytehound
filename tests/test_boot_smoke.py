@@ -32,8 +32,8 @@ from app.ui.main_window import (
     MainWindow,
     APP_ORG,
     APP_NAME,
-    TitleBarThemeFilter,
 )
+from app.ui.widgets import TitleBarThemeFilter
 
 
 @pytest.fixture(scope="session")

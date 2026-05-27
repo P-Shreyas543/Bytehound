@@ -35,7 +35,7 @@ from serial.tools import list_ports
 from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
 
 from ..protocol.packet_parser import ParsedPacket, create_parser
-from ..decoder.frame_decoder import DecodedFrame, decode_frame
+from ..decoder.frame_decoder import decode_frame
 from ..decoder.types import FrameConfig, PollingScheduleSpec, ProtocolConfig
 
 _LOG = logging.getLogger("bytehound.serial_io.worker")
@@ -859,7 +859,7 @@ class PollingWorker(QThread):
             if self._pipeline_tx_gap_ms is not None
             else POLL_PIPELINE_TX_GAP_FLOOR_MS
         )
-        
+
         # Check gap manually instead of sleeping
         delay_ms = self._effective_tx_gap_ms(gap_ms)
         if delay_ms > 0 and self._last_tx_time > 0:

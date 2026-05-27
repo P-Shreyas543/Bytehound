@@ -30,7 +30,8 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
-from app.ui.main_window import MainWindow, APP_ORG, APP_NAME, TitleBarThemeFilter, _find_logo
+from app.ui.main_window import MainWindow, APP_ORG, APP_NAME, _find_logo
+from app.ui.widgets import TitleBarThemeFilter
 
 _LOG_MAX_BYTES = 5 * 1024 * 1024
 _LOG_BACKUP_COUNT = 3

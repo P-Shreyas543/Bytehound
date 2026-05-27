@@ -90,13 +90,13 @@ class LogLoaderThread(QThread):
         from PySide6.QtCore import QSettings
         from .analysis_theme import APP_ORG, APP_NAME
         s = QSettings(APP_ORG, APP_NAME)
-        
+
         sheets_raw = s.value("import/sheet_names", "Data,Record")
         sheet_candidates = [x.strip() for x in str(sheets_raw).split(",") if x.strip()]
-        
+
         cols_raw = s.value("import/elapsed_cols", "Elapsed (s),elapsed_ms")
         col_candidates = [x.strip() for x in str(cols_raw).split(",") if x.strip()]
-        
+
         scales_raw = s.value("import/elapsed_scales", "Elapsed (s): 1.0\nelapsed_ms: 0.001")
         scale_mapping = {}
         for line in str(scales_raw).split("\n"):
@@ -106,7 +106,7 @@ class LogLoaderThread(QThread):
                     scale_mapping[k.strip()] = float(v.strip())
                 except ValueError:
                     pass
-                    
+
         return sheet_candidates, col_candidates, scale_mapping
 
     def _load_csv(self):

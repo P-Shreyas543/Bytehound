@@ -2,14 +2,12 @@
 
 from __future__ import annotations
 import time
-import struct
 from datetime import datetime
 from collections import deque
-from typing import Optional, Dict, List, Tuple, Deque
+from typing import Optional, List, Tuple, Deque
 
 from ..decoder.frame_decoder import DecodedFrame, DecodedSignal, decode_frame
 from ..protocol.packet_parser import ParsedPacket
-from .dialogs import PlotTriggerDialog
 from .logging_session import _format_number
 
 
@@ -30,6 +28,17 @@ class TelemetryPipelineMixin:
         The session clock and rate label are updated on EVERY tick (even when
         no packets arrived) so the clock doesn't freeze during device timeouts.
         """
+        try:
+            self._flush_ui_inner()
+        except Exception:
+            # Never let a single bad batch kill the 60 Hz timer.
+            import logging
+            logging.getLogger("bytehound.ui").exception(
+                "_flush_ui recovered from unexpected error"
+            )
+
+    def _flush_ui_inner(self) -> None:
+        """Actual flush implementation, called by _flush_ui with protection."""
         # Update the session elapsed clock unconditionally (cheap string op).
         if self._session_started is not None and hasattr(self, '_session_clock_label'):
             elapsed = int((datetime.now() - self._session_started).total_seconds())
@@ -60,7 +69,14 @@ class TelemetryPipelineMixin:
                 packet, pre_decoded = item
             else:
                 packet, pre_decoded = item, None
-            self._handle_packet(packet, pre_decoded=pre_decoded)
+            try:
+                self._handle_packet(packet, pre_decoded=pre_decoded)
+            except Exception:
+                import logging
+                logging.getLogger("bytehound.ui").exception(
+                    "_handle_packet raised on frame_id=0x%04X",
+                    getattr(packet, 'frame_id', 0),
+                )
         if self._console_buffer:
             self._console.appendPlainText("\n".join(self._console_buffer))
             self._console_buffer.clear()
@@ -90,7 +106,7 @@ class TelemetryPipelineMixin:
         for signal in self._staged_signals_for_ui.values():
             if detail_tabs_visible:
                 self._update_detail_tabs(signal, bf_visible=bf_visible, en_visible=en_visible)
-            
+
             value_text = "-" if signal.scaled_value is None else _format_number(signal.scaled_value)
             for val_item in getattr(self, "_editor_value_items", {}).get(signal.signal_name, ()):
                 val_item.setText(signal.display_value or value_text)
@@ -143,7 +159,8 @@ class TelemetryPipelineMixin:
                 self._led_label.setToolTip("Connected")
                 self._set_status("Connected")
 
-        assert self._config is not None
+        if self._config is None:
+            return
         # The worker thread already decoded for us so the GUI thread doesn't
         # block on decode work. The rare worker-decode-error fallback path
         # goes through decode_frame here.
@@ -229,15 +246,15 @@ class TelemetryPipelineMixin:
         if trigger_hit:
             trigger_cfg = self._plot_trigger
             self._plot_trigger = None  # Disarm after triggering once
-            
+
             if trigger_cfg.get("pause") and self._plot_live:
                 self._set_plot_live(False, source="trigger")
-                self._log_activity(f"[ACTION] Plot auto-paused by trigger")
-            
+                self._log_activity("[ACTION] Plot auto-paused by trigger")
+
             if trigger_cfg.get("log") and not self._raw_logger:
                 self._on_toggle_logging()  # Start logging
-                self._log_activity(f"[ACTION] Logging auto-started by trigger")
-                
+                self._log_activity("[ACTION] Logging auto-started by trigger")
+
             # Update trigger button UI if it exists
             if hasattr(self, "_trigger_btn"):
                 self._trigger_btn.setText("Trigger...")

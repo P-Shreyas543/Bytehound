@@ -2,76 +2,42 @@
 
 from __future__ import annotations
 
-import logging
-import math
 import os
 import sys
-import time
 from collections import defaultdict, deque
-from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
-from typing import Deque, Dict, List, Optional, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
-from PySide6.QtCore import QEvent, QSettings, Qt, QTimer, QUrl, QObject, Signal, QLocale
+from PySide6.QtCore import QSettings, Qt, QTimer, QUrl
 from PySide6.QtGui import (
     QAction,
     QActionGroup,
-    QBrush,
-    QColor,
     QDesktopServices,
-    QFont,
     QIcon,
     QKeySequence,
-    QPainter,
-    QPainterPath,
-    QPen,
-    QPixmap,
 )
 from PySide6.QtWidgets import (
     QApplication,
-    QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QDockWidget,
     QFileDialog,
-    QFormLayout,
-    QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
-    QAbstractItemView,
-    QInputDialog,
     QMainWindow,
     QMenu,
     QMessageBox,
-    QPlainTextEdit,
-    QProgressDialog,
-    QPushButton,
-    QSizePolicy,
-    QStatusBar,
-    QStyle,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
-    QTableView,
-    QTableWidget,
-    QTableWidgetItem,
-    QToolBar,
     QToolButton,
     QVBoxLayout,
-    QWidget,
 )
-from PySide6.QtGui import QIntValidator, QDoubleValidator
 
 try:
     import pyqtgraph as pg
 except ImportError:  # pragma: no cover - exercised only when optional dep missing
     pg = None
 
-import numpy as np
 
 if pg is not None:
     # Global, intentional: keeps rendering consistent across Live Plot and Analysis Suite.
@@ -168,16 +134,11 @@ def _find_logo(name: str) -> Optional[Path]:
 from .parameter_editor import ParameterEditorMixin
 from .telemetry_pipeline import TelemetryPipelineMixin
 from app.ui.widgets import (
-    TitleBarThemeFilter,
     _BTN_GREEN,
     _BTN_PINK,
     _BTN_YELLOW,
-    _CheckableGroupCombo,
-    _StatusBadgeDelegate,
     _apply_windows_dark_titlebar,
-    _contrast_text_color,
     _icon,
-    _pad_dock_content,
 )
 
 
@@ -210,15 +171,12 @@ def _format_serial_open_error(port: str, exc: BaseException) -> str:
 
     return f"{friendly}\nDetails: {raw}"
 
-from .telemetry_model import TelemetryTableModel, COLUMNS as _MODEL_COLUMNS
-from .dialogs import ConnectionDialog, LoggingSettingsDialog, PollingConfigDialog, AboutDialog
-from ..decoder.config_loader import ConfigError, load_config
-from ..decoder.frame_decoder import DecodedFrame, DecodedSignal, decode_frame
-from ..decoder.template_io import export_excel_template, snapshot_config
+from .dialogs import ConnectionDialog, AboutDialog
+from ..decoder.template_io import export_excel_template
 from ..decoder.types import FrameConfig
 from ..serial_logging.decoded_logger import DecodedLogger
 from ..serial_logging.raw_logger import RawLogger
-from ..protocol.packet_parser import create_parser, ParserProtocol, ParsedPacket
+from ..protocol.packet_parser import ParserProtocol
 from ..serial_io.serial_worker import PollingWorker, SerialSettings
 
 
@@ -240,11 +198,6 @@ from app.ui.plot_panel import (
     GRID_LAYOUTS,
     PlotPanel,
     TimeSeriesBuffer,
-    _TimeAxisItem,
-    _EMPTY_F64,
-    _PLOT_INITIAL_WINDOW_S,
-    _configure_live_curve,
-    _format_elapsed_time,
 )
 
 
@@ -254,11 +207,11 @@ from app.ui.plot_panel import (
 
 from app.ui.config_loader import ConfigLoaderMixin
 from app.ui.detail_tabs import DetailTabsMixin
-from app.ui.logging_session import LoggingSessionMixin, _format_number
+from app.ui.logging_session import LoggingSessionMixin
 from app.ui.plot_orchestration import PlotOrchestrationMixin
 from app.ui.polling_session import PollingSessionMixin
 from app.ui.popups import PopupsMixin
-from app.ui.theming import ThemingMixin, _PLOT_PALETTE_DARK, build_card_qss
+from app.ui.theming import ThemingMixin, _PLOT_PALETTE_DARK
 from app.ui.tx_panel import TxPanelMixin
 from app.ui.ui_builders import UIBuildersMixin
 from app.ui.updater_wiring import UpdaterWiringMixin
@@ -468,9 +421,9 @@ class MainWindow(
             _v = _json.loads(_vpath.read_text(encoding="utf-8"))
         except Exception:
             _v = {}
-        
+
         logo_path = _find_logo("logo_sq.png") or _find_logo("logo.png")
-        
+
         self._log_activity("[ACTION] Open About Dialog")
         dlg = AboutDialog(_v, logo_path, self)
         dlg.exec()
@@ -937,19 +890,25 @@ class MainWindow(
 
         Guarantees the safe sequence:
           1. Stop the 60 Hz UI flush timer
-          2. Stop logging (flushes final data while worker may still be alive)
-          3. Stop the worker thread and wait for it to exit
-          4. Null the reference
-          5. Update the UI chrome
+          2. Stop the Y-autofit timer
+          3. Stop logging (flushes final data while worker may still be alive)
+          4. Stop the worker thread and wait for it to exit
+          5. Null the reference
+          6. Update the UI chrome
 
         Idempotent — safe to call even when already disconnected.
         """
         self._ui_timer.stop()
+        if hasattr(self, "_y_autofit_timer"):
+            self._y_autofit_timer.stop()
         if self._logging:
             self._stop_logging()
             self._log_activity("[INFO] Logging auto-stopped on disconnect")
         if self._serial is not None:
-            self._serial.close()   # calls stop() + wait(2000) + port.close()
+            try:
+                self._serial.close()   # calls stop() + wait(2000) + port.close()
+            except Exception:
+                pass
             self._serial = None
         self._set_connection_ui(False)
         self._set_status(reason)
@@ -1043,7 +1002,14 @@ class MainWindow(
 
     def _on_connection_lost(self) -> None:
         """Called when the worker detects a physical USB unplug."""
-        self._disconnect(reason="USB device disconnected")
+        try:
+            self._disconnect(reason="USB device disconnected")
+        except Exception:
+            # _disconnect can fail if the serial port is in a bad state
+            import logging
+            logging.getLogger("bytehound.ui").exception(
+                "_disconnect raised during connection_lost handling"
+            )
         self._log_activity("[WARN] Connection lost — USB device was disconnected")
 
         # Trigger exponential backoff auto-reconnect if enabled
@@ -1260,7 +1226,7 @@ class MainWindow(
         # Add calc groups to available triggers
         for calc in self._config.calc_groups:
             signals.append(f"{calc.group} {calc.stat}")
-        
+
         dlg = PlotTriggerDialog(signals, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
             self._plot_trigger = dlg.get_trigger()
@@ -1415,7 +1381,7 @@ class MainWindow(
             return
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self._activity_log.appendPlainText(f"{timestamp}  {text}")
-        
+
         lower_text = text.lower()
         if "queue full" in lower_text or "saturated" in lower_text or "dropped" in lower_text:
             if hasattr(self, "_warning_badge") and self._warning_badge is not None:
@@ -1423,6 +1389,12 @@ class MainWindow(
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self._log_activity("[SESSION] Close requested by user")
+        # Stop all recurring timers FIRST so they can't fire during teardown.
+        self._ui_timer.stop()
+        if hasattr(self, "_y_autofit_timer"):
+            self._y_autofit_timer.stop()
+        if hasattr(self, "_reconnect_timer"):
+            self._reconnect_timer.stop()
         # Warn if logging is active — data is safe (flushed per-frame) but
         # the user may not realise they are about to stop a recording.
         if self._logging:

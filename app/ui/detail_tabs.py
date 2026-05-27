@@ -125,7 +125,8 @@ class DetailTabsMixin:
             last_values[key_text] = values_tuple
 
     def _populate_group_selector(self) -> None:
-        assert self._config is not None
+        if self._config is None:
+            return
         groups = sorted({signal.group for signal in self._config.all_signals if signal.group})
         self._group_combo.set_groups(groups)
         # Refresh the per-(frame,signal) → group lookup used by the dock filters.

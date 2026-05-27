@@ -144,11 +144,11 @@ def _apply_windows_accent_titlebar(widget, color) -> None:
     try:
         import ctypes
         hwnd = int(widget.winId())
-        
+
         # Windows COLORREF is 0x00BBGGRR
         bgr_color = (color.blue() << 16) | (color.green() << 8) | color.red()
         value = ctypes.c_int(bgr_color)
-        
+
         # DWMWA_CAPTION_COLOR = 35
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
             hwnd,
@@ -156,7 +156,7 @@ def _apply_windows_accent_titlebar(widget, color) -> None:
             ctypes.byref(value),
             ctypes.sizeof(value),
         )
-        
+
         # DWMWA_BORDER_COLOR = 34
         ctypes.windll.dwmapi.DwmSetWindowAttribute(
             hwnd,
@@ -164,7 +164,7 @@ def _apply_windows_accent_titlebar(widget, color) -> None:
             ctypes.byref(value),
             ctypes.sizeof(value),
         )
-        
+
         # Set text color to white/black for contrast
         # DWMWA_TEXT_COLOR = 36
         luminance = (0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()) / 255.0
@@ -393,11 +393,11 @@ class TitleBarThemeFilter(QObject):
                     from .theming import resolve_theme
                     from PySide6.QtGui import QPalette
                     from PySide6.QtWidgets import QApplication
-                    
+
                     theme = str(self._settings.value("ui/theme", "dark"))
                     is_dark = (resolve_theme(theme) == "dark")
                     _apply_windows_dark_titlebar(obj, dark=is_dark)
-                    
+
                     accent = QApplication.palette().color(QPalette.ColorRole.Highlight)
                     _apply_windows_accent_titlebar(obj, accent)
             except Exception:

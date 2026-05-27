@@ -8,7 +8,6 @@ mixed into MainWindow.
 
 from __future__ import annotations
 
-import logging
 from datetime import datetime
 from pathlib import Path
 
@@ -224,7 +223,8 @@ class ConfigLoaderMixin:
             self._recent_config_combo.setCurrentIndex(index)
 
     def _populate_table_from_config(self) -> None:
-        assert self._config is not None
+        if self._config is None:
+            return
         self._row_index.clear()
         rows = []
         self._signal_unit_map.clear()

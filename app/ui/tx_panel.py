@@ -11,7 +11,6 @@ while shrinking ``main_window.py``.
 
 from __future__ import annotations
 
-from datetime import datetime
 from typing import Dict
 
 from PySide6.QtWidgets import (

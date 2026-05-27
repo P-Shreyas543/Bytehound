@@ -15,9 +15,9 @@ from app.ui.analysis_suite import (
     AnalysisSuiteWindow,
     StatisticsPanel,
     _curve_visuals,
-    _is_time_like_param,
     _PARAM_COLORS,
 )
+from app.ui.log_io import _is_time_like_param
 from PySide6.QtCore import Qt
 
 

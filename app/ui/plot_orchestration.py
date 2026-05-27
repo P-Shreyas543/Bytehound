@@ -8,17 +8,16 @@ refresh. Designed to be mixed into MainWindow.
 
 from __future__ import annotations
 
-import logging
 import math
 from datetime import datetime, timedelta
 from typing import List, Optional, Set, Tuple
 
 import numpy as np
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
-    QComboBox, QHBoxLayout, QInputDialog, QLabel, QMenu, QMessageBox,
+    QComboBox, QHBoxLayout, QLabel, QMenu, QMessageBox,
     QPushButton, QToolButton, QWidget, QWidgetAction,
 )
 
@@ -40,7 +39,6 @@ except ImportError:  # pragma: no cover
 
 from .plot_panel import (
     PlotPanel,
-    _EMPTY_F64,
     _PLOT_INITIAL_WINDOW_S,
     _TimeAxisItem,
     _configure_live_curve,
@@ -200,14 +198,18 @@ class PlotOrchestrationMixin:
                 continue
             local_min = float(np.nanmin(ys))
             local_max = float(np.nanmax(ys))
-            
+
             unit = self._signal_unit_map.get(key, "").strip() if hasattr(self, "_signal_unit_map") else ""
             if panel.left_unit is None or unit == panel.left_unit:
-                if left_min is None or local_min < left_min: left_min = local_min
-                if left_max is None or local_max > left_max: left_max = local_max
+                if left_min is None or local_min < left_min:
+                    left_min = local_min
+                if left_max is None or local_max > left_max:
+                    left_max = local_max
             elif panel.right_unit is not None:
-                if right_min is None or local_min < right_min: right_min = local_min
-                if right_max is None or local_max > right_max: right_max = local_max
+                if right_min is None or local_min < right_min:
+                    right_min = local_min
+                if right_max is None or local_max > right_max:
+                    right_max = local_max
 
         def _apply_range(target_vb, y_min, y_max):
             if y_min is None or y_max is None:
@@ -1062,7 +1064,7 @@ class PlotOrchestrationMixin:
                     left_unit = unit
                 elif unit != left_unit and right_unit is None:
                     right_unit = unit
-            
+
             panel.left_unit = left_unit
             panel.right_unit = right_unit
 
@@ -1091,10 +1093,10 @@ class PlotOrchestrationMixin:
                             if vb is not None:
                                 target_vb.setGeometry(vb.sceneBoundingRect())
                                 target_vb.linkedViewChanged(vb, target_vb.XAxis)
-                    
+
                     pi.getViewBox().sigResized.connect(updateViews)
                     updateViews()
-                
+
                 panel.right_axis.setLabel(text=right_unit)
                 panel.right_axis.show()
             elif panel.right_axis is not None:
@@ -1143,7 +1145,7 @@ class PlotOrchestrationMixin:
                 target_vb = panel.right_vb if is_right else pi.getViewBox()
 
                 curve = panel.curves.get(key)
-                
+
                 if curve is not None:
                     try:
                         old_vb = curve.getViewBox()
@@ -1277,18 +1279,18 @@ class PlotOrchestrationMixin:
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         cap_val, window_s = dlg.get_values()
-        
+
         # Apply cap to existing plot buffers
         self._plot_history_max_samples = cap_val if cap_val > 0 else None
         for buf in self._plot_history.values():
             buf.set_max_samples(self._plot_history_max_samples)
-            
+
         # Apply display window
         self._plot_window_seconds = window_s if window_s > 0 else None
-        
+
         # Force a redraw to update display window immediately
         self._redraw_plot()
-        
+
         self._set_status(
             f"Plot settings updated: memory cap {cap_val or 'Unlimited'}, display window {window_s or 'All'}"
         )
