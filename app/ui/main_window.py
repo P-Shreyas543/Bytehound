@@ -1205,6 +1205,11 @@ class MainWindow(
         if self._serial is not None:
             self._serial.reset_metrics()
         self._plot_history.clear()
+        # Hover-readout cache snapshots history per-key; without this, a
+        # cursor read right after Clear would surface values from data
+        # that no longer exists in _plot_history.
+        if hasattr(self, "_hover_cache"):
+            self._hover_cache.clear()
         self._bitfield_table.setRowCount(0)
         self._enum_table.setRowCount(0)
         # Side indexes must drop their mappings alongside the table reset,

@@ -157,12 +157,28 @@ class ConfigLoaderMixin:
         self._populate_table_from_config()
         self._populate_group_selector()
         self._plot_keys.clear()
-        # Clear panel assignments — old signals may not exist in the new config
+        # Clear panel assignments — old signals may not exist in the new config.
+        # Curves must be removed from the legend and right_vb too, or the
+        # next config's signals will show stacked-on-top legend rows and
+        # ghost dual-axis links (same root cause as _remove_signal_from_panel).
         for panel in self._plot_panels:
             panel.assigned_keys.clear()
             for curve in panel.curves.values():
                 panel.plot_item.removeItem(curve)
+                if panel.right_vb is not None:
+                    panel.right_vb.removeItem(curve)
+                if panel.legend is not None:
+                    panel.legend.removeItem(curve)
             panel.curves.clear()
+            # Reset unit tracking so the right-axis decision is recomputed
+            # from scratch on the new config's first redraw.
+            panel.left_unit = None
+            panel.right_unit = None
+        # Hover-readout cache holds (xs, ys) snapshots keyed by old (frame_id,
+        # signal_name) tuples — drop it so a stale cursor read doesn't
+        # surface values for signals the new config no longer has.
+        if hasattr(self, "_hover_cache"):
+            self._hover_cache.clear()
         self._rebuild_panel_strips()   # once after the loop, not N times
         self._persist_panel_assignments()
         self._populate_tx_commands()

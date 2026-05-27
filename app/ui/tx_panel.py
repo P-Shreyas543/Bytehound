@@ -69,14 +69,25 @@ class TxPanelMixin:
         if self._config is None:
             return
         # Hide commands whose target frame is marked rx-only in frames.csv —
-        # sending to an rx-only frame is a config mistake we surface by
-        # omission. Commands whose frame_id is unknown to the frames map are
-        # left visible (auto-created frames default to rxtx).
+        # sending to an rx-only frame is a config mistake. Commands whose
+        # frame_id is unknown to the frames map are left visible
+        # (auto-created frames default to rxtx).
+        # Silent omission was confusing users who added a TX command and
+        # then saw nothing in the dropdown, so log every hidden command
+        # with the reason — visible in the Activity log.
         frames = self._config.frames
-        visible = sorted(
-            name for name, cmd in self._config.tx_commands.items()
-            if frames.get(cmd.frame_id) is None or frames[cmd.frame_id].is_tx_capable
-        )
+        visible: list[str] = []
+        for name, cmd in self._config.tx_commands.items():
+            frame = frames.get(cmd.frame_id)
+            if frame is None or frame.is_tx_capable:
+                visible.append(name)
+            else:
+                self._log_activity(
+                    f"[WARN] TX command {name!r} hidden — frame 0x{cmd.frame_id:04X} "
+                    f"({frame.frame_name}) is direction={frame.direction!r}; "
+                    f"set it to 'tx' or 'rxtx' in frames.csv to make this command sendable."
+                )
+        visible.sort()
         for name in visible:
             description = self._config.tx_commands[name].description.strip()
             self._tx_command_combo.addItem(name)

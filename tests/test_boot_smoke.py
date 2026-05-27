@@ -577,3 +577,44 @@ def test_window_state_schema_version_discards_stale_blobs(qapp) -> None:
             else:
                 s.setValue(k, v)
         s.sync()
+
+
+def test_plot_dual_axis_resize_callback(window: MainWindow, monkeypatch) -> None:
+    """Regression guard for dual Y-axis resize callback updateViews.
+    Ensures that when a panel has signals with different units (triggering
+    dual Y-axis setup) and the view is resized, the callback executes
+    successfully without raising AttributeError.
+    """
+    if not window._plot_panels:
+        window._rebuild_plot_grid(1, 1)
+    
+    panel = window._plot_panels[0]
+    pi = panel.plot_item
+    
+    # Mock visibility so _redraw_plot is not skipped in headless environment
+    monkeypatch.setattr(pi, "isVisible", lambda: True)
+    if hasattr(window, "_plot_dock") and window._plot_dock is not None:
+        monkeypatch.setattr(window._plot_dock, "isVisible", lambda: True)
+    
+    # Assign two keys with different units
+    key1 = (1, "SignalA")
+    key2 = (1, "SignalB")
+    panel.assigned_keys = [key1, key2]
+    window._signal_unit_map[key1] = "V"
+    window._signal_unit_map[key2] = "A"
+    
+    # Seed the history buffers so redraw doesn't skip
+    buf1 = window._plot_history.setdefault(key1, window._make_history_buffer())
+    buf2 = window._plot_history.setdefault(key2, window._make_history_buffer())
+    buf1.append(0.0, 1.0)
+    buf2.append(0.0, 2.0)
+    
+    # Redraw plot to set up right_vb and connect the resize signal
+    window._redraw_plot()
+    
+    assert panel.right_vb is not None
+    
+    # Trigger the sigResized signal on pi.vb to fire updateViews callback.
+    pi.vb.sigResized.emit(pi.vb)
+
+

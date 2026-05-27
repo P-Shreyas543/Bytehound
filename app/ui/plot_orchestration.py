@@ -789,7 +789,16 @@ class PlotOrchestrationMixin:
         if key in panel.assigned_keys:
             panel.assigned_keys.remove(key)
             if key in panel.curves:
-                panel.plot_item.removeItem(panel.curves.pop(key))
+                curve = panel.curves.pop(key)
+                panel.plot_item.removeItem(curve)
+                # Removing from the plot does NOT remove the legend row in
+                # pyqtgraph — leave this out and the legend keeps a phantom
+                # entry, then re-adding the same signal stacks a second row
+                # for the same name. Drop both the curve and the legend row.
+                if panel.right_vb is not None:
+                    panel.right_vb.removeItem(curve)
+                if panel.legend is not None:
+                    panel.legend.removeItem(curve)
             self._sync_plot_keys()
             self._persist_panel_assignments()
             self._rebuild_panel_strips()
@@ -1063,9 +1072,9 @@ class PlotOrchestrationMixin:
                     ax.setPen(pen)
                     ax.setTextPen(pen)
 
-                    def updateViews(pi=pi, vb=panel.right_vb):
-                        vb.setGeometry(pi.vb.sceneBoundingRect())
-                        vb.linkedViewChanged(pi.vb, vb.XAxis)
+                    def updateViews(*args, target_pi=pi, target_vb=panel.right_vb):
+                        target_vb.setGeometry(target_pi.vb.sceneBoundingRect())
+                        target_vb.linkedViewChanged(target_pi.vb, target_vb.XAxis)
                     
                     pi.vb.sigResized.connect(updateViews)
                     updateViews()
@@ -1082,6 +1091,12 @@ class PlotOrchestrationMixin:
                     pi.removeItem(curve)
                     if panel.right_vb is not None:
                         panel.right_vb.removeItem(curve)
+                    # Legend rows aren't auto-removed with the curve — clear
+                    # the entry here too so any future path that drops a key
+                    # without going through _remove_signal_from_panel still
+                    # leaves a clean legend behind.
+                    if panel.legend is not None:
+                        panel.legend.removeItem(curve)
 
             for local_idx, key in enumerate(panel.assigned_keys):
                 buf = self._plot_history.get(key)
