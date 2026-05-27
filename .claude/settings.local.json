@@ -8,7 +8,13 @@
       "Bash(python -c \"import ast; ast.parse\\(open\\('app/ui/main_window.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
       "Bash(python -c \"from app.ui.main_window import MainWindow; print\\('imports OK'\\)\")",
       "Bash(python smoke_ui.py)",
-      "Bash(python -m pytest -q --tb=short)"
+      "Bash(python -m pytest -q --tb=short)",
+      "Bash(python -m pip install -r requirements.txt)",
+      "Bash(python -c \"import qdarktheme; print\\('OK', qdarktheme.__file__\\)\")",
+      "Bash(python -m pip show pyqt-darktheme)",
+      "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
+      "Bash(python -m pip install pyqtdarktheme)",
+      "Bash(python -c \"import qdarktheme; print\\('OK'\\)\")"
     ]
   }
 }
