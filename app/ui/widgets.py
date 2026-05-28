@@ -41,7 +41,7 @@ try:
 except ImportError:  # pragma: no cover - icons degrade to empty if missing
     qta = None
 
-from ..decoder.types import ProtocolConfig
+from ..decoder.types import FrameConfig, ProtocolConfig
 
 
 # Primary toolbar button colour palette. Three semantic states; all buttons
