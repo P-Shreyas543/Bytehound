@@ -690,7 +690,7 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("About Bytehound")
         self.setModal(True)
-        self.setFixedSize(480, 240)
+        self.setFixedSize(540, 270)
 
         # Remove help button from title bar
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
@@ -698,15 +698,34 @@ class AboutDialog(QDialog):
         # Main horizontal layout
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(20, 20, 20, 20)
-        main_layout.setSpacing(20)
+        main_layout.setSpacing(24)
 
-        # Left Column: Logo
-        logo_label = QLabel(self)
+        # Import PySide6 GUI / Utility classes locally
+        from PySide6.QtGui import QPixmap, QFont, QDesktopServices
+        from PySide6.QtCore import QUrl, QSize
+        from PySide6.QtWidgets import QToolButton
+        try:
+            import qtawesome as qta
+        except ImportError:
+            qta = None
+
+        # Resolve Theme and Colors for qtawesome icons
+        from .theming import resolve_theme
+        theme = str(QSettings("Bytehound", "Bytehound").value("ui/theme", "dark"))
+        is_dark = (resolve_theme(theme) == "dark")
+        icon_color = "#CBD5E1" if is_dark else "#475569"
+        accent_color = "#38BDF8" if is_dark else "#2563EB"
+
+        # Left Column: Logo & Homepage Button
+        left_column = QWidget(self)
+        left_layout = QVBoxLayout(left_column)
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(12)
+
+        logo_label = QLabel(left_column)
         if logo_path:
-            from PySide6.QtGui import QPixmap
             pixmap = QPixmap(str(logo_path))
             if not pixmap.isNull():
-                # Scale logo smoothly
                 logo_label.setPixmap(pixmap.scaled(96, 96, Qt.AspectRatioMode.KeepAspectRatio, Qt.TransformationMode.SmoothTransformation))
             else:
                 logo_label.setText("🐶")
@@ -714,8 +733,22 @@ class AboutDialog(QDialog):
         else:
             logo_label.setText("🐶")
             logo_label.setStyleSheet("font-size: 48px;")
-        logo_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        main_layout.addWidget(logo_label)
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        left_layout.addWidget(logo_label)
+
+        # Homepage / GitHub Repository Button
+        homepage = version_info.get("homepage", "https://github.com/P-Shreyas543/Bytehound")
+        btn_repo = QPushButton("GitHub Repo", left_column)
+        btn_repo.setCursor(Qt.PointingHandCursor)
+        btn_repo.setToolTip("View project GitHub repository")
+        btn_repo.setStyleSheet("font-size: 9pt; font-weight: bold; padding: 4px 8px;")
+        if qta:
+            btn_repo.setIcon(qta.icon("mdi6.github", color=icon_color))
+        btn_repo.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(homepage)))
+        left_layout.addWidget(btn_repo)
+        left_layout.addStretch(1)
+
+        main_layout.addWidget(left_column)
 
         # Right Column: Details
         details_widget = QWidget(self)
@@ -737,28 +770,68 @@ class AboutDialog(QDialog):
         version_label.setStyleSheet("font-size: 9.5pt; color: gray;")
         details_layout.addWidget(version_label)
 
+        # Description / Tagline
+        desc_label = QLabel("Serial Data Logger, Parser and Visualizer.", self)
+        desc_label.setStyleSheet("font-size: 9.5pt; color: gray; font-style: italic;")
+        details_layout.addWidget(desc_label)
+
+        # Thin divider
+        divider = QWidget(self)
+        divider.setFixedHeight(1)
+        divider_color = "#334155" if is_dark else "#E5E7EB"
+        divider.setStyleSheet(f"background-color: {divider_color};")
+        details_layout.addWidget(divider)
+
         # Publisher section (name and webpage link)
         publisher = version_info.get("publisher", "Bytehound Open Source Community")
         pub_webpage = version_info.get("publisher_webpage", "https://github.com/P-Shreyas543/Bytehound")
         publisher_label = QLabel(self)
-        publisher_label.setText(f"Published by: <b>{publisher}</b><br><a href='{pub_webpage}'>{pub_webpage}</a>")
+        publisher_label.setText(f"Publisher: <b>{publisher}</b> &nbsp;(<a href='{pub_webpage}'>Website</a>)")
         publisher_label.setOpenExternalLinks(True)
+        publisher_label.setWordWrap(True)
         publisher_label.setStyleSheet("font-size: 9.5pt;")
         details_layout.addWidget(publisher_label)
 
-        # Developer and license info
+        # Developer Section with Inline GitHub Icon Button
         dev = version_info.get("Developer", "Shreyas P")
-        lic = version_info.get("license", "MIT")
-        info_label = QLabel(self)
-        info_label.setText(f"Developer: <b>{dev}</b> &nbsp;&nbsp;|&nbsp;&nbsp; License: <b>{lic}</b>")
-        info_label.setTextFormat(Qt.TextFormat.RichText)
-        info_label.setStyleSheet("font-size: 9pt;")
-        details_layout.addWidget(info_label)
+        dev_github = version_info.get("developer_github", "https://github.com/P-Shreyas543")
+        
+        dev_widget = QWidget(self)
+        dev_hl = QHBoxLayout(dev_widget)
+        dev_hl.setContentsMargins(0, 0, 0, 0)
+        dev_hl.setSpacing(4)
+        
+        dev_label = QLabel(f"Developer: <a href='{dev_github}'><b>{dev}</b></a>", dev_widget)
+        dev_label.setOpenExternalLinks(True)
+        dev_label.setStyleSheet("font-size: 9.5pt;")
+        dev_hl.addWidget(dev_label)
+        
+        if dev_github:
+            btn_dev_git = QToolButton(dev_widget)
+            btn_dev_git.setCursor(Qt.PointingHandCursor)
+            btn_dev_git.setToolTip("Developer GitHub Profile")
+            btn_dev_git.setStyleSheet("QToolButton { border: none; background: transparent; padding: 0; }")
+            btn_dev_git.setFixedSize(18, 18)
+            btn_dev_git.setIconSize(QSize(16, 16))
+            if qta:
+                btn_dev_git.setIcon(qta.icon("mdi6.github", color=accent_color))
+            else:
+                btn_dev_git.setText("🔗")
+            btn_dev_git.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(dev_github)))
+            dev_hl.addWidget(btn_dev_git)
+        dev_hl.addStretch(1)
+        details_layout.addWidget(dev_widget)
 
-        # Add description / other details
-        desc_label = QLabel("Serial Data Logger, Parser and Visualizer.", self)
-        desc_label.setStyleSheet("font-size: 9pt; color: gray;")
-        details_layout.addWidget(desc_label)
+        # License Section (clickable hyperlink)
+        lic = version_info.get("license", "MIT")
+        lic_url = version_info.get("license_url", "https://github.com/P-Shreyas543/Bytehound/blob/master/LICENSE")
+        lic_text = f"<a href='{lic_url}'><b>{lic}</b></a>" if lic_url else f"<b>{lic}</b>"
+        
+        license_label = QLabel(self)
+        license_label.setText(f"License: {lic_text}")
+        license_label.setOpenExternalLinks(True)
+        license_label.setStyleSheet("font-size: 9.5pt;")
+        details_layout.addWidget(license_label)
 
         details_layout.addStretch()
 

@@ -157,14 +157,14 @@ QWidget#centralPanel > QWidget {
 }
 
 /* 5. Input controls — search bar, dropdowns, spinboxes */
-QLineEdit, QComboBox, QSpinBox {
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     background-color: #0F172A;
     color: #F8FAFC;
     border: 1px solid #334155;
     padding: 4px 8px;
     border-radius: 3px;
 }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
     border-color: #2563EB;
 }
 QComboBox QAbstractItemView {
@@ -382,14 +382,14 @@ QToolBar QToolButton:pressed {
 }
 
 /* 4. Input controls */
-QLineEdit, QComboBox, QSpinBox {
+QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     background-color: #FFFFFF;
     color: #1F2937;
     border: 1px solid #D1D5DB;
     padding: 4px 8px;
     border-radius: 3px;
 }
-QLineEdit:focus, QComboBox:focus, QSpinBox:focus {
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus {
     border-color: #2563EB;
 }
 QComboBox QAbstractItemView {
@@ -750,6 +750,18 @@ class ThemingMixin:
         # invisible. The toast confirms the switch landed.
         self._toast(f"Theme: {theme.title()}")
         self._log_activity(f"[ACTION] Theme changed to {theme}")
+        self._restyle_all_action_buttons()
+
+    def _restyle_all_action_buttons(self) -> None:
+        if not hasattr(self, "_connect_action") or not hasattr(self, "_polling_action") or not hasattr(self, "_logging_action"):
+            return
+        connected = getattr(self, "_serial", None) is not None and self._serial.is_open
+        polling = self._polling_action.isChecked()
+        logging_active = getattr(self, "_logging", False)
+        from .widgets import _BTN_GREEN, _BTN_PINK, _BTN_YELLOW
+        self._style_action_btn(self._connect_action, _BTN_PINK if connected else _BTN_GREEN)
+        self._style_action_btn(self._polling_action, _BTN_PINK if polling else _BTN_GREEN)
+        self._style_action_btn(self._logging_action, _BTN_PINK if logging_active else (_BTN_GREEN if connected else _BTN_YELLOW))
 
     def _apply_plot_theme(self, theme: str) -> None:
         """Tint the pyqtgraph canvas + axis labels for the active theme."""

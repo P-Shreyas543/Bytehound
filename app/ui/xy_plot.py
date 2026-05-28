@@ -117,17 +117,41 @@ class XYPlotWindow(QDialog):
 
         # ── Plot widget ───────────────────────────────────────────
         self._plot = pg.PlotWidget()
+        self._plot.showGrid(x=True, y=True, alpha=THEME.plot_grid_alpha())
+        self._legend = self._plot.addLegend(offset=(10, 10))
+        layout.addWidget(self._plot)
+
+        self.apply_theme(THEME.theme())
+
+    def apply_theme(self, theme: str) -> None:
+        """Apply stylesheet and update plot background/foreground colors."""
+        try:
+            from .theming import build_card_qss
+            self.setStyleSheet(build_card_qss(theme))
+        except Exception:
+            pass
+
         bg = THEME.c('plot_bg')
         fg = THEME.c('plot_fg')
         self._plot.setBackground(bg)
-        self._plot.showGrid(x=True, y=True, alpha=THEME.plot_grid_alpha())
         for ax_name in ('left', 'bottom'):
             ax = self._plot.getAxis(ax_name)
-            pen = pg.mkPen(fg)
-            ax.setPen(pen)
-            ax.setTextPen(pen)
-        self._legend = self._plot.addLegend(offset=(10, 10))
-        layout.addWidget(self._plot)
+            if ax is not None:
+                pen = pg.mkPen(fg)
+                ax.setPen(pen)
+                ax.setTextPen(pen)
+        # Update legend styling
+        if hasattr(self, "_legend") and self._legend is not None:
+            try:
+                self._legend.setLabelTextColor(fg)
+                legend_bg = THEME.c('legend_bg')
+                if isinstance(legend_bg, tuple):
+                    self._legend.setBrush(pg.mkBrush(*legend_bg))
+                else:
+                    self._legend.setBrush(pg.mkBrush(legend_bg))
+            except Exception:
+                pass
+        self._plot.update()
 
     def _do_plot(self):
         x_param = self._x_combo.currentText()

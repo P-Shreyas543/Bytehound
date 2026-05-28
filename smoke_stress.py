@@ -15,7 +15,7 @@ Designed to find production bugs by hammering every part of the stack:
   Phase 10 Parameter editor round-trip (multiple set-points)
   Phase 11 Long-run leak check (5 s bursts, watch _pending_packets / RAM)
 
-The Arduino must be flashed with the sketch in Arduino_BMS_Simulator/.
+The Arduino must be flashed with the sketch in MCU_BMS_Simulator/.
 Exit code is the number of failed checks (0 = all green).
 
 Usage:

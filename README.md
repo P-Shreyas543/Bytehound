@@ -6,7 +6,7 @@ Python desktop tool for framed serial data logging, decoding, TX command buildin
 
 - **Python:** 3.10 – 3.12 (matches PySide6 6.11 wheels).
 - **Platforms:** developed and tested on Windows 10/11. The core (decoder, protocol, serial worker, logging) is platform-portable; the title-bar theming and installer are Windows-specific.
-- **Hardware:** any serial device matching a user-defined frame protocol. The Arduino sketch in [`Arduino_BMS_Simulator/`](Arduino_BMS_Simulator/) is the reference fixture.
+- **Hardware:** any serial device matching a user-defined frame protocol. The MCU sketch in [`MCU_BMS_Simulator/`](MCU_BMS_Simulator/) is the reference fixture.
 
 ## Run
 
@@ -48,7 +48,7 @@ Full schema reference: [instruction.md](instruction.md) (`§3 Config Schema`) or
 pytest -q
 ```
 
-Manual hardware smoke scripts (not auto-collected) live at the repo root: [`smoke_com7.py`](smoke_com7.py), [`smoke_headless.py`](smoke_headless.py), [`smoke_stress.py`](smoke_stress.py). They require a connected device or the Arduino BMS simulator.
+Manual hardware smoke scripts (not auto-collected) live at the repo root: [`smoke_com7.py`](smoke_com7.py), [`smoke_headless.py`](smoke_headless.py), [`smoke_stress.py`](smoke_stress.py). They require a connected device or the reference BMS simulator.
 
 ## Build
 

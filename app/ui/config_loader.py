@@ -56,6 +56,25 @@ class ConfigLoaderMixin:
 
         root.addLayout(form)
 
+        if self._config and self._config.protocol:
+            from PySide6.QtWidgets import QFrame
+            # Separator line
+            line = QFrame()
+            line.setFrameShape(QFrame.Shape.HLine)
+            line.setFrameShadow(QFrame.Shadow.Sunken)
+            root.addWidget(line)
+            
+            # Label header
+            fmt_lbl = QLabel("On-Wire Frame Format (Hover for info):")
+            fmt_lbl.setStyleSheet("font-weight: bold;")
+            root.addWidget(fmt_lbl)
+            
+            # Block diagram widget
+            from .widgets import FrameFormatWidget
+            fmt_widget = FrameFormatWidget(self._config, parent=dlg)
+            root.addWidget(fmt_widget)
+            dlg.setMinimumWidth(560)
+
         btn_row = QDialogButtonBox()
         open_log_btn = QPushButton("📂  Open Log Folder")
         open_log_btn.clicked.connect(self._on_open_log_folder)
@@ -143,6 +162,7 @@ class ConfigLoaderMixin:
         self._apply_plot_time_mode(self._plot_time_mode, persist=False)
         self._plot_history.clear()
         self._seen_decode_warnings.clear()
+        self._unsolicited_detected = False
         self._packet_count = 0
         self._error_count = 0
         self._timeouts = 0

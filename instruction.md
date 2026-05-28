@@ -160,7 +160,7 @@ BMS-MonitorApp/
 ├── build.py                            # convenience wrapper around PyInstaller
 ├── smoke_com7.py                       # optional serial decode smoke test (requires hardware)
 ├── smoke_headless.py                   # optional headless integration smoke test (requires hardware)
-├── smoke_stress.py                     # 13-phase stress harness (requires Arduino BMS simulator)
+├── smoke_stress.py                     # 13-phase stress harness (requires MCU BMS simulator)
 └── instruction.md                      # this file
 ```
 
@@ -562,7 +562,7 @@ all three so *Edit → Clear* and *Import Config* start from a clean slate.
 
 `POLLING_BOOT_GRACE = 2.5` seconds. After `open()` succeeds, polling stays
 suppressed until *either* the first RX byte arrives *or* the grace expires.
-This prevents the worker from hammering an Arduino-style device that auto-
+This prevents the worker from hammering an MCU-style device that auto-
 resets on DTR (USB-CDC bootloader window is ~1.5 s) and getting stuck with a
 silent link. NXP/STM32 boards that don't auto-reset clear the grace
 immediately on the first response.
@@ -1346,7 +1346,7 @@ machine with a real device attached. They are **not** part of the pytest suite:
 
 - [smoke_com7.py](smoke_com7.py) — quick serial decode smoke test (defaults to `COM7` @ `115200`).
 - [smoke_headless.py](smoke_headless.py) — headless (no GUI) end-to-end run that exercises every protocol-layer feature against a real serial device.
-- [smoke_stress.py](smoke_stress.py) — 13-phase stress harness (CRC bursts, device-silence windows, TX flood, polling-toggle storm, reconnect cycles, watchdog timing, rapid config reload). Drives the Arduino BMS simulator via the 0x1002/0x1003/0x1004 stress hooks.
+- [smoke_stress.py](smoke_stress.py) — 13-phase stress harness (CRC bursts, device-silence windows, TX flood, polling-toggle storm, reconnect cycles, watchdog timing, rapid config reload). Drives the MCU BMS simulator via the 0x1002/0x1003/0x1004 stress hooks.
 
 These are named `smoke_*.py` (not `test_*.py`) so pytest does not auto-collect them — they open real serial ports at import time.
 
@@ -1369,9 +1369,9 @@ The script exits with a non-zero code equal to the number of failed checks, and 
 | 6 | TX commands | Both `Reset` (static payload) and `Set_Voltage_Limit` (parameterized) appear in `tx_recorded` |
 | 7 | Round-trip | After `Set_Voltage_Limit(58.5 V)` the simulator's next `0x2000` frame reflects the new value (closes the parameter-editor loop end-to-end) |
 
-### Arduino BMS Simulator
+### MCU BMS Simulator
 
-[Arduino_BMS_Simulator/Arduino_BMS_Simulator.ino](Arduino_BMS_Simulator/Arduino_BMS_Simulator.ino) is a single-file sketch for any Arduino with hardware Serial (e.g. Mega 2560). It is the reference fixture for `smoke_headless.py`. It implements:
+[MCU_BMS_Simulator/MCU_BMS_Simulator.ino](MCU_BMS_Simulator/MCU_BMS_Simulator.ino) is a single-file sketch for any MCU with hardware Serial (e.g. Mega 2560). It is the reference fixture for `smoke_headless.py`. It implements:
 
 **TX (board → PC), continuous streams:**
 
@@ -1394,7 +1394,7 @@ The script exits with a non-zero code equal to the number of failed checks, and 
 
 The sketch contains a byte-by-byte RX state machine that validates the full frame (header `AA 55`, frame ID LE, length, payload, CRC16 Modbus LE, footer `EE`) before dispatching to a command handler. Bytes that fail any check are silently discarded and the parser resyncs on the next `AA 55`.
 
-Flash via Arduino IDE 1.8 / 2.x at 115200 baud; no external libraries.
+Flash via MCU IDE 1.8 / 2.x at 115200 baud; no external libraries.
 
 ### Lint & pre-commit gate
 

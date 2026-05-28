@@ -1,4 +1,4 @@
-"""SLIP-framed end-to-end smoke test against Arduino_BMS_SLIP.ino.
+"""SLIP-framed end-to-end smoke test against MCU_BMS_SLIP.ino.
 
 The point of this script is not to re-test BMS features (smoke_headless.py
 already covers those in depth) — it's to prove that escape_mode = slip
@@ -71,7 +71,7 @@ def main() -> int:
     else:
         rep.fail(f"escape_mode wrong: {config.protocol.escape_mode!r}")
     if config.protocol.footer == b"\xEE":
-        rep.ok("inner footer is 0xEE (matches Arduino_BMS_SLIP.ino)")
+        rep.ok("inner footer is 0xEE (matches MCU_BMS_SLIP.ino)")
     else:
         rep.fail(f"inner footer drift: {config.protocol.footer!r}")
     if "Reset Faults" in config.tx_commands:

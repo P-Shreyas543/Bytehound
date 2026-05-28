@@ -4,7 +4,7 @@
 [tool.ruff]
 target-version = "py310"
 line-length = 100
-extend-exclude = ["build", "dist", "installer_output", "scratch", "Arduino_BMS_Simulator"]
+extend-exclude = ["build", "dist", "installer_output", "scratch", "MCU_BMS_Simulator"]
 
 [tool.ruff.lint]
 # Default rules (E, F) plus targeted bugbear checks. UP/SIM rule families

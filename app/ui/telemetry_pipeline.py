@@ -135,6 +135,8 @@ class TelemetryPipelineMixin:
         packet: ParsedPacket,
         pre_decoded: Optional[DecodedFrame] = None,
     ) -> None:
+        if hasattr(self, "_polling_action") and not self._polling_action.isChecked():
+            self._unsolicited_detected = True
         self._packet_count += 1
         now = time.perf_counter()
         if self._last_packet_perf is not None:
@@ -326,10 +328,10 @@ class TelemetryPipelineMixin:
                     signal.is_calculated,
                 )
 
-            if signal.raw_value is None:
+            if signal.raw_value is None and not signal.is_calculated:
                 continue
 
-            raw_text = _format_number(signal.raw_value)
+            raw_text = "-" if signal.raw_value is None else _format_number(signal.raw_value)
             value_text = "-" if signal.scaled_value is None else _format_number(signal.scaled_value)
             self._table_model.stage_live_cells(
                 key,
