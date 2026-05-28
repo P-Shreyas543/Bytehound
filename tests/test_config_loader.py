@@ -335,3 +335,30 @@ def test_auto_created_frames_default_rxtx(tmp_path):
     )
     cfg = load_config(tmp_path)
     assert cfg.frames[0x0099].direction == "rxtx"
+
+
+def test_csv_filename_normalization(tmp_path):
+    """CSV file stems should be normalized using _normalize_table_name, allowing aliases."""
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "framevariables.csv").write_text(
+        "id_or_address,signal_name,data_type,count,byte_order,"
+        "scale,offset,unit,enabled,group\n"
+        "0x0010,Sig,uint16,1,big,1,0,V,TRUE,TempGroup\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "calcgroups.csv").write_text(
+        "group_name,operations,unit,frame_id,enabled\n"
+        "TempGroup,min|max,V,0x0010,TRUE\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "serialdefaults.csv").write_text(
+        "baud_rate,data_bits,stop_bits,parity,timeout_ms\n"
+        "9600,8,1,N,50\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(tmp_path)
+    assert 0x0010 in cfg.signals_by_frame
+    assert len(cfg.calc_groups) == 2
+    assert cfg.calc_groups[0].group == "TempGroup"
+    assert cfg.serial_defaults.baud_rate == 9600
+

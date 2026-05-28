@@ -165,7 +165,7 @@ def load_config(path: str | Path) -> FrameConfig:
 def _read_csv_tables(directory: Path) -> Dict[str, List[Dict[str, str]]]:
     tables: Dict[str, List[Dict[str, str]]] = {}
     for file in directory.glob("*.csv"):
-        tables[file.stem.lower()] = _read_csv(file)
+        tables[_normalize_table_name(file.stem)] = _read_csv(file)
     return tables
 
 
