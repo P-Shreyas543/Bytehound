@@ -280,3 +280,44 @@ def test_math_channels_settings_persistence(monkeypatch):
     
     assert "Power" not in win._math_channels
     assert win._qsettings.value("analysis/math_channels") == {}
+
+
+def test_get_subplot_groups_flat_layout():
+    """Test that _get_subplot_groups correctly filters active subplots based on tree checked items."""
+    win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
+    win._subplot_layout = [
+        ["Speed", "Power"],
+        ["Torque"],
+        ["Voltage"]
+    ]
+    
+    class MockTree:
+        def __init__(self):
+            self.items = []
+        def topLevelItemCount(self):
+            return len(self.items)
+        def topLevelItem(self, idx):
+            return self.items[idx]
+            
+    class MockItem:
+        def __init__(self, text, checked):
+            self._text = text
+            self._checked = checked
+        def text(self, col):
+            return self._text
+        def checkState(self, col):
+            return Qt.Checked if self._checked else Qt.Unchecked
+            
+    tree = MockTree()
+    tree.items = [
+        MockItem("Speed", True),
+        MockItem("Power", False),
+        MockItem("Torque", True),
+        MockItem("Voltage", False)
+    ]
+    
+    win._param_tree = tree
+    
+    groups = win._get_subplot_groups()
+    assert groups == [["Speed"], ["Torque"]]
+

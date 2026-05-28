@@ -33,6 +33,20 @@ class PollingSessionMixin:
                 self._popup_warning("Auto-Fetch", "Please connect to a device first.")
                 self._polling_action.setChecked(False)
                 return
+            if getattr(self, "_unsolicited_detected", False):
+                from PySide6.QtWidgets import QMessageBox
+                res = QMessageBox.warning(
+                    self,
+                    "Potential Collision Warning",
+                    "The connected device is already streaming data automatically (unsolicited).\n"
+                    "Enabling Auto-Fetch (polling) may cause transmission collisions and corrupt the data.\n\n"
+                    "Do you want to enable Auto-Fetch anyway?",
+                    QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                    QMessageBox.StandardButton.No
+                )
+                if res != QMessageBox.StandardButton.Yes:
+                    self._polling_action.setChecked(False)
+                    return
             is_modbus = (self._config.protocol.parser_type == "modbus_rtu") if self._config else False
             dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self, is_modbus=is_modbus)
             if dlg.exec() != QDialog.DialogCode.Accepted:

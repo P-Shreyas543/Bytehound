@@ -117,6 +117,7 @@ def load_config(path: str | Path) -> FrameConfig:
         signals = _parse_variables(
             _required_table(tables, "variables", _VARIABLES_REQUIRED),
             frames,
+            parser_type=protocol.parser_type,
         )
         if not frames:
             for sig in signals:
@@ -127,7 +128,8 @@ def load_config(path: str | Path) -> FrameConfig:
                     )
     elif "frame_config" in tables:
         signals, frames = _parse_legacy_frame_config(
-            _required_table(tables, "frame_config", _LEGACY_FRAME_CONFIG_REQUIRED)
+            _required_table(tables, "frame_config", _LEGACY_FRAME_CONFIG_REQUIRED),
+            parser_type=protocol.parser_type,
         )
     else:
         raise ConfigError(
@@ -165,7 +167,7 @@ def load_config(path: str | Path) -> FrameConfig:
 def _read_csv_tables(directory: Path) -> Dict[str, List[Dict[str, str]]]:
     tables: Dict[str, List[Dict[str, str]]] = {}
     for file in directory.glob("*.csv"):
-        tables[file.stem.lower()] = _read_csv(file)
+        tables[_normalize_table_name(file.stem)] = _read_csv(file)
     return tables
 
 
@@ -397,18 +399,22 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
             f"protocol: raw_log_format must be 'hex' or 'compact' (got {raw_log_format_raw!r})"
         )
 
+    is_modbus = ParserType.parse(row.get("parser_type", "")).value == "modbus_rtu"
+    frame_id_default = "big" if is_modbus else "little"
+    crc_default = "little" if is_modbus else "little"
+
     protocol = ProtocolConfig(
         profile_name=row["profile_name"],
         header=_hex_to_bytes(row["header_hex"], "header_hex"),
         frame_id_size=_to_int(row["frame_id_size"], field_name="frame_id_size"),
         frame_id_byte_order=_normalize_byte_order(
-            row["frame_id_byte_order"], source="protocol", column="frame_id_byte_order"),
+            row["frame_id_byte_order"], source="protocol", column="frame_id_byte_order", default=frame_id_default),
         length_size=_to_int(row["length_size"], field_name="length_size"),
         length_meaning=row["length_meaning"].strip().lower(),
         crc_type=crc_type,
         crc_size=_to_int(row["crc_size"], field_name="crc_size"),
         crc_byte_order=_normalize_byte_order(
-            row["crc_byte_order"], source="protocol", column="crc_byte_order"),
+            row["crc_byte_order"], source="protocol", column="crc_byte_order", default=crc_default),
         # crc_coverage: only "header_to_payload" is implemented; default to it
         # so the column can be omitted from user-facing config sheets.
         crc_coverage=(row.get("crc_coverage") or "header_to_payload").strip().lower(),
@@ -428,6 +434,11 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
 
 
 def _validate_protocol(protocol: ProtocolConfig) -> None:
+    if protocol.parser_type == "modbus_rtu":
+        if protocol.frame_id_byte_order != "big":
+            raise ConfigError("protocol: Modbus RTU register addresses (frame_id_byte_order) must be big-endian")
+        if protocol.crc_byte_order != "little":
+            raise ConfigError("protocol: Modbus RTU CRC checksum (crc_byte_order) must be little-endian")
     if not protocol.header:
         raise ConfigError("protocol: header_hex must not be empty")
     if protocol.frame_id_byte_order not in {"big", "little"}:
@@ -486,11 +497,14 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
 
 
 def _parse_variables(
-    rows: List[Dict[str, str]], frames: Dict[int, FrameDefinition]
+    rows: List[Dict[str, str]], frames: Dict[int, FrameDefinition], parser_type: str = "framed"
 ) -> List[SignalSpec]:
     signals: List[SignalSpec] = []
     offsets: Dict[int, int] = {}
     seen: Dict[int, set[str]] = {}
+
+    is_modbus = (parser_type == "modbus_rtu")
+    default_endian = "big" if is_modbus else "little"
 
     for row_no, row in enumerate(rows, start=2):
         if not _to_bool(row.get("enabled", "true"), default=True, field_name="variables.enabled"):
@@ -517,7 +531,9 @@ def _parse_variables(
         frame = frames[frame_id]
         group = row.get("group", "")
         unit = row.get("unit", "")
-        endian = _normalize_byte_order(row.get("byte_order", ""), source=f"variables row {row_no}")
+        endian = _normalize_byte_order(row.get("byte_order", ""), source=f"variables row {row_no}", default=default_endian)
+        if is_modbus and endian != "big":
+            raise ConfigError(f"variables row {row_no}: Modbus RTU data values (byte_order) must be big-endian")
 
         for idx in range(count):
             signal_name = name if count == 1 else f"{name} {idx + 1}"
@@ -557,11 +573,14 @@ def _fmt_to_data_type(fmt: str) -> str:
 
 
 def _parse_legacy_frame_config(
-    rows: List[Dict[str, str]]
+    rows: List[Dict[str, str]], parser_type: str = "framed"
 ) -> tuple[List[SignalSpec], Dict[int, FrameDefinition]]:
     signals: List[SignalSpec] = []
     frames: Dict[int, FrameDefinition] = {}
     seen_per_frame: Dict[int, set[str]] = {}
+
+    is_modbus = (parser_type == "modbus_rtu")
+    default_endian = "big" if is_modbus else "little"
 
     for row_no, row in enumerate(rows, start=2):
         frame_id = _parse_frame_id(row["frame_id_hex"], field_name="frame_id_hex")
@@ -574,7 +593,10 @@ def _parse_legacy_frame_config(
             row["endianness"],
             source=f"frame_config row {row_no}",
             column="endianness",
+            default=default_endian,
         )
+        if is_modbus and endianness != "big":
+            raise ConfigError(f"frame_config row {row_no}: Modbus RTU data values (endianness) must be big-endian")
         byte_length = _to_int(row["byte_length"], field_name="byte_length")
         if byte_length < 1 or byte_length > 8:
             raise ConfigError(f"frame_config row {row_no}: byte_length must be 1..8")
@@ -661,9 +683,11 @@ def _parse_enums(
         variable_name = row["signal_name"]
         if (frame_id, variable_name) not in known:
             raise ConfigError(f"enums row {row_no}: unknown variable {variable_name!r}")
-        out.setdefault((frame_id, variable_name), {})[
-            _to_int(row["value"], field_name="enum.value")
-        ] = row["label"]
+        val = _to_int(row["value"], field_name="enum.value")
+        signal_enums = out.setdefault((frame_id, variable_name), {})
+        if val in signal_enums:
+            raise ConfigError(f"enums row {row_no}: duplicate enum value {val} for signal {variable_name!r}")
+        signal_enums[val] = row["label"]
     return out
 
 
@@ -728,11 +752,15 @@ def _parse_tx_commands(
         )
 
     commands: Dict[str, TxCommandSpec] = {}
+    seen_names = set()
     for row in command_rows:
+        name = row["command_name"]
+        if name in seen_names:
+            raise ConfigError(f"Duplicate tx_command defined with name '{name}'")
+        seen_names.add(name)
         enabled = _to_bool(row.get("enabled", "true"), default=True, field_name="tx_commands.enabled")
         if not enabled:
             continue
-        name = row["command_name"]
         commands[name] = TxCommandSpec(
             command_name=row["command_name"],
             frame_id=_parse_frame_id(row["id_or_address"], field_name="tx_commands.id_or_address"),

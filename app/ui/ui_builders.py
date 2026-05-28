@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDockWidget,
+    QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -380,9 +381,7 @@ class UIBuildersMixin:
         # ── Right column: tabbed panels (top) ─────────────────────────────
         self._plot_dock = QDockWidget("Live Plot", self)
         self._plot_dock.setObjectName("PlotDock")
-        self._plot_dock.setAllowedAreas(
-            Qt.DockWidgetArea.BottomDockWidgetArea | Qt.DockWidgetArea.LeftDockWidgetArea
-        )
+        self._plot_dock.setAllowedAreas(Qt.DockWidgetArea.AllDockWidgetAreas)
         self._plot_dock.setWidget(self._build_plot_tab())
         self.addDockWidget(Qt.DockWidgetArea.BottomDockWidgetArea, self._plot_dock)
 
@@ -713,9 +712,10 @@ class UIBuildersMixin:
         # Strips live in a QWidget ABOVE the GraphicsLayoutWidget because
         # pg.GraphicsLayoutWidget is an OpenGL canvas and cannot host Qt widgets.
         self._panel_strip_container = QWidget(outer)
-        self._panel_strip_layout = QHBoxLayout(self._panel_strip_container)
+        self._panel_strip_layout = QGridLayout(self._panel_strip_container)
         self._panel_strip_layout.setContentsMargins(0, 0, 0, 0)
-        self._panel_strip_layout.setSpacing(4)
+        self._panel_strip_layout.setHorizontalSpacing(4)
+        self._panel_strip_layout.setVerticalSpacing(2)
         root_layout.addWidget(self._panel_strip_container)
 
         # ── Graphics canvas ────────────────────────────────────────────────

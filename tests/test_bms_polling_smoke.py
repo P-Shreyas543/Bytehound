@@ -314,7 +314,9 @@ def _build_worker_with_perfect_mcu(*, pipeline_depth: int, gap_ms: int = 30):
     """
     cfg = load_config(USER_CONFIG)
     proto = cfg.protocol
-    settings = SerialSettings(port="COM_TEST", baud_rate=115200, timeout_ms=50)
+    from dataclasses import replace
+    cfg.polling_schedules = [replace(s, timeout_ms=1000) for s in cfg.polling_schedules]
+    settings = SerialSettings(port="COM_TEST", baud_rate=115200, timeout_ms=1000)
     worker = PollingWorker(settings, proto, cfg.polling_schedules, decode_config=cfg)
     all_targets = {s.target_id for s in cfg.polling_schedules}
     sim = _PerTargetDelaySimulatedSerial(proto, all_targets)

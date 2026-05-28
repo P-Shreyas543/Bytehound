@@ -5,8 +5,10 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bytehound - Comprehensive User Manual</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+        
         body {
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: 'PT Sans', sans-serif;
             line-height: 1.6;
             color: #2c3e50;
             max-width: 900px;
@@ -112,6 +114,125 @@
             padding-left: 20px;
             font-size: 0.95em;
         }
+        
+        /* A4 Printing Layout Styles */
+        @media print {
+            @page {
+                size: A4;
+                margin: 20mm;
+            }
+            body {
+                background-color: white;
+                color: #000;
+                font-size: 11pt;
+                line-height: 1.5;
+                max-width: 100%;
+                margin: 0;
+                padding: 0;
+            }
+            .container {
+                box-shadow: none;
+                border-radius: 0;
+                padding: 0;
+                margin: 0;
+                background-color: white;
+            }
+            h1, h2, h3 {
+                color: #000;
+                page-break-after: avoid;
+                break-after: avoid;
+            }
+            h1 {
+                font-size: 20pt;
+                border-bottom: 2px solid #000;
+                margin-bottom: 30px;
+            }
+            h2 {
+                font-size: 16pt;
+                page-break-before: always;
+                break-before: page;
+                border-bottom: 1.5px solid #666;
+                padding-top: 15px;
+                margin-top: 40px;
+            }
+            h3 {
+                font-size: 13pt;
+                margin-top: 25px;
+                border-bottom: 1px dashed #ccc;
+                padding-bottom: 4px;
+            }
+            h4 {
+                font-size: 11pt;
+                margin-top: 15px;
+                margin-bottom: 5px;
+            }
+            p, li {
+                color: #111;
+            }
+            pre {
+                background-color: #fff;
+                color: #000;
+                border: 1px solid #999;
+                padding: 12px;
+                border-radius: 4px;
+                page-break-inside: avoid;
+                break-inside: avoid;
+                white-space: pre-wrap;
+                word-wrap: break-word;
+                font-size: 9.5pt;
+            }
+            code {
+                background-color: #f0f0f0;
+                color: #000;
+                border: 0.5px solid #ccc;
+                padding: 1px 3px;
+                font-size: 9.5pt;
+            }
+            table {
+                width: 100%;
+                border-collapse: collapse;
+                margin: 15px 0;
+                page-break-inside: auto;
+                break-inside: auto;
+            }
+            tr {
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            th, td {
+                border: 1px solid #666;
+                padding: 8px;
+                font-size: 9.5pt;
+            }
+            th {
+                background-color: #eaeaea;
+                color: #000;
+            }
+            .toc {
+                background-color: #fff;
+                border: 1px solid #ccc;
+                padding: 15px;
+                page-break-after: always;
+                break-after: page;
+            }
+            .toc a {
+                color: #000;
+            }
+            .note, .success, .warning {
+                background-color: #fff;
+                color: #000;
+                border: 1px solid #999;
+                border-left: 5px solid #000;
+                padding: 12px;
+                border-radius: 4px;
+                margin: 15px 0;
+                page-break-inside: avoid;
+                break-inside: avoid;
+            }
+            .note strong, .success strong, .warning strong {
+                color: #000;
+            }
+        }
     </style>
 </head>
 <body>
@@ -120,7 +241,7 @@
     <h1>Bytehound: Comprehensive User Manual</h1>
     
     <p style="font-size: 18px; text-align: center; color: #7f8c8d;">
-        This manual is your complete guide to Bytehound's panels, workflows, and configuration sheets. Whether you are connecting a simple Arduino or validating complex Model-Based Design firmware, it shows you how to decode, visualize, log, control, and analyze serial hardware telemetry.
+        This manual is your complete guide to Bytehound's panels, workflows, and configuration sheets. Whether you are connecting a simple microcontroller or validating complex Model-Based Design firmware, it shows you how to decode, visualize, log, control, and analyze serial hardware telemetry.
     </p>
 
     <!-- Table of Contents -->
@@ -144,6 +265,7 @@
                     <li><a href="#activity-log">Activity Log</a></li>
                     <li><a href="#fault-alarms">Fault Alarms</a></li>
                     <li><a href="#status-bar">Status Bar (bottom-right counters)</a></li>
+                    <li><a href="#menu-bar-reference">The Menu Bar Reference</a></li>
                     <li><a href="#keyboard-shortcuts">Keyboard Shortcuts</a></li>
                 </ul>
             </li>
@@ -163,14 +285,17 @@
             </li>
             <li><a href="#section-5">5. Customizing Your Data (The Excel Config)</a>
                 <ul class="sub-menu">
-                    <li><a href="#variables">variables</a></li>
-                    <li><a href="#config-bitfields">bitfields</a></li>
-                    <li><a href="#config-enums">enums</a></li>
-                    <li><a href="#config-tx">tx_commands</a></li>
-                    <li><a href="#config-fields">tx_command_fields</a></li>
-                    <li><a href="#config-polling">polling_schedule</a></li>
-                    <li><a href="#config-protocol">protocol</a></li>
-                    <li><a href="#yaml-json-configs">YAML and JSON Configuration</a></li>
+                    <li><a href="#config-protocol">Sheet 1 — Protocol</a></li>
+                    <li><a href="#sheet-frames">Sheet 2 — Frames</a></li>
+                    <li><a href="#variables">Sheet 3 — Variables</a></li>
+                    <li><a href="#sheet-frameconfig">Legacy — FrameConfig</a></li>
+                    <li><a href="#config-bitfields">Sheet 4 — Bitfields</a></li>
+                    <li><a href="#config-enums">Sheet 5 — Enums</a></li>
+                    <li><a href="#sheet-calcgroups">Sheet 6 — CalcGroups</a></li>
+                    <li><a href="#config-tx">Sheet 7 — TxCommands</a></li>
+                    <li><a href="#config-fields">Sheet 8 — TxCommandFields</a></li>
+                    <li><a href="#config-polling">Sheet 9 — PollingSchedule</a></li>
+                    <li><a href="#sheet-serialdefaults">Sheet 10 — SerialDefaults</a></li>
                     <li><a href="#validator-cli">Config Validator CLI</a></li>
                 </ul>
             </li>
@@ -181,6 +306,7 @@
                     <li><a href="#diagnostics">Diagnostics &amp; Troubleshooting</a></li>
                 </ul>
             </li>
+            <li><a href="#section-7">7. Application Limitations &amp; Safety Caveats</a></li>
         </ul>
     </div>
 
@@ -191,7 +317,7 @@
     <p>Bytehound is a hardware-agnostic telemetry and control dashboard for serial devices. It reads framed UART/USB byte streams or Modbus RTU traffic, decodes the payload using a workbook or CSV configuration that you define, and displays the results in live tables, plots, logs, and command panels — all without writing Python code.</p>
 
     <h3 id="connecting">Connecting Your Hardware</h3>
-    <p>To get your hardware (NXP, STM32, Arduino, etc.) talking to the app:</p>
+    <p>To get your hardware (NXP, STM32, ESP32, etc.) talking to the app:</p>
     <ol>
         <li>Connect your hardware to your computer using a USB cable or Serial adapter.</li>
         <li>Make sure your loaded config matches the bytes your device sends. For a framed protocol that usually means <code>[Header] + [ID] + [Length] + [Data] + [CRC]</code>; for Modbus RTU, set <code>parser_type = modbus_rtu</code>. See <a href="#section-5">Section 5</a> for protocol details.</li>
@@ -314,6 +440,8 @@
 
     <h3 id="activity-log">Activity Log</h3>
     <p>The <strong>Activity Log</strong> tracks major application events: configurations loaded, connections established or lost, logging start/stop, and any error popups. Useful for post-mortem analysis of a test session.</p>
+    
+    <p><strong>Frame Errors:</strong> If the application receives corrupted telemetry packets (e.g., CRC mismatch, invalid payload length, or bad footer), the exact reason will be displayed here as a <code>[WARN] Frame Error</code> message (e.g. <code>[WARN] Frame Error: CRC mismatch on frame 0x9000...</code>). To prevent the log from being flooded during a noisy connection, identical error messages are throttled to appear at most once per second.</p>
 
     <h3 id="fault-alarms">Fault Alarms</h3>
     <p>Bytehound monitors all incoming decoded signals for the words <code>fault</code> or <code>error</code> (case-insensitive) in their Enum Labels or Bitfield states. If a fault is detected (e.g., a bit named "Overvoltage Fault" flips to ON), Bytehound automatically logs an <code>[ALARM]</code> entry to the Activity Log and the Raw Console. This requires no setup—as long as your Variables configuration includes Enums or Bitfields with those keywords, the application will catch them.</p>
@@ -375,6 +503,134 @@
         <tr><td><kbd>F1</kbd></td><td>View Documentation</td><td>Opens this manual in your browser.</td></tr>
         <tr><td><kbd>Space</kbd></td><td>Pause / Resume Live Plot</td><td>Toggles between Live and Explore modes.</td></tr>
     </table>
+
+    <h3 id="menu-bar-reference">The Menu Bar Reference</h3>
+    <p>The main window's menu bar provides direct access to all configuration, control, view, and utility functions of the application. Here is an in-depth breakdown of every menu, action, and setting to help you operate the application effectively, even if you are new to serial testing tools:</p>
+
+    <h4>1. File Menu</h4>
+    <p>The <strong>File</strong> menu is where you manage Bytehound's connection mappings (decoders) and exit the application safely.</p>
+    <ul>
+        <li><strong>Import Config (<code>Ctrl+O</code>)</strong>
+            <br><em>What it does:</em> Opens a file selection dialog to load a new protocol definition. You can select an Excel workbook (<code>.xlsx</code> or <code>.xlsm</code>) or a directory containing individual CSV sheets.
+            <br><em>Why you need it:</em> Bytehound is generic; it doesn't know how your hardware packs its bytes until you tell it. Importing a configuration tells the app what each byte represents, what scales/offsets to apply, and how to format names.
+            <br><em>Example:</em> You are testing a new Modbus-based temperature controller. You load <code>modbus_temp_sensor_map.xlsx</code>. Instantly, the main telemetry table updates to display rows for "Zone 1 Temp", "Heater Power %", and "Alarm Bitfield".
+        </li>
+        <li><strong>Export Template (<code>Ctrl+E</code>)</strong>
+            <br><em>What it does:</em> Generates a fresh, blank Excel workbook containing the template structure (10 required sheets with correct headers).
+            <br><em>Why you need it:</em> If you are building a new sensor or controller and want to construct a telemetry profile, this gives you a valid starting point without needing to remember column names.
+            <br><em>Example:</em> You want to monitor a custom DIY microcontroller project. You click Export Template, save it as <code>my_project_def.xlsx</code>, and open it in Excel to start typing in your signal names, offsets, and data types (e.g. <code>float32</code> at byte 4).
+        </li>
+        <li><strong>Exit (<code>Ctrl+Q</code>)</strong>
+            <br><em>What it does:</em> Closes the main application.
+            <br><em>Safety Prompt:</em> If the application is currently recording telemetry logs, exiting will show a caution popup. This warns you that closing the app will immediately stop logging and finalize the logs. This prompt is critical because closing the app abruptly without stopping the log would result in losing all buffered decoded data.
+        </li>
+    </ul>
+
+    <h4>2. Edit Menu</h4>
+    <p>The <strong>Edit</strong> menu allows you to copy real-time data quickly or clear diagnostic clutter from the display.</p>
+    <ul>
+        <li><strong>Copy Value (<code>Ctrl+Shift+C</code>)</strong>
+            <br><em>What it does:</em> Copies the text contents of the currently selected cell in the center Data Table directly to the operating system clipboard.
+            <br><em>Example:</em> You notice that the "Battery Voltage" signal wiggles to a peak value of <code>54.38 V</code> and you want to document it. Highlight that cell in the table, press <code>Ctrl+Shift+C</code>, and paste the value into Slack, Notepad, or your bug tracking tool.
+        </li>
+        <li><strong>Copy Table Snapshot (<code>Ctrl+Shift+T</code>)</strong>
+            <br><em>What it does:</em> Captures the complete, real-time status of all decoded signals (columns and rows) in the main table and copies them as tab-separated values (TSV) to the clipboard.
+            <br><em>Example:</em> You are running a bench test and want to quickly record the current status of all 50 cell voltages without starting a full session log. Press <code>Ctrl+Shift+T</code>, open Microsoft Excel or Google Sheets, click on cell A1, and press Paste. The entire table will populate instantly with aligned columns.
+        </li>
+        <li><strong>Clear Console / Log (<code>Ctrl+K</code>)</strong>
+            <br><em>What it does:</em> Resets all communication statistics (Frames, Errors, Timeouts, RX, TX, Latency) back to zero, clears all historical lines from the Raw Console and Activity Log text panes, and empties the main table's variables.
+            <br><em>Why you need it:</em> If you have resolved a wiring issue that caused thousands of CRC errors, you want to clear the error count so you can monitor if any *new* errors occur. Pressing <code>Ctrl+K</code> gives you a clean slate.
+        </li>
+    </ul>
+
+    <h4>3. View Menu</h4>
+    <p>The <strong>View</strong> menu manages visual layout docking, themes, and configuration metadata.</p>
+    <ul>
+        <li><strong>Panels (Submenu)</strong>
+            <br><em>What it does:</em> Contains checkable options for each of the seven interface docks: *Live Plot*, *Bitfields*, *Enums*, *TX Commands*, *Parameter Editor*, *Raw Console*, and *Activity Log*. Unchecking a panel closes it; checking it opens it.
+            <br><em>Why you need it:</em> Docks can be dragged, floating independently, or closed. If you accidentally close a panel (like the Live Plot), you can restore it here.
+            <br><em>Example:</em> When doing read-only telemetry checks, you don't need to send commands. You uncheck *TX Commands* and *Parameter Editor* to hide them, freeing up screen space for the plot panel.
+        </li>
+        <li><strong>Reset Window Layout (<code>Ctrl+Shift+R</code>)</strong>
+            <br><em>What it does:</em> Restores all dock panels to their default positions and splits, and returns the window size to standard defaults.
+            <br><em>Example:</em> You dragged the Live Plot to a second monitor and closed the console, and now your layout is disorganized. Pressing <code>Ctrl+Shift+R</code> snaps all panels back to their neat, default locations.
+        </li>
+        <li><strong>Config Info...</strong>
+            <br><em>What it does:</em> Displays a dialog summarizing the active configuration profile, showing the total number of parsed variables, valid frame IDs, CRC settings, and the serialdefaults configuration.
+        </li>
+        <li><strong>Theme (Submenu)</strong>
+            <br><em>What it does:</em> Switches the visual appearance of the application.
+            <ul>
+                <li><em>Dark:</em> Best for low-light test benches or server rooms, reducing eye strain.</li>
+                <li><em>Light:</em> Best for bright outdoor environments, test labs, or creating clean, high-contrast screenshots for technical documentation.</li>
+                <li><em>System:</em> Automatically aligns the app with your Windows operating system light/dark theme settings.</li>
+            </ul>
+        </li>
+    </ul>
+
+    <h4>4. Device Menu</h4>
+    <p>The <strong>Device</strong> menu controls the physical hardware communication and data recording sessions.</p>
+    <ul>
+        <li><strong>Connect / Disconnect (<code>F9</code>)</strong>
+            <br><em>What it does:</em> Opens the Serial Settings dialog (allowing you to select COM Port, Baud rate, data/stop bits, parity, and timeout) and connects the serial interface. Toggles the connection on/off.
+            <br><em>Example:</em> Plug in your USB-to-Serial adapter. Press <code>F9</code>, click Refresh, select <code>COM5</code>, set the baud rate to match your hardware (e.g. <code>115200</code>), and click Connect. The connection LED will turn green.
+        </li>
+        <li><strong>Start / Stop Auto-Fetch (<code>F10</code>)</strong>
+            <br><em>What it does:</em> Toggles active register polling on devices that follow a request/response (polled) protocol rather than streaming data continuously.
+            <br><em>Example:</em> Your Modbus sensor requires a "Read Input Registers" command to be sent before it replies with the temperature. Enabling Auto-Fetch starts sending these commands automatically at intervals defined in the <code>polling_schedule</code> sheet.
+        </li>
+        <li><strong>Start / Stop Logging (<code>Ctrl+L</code>)</strong>
+            <br><em>What it does:</em> Opens the session recording dialog and begins logging data.
+            <br><em>Modes:</em>
+            <ul>
+                <li><em>Raw only:</em> Records raw incoming and outgoing hexadecimal bytes with timestamps directly to a <code>*_raw.csv</code> file. Safest for deep diagnostics.</li>
+                <li><em>Decoded only:</em> Buffers decoded variables into memory and formats them as a wide Excel spreadsheet (<code>*_decoded.xlsx</code>) with metadata, written on Stop.</li>
+                <li><em>Raw + Decoded:</em> Records both files simultaneously (highly recommended).</li>
+            </ul>
+        </li>
+    </ul>
+
+    <h4>5. Tools Menu</h4>
+    <p>The <strong>Tools</strong> menu hosts the post-test visual analysis suite and utility preferences.</p>
+    <ul>
+        <li><strong>Analysis Suite (<code>Ctrl+T</code>)</strong>
+            <br><em>What it does:</em> Opens a separate, non-modal plotting window for offline log analysis.
+            <br><em>Why you need it:</em> It lets you load saved <code>*_decoded.xlsx</code> files from prior test runs, zoom in, place measurement cursors, apply smoothing filters, and overlay multiple runs to compare hardware behavior.
+        </li>
+        <li><strong>Logging Settings...</strong>
+            <br><em>What it does:</em> Opens the configuration dialog for internal rotating diagnostics and disk writing schedules.
+            <br><em>Understanding the Settings:</em>
+            <ul>
+                <li><strong>Log level (DEBUG / INFO / WARNING / ERROR):</strong> Controls how much diagnostic information the application writes to its internal <code>bytehound.log</code> file. If you set it to <code>INFO</code>, it only records major events (starts, connections). If you set it to <code>DEBUG</code>, it logs every transaction details, worker threads, and layout swaps—excellent for debugging connection drops or serial driver glitches.</li>
+                <li><strong>Flush interval (seconds):</strong> Controls how frequently the Raw CSV logger writes buffered data from RAM to your disk. The default is <code>0.5 s</code>. Setting it to <code>0.0 s</code> forces an immediate disk write on every packet. This protects against data loss if the computer suddenly loses power, but it causes continuous disk activity which can degrade performance on older or slower drives.</li>
+            </ul>
+        </li>
+        <li><strong>Plot Settings...</strong>
+            <br><em>What it does:</em> Opens settings for the Live Plot panel.
+            <br><em>Understanding the Settings:</em>
+            <ul>
+                <li><strong>History Max Samples:</strong> Sets a limit on how many data points the Live Plot retains in memory per signal (default is 6,000). Setting it to <code>0</code> or blank means "unbounded" (no limit). If you are running high-speed tests (e.g. 1 kHz) and want to zoom out and view hours of data, increase this number, but be aware that setting it to unbounded will consume more system RAM over long sessions.</li>
+            </ul>
+        </li>
+    </ul>
+
+    <h4>6. Help Menu</h4>
+    <p>The <strong>Help</strong> menu provides manual documentation, software update tools, and debugging diagnostics.</p>
+    <ul>
+        <li><strong>View Documentation (<code>F1</code>)</strong>
+            <br><em>What it does:</em> Opens this manual (<code>index.html</code>) in your default web browser for quick offline reference.</li>
+        <li><strong>Check for Updates</strong>
+            <br><em>What it does:</em> Safely connects to the online updates server to see if a new release is available.
+            <br><em>Why it is safe:</em> It displays the version numbers and release notes first. If you confirm, it downloads the installer, computes its **SHA-256 cryptographic checksum**, and compares it with the server manifest. If the checksum matches, it runs the installer in silent mode to update your installation automatically. If it doesn't match, it blocks the install to protect you from corrupted downloads.
+        </li>
+        <li><strong>Copy Diagnostics</strong>
+            <br><em>What it does:</em> Automatically gathers details about your Windows version, Python version, PySide6/Qt versions, serial port configuration, data counters (frames, errors), and the last 200 lines of the application log. It copies this info to your clipboard.
+            <br><em>Why you need it:</em> If you run into a bug, you can click this action and immediately paste the results into a bug report or support email, giving developers all the context they need to help you in one click.
+        </li>
+        <li><strong>About Bytehound</strong>
+            <br><em>What it does:</em> Opens a window showing copyright notices, version info, credits, and links to the MIT License.
+        </li>
+    </ul>
 
     <!-- Section 3 -->
     <h2 id="section-3">3. Controlling Your Hardware</h2>
@@ -598,7 +854,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         <strong>Common workflows:</strong>
         <ul>
             <li><strong>Align two runs:</strong> load both logs, then adjust the time offset spin box on one log until key events line up.</li>
-            <li><strong>Compare signal deltas:</strong> add two vertical cursors and read the X and Y values in the Cursors tab.</li>
+            <li><strong>Compare signal deltas:</strong> add two vertical cursors and read the  X and  Y values in the Cursors tab.</li>
             <li><strong>Normalize mixed units:</strong> group the parameters, then right-click the subplot header and enable Normalize (0-1).</li>
             <li><strong>Clean up noisy data:</strong> enable smoothing on a subplot and set the window size under View -&gt; Smoothing Window...</li>
             <li><strong>Export a report snapshot:</strong> zoom to a range, then export CSV or PDF from the File menu.</li>
@@ -613,12 +869,27 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         <strong>Quick start:</strong> Click <strong>File → Export Template</strong>, save the <code>.xlsx</code> file, open it in Excel, fill in the sheets described below, save, then click <strong>File → Import Config</strong> to load it. Changes take effect immediately.
     </div>
 
-    <h4 id="yaml-json-configs">YAML and JSON Configuration Support</h4>
-    <p>In addition to <code>.xlsx</code> files, Bytehound natively supports loading protocol configurations from <code>.yaml</code> and <code>.json</code> formats. This is ideal for version-controlling your telemetry maps in Git and integrating them into automated CI/CD pipelines. The JSON/YAML files must define a top-level dictionary with keys matching the Excel sheet names (e.g., <code>{"protocol": [...], "variables": [...]}</code>). Missing keys are treated as empty sheets.</p>
+    <div class="note">
+        <strong>Alternative CSV Folder Configuration:</strong> Instead of a single Excel <code>.xlsx</code> workbook, you can configure Bytehound using a directory containing individual CSV files. When importing, simply select <strong>any CSV file inside the configuration folder</strong>, and Bytehound will automatically read all related CSV files in that directory. The CSV filenames are case-insensitive and support normalization aliases:
+        <ul>
+            <li><code>protocol.csv</code> (maps to <em>Sheet 1 — Protocol</em>)</li>
+            <li><code>frames.csv</code> (maps to <em>Sheet 2 — Frames</em>)</li>
+            <li><code>variables.csv</code> or <code>frame_variables.csv</code> or <code>framevariables.csv</code> (maps to <em>Sheet 3 — Variables</em>)</li>
+            <li><code>bitfields.csv</code> (maps to <em>Sheet 4 — Bitfields</em>)</li>
+            <li><code>enums.csv</code> (maps to <em>Sheet 5 — Enums</em>)</li>
+            <li><code>calc_groups.csv</code> or <code>calcgroups.csv</code> (maps to <em>Sheet 6 — CalcGroups</em>)</li>
+            <li><code>tx_commands.csv</code> or <code>txcommands.csv</code> (maps to <em>Sheet 7 — TxCommands</em>)</li>
+            <li><code>tx_command_fields.csv</code> or <code>txcommandfields.csv</code> (maps to <em>Sheet 8 — TxCommandFields</em>)</li>
+            <li><code>polling_schedule.csv</code> or <code>pollingschedule.csv</code> (maps to <em>Sheet 9 — PollingSchedule</em>)</li>
+            <li><code>serial_defaults.csv</code> or <code>serialdefaults.csv</code> (maps to <em>Sheet 10 — SerialDefaults</em>)</li>
+            <li><code>frame_config.csv</code> or <code>frameconfig.csv</code> (maps to <em>Legacy — FrameConfig</em>)</li>
+        </ul>
+        Each CSV file must contain a header row matching the exact column names documented for the corresponding sheet below.
+    </div>
 
     <h4 id="validator-cli">Config Validator CLI</h4>
-    <p>Bytehound can be run headlessly in your CI/CD pipeline to validate configuration syntax without launching the GUI. Simply execute:</p>
-    <pre><code>Bytehound.exe --validate config.yaml</code></pre>
+    <p>Bytehound can be run headlessly from the command line to validate configuration syntax without launching the GUI. Simply execute:</p>
+    <pre><code>Bytehound.exe --validate config.xlsx</code></pre>
     <p>If the configuration schema is perfect (valid byte orders, correct types, no missing required fields), the CLI will print a success summary and exit with code <code>0</code>. If there are schema errors, it prints the errors and exits with code <code>1</code>, failing the build pipeline instantly.</p>
 
     <p>The workbook contains the following sheets <em>in this order</em>. Each section below matches one sheet tab.</p>
@@ -719,7 +990,7 @@ crc_type               = crc16_modbus
 crc_size               = 2
 crc_byte_order         = little
 crc_coverage           =                     ← defaults to header_to_payload
-footer_hex             = EE                  ← matches the bundled Arduino simulator's trailer byte
+footer_hex             = EE                  ← matches the expected frame trailer byte
 escape_mode            =                     ← defaults to none
 raw_log_format         = hex                 ← `hex` = spaced, `compact` = contiguous
 inter_frame_delay_ms   = 10
@@ -789,7 +1060,7 @@ enabled                = TRUE</pre>
 
     <hr>
 
-    <h3 id="sheet-frameconfig">Sheet 4 — FrameConfig (Legacy)</h3>
+    <h3 id="sheet-frameconfig">Legacy — FrameConfig</h3>
     <p>An older schema with explicit <code>start_byte</code> and <code>byte_length</code>. Only used when the Variables sheet is absent. <strong>Use Variables for all new configs.</strong> Every column in this schema is required — there are no optional fields, no <code>count</code> auto-expansion, no <code>enabled</code> toggle, no per-frame <code>Frames</code> sheet (each row carries its own <code>frame_name</code>).</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
@@ -816,7 +1087,7 @@ enabled                = TRUE</pre>
 
     <hr>
 
-    <h3 id="config-bitfields">Sheet 5 — Bitfields</h3>
+    <h3 id="config-bitfields">Sheet 4 — Bitfields</h3>
     <p>Breaks a single integer signal into named Boolean flags. Each bit appears as an ON/OFF indicator in the <strong>Bitfields</strong> panel.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
@@ -843,7 +1114,7 @@ enabled                = TRUE</pre>
 
     <hr>
 
-    <h3 id="config-enums">Sheet 6 — Enums</h3>
+    <h3 id="config-enums">Sheet 5 — Enums</h3>
     <p>Maps raw integer values of a signal to readable text labels. Results appear in the <strong>Enums</strong> panel and replace the raw number in the Data Table's Value column.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
@@ -865,7 +1136,7 @@ enabled                = TRUE</pre>
 
     <hr>
 
-    <h3 id="sheet-calcgroups">Sheet 7 — CalcGroups</h3>
+    <h3 id="sheet-calcgroups">Sheet 6 — CalcGroups</h3>
     <p>Computes aggregate statistics across decoded signals sharing the same <code>group</code> name. Results appear as extra rows at the bottom of the Data Table.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
@@ -889,7 +1160,7 @@ Cell Voltages | min|max|diff|avg   | V    | 0x2000   | TRUE</pre>
 
     <hr>
 
-    <h3 id="config-tx">Sheet 8 — TxCommands</h3>
+    <h3 id="config-tx">Sheet 7 — TxCommands</h3>
     <p>Each enabled row creates one entry in the <strong>TX Commands</strong> panel. The app builds a packet from the static payload plus any matching TxCommandFields, then sends it to your hardware when you click <strong>Send</strong>.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
@@ -909,7 +1180,7 @@ Set Voltage Limit | 0x2000        |             | Set the overvoltage threshold 
 
     <hr>
 
-    <h3 id="config-fields">Sheet 9 — TxCommandFields</h3>
+    <h3 id="config-fields">Sheet 8 — TxCommandFields</h3>
     <p>Adds user-input numeric fields to a TX command. When a command has fields, the TX Commands panel shows an input form. The app encodes, scales, and appends those values after the command's static payload.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
@@ -934,26 +1205,7 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
 
     <hr>
 
-    <h3 id="sheet-serialdefaults">Sheet 10 — SerialDefaults</h3>
-    <p>Config-driven defaults for the Connection dialog. When the dialog opens, each field is filled from <strong>QSettings (your last-used choice) if present, otherwise from this sheet</strong>. That means a fresh install — or a freshly loaded config you've never connected with before — opens the Connect dialog already showing this config's expected baud rate, parity, etc.; subsequent runs keep whatever you explicitly chose.</p>
-    <table>
-        <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
-        <tr><td><code>baud_rate</code></td><td>integer <em>(required)</em></td><td><code>115200</code></td><td>Baud-rate default for the Connection dialog. Used on first open; thereafter QSettings wins.</td></tr>
-        <tr><td><code>data_bits</code></td><td>integer <em>(required)</em></td><td><code>8</code></td><td>Data-bits default for the Connection dialog. Combo offers <code>8</code> and <code>7</code>.</td></tr>
-        <tr><td><code>stop_bits</code></td><td>number <em>(required)</em></td><td><code>1</code> <em>(blank: <code>1.0</code>)</em></td><td>Stop-bits default for the Connection dialog. Combo offers <code>1</code>, <code>1.5</code>, <code>2</code>. Blank cells fall back to <code>1.0</code>.</td></tr>
-        <tr><td><code>parity</code></td><td>text <em>(required)</em></td><td><code>N</code> <em>(blank: <code>N</code>)</em></td><td>Parity default for the Connection dialog. Combo offers <code>N</code>, <code>E</code>, <code>O</code>. Blank cells fall back to <code>N</code>; values are uppercased on load.</td></tr>
-        <tr><td><code>timeout_ms</code></td><td>integer <em>(required)</em></td><td><code>100</code></td><td>Read-timeout default for the Connection dialog. Combo offers <code>20</code>/<code>50</code>/<code>100</code>/<code>250</code>/<code>500</code>/<code>1000</code> ms.</td></tr>
-    </table>
-    <div class="warning">
-        <strong>Do not add a partially blank row.</strong> If this sheet is absent or empty, the loader uses internal defaults. If the sheet contains a row, all five column headers are required; <code>baud_rate</code>, <code>data_bits</code>, and <code>timeout_ms</code> must contain valid integers.
-    </div>
-    <p><strong>Bundled template content</strong> (standard 8-N-1 at 115 200 baud with a 100 ms read timeout — matches what the Connection dialog uses by default):</p>
-    <pre>baud_rate | data_bits | stop_bits | parity | timeout_ms
-115200    | 8         | 1         | N      | 100</pre>
-
-    <hr>
-
-    <h3 id="config-polling">Sheet 11 — PollingSchedule</h3>
+    <h3 id="config-polling">Sheet 9 — PollingSchedule</h3>
     <p>Only needed if your hardware uses a <strong>request / response</strong> model — i.e. it only sends data when asked. Each row tells the app to periodically send a request packet and wait for a response.</p>
     <table>
         <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
@@ -973,6 +1225,25 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
 0x1000        | 100         | 50         | true
 0x2000        | 500         | 100        | true
 0x3000        | 200         | 50         | true</pre>
+
+    <hr>
+
+    <h3 id="sheet-serialdefaults">Sheet 10 — SerialDefaults</h3>
+    <p>Config-driven defaults for the Connection dialog. When the dialog opens, each field is filled from <strong>QSettings (your last-used choice) if present, otherwise from this sheet</strong>. That means a fresh install — or a freshly loaded config you've never connected with before — opens the Connect dialog already showing this config's expected baud rate, parity, etc.; subsequent runs keep whatever you explicitly chose.</p>
+    <table>
+        <tr><th>Column</th><th>Type</th><th>Example</th><th>What it does</th></tr>
+        <tr><td><code>baud_rate</code></td><td>integer <em>(required)</em></td><td><code>115200</code></td><td>Baud-rate default for the Connection dialog. Used on first open; thereafter QSettings wins.</td></tr>
+        <tr><td><code>data_bits</code></td><td>integer <em>(required)</em></td><td><code>8</code></td><td>Data-bits default for the Connection dialog. Combo offers <code>8</code> and <code>7</code>.</td></tr>
+        <tr><td><code>stop_bits</code></td><td>number <em>(required)</em></td><td><code>1</code> <em>(blank: <code>1.0</code>)</em></td><td>Stop-bits default for the Connection dialog. Combo offers <code>1</code>, <code>1.5</code>, <code>2</code>. Blank cells fall back to <code>1.0</code>.</td></tr>
+        <tr><td><code>parity</code></td><td>text <em>(required)</em></td><td><code>N</code> <em>(blank: <code>N</code>)</em></td><td>Parity default for the Connection dialog. Combo offers <code>N</code>, <code>E</code>, <code>O</code>. Blank cells fall back to <code>N</code>; values are uppercased on load.</td></tr>
+        <tr><td><code>timeout_ms</code></td><td>integer <em>(required)</em></td><td><code>100</code></td><td>Read-timeout default for the Connection dialog. Combo offers <code>20</code>/<code>50</code>/<code>100</code>/<code>250</code>/<code>500</code>/<code>1000</code> ms.</td></tr>
+    </table>
+    <div class="warning">
+        <strong>Do not add a partially blank row.</strong> If this sheet is absent or empty, the loader uses internal defaults. If the sheet contains a row, all five column headers are required; <code>baud_rate</code>, <code>data_bits</code>, and <code>timeout_ms</code> must contain valid integers.
+    </div>
+    <p><strong>Bundled template content</strong> (standard 8-N-1 at 115 200 baud with a 100 ms read timeout — matches what the Connection dialog uses by default):</p>
+    <pre>baud_rate | data_bits | stop_bits | parity | timeout_ms
+115200    | 8         | 1         | N      | 100</pre>
 
     <!-- Section 6 -->
     <h2 id="section-6">6. Appearance &amp; Updates</h2>
@@ -1012,7 +1283,36 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
     <h3 id="diagnostics">Diagnostics &amp; Troubleshooting</h3>
     <p>If you encounter issues, use <strong>Help → Copy Diagnostics</strong>. This generates a complete snapshot of your session state—including OS details, Bytehound version, Qt/Python versions, active config path, connection status, packet counters, and the tail of the internal application log. You can paste this directly into a bug report to provide all necessary context in one step without needing to manually hunt down the log file.</p>
 
-</div>
+    <!-- Section 7 -->
+    <h2 id="section-7">7. Application Limitations &amp; Safety Caveats</h2>
+    <p>Bytehound is designed to be highly flexible and performant. However, when using the application for real-time telemetry and control, you must keep the following design limitations and safety constraints in mind:</p>
 
+    <h3>Performance &amp; Packet Processing Rates</h3>
+    <ul>
+        <li><strong>Maximum Frame Rate Limit:</strong> The Qt GUI telemetry pipeline is optimized and verified to handle packet rates up to <strong>1000 Hz (1 kHz)</strong>. Above this rate, packet processing and UI redraw operations may consume significant CPU resources.</li>
+        <li><strong>Queue Saturation (<code>⚠️ Queue Saturated</code>):</strong> If incoming serial data rates exceed the system's capacity, or if the OS stalls the GUI thread (e.g., during window dragging), the serial packet queue or log flush queue may saturate. When this happens, a yellow warning badge appears in the bottom status bar, and newer packets/logs will be dropped to protect system memory.</li>
+        <li><strong>Odd Byte Widths:</strong> Decoded signal widths of 1, 2, 4, and 8 bytes use highly optimized struct unpacking routines. Signals with odd widths (3, 5, 6, and 7 bytes) fallback to slower binary conversions, which can impact performance at high frame rates.</li>
+    </ul>
+
+    <h3>Data Logging &amp; Buffer Safety</h3>
+    <ul>
+        <li><strong>In-Memory Decoded Log Risk:</strong> While the Raw CSV log (<code>*_raw.csv</code>) is continuously flushed to disk at a configurable interval (default 0.5 seconds), the Decoded Excel log (<code>*_decoded.xlsx</code>) is buffered entirely in system memory. It is only written to disk when you click <strong>Stop Logging</strong>. If the application crashes, the computer loses power, or is killed before you stop logging, the decoded spreadsheet data will be lost. <strong>Always stop logging manually</strong> before closing the app or disconnecting power.</li>
+        <li><strong>Plot History Limits:</strong> Plot history is stored in a fixed-capacity ring buffer (default 6,000 samples per signal). In long monitoring sessions, older points will wrap around and be discarded from memory to prevent memory leaks. Consequently, scrolling back to the beginning of a multi-hour test in the Live Plot is not supported; use the Analysis Suite on the saved log files instead.</li>
+        <li><strong>Raw Console and Log line limits:</strong> The Raw Console is capped at 3,000 blocks/lines of history, and the Activity Log is capped at 5,000 blocks. Old messages are automatically truncated from the display buffer.</li>
+    </ul>
+
+    <h3>Dock Window CPU Optimization (Data Gaps)</h3>
+    <ul>
+        <li><strong>Hidden Dock Optimization:</strong> To save CPU cycles on low-spec hardware, the application stops buffering plot history, formatting console strings, and generating bitfield/enum table items for any panel that is currently hidden or collapsed. If you close the <em>Live Plot</em>, <em>Raw Console</em>, <em>Bitfields</em>, or <em>Enums</em> dock, telemetry points for that period are skipped. When you re-open the dock, data resumes plotting from that moment onward, resulting in a gap in the timeline. Keep panels visible if you need continuous live visualization.</li>
+    </ul>
+
+    <h3>Configuration Constraints</h3>
+    <ul>
+        <li><strong>Silent Overwriting:</strong> The configuration importer parses files sequentially. If you define duplicate entries—such as two <code>tx_commands</code> with the same name, or two <code>enums</code> values for the same signal—the latter entry overwrites the former silently without raising a warning. Make sure your names and enum states are unique.</li>
+        <li><strong>Modbus RTU Specifications:</strong> The Modbus RTU protocol specifies big-endian encoding for register addresses and data values, and little-endian encoding for the CRC checksum. Custom <code>byte_order</code> configurations in the Protocol sheet are ignored when <code>parser_type = modbus_rtu</code> is selected.</li>
+        <li><strong>Polling vs. Streaming:</strong> Do not enable <strong>Auto-Fetch (F10)</strong> on a device that is already streaming data automatically (unsolicited). Sending poll requests to a streaming device will cause transmission collisions and corrupt the incoming data packets.</li>
+    </ul>
+
+</div>
 </body>
 </html>

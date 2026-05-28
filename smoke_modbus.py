@@ -1,4 +1,4 @@
-"""End-to-end Modbus RTU headless test against Arduino_BMS_Modbus.ino.
+"""End-to-end Modbus RTU headless test against MCU_BMS_Modbus.ino.
 
 Exercises every Modbus-specific code path on both sides of the wire:
 
@@ -79,7 +79,7 @@ def main() -> int:
     else:
         rep.fail(f"parser_type wrong: {config.protocol.parser_type!r}")
     if config.protocol.modbus_node_address == 1:
-        rep.ok("modbus_node_address = 1 (matches Arduino_BMS_Modbus.ino)")
+        rep.ok("modbus_node_address = 1 (matches MCU_BMS_Modbus.ino)")
     else:
         rep.fail(f"modbus_node_address wrong: {config.protocol.modbus_node_address}")
 

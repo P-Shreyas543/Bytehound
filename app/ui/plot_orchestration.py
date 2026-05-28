@@ -353,12 +353,18 @@ class PlotOrchestrationMixin:
         self._plot_y_range_timers.clear()
         self._plot_y_range_pending.clear()
 
-        # Clear variable-strip widgets
+        # Clear variable-strip widgets and reset prior column/row stretches so
+        # a previous 1×8 layout doesn't leave 8 stretched columns hanging
+        # around after a switch to 4×2.
         if hasattr(self, "_panel_strip_layout") and self._panel_strip_layout is not None:
             while self._panel_strip_layout.count():
                 item = self._panel_strip_layout.takeAt(0)
                 if item.widget():
                     item.widget().deleteLater()
+            for c in range(self._panel_strip_layout.columnCount()):
+                self._panel_strip_layout.setColumnStretch(c, 0)
+            for r in range(self._panel_strip_layout.rowCount()):
+                self._panel_strip_layout.setRowStretch(r, 0)
 
         n = rows * cols
         # Determine assigned keys for each new panel
@@ -507,10 +513,21 @@ class PlotOrchestrationMixin:
                 _configure_live_curve(curve)
                 panel.curves[key] = curve
 
-            # Build variable-strip widget for this panel
+            # Build variable-strip widget for this panel, placed in the same
+            # grid cell (row_idx, col_idx) as the plot so each strip sits
+            # above its panel instead of jamming all N strips into one
+            # horizontal row (which forced the dock to ~N*200px wide).
             if hasattr(self, "_panel_strip_layout") and self._panel_strip_layout is not None:
                 strip = self._make_panel_strip(idx)
-                self._panel_strip_layout.addWidget(strip, 1)
+                self._panel_strip_layout.addWidget(strip, row_idx, col_idx)
+
+        # Remember the grid dims so _rebuild_panel_strips (called after
+        # add/remove-signal) places strips at the same (row, col) coords.
+        self._plot_grid_rows = rows
+        self._plot_grid_cols = cols
+        if hasattr(self, "_panel_strip_layout") and self._panel_strip_layout is not None:
+            for c in range(cols):
+                self._panel_strip_layout.setColumnStretch(c, 1)
 
         # Anchor X to start at 0 immediately, before any data arrives. Without
         # this, pyqtgraph's default auto-range shows roughly [-0.5, 0.5] until
@@ -732,16 +749,26 @@ class PlotOrchestrationMixin:
         self._rebuild_panel_strips()
 
     def _rebuild_panel_strips(self) -> None:
-        """Rebuild all variable-chip strips after assignments change."""
+        """Rebuild all variable-chip strips after assignments change.
+
+        Strips are placed in the same (row, col) cells as the plot panels —
+        the grid dims are cached on _plot_grid_rows / _plot_grid_cols by
+        _rebuild_plot_grid. Falls back to a single column when called
+        before the first grid build.
+        """
         if not hasattr(self, "_panel_strip_layout") or self._panel_strip_layout is None:
             return
         while self._panel_strip_layout.count():
             item = self._panel_strip_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        cols = getattr(self, "_plot_grid_cols", 1) or 1
         for idx in range(len(self._plot_panels)):
+            row_idx, col_idx = divmod(idx, cols)
             strip = self._make_panel_strip(idx)
-            self._panel_strip_layout.addWidget(strip, 1)
+            self._panel_strip_layout.addWidget(strip, row_idx, col_idx)
+        for c in range(cols):
+            self._panel_strip_layout.setColumnStretch(c, 1)
 
     def _on_panel_add_signal(self, panel_idx: int) -> None:
         """Open a searchable dialog to pick a signal to assign to panel *panel_idx*.

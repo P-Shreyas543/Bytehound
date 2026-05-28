@@ -2,7 +2,7 @@
 
 Exercises every Bytehound feature that has a wire-level or device-level
 component, against the bundled `app/resources/config_template` config and
-the matching `Arduino_BMS_Simulator.ino` sketch.
+the matching `MCU_BMS_Simulator.ino` sketch.
 
   Phase  0  Static config sanity
   Phase  1  TX builder byte-exactness (offline)

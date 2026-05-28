@@ -38,7 +38,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox,
     QDoubleSpinBox, QFileDialog, QFrame,
     QGroupBox, QHBoxLayout, QLabel, QLineEdit,
-    QMainWindow, QMenu, QMessageBox, QInputDialog,
+    QMainWindow, QMenu, QMessageBox, QInputDialog, QHeaderView,
     QPushButton, QScrollArea, QSizePolicy, QSplitter, QStatusBar, QTabWidget, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget,
 )
 
@@ -336,29 +336,50 @@ class AnalysisSuiteWindow(QMainWindow):
         search_row.addWidget(self._param_hit_count)
         param_layout.addLayout(search_row)
 
-        # Primary actions — grouping is the main thing users want to do here.
-        p_btn_row = QHBoxLayout()
-        p_btn_row.setSpacing(4)
-        self._btn_group = QPushButton("Group")
-        self._btn_group.setToolTip(
-            "Put the selected parameters on the same subplot.\n"
-            "Tip: Ctrl/Shift-click parameters to multi-select, then click Group."
-        )
-        self._btn_group.clicked.connect(self._group_selected_params)
-        self._btn_group.setEnabled(False)
-        p_btn_row.addWidget(self._btn_group)
-        self._btn_ungroup = QPushButton("Ungroup")
-        self._btn_ungroup.setToolTip("Move the selected parameters to their own subplots.")
-        self._btn_ungroup.clicked.connect(self._ungroup_selected_params)
-        self._btn_ungroup.setEnabled(False)
-        p_btn_row.addWidget(self._btn_ungroup)
-        btn_add_subplot = QPushButton("+ Subplot")
-        btn_add_subplot.setToolTip("Add a new empty subplot — drag parameters into it.")
-        btn_add_subplot.clicked.connect(self._add_empty_subplot)
-        p_btn_row.addWidget(btn_add_subplot)
-        param_layout.addLayout(p_btn_row)
+        # Subplot settings toolbar
+        subplot_settings_layout = QHBoxLayout()
+        subplot_settings_layout.setSpacing(4)
+        
+        self._subplot_settings_combo = QComboBox()
+        self._subplot_settings_combo.setFont(QFont("PT Sans", 8))
+        self._subplot_settings_combo.setToolTip("Select subplot to configure settings below")
+        self._subplot_settings_combo.currentTextChanged.connect(self._on_subplot_settings_combo_changed)
+        subplot_settings_layout.addWidget(QLabel("Subplot:"))
+        subplot_settings_layout.addWidget(self._subplot_settings_combo, 1)
 
-        # Secondary actions
+        self._subplot_normalize_cb = QCheckBox("Norm")
+        self._subplot_normalize_cb.setFont(QFont("PT Sans", 8))
+        self._subplot_normalize_cb.setToolTip("Normalize curves on the selected subplot to 0-1")
+        self._subplot_normalize_cb.stateChanged.connect(self._on_subplot_normalize_toggled)
+        subplot_settings_layout.addWidget(self._subplot_normalize_cb)
+
+        self._subplot_smooth_cb = QCheckBox("Smooth")
+        self._subplot_smooth_cb.setFont(QFont("PT Sans", 8))
+        self._subplot_smooth_cb.setToolTip("Enable rolling average smoothing on the selected subplot")
+        self._subplot_smooth_cb.stateChanged.connect(self._on_subplot_smooth_toggled)
+        subplot_settings_layout.addWidget(self._subplot_smooth_cb)
+
+        self._subplot_up_btn = QPushButton("▲")
+        self._subplot_up_btn.setToolTip("Move selected subplot up")
+        self._subplot_up_btn.setFixedWidth(24)
+        self._subplot_up_btn.clicked.connect(self._on_subplot_move_up)
+        subplot_settings_layout.addWidget(self._subplot_up_btn)
+
+        self._subplot_down_btn = QPushButton("▼")
+        self._subplot_down_btn.setToolTip("Move selected subplot down")
+        self._subplot_down_btn.setFixedWidth(24)
+        self._subplot_down_btn.clicked.connect(self._on_subplot_move_down)
+        subplot_settings_layout.addWidget(self._subplot_down_btn)
+
+        self._subplot_delete_btn = QPushButton("✕")
+        self._subplot_delete_btn.setToolTip("Clear / delete selected subplot")
+        self._subplot_delete_btn.setFixedWidth(24)
+        self._subplot_delete_btn.clicked.connect(self._on_subplot_delete)
+        subplot_settings_layout.addWidget(self._subplot_delete_btn)
+        
+        param_layout.addLayout(subplot_settings_layout)
+
+        # Global actions
         sec_btn_row = QHBoxLayout()
         sec_btn_row.setSpacing(4)
         btn_all = QPushButton("Check All")
@@ -371,31 +392,28 @@ class AnalysisSuiteWindow(QMainWindow):
         sec_btn_row.addStretch(1)
         param_layout.addLayout(sec_btn_row)
 
-        # Tree: top-level items are subplots, children are parameters.
-        # Drag-and-drop lets the user move a parameter onto a different
-        # subplot to overlay it on the same axes.
+        # Flat tree layout
         self._param_tree = QTreeWidget()
         self._param_tree.setFont(QFont("PT Sans", 9))
-        self._param_tree.setHeaderHidden(True)
-        self._param_tree.setRootIsDecorated(True)
-        self._param_tree.setDragEnabled(True)
-        self._param_tree.setAcceptDrops(True)
-        self._param_tree.setDropIndicatorShown(True)
-        self._param_tree.setDragDropMode(QAbstractItemView.InternalMove)
-        # Extended selection so users can Ctrl/Shift-click multiple params and
-        # operate on them at once (the primary grouping interaction).
-        self._param_tree.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self._param_tree.setContextMenuPolicy(Qt.CustomContextMenu)
-        self._param_tree.customContextMenuRequested.connect(self._on_param_tree_context_menu)
+        self._param_tree.setColumnCount(2)
+        self._param_tree.setHeaderLabels(["Parameter", "Subplot"])
+        self._param_tree.setHeaderHidden(False)
+        self._param_tree.setRootIsDecorated(False)
+        self._param_tree.setDragEnabled(False)
+        self._param_tree.setAcceptDrops(False)
+        self._param_tree.setDropIndicatorShown(False)
+        self._param_tree.setSelectionMode(QAbstractItemView.SingleSelection)
+        self._param_tree.setContextMenuPolicy(Qt.NoContextMenu)
         self._param_tree.itemChanged.connect(self._on_param_changed)
-        self._param_tree.itemSelectionChanged.connect(self._on_param_selection_changed)
-        # Catch drops so we can sync the model and rebuild plots.
-        self._param_tree.model().rowsInserted.connect(self._on_tree_rows_inserted)
+        
+        # Configure columns stretch
+        self._param_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
+        self._param_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        
         param_layout.addWidget(self._param_tree)
 
-        # Inline tip line so the gestures aren't a hidden feature.
         tip = QLabel(
-            "Tip: Ctrl/Shift-click parameters → Group · Right-click for more"
+            "Tip: Select subplot in dropdown to display curve, or Off to hide. Use checkbox for quick toggle."
         )
         tip.setWordWrap(True)
         tip.setStyleSheet("color: palette(mid); font-size: 9pt; padding: 2px 0;")
@@ -510,13 +528,9 @@ class AnalysisSuiteWindow(QMainWindow):
         # The grouping operations are first-class: keyboard shortcuts make
         # them practical for daily use. The buttons in the sidebar do the
         # exact same thing — these just put hands on keys.
-        layout_menu = mb.addMenu("Layout")
-        layout_menu.addAction("Group Selected Parameters",
-                              self._group_selected_params, QKeySequence("G"))
-        layout_menu.addAction("Ungroup Selected Parameters",
-                              self._ungroup_selected_params, QKeySequence("U"))
-        layout_menu.addAction("New Empty Subplot",
-                              self._add_empty_subplot, QKeySequence("Ctrl+N"))
+
+
+
 
         # ── Tools ────────────────────────────────────────────────────
         # V adds a cursor that lives ONLY on the subplot under the mouse —
@@ -565,11 +579,16 @@ class AnalysisSuiteWindow(QMainWindow):
         the pyqtgraph plots to match the new theme.
         """
         try:
-            from .main_window import build_card_qss
+            from .theming import build_card_qss
             self.setStyleSheet(build_card_qss(theme))
         except Exception:
             pass
         self._apply_theme(theme)
+        if self._xy_window is not None:
+            try:
+                self._xy_window.apply_theme(theme)
+            except Exception:
+                pass
 
     def _apply_theme(self, _mode: str = ""):
         bg = THEME.c('plot_bg')
@@ -602,6 +621,15 @@ class AnalysisSuiteWindow(QMainWindow):
                         legend.setBrush(pg.mkBrush(legend_bg))
             except Exception:
                 pass
+
+        # Update crosshair pen styling
+        try:
+            crosshair_pen = pg.mkPen(THEME.c('crosshair'), width=1, style=Qt.DashLine)
+            for pw, lines in self._crosshair_lines.items():
+                for line in lines:
+                    line.setPen(crosshair_pen)
+        except Exception:
+            pass
 
     # ──────────────────────────────────────────────────────────────────
     # Log loading
@@ -896,24 +924,25 @@ class AnalysisSuiteWindow(QMainWindow):
                     out.append(p)
         return out
 
-    def _rebuild_param_list(self):
-        """Rebuild the subplot tree, preserving the user's layout & checks
-        across log add/remove."""
+    def _rebuild_param_list(self, uncheck_params: set[str] = None):
+        """Rebuild the flat parameter list with inline dropdowns."""
         tree = self._param_tree
         tree.blockSignals(True)
         self._populating_tree = True
 
         # Snapshot prior check state by param name
         prev_checked: set[str] = set()
-        for layout_group in self._iter_tree_groups():
-            for p, checked in layout_group:
-                if checked:
-                    prev_checked.add(p)
+        for i in range(tree.topLevelItemCount()):
+            item = tree.topLevelItem(i)
+            if item.checkState(0) == Qt.Checked:
+                prev_checked.add(item.text(0))
+        
+        if uncheck_params:
+            prev_checked.difference_update(uncheck_params)
 
         all_params = self._collect_available_params()
 
-        # Build the working layout: keep any existing user layout, append new
-        # params (those not yet placed) as their own subplots.
+        # Build working layout: keep existing layout groups that are still in all_params
         layout: list[list[str]] = []
         placed: set[str] = set()
         for grp in self._subplot_layout:
@@ -925,59 +954,68 @@ class AnalysisSuiteWindow(QMainWindow):
             if p not in placed:
                 layout.append([p])
 
-        # If this is the very first build (no prior layout, no prior checks),
-        # pre-check DEFAULT_PARAMS just like the old behaviour.
         first_build = not self._subplot_layout and not prev_checked
         self._subplot_layout = layout
 
-        tree.clear()
-        for gi, group in enumerate(layout):
-            top = QTreeWidgetItem(tree, [f"Subplot {gi + 1}"])
-            top.setFlags(
-                (top.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDropEnabled)
-                & ~Qt.ItemIsDragEnabled
-            )
-            top.setCheckState(0, Qt.Unchecked)
-            top.setData(0, Qt.UserRole, "subplot")
-            for p in group:
-                child = QTreeWidgetItem(top, [p])
-                child.setFlags(
-                    (child.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDragEnabled)
-                    & ~Qt.ItemIsDropEnabled
-                )
-                child.setData(0, Qt.UserRole, "param")
-                if first_build:
-                    state = Qt.Checked if p in DEFAULT_PARAMS else Qt.Unchecked
-                else:
-                    state = Qt.Checked if p in prev_checked else Qt.Unchecked
-                child.setCheckState(0, state)
-            top.setExpanded(True)
+        # If first build, pre-check DEFAULT_PARAMS
+        if first_build:
+            for p in DEFAULT_PARAMS:
+                if p in all_params:
+                    prev_checked.add(p)
 
-        self._renumber_subplots()
-        # Sync each parent header to mirror its children's check state.
-        for i in range(tree.topLevelItemCount()):
-            self._refresh_parent_tristate(tree.topLevelItem(i))
+        tree.clear()
+
+        # Sort alphabetically for list readability
+        sorted_params = sorted(all_params)
+
+        for p in sorted_params:
+            item = QTreeWidgetItem(tree, [p, ""])
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
+            
+            is_checked = p in prev_checked
+            item.setCheckState(0, Qt.Checked if is_checked else Qt.Unchecked)
+            item.setData(0, Qt.UserRole, "param")
+
+            # Create combobox for Column 1
+            combo = QComboBox()
+            combo.setFont(QFont("PT Sans", 8))
+            
+            # Populate dropdown
+            N = len(self._subplot_layout)
+            for si in range(N):
+                combo.addItem(f"Subplot {si + 1}")
+            combo.addItem("+ New Subplot")
+            combo.addItem("Off")
+
+            # Select current subplot or Off
+            sub_idx = -1
+            for si, grp in enumerate(self._subplot_layout):
+                if p in grp:
+                    sub_idx = si
+                    break
+
+            if not is_checked:
+                combo.setCurrentIndex(N + 1)
+            else:
+                if sub_idx != -1:
+                    combo.setCurrentIndex(sub_idx)
+                else:
+                    combo.setCurrentIndex(0)
+
+            # Connect combo activation signal
+            combo.activated.connect(lambda idx, param=p, cb=item: self._on_param_subplot_changed(param, cb, idx))
+            
+            tree.addTopLevelItem(item)
+            tree.setItemWidget(item, 1, combo)
+
         tree.blockSignals(False)
         self._populating_tree = False
+
         # Re-apply the active filter to newly added rows
         self._apply_param_filter(self._param_search.text())
 
-    def _iter_tree_groups(self):
-        """Yield list[(param_name, checked: bool)] for each subplot row."""
-        tree = self._param_tree
-        for i in range(tree.topLevelItemCount()):
-            top = tree.topLevelItem(i)
-            group = []
-            for j in range(top.childCount()):
-                child = top.child(j)
-                group.append((child.text(0), child.checkState(0) == Qt.Checked))
-            yield group
-
-    def _sync_subplot_layout_from_tree(self):
-        """Mirror the current tree state into self._subplot_layout."""
-        self._subplot_layout = [
-            [p for p, _ in grp] for grp in self._iter_tree_groups()
-        ]
+        # Rebuild settings combo choices
+        self._rebuild_subplot_settings_combo()
 
     @staticmethod
     def _strip_units(name: str) -> str:
@@ -996,32 +1034,21 @@ class AnalysisSuiteWindow(QMainWindow):
             head += f"  +{len(names) - 2}"
         return head
 
-    def _subplot_header_text(self, top: QTreeWidgetItem, index: int) -> str:
-        """Build a descriptive header like 'Subplot 2 · Speed, Power · +1'."""
-        params = [top.child(j).text(0) for j in range(top.childCount())]
-        if not params:
-            return f"Subplot {index + 1}  ·  (empty — drag a param in)"
-        preview = ", ".join(params[:2])
-        if len(params) > 2:
-            preview += f"  +{len(params) - 2}"
-        return f"Subplot {index + 1}  ·  {preview}"
-
-    def _renumber_subplots(self):
-        """Relabel top-level rows after a drop/add/delete with previews of
-        their parameters so the row is informative at a glance."""
-        tree = self._param_tree
-        for i in range(tree.topLevelItemCount()):
-            top = tree.topLevelItem(i)
-            top.setText(0, self._subplot_header_text(top, i))
-
     def _get_subplot_groups(self) -> list[list[str]]:
         """Return list of param lists for currently checked items, skipping
         any subplot whose params are all unchecked."""
+        tree = self._param_tree
+        checked_params = set()
+        for i in range(tree.topLevelItemCount()):
+            item = tree.topLevelItem(i)
+            if item.checkState(0) == Qt.Checked:
+                checked_params.add(item.text(0))
+
         groups: list[list[str]] = []
-        for grp in self._iter_tree_groups():
-            checked_params = [p for p, c in grp if c]
-            if checked_params:
-                groups.append(checked_params)
+        for grp in self._subplot_layout:
+            checked_in_grp = [p for p in grp if p in checked_params]
+            if checked_in_grp:
+                groups.append(checked_in_grp)
         return groups
 
     def _set_all_params(self, checked: bool):
@@ -1029,63 +1056,201 @@ class AnalysisSuiteWindow(QMainWindow):
         tree.blockSignals(True)
         state = Qt.Checked if checked else Qt.Unchecked
         for i in range(tree.topLevelItemCount()):
-            top = tree.topLevelItem(i)
-            for j in range(top.childCount()):
-                child = top.child(j)
-                # Respect the active search filter — only toggle visible rows.
-                if not child.isHidden():
-                    child.setCheckState(0, state)
-            self._refresh_parent_tristate(top)
+            item = tree.topLevelItem(i)
+            if not item.isHidden():
+                item.setCheckState(0, state)
+                combo = tree.itemWidget(item, 1)
+                if isinstance(combo, QComboBox):
+                    N = len(self._subplot_layout)
+                    if checked:
+                        param = item.text(0)
+                        sub_idx = -1
+                        for si, grp in enumerate(self._subplot_layout):
+                            if param in grp:
+                                sub_idx = si
+                                break
+                        if sub_idx != -1:
+                            combo.setCurrentIndex(sub_idx)
+                        else:
+                            combo.setCurrentIndex(0)
+                    else:
+                        combo.setCurrentIndex(N + 1)
         tree.blockSignals(False)
         self._rebuild_plots()
+        self._refresh_subplot_control_states()
 
     def _on_param_changed(self, item: QTreeWidgetItem, column: int = 0):
-        role = item.data(0, Qt.UserRole)
-        if role == "subplot":
-            # User clicked the subplot header's checkbox — cascade the new
-            # state down to every (visible) parameter child, then rebuild.
-            # AutoTristate would otherwise make the parent state a passive
-            # mirror; this turns the header check into an actual toggle-all.
-            tree = self._param_tree
-            tree.blockSignals(True)
-            new_state = item.checkState(0)
-            if new_state == Qt.PartiallyChecked:
-                # Treat a partial state click as "check all" so the user can
-                # use the header as a quick on/off switch.
-                new_state = Qt.Checked
-                item.setCheckState(0, Qt.Checked)
-            for j in range(item.childCount()):
-                child = item.child(j)
-                if not child.isHidden():
-                    child.setCheckState(0, new_state)
-            tree.blockSignals(False)
-            self._rebuild_plots()
+        if self._populating_tree:
             return
+        role = item.data(0, Qt.UserRole)
         if role == "param":
-            # Reflect the new aggregate state on the parent header without
-            # firing another itemChanged loop.
-            parent = item.parent()
-            if parent is not None:
-                self._refresh_parent_tristate(parent)
+            param = item.text(0)
+            is_checked = item.checkState(0) == Qt.Checked
+            
+            combo = self._param_tree.itemWidget(item, 1)
+            if isinstance(combo, QComboBox):
+                N = len(self._subplot_layout)
+                if is_checked:
+                    sub_idx = -1
+                    for si, grp in enumerate(self._subplot_layout):
+                        if param in grp:
+                            sub_idx = si
+                            break
+                    if sub_idx != -1:
+                        combo.setCurrentIndex(sub_idx)
+                    else:
+                        combo.setCurrentIndex(0)
+                else:
+                    combo.setCurrentIndex(N + 1)
+            
+            self._rebuild_plots()
+            self._refresh_subplot_control_states()
+
+    def _on_param_subplot_changed(self, param: str, item: QTreeWidgetItem, combo_idx: int):
+        """Callback when the user changes a parameter's subplot combobox."""
+        N = len(self._subplot_layout)
+        
+        if combo_idx == N + 1:
+            # "Off" selected
+            item.setCheckState(0, Qt.Unchecked)
+        else:
+            # Subplot 1..N or + New Subplot
+            item.setCheckState(0, Qt.Checked)
+            
+            for grp in self._subplot_layout:
+                if param in grp:
+                    grp.remove(param)
+            
+            if combo_idx == N:
+                self._subplot_layout.append([param])
+            else:
+                if combo_idx < len(self._subplot_layout):
+                    self._subplot_layout[combo_idx].append(param)
+                else:
+                    self._subplot_layout.append([param])
+
+            # Prune empty subplots
+            self._subplot_layout = [grp for grp in self._subplot_layout if len(grp) > 0]
+
+        self._rebuild_param_list()
+        self._rebuild_plots()
+
+    def _rebuild_subplot_settings_combo(self):
+        """Populate the Subplot settings dropdown with all active subplots."""
+        combo = self._subplot_settings_combo
+        combo.blockSignals(True)
+        prev_selection = combo.currentText()
+        combo.clear()
+        N = len(self._subplot_layout)
+        for si in range(N):
+            combo.addItem(f"Subplot {si + 1}")
+        index = combo.findText(prev_selection)
+        if index != -1:
+            combo.setCurrentIndex(index)
+        elif N > 0:
+            combo.setCurrentIndex(0)
+        combo.blockSignals(False)
+        self._refresh_subplot_control_states()
+
+    def _refresh_subplot_control_states(self):
+        """Update checkbox states and button enabled/disabled states based on selected subplot."""
+        combo = self._subplot_settings_combo
+        text = combo.currentText()
+        if not text:
+            self._subplot_normalize_cb.setEnabled(False)
+            self._subplot_normalize_cb.setChecked(False)
+            self._subplot_smooth_cb.setEnabled(False)
+            self._subplot_smooth_cb.setChecked(False)
+            self._subplot_up_btn.setEnabled(False)
+            self._subplot_down_btn.setEnabled(False)
+            self._subplot_delete_btn.setEnabled(False)
+            return
+
+        try:
+            sub_idx = int(text.split()[-1]) - 1
+        except Exception:
+            return
+
+        N = len(self._subplot_layout)
+        if not (0 <= sub_idx < N):
+            return
+
+        self._subplot_normalize_cb.setEnabled(True)
+        self._subplot_smooth_cb.setEnabled(True)
+        self._subplot_delete_btn.setEnabled(True)
+
+        self._subplot_up_btn.setEnabled(sub_idx > 0)
+        self._subplot_down_btn.setEnabled(sub_idx < N - 1)
+
+        grp = self._subplot_layout[sub_idx]
+        key = frozenset(grp)
+        
+        self._subplot_normalize_cb.blockSignals(True)
+        self._subplot_normalize_cb.setChecked(key in self._normalized_subplots)
+        self._subplot_normalize_cb.blockSignals(False)
+
+        self._subplot_smooth_cb.blockSignals(True)
+        self._subplot_smooth_cb.setChecked(key in self._smoothed_subplots)
+        self._subplot_smooth_cb.blockSignals(False)
+
+    def _on_subplot_settings_combo_changed(self, text: str):
+        self._refresh_subplot_control_states()
+
+    def _on_subplot_normalize_toggled(self, state: int):
+        sub_idx = self._subplot_settings_combo.currentIndex()
+        if 0 <= sub_idx < len(self._subplot_layout):
+            grp = self._subplot_layout[sub_idx]
+            key = frozenset(grp)
+            if state == 2:
+                self._normalized_subplots.add(key)
+            else:
+                self._normalized_subplots.discard(key)
             self._rebuild_plots()
 
-    def _refresh_parent_tristate(self, parent: QTreeWidgetItem):
-        """Manually mirror children's check states onto the parent header.
-        We can't use Qt.ItemIsAutoTristate because that makes the header
-        checkbox read-only for users."""
-        tree = self._param_tree
-        n = parent.childCount()
-        checked = sum(1 for j in range(n) if parent.child(j).checkState(0) == Qt.Checked)
-        tree.blockSignals(True)
-        if n == 0:
-            parent.setCheckState(0, Qt.Unchecked)
-        elif checked == 0:
-            parent.setCheckState(0, Qt.Unchecked)
-        elif checked == n:
-            parent.setCheckState(0, Qt.Checked)
-        else:
-            parent.setCheckState(0, Qt.PartiallyChecked)
-        tree.blockSignals(False)
+    def _on_subplot_smooth_toggled(self, state: int):
+        sub_idx = self._subplot_settings_combo.currentIndex()
+        if 0 <= sub_idx < len(self._subplot_layout):
+            grp = self._subplot_layout[sub_idx]
+            key = frozenset(grp)
+            if state == 2:
+                self._smoothed_subplots.add(key)
+            else:
+                self._smoothed_subplots.discard(key)
+            self._rebuild_plots()
+
+    def _on_subplot_move_up(self):
+        sub_idx = self._subplot_settings_combo.currentIndex()
+        if sub_idx > 0 and sub_idx < len(self._subplot_layout):
+            self._subplot_layout[sub_idx], self._subplot_layout[sub_idx - 1] = \
+                self._subplot_layout[sub_idx - 1], self._subplot_layout[sub_idx]
+            self._rebuild_param_list()
+            self._subplot_settings_combo.setCurrentIndex(sub_idx - 1)
+            self._rebuild_plots()
+
+    def _on_subplot_move_down(self):
+        sub_idx = self._subplot_settings_combo.currentIndex()
+        if sub_idx >= 0 and sub_idx < len(self._subplot_layout) - 1:
+            self._subplot_layout[sub_idx], self._subplot_layout[sub_idx + 1] = \
+                self._subplot_layout[sub_idx + 1], self._subplot_layout[sub_idx]
+            self._rebuild_param_list()
+            self._subplot_settings_combo.setCurrentIndex(sub_idx + 1)
+            self._rebuild_plots()
+
+    def _on_subplot_delete(self):
+        sub_idx = self._subplot_settings_combo.currentIndex()
+        if 0 <= sub_idx < len(self._subplot_layout):
+            grp = self._subplot_layout[sub_idx]
+            ret = QMessageBox.question(
+                self, "Delete Subplot",
+                f"Are you sure you want to delete Subplot {sub_idx + 1}?\n"
+                f"This will uncheck/hide its {len(grp)} parameters.",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if ret == QMessageBox.Yes:
+                uncheck = set(grp)
+                self._subplot_layout.pop(sub_idx)
+                self._rebuild_param_list(uncheck_params=uncheck)
+                self._rebuild_plots()
 
     def _on_param_search_changed(self, text: str):
         self._apply_param_filter(text)
@@ -1096,280 +1261,20 @@ class AnalysisSuiteWindow(QMainWindow):
         total = 0
         matches = 0
         for i in range(tree.topLevelItemCount()):
-            top = tree.topLevelItem(i)
-            top.setHidden(False)
-            subplot_has_match = False
-            for j in range(top.childCount()):
-                child = top.child(j)
-                total += 1
-                is_hit = (not query) or (query in child.text(0).lower())
-                child.setHidden(not is_hit)
-                if is_hit:
-                    matches += 1
-                    if query:
-                        subplot_has_match = True
-            # When searching, expand subplots that contain matches so the
-            # user sees them without an extra click. When not searching,
-            # leave the user's expand state alone.
-            if query and subplot_has_match:
-                top.setExpanded(True)
-            if query and not subplot_has_match:
-                top.setHidden(True)
+            item = tree.topLevelItem(i)
+            total += 1
+            is_hit = (not query) or (query in item.text(0).lower())
+            item.setHidden(not is_hit)
+            if is_hit:
+                matches += 1
 
         if not query:
             self._param_hit_count.setText("")
         else:
             self._param_hit_count.setText(f"{matches}/{total}")
 
-    def _add_empty_subplot(self):
-        """Append a new empty subplot row at the bottom of the tree."""
-        tree = self._param_tree
-        tree.blockSignals(True)
-        self._populating_tree = True
-        top = QTreeWidgetItem(tree, [""])
-        top.setFlags(
-            (top.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDropEnabled)
-            & ~Qt.ItemIsDragEnabled
-        )
-        top.setCheckState(0, Qt.Unchecked)
-        top.setData(0, Qt.UserRole, "subplot")
-        top.setExpanded(True)
-        self._renumber_subplots()
-        self._populating_tree = False
-        tree.blockSignals(False)
-        self._sync_subplot_layout_from_tree()
-        # No checked params → no plot change yet, but the row is now a drop
-        # target for the user to drag parameters into.
-
-    def _on_tree_rows_inserted(self, parent, first, last):
-        """Drag-drop landed — sync model and rebuild plots."""
-        # Fires for every row inserted, including during our own programmatic
-        # populates. Skip those; we sync the model manually after.
-        if self._populating_tree:
-            return
-        # Defer with a singleShot so the move completes before we re-read.
-        from PySide6.QtCore import QTimer
-        QTimer.singleShot(0, self._after_tree_drop)
-
-    def _after_tree_drop(self):
-        self._sync_subplot_layout_from_tree()
-        # Drop any newly-emptied subplots? Keep them — user may want to
-        # drag more params in. They can use the context menu to delete.
-        self._renumber_subplots()
-        # Refresh parent tristate on every subplot — a dropped child may have
-        # changed several rows' aggregate state.
-        tree = self._param_tree
-        tree.blockSignals(True)
-        for i in range(tree.topLevelItemCount()):
-            self._refresh_parent_tristate(tree.topLevelItem(i))
-        tree.blockSignals(False)
-        self._rebuild_plots()
-
-    def _on_param_tree_context_menu(self, pos):
-        tree = self._param_tree
-        item = tree.itemAt(pos)
-        if item is None:
-            return
-        menu = QMenu(self)
-        role = item.data(0, Qt.UserRole)
-        selected_params = self._selected_param_items()
-        if role == "param":
-            # Grouping actions take priority when multiple params are selected.
-            if len(selected_params) >= 2:
-                act_group = menu.addAction(f"Group {len(selected_params)} selected on one subplot")
-                act_group.triggered.connect(self._group_selected_params)
-                act_ungroup = menu.addAction("Ungroup (each on own subplot)")
-                act_ungroup.triggered.connect(self._ungroup_selected_params)
-                menu.addSeparator()
-
-            move_menu = menu.addMenu("Move to subplot")
-            parent_top = item.parent()
-            for i in range(tree.topLevelItemCount()):
-                top = tree.topLevelItem(i)
-                if top is parent_top:
-                    continue
-                act = move_menu.addAction(top.text(0))
-                act.triggered.connect(
-                    lambda _c=False, _child=item, _dest=top: self._move_param_to(_child, _dest))
-            move_menu.addSeparator()
-            act_new = move_menu.addAction("New subplot")
-            act_new.triggered.connect(lambda _c=False, _child=item: self._move_param_to_new(_child))
-        elif role == "subplot":
-            idx = tree.indexOfTopLevelItem(item)
-            n = tree.topLevelItemCount()
-            act_up = menu.addAction("Move subplot up")
-            act_up.setEnabled(idx > 0)
-            act_up.triggered.connect(lambda _c=False, _top=item: self._move_subplot(_top, -1))
-            act_down = menu.addAction("Move subplot down")
-            act_down.setEnabled(idx < n - 1)
-            act_down.triggered.connect(lambda _c=False, _top=item: self._move_subplot(_top, +1))
-            menu.addSeparator()
-            # Normalize toggle — recommended for multi-param subplots where
-            # each curve has a different unit / scale (e.g. speed in kmph vs
-            # power in W). The flag survives subplot reorder via frozenset key.
-            is_norm = self._group_key(item) in self._normalized_subplots
-            act_norm = menu.addAction(
-                "Normalize curves to 0–1  " + ("✓" if is_norm else ""))
-            act_norm.setToolTip(
-                "Min-max scale each curve to [0,1] for the same subplot — "
-                "useful when params share an axis but have very different ranges."
-            )
-            act_norm.triggered.connect(
-                lambda _c=False, _top=item: self._toggle_subplot_normalize(_top))
-            is_smooth = self._group_key(item) in self._smoothed_subplots
-            act_smooth = menu.addAction(
-                f"Smooth (rolling avg N={self._smoothing_window})  "
-                + ("✓" if is_smooth else ""))
-            act_smooth.setToolTip(
-                "Overlay a moving-average smoothed version of each curve. "
-                "Change the window size in View → Smoothing Window…"
-            )
-            act_smooth.triggered.connect(
-                lambda _c=False, _top=item: self._toggle_subplot_smoothing(_top))
-            menu.addSeparator()
-            act_check_all = menu.addAction("Check all params in subplot")
-            act_check_all.setEnabled(item.childCount() > 0)
-            act_check_all.triggered.connect(
-                lambda _c=False, _top=item: self._set_subplot_children_checked(_top, True))
-            act_uncheck_all = menu.addAction("Uncheck all params in subplot")
-            act_uncheck_all.setEnabled(item.childCount() > 0)
-            act_uncheck_all.triggered.connect(
-                lambda _c=False, _top=item: self._set_subplot_children_checked(_top, False))
-            menu.addSeparator()
-            act_del = menu.addAction("Delete subplot (split params out)")
-            act_del.triggered.connect(lambda _c=False, _top=item: self._delete_subplot(_top))
-        if menu.actions():
-            menu.exec(tree.viewport().mapToGlobal(pos))
-
-    # ------------------------------------------------------------------
-    # Multi-select grouping actions
-    # ------------------------------------------------------------------
-    def _selected_param_items(self) -> list[QTreeWidgetItem]:
-        return [it for it in self._param_tree.selectedItems()
-                if it.data(0, Qt.UserRole) == "param"]
-
-    def _on_param_selection_changed(self):
-        n = len(self._selected_param_items())
-        self._btn_group.setEnabled(n >= 2)
-        self._btn_ungroup.setEnabled(n >= 1)
-
-    def _group_selected_params(self):
-        """Pull every selected parameter onto a single subplot. If all selected
-        params already belong to one subplot, this is a no-op. Otherwise we
-        merge them into the subplot of the first selection (most expected)
-        and prune any subplot that ends up empty."""
-        items = self._selected_param_items()
-        if len(items) < 2:
-            return
-        tree = self._param_tree
-        tree.blockSignals(True)
-        self._populating_tree = True
-
-        dest = items[0].parent()
-        for it in items[1:]:
-            old_parent = it.parent()
-            if old_parent is dest:
-                continue
-            old_parent.removeChild(it)
-            dest.addChild(it)
-
-        # Drop any subplot that's now empty (cleanup after a merge).
-        i = 0
-        while i < tree.topLevelItemCount():
-            top = tree.topLevelItem(i)
-            if top is not dest and top.childCount() == 0:
-                tree.takeTopLevelItem(i)
-                continue
-            i += 1
-
-        dest.setExpanded(True)
-        self._renumber_subplots()
-        self._populating_tree = False
-        tree.blockSignals(False)
-        self._sync_subplot_layout_from_tree()
-        self._rebuild_plots()
-
-    def _ungroup_selected_params(self):
-        """Move every selected param into its own dedicated subplot."""
-        items = self._selected_param_items()
-        if not items:
-            return
-        tree = self._param_tree
-        tree.blockSignals(True)
-        self._populating_tree = True
-
-        for it in items:
-            old_parent = it.parent()
-            # Skip if it's already alone in its subplot.
-            if old_parent is not None and old_parent.childCount() == 1:
-                continue
-            if old_parent is not None:
-                old_parent.removeChild(it)
-            new_top = QTreeWidgetItem(tree, [""])
-            new_top.setFlags(
-                (new_top.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDropEnabled)
-                & ~Qt.ItemIsDragEnabled
-            )
-            new_top.setCheckState(0, Qt.Unchecked)
-            new_top.setData(0, Qt.UserRole, "subplot")
-            new_top.addChild(it)
-            new_top.setExpanded(True)
-
-        self._renumber_subplots()
-        self._populating_tree = False
-        tree.blockSignals(False)
-        self._sync_subplot_layout_from_tree()
-        self._rebuild_plots()
-
-    def _move_subplot(self, top: QTreeWidgetItem, delta: int):
-        tree = self._param_tree
-        idx = tree.indexOfTopLevelItem(top)
-        new_idx = idx + delta
-        if not (0 <= new_idx < tree.topLevelItemCount()):
-            return
-        tree.blockSignals(True)
-        self._populating_tree = True
-        was_expanded = top.isExpanded()
-        tree.takeTopLevelItem(idx)
-        tree.insertTopLevelItem(new_idx, top)
-        top.setExpanded(was_expanded)
-        self._renumber_subplots()
-        self._populating_tree = False
-        tree.blockSignals(False)
-        self._sync_subplot_layout_from_tree()
-        self._rebuild_plots()
-
-    def _set_subplot_children_checked(self, top: QTreeWidgetItem, checked: bool):
-        tree = self._param_tree
-        tree.blockSignals(True)
-        state = Qt.Checked if checked else Qt.Unchecked
-        for j in range(top.childCount()):
-            child = top.child(j)
-            if not child.isHidden():
-                child.setCheckState(0, state)
-        self._refresh_parent_tristate(top)
-        tree.blockSignals(False)
-        self._rebuild_plots()
-
-    # ------------------------------------------------------------------
-    # Per-subplot normalize
-    # ------------------------------------------------------------------
-    @staticmethod
-    def _group_key(top: QTreeWidgetItem) -> frozenset[str]:
-        return frozenset(top.child(j).text(0) for j in range(top.childCount()))
-
     def _is_subplot_normalized(self, group: list[str]) -> bool:
         return frozenset(group) in self._normalized_subplots
-
-    def _toggle_subplot_normalize(self, top: QTreeWidgetItem):
-        """Right-click → Normalize toggle. State is keyed by frozenset of
-        param names so it survives reorder / split-and-rejoin."""
-        key = self._group_key(top)
-        if key in self._normalized_subplots:
-            self._normalized_subplots.discard(key)
-        else:
-            self._normalized_subplots.add(key)
-        self._rebuild_plots()
 
     @staticmethod
     def _normalize_series(y: np.ndarray) -> np.ndarray:
@@ -1384,19 +1289,8 @@ class AnalysisSuiteWindow(QMainWindow):
             return np.zeros_like(y)
         return (y - lo) / (hi - lo)
 
-    # ------------------------------------------------------------------
-    # Smoothing (moving-average)
-    # ------------------------------------------------------------------
     def _is_subplot_smoothed(self, group: list[str]) -> bool:
         return frozenset(group) in self._smoothed_subplots
-
-    def _toggle_subplot_smoothing(self, top: QTreeWidgetItem):
-        key = self._group_key(top)
-        if key in self._smoothed_subplots:
-            self._smoothed_subplots.discard(key)
-        else:
-            self._smoothed_subplots.add(key)
-        self._rebuild_plots()
 
     def _prompt_smoothing_window(self):
         from PySide6.QtWidgets import QInputDialog
@@ -1412,8 +1306,7 @@ class AnalysisSuiteWindow(QMainWindow):
             self._rebuild_plots()
         else:
             self._status.showMessage(
-                f"Smoothing window set to {new_n}. Right-click a subplot → "
-                "Smooth to enable it.", 6000)
+                f"Smoothing window set to {new_n}. Toggle Smooth on subplot toolbar to enable it.", 6000)
 
     @staticmethod
     def _moving_average(y: np.ndarray, window: int) -> np.ndarray:
@@ -1432,9 +1325,6 @@ class AnalysisSuiteWindow(QMainWindow):
             out = np.where(counted > 0, summed / counted, np.nan)
         return out
 
-    # ------------------------------------------------------------------
-    # Auto-fit Y to visible X range
-    # ------------------------------------------------------------------
     def _on_auto_fit_y_toggled(self, on: bool):
         self._auto_fit_y = bool(on)
         if on:
@@ -1484,9 +1374,6 @@ class AnalysisSuiteWindow(QMainWindow):
                 ymax += pad
             pw.getPlotItem().vb.setYRange(ymin, ymax, padding=0)
 
-    # ------------------------------------------------------------------
-    # CSV export of visible data
-    # ------------------------------------------------------------------
     def _export_visible_csv(self):
         """Wide-format CSV export of every visible (log, param) curve, sliced
         to the current x view range. All series are interpolated onto a
@@ -1500,9 +1387,6 @@ class AnalysisSuiteWindow(QMainWindow):
             return
 
         x_range = rows[0].get("x_range")
-        # Build a master time grid from the union of all visible timestamps
-        # within the x-range. Sorted and de-duplicated → monotonic so np.interp
-        # is well-defined for each curve.
         masters: list[np.ndarray] = []
         for r in rows:
             x = r["x"]
@@ -1533,7 +1417,6 @@ class AnalysisSuiteWindow(QMainWindow):
         if rate > 1:
             merged = merged[::rate]
 
-        # Build the data matrix: cols = ['time', curve1, curve2, …]
         headers = ["time"]
         data_cols: list[np.ndarray] = []
         for r in rows:
@@ -1574,9 +1457,9 @@ class AnalysisSuiteWindow(QMainWindow):
             f"Exported {len(rows)} curve(s) × {merged.size} rows to "
             f"{os.path.basename(path)}", 6000)
 
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────
     # Recent files (Phase 2)
-    # ------------------------------------------------------------------
+    # ──────────────────────────────────────────────────────────────────
     _RECENT_KEY = "analysis/recent_files"
     _RECENT_MAX = 10
 
@@ -1641,45 +1524,6 @@ class AnalysisSuiteWindow(QMainWindow):
         self._loader_threads.append(thread)
         thread.start()
 
-    def _move_param_to(self, child: QTreeWidgetItem, dest_top: QTreeWidgetItem):
-        old_parent = child.parent()
-        if old_parent is None:
-            return
-        old_parent.removeChild(child)
-        dest_top.addChild(child)
-        dest_top.setExpanded(True)
-        self._sync_subplot_layout_from_tree()
-        self._rebuild_plots()
-
-    def _move_param_to_new(self, child: QTreeWidgetItem):
-        self._add_empty_subplot()
-        dest_top = self._param_tree.topLevelItem(self._param_tree.topLevelItemCount() - 1)
-        self._move_param_to(child, dest_top)
-
-    def _delete_subplot(self, top: QTreeWidgetItem):
-        """Remove a subplot row, re-homing its params into their own subplots."""
-        tree = self._param_tree
-        tree.blockSignals(True)
-        self._populating_tree = True
-        # Move children out to new top-level subplots so they survive.
-        children = [top.takeChild(0) for _ in range(top.childCount())]
-        idx = tree.indexOfTopLevelItem(top)
-        tree.takeTopLevelItem(idx)
-        for child in children:
-            new_top = QTreeWidgetItem(tree, ["Subplot"])
-            new_top.setFlags(
-                (new_top.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsDropEnabled)
-                & ~Qt.ItemIsDragEnabled
-            )
-            new_top.setCheckState(0, Qt.Unchecked)
-            new_top.setData(0, Qt.UserRole, "subplot")
-            new_top.addChild(child)
-            new_top.setExpanded(True)
-        self._renumber_subplots()
-        self._populating_tree = False
-        tree.blockSignals(False)
-        self._sync_subplot_layout_from_tree()
-        self._rebuild_plots()
 
     # ──────────────────────────────────────────────────────────────────
     # Plot management

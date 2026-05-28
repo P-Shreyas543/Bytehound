@@ -41,6 +41,8 @@ try:
 except ImportError:  # pragma: no cover - icons degrade to empty if missing
     qta = None
 
+from ..decoder.types import FrameConfig, ProtocolConfig
+
 
 # Primary toolbar button colour palette. Three semantic states; all buttons
 # show white (#FFFFFF) text/icons on top.
@@ -403,3 +405,263 @@ class TitleBarThemeFilter(QObject):
             except Exception:
                 pass
         return False
+
+
+class FrameFormatWidget(QWidget):
+    """A graphical, byte-aligned widget that displays a protocol's on-wire frame format."""
+
+    def __init__(self, config: FrameConfig, parent: Optional[QWidget] = None) -> None:
+        super().__init__(parent)
+        self._config = config
+        self._protocol = config.protocol
+        self._grid_widget = None
+        self._init_ui()
+
+    def _init_ui(self) -> None:
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QComboBox, QLabel
+        from PySide6.QtCore import Qt
+
+        self._main_layout = QVBoxLayout(self)
+        self._main_layout.setContentsMargins(0, 0, 0, 0)
+        self._main_layout.setSpacing(6)
+
+        # Dropdown selection layout
+        selector_layout = QHBoxLayout()
+        selector_layout.setContentsMargins(0, 0, 0, 0)
+        
+        lbl_text = "Select Register:" if self._protocol.parser_type == "modbus_rtu" else "Select Frame Structure:"
+        self._select_lbl = QLabel(lbl_text)
+        self._select_lbl.setStyleSheet("font-weight: bold; font-size: 11px;")
+        selector_layout.addWidget(self._select_lbl)
+
+        self._combo = QComboBox()
+        self._combo.setMinimumWidth(220)
+        
+        default_item = "All Registers (General)" if self._protocol.parser_type == "modbus_rtu" else "All Frames (General Template)"
+        self._combo.addItem(default_item, userData=None)
+
+        # Add all loaded frames to the dropdown
+        for frame_id in sorted(self._config.frames.keys()):
+            frame = self._config.frames[frame_id]
+            desc = f"0x{frame_id:04X}"
+            if frame.frame_name:
+                desc += f" - {frame.frame_name}"
+            self._combo.addItem(desc, userData=frame_id)
+
+        self._combo.currentIndexChanged.connect(self._on_frame_selection_changed)
+        selector_layout.addWidget(self._combo)
+        selector_layout.addStretch()
+
+        self._main_layout.addLayout(selector_layout)
+
+        from PySide6.QtWidgets import QScrollArea
+        self._scroll_area = QScrollArea()
+        self._scroll_area.setWidgetResizable(True)
+        self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+        self._scroll_area.setStyleSheet("background: transparent; border: none;")
+        self._main_layout.addWidget(self._scroll_area)
+
+        # Build initial grid
+        self._rebuild_grid(None)
+
+    def _on_frame_selection_changed(self, index: int) -> None:
+        frame_id = self._combo.itemData(index)
+        self._rebuild_grid(frame_id)
+
+    def _rebuild_grid(self, frame_id: Optional[int]) -> None:
+        from PySide6.QtWidgets import QGridLayout, QLabel
+        from PySide6.QtCore import Qt
+
+        if self._grid_widget:
+            self._grid_widget.deleteLater()
+            self._grid_widget = None
+
+        self._grid_widget = QWidget()
+        self._grid_widget.setStyleSheet("background: transparent;")
+        layout = QGridLayout(self._grid_widget)
+        layout.setSpacing(4)
+        layout.setContentsMargins(0, 4, 0, 4)
+
+        colors = {
+            "Amber": ("#F59E0B", "#D97706", "#B45309"),
+            "Emerald": ("#10B981", "#059669", "#047857"),
+            "Indigo": ("#6366F1", "#4F46E5", "#4338CA"),
+            "Teal": ("#06B6D4", "#0891B2", "#0E7490"),
+            "Pink": ("#EC4899", "#DB2777", "#9D174D"),
+            "Grey": ("#6B7280", "#4B5563", "#374151"),
+            "Muted": ("#64748B", "#475569", "#334155"),
+        }
+
+        # Define fields: (Label, Size in bytes, Color key, Tooltip description)
+        if self._protocol.parser_type == "modbus_rtu":
+            if frame_id is not None:
+                # Modbus Register specific frame layout
+                signals = self._config.signals_by_frame.get(frame_id, [])
+                if signals:
+                    sig_names = ", ".join(s.signal_name for s in signals)
+                    data_desc = f"Mapped signals: {sig_names}"
+                    data_label = signals[0].signal_name if len(signals) == 1 else "Reg Data"
+                else:
+                    data_desc = "No variables configured at this address"
+                    data_label = "Reg Data"
+                
+                fields = [
+                    ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
+                    ("Func Code", 1, "Emerald", "Function Code (e.g. 0x03 Read, 0x06 Write)"),
+                    ("Reg Addr", 2, "Indigo", f"Register Start Address: 0x{frame_id:04X} ({frame_id})"),
+                    (data_label, 2, "Teal", f"Register Data/Value (2 bytes, Big-endian)\n{data_desc}"),
+                    ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)"),
+                ]
+            else:
+                fields = [
+                    ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
+                    ("Func Code", 1, "Emerald", "Function Code (e.g. 0x03 Read, 0x06 Write)"),
+                    ("Reg Addr", 2, "Indigo", "Register Start Address (2 bytes, Big-endian)"),
+                    ("Reg Value", 2, "Teal", "Register Data/Value (2-byte response/request, Big-endian)"),
+                    ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)"),
+                ]
+        else:
+            fields = []
+            if self._protocol.header:
+                fields.append((
+                    "Header",
+                    len(self._protocol.header),
+                    "Amber",
+                    f"Frame Header Hex: 0x{self._protocol.header.hex().upper()}"
+                ))
+            if self._protocol.frame_id_size > 0:
+                fid_val_desc = f" (Value: 0x{frame_id:04X})" if frame_id is not None else ""
+                fields.append((
+                    "Frame ID",
+                    self._protocol.frame_id_size,
+                    "Emerald",
+                    f"Frame Identifier ({self._protocol.frame_id_size} bytes, {self._protocol.frame_id_byte_order}-endian){fid_val_desc}"
+                ))
+            if self._protocol.length_size > 0:
+                len_bo = self._protocol.length_byte_order or self._protocol.frame_id_byte_order
+                fields.append((
+                    "Length",
+                    self._protocol.length_size,
+                    "Indigo",
+                    f"Payload Length ({self._protocol.length_size} bytes, {len_bo}-endian, meaning: {self._protocol.length_meaning})"
+                ))
+
+            if frame_id is not None:
+                # Add specific signals for selected Frame ID
+                signals = self._config.signals_by_frame.get(frame_id, [])
+                sorted_signals = sorted(signals, key=lambda s: s.start_byte)
+                
+                frame_def = self._config.frames.get(frame_id)
+                expected_payload_len = frame_def.payload_length if frame_def else None
+                
+                current_byte = 0
+                for sig in sorted_signals:
+                    if sig.start_byte > current_byte:
+                        gap_size = sig.start_byte - current_byte
+                        fields.append((
+                            "Unused",
+                            gap_size,
+                            "Muted",
+                            f"Unused payload byte(s) ({gap_size} bytes)"
+                        ))
+                    
+                    fields.append((
+                        sig.signal_name,
+                        sig.byte_length,
+                        "Teal",
+                        f"Signal: {sig.signal_name}\nData Type: {sig.data_type}\nByte offset: {sig.start_byte}\nSize: {sig.byte_length} bytes\nScale: {sig.scale}\nOffset: {sig.offset}\nUnit: {sig.unit or '-'}"
+                    ))
+                    current_byte = sig.end_byte
+                
+                if expected_payload_len is not None and expected_payload_len > current_byte:
+                    gap_size = expected_payload_len - current_byte
+                    fields.append((
+                        "Unused",
+                        gap_size,
+                        "Muted",
+                        f"Unused trailing payload byte(s) ({gap_size} bytes)"
+                    ))
+                elif not sorted_signals:
+                    fields.append((
+                        "Data",
+                        8,
+                        "Teal",
+                        "Payload Data (no signals configured)"
+                    ))
+            else:
+                fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
+                if self._protocol.tx_pad_length is not None:
+                    payload_size = max(0, self._protocol.tx_pad_length - fixed_size)
+                    data_label = f"Data ({payload_size}-Byte)"
+                else:
+                    payload_size = 8
+                    data_label = "Data (8-Byte)"
+
+                fields.append((
+                    data_label,
+                    payload_size,
+                    "Teal",
+                    "Payload Data (configured signals)"
+                ))
+
+            if self._protocol.crc_size > 0:
+                fields.append((
+                    f"CRC-{self._protocol.crc_size*8}",
+                    self._protocol.crc_size,
+                    "Pink",
+                    f"CRC Checksum ({self._protocol.crc_size} bytes, type: {self._protocol.crc_type}, {self._protocol.crc_byte_order}-endian)"
+                ))
+            if self._protocol.footer:
+                fields.append((
+                    "Footer",
+                    len(self._protocol.footer),
+                    "Grey",
+                    f"Frame Footer Hex: 0x{self._protocol.footer.hex().upper()}"
+                ))
+
+        # Row 0: Byte columns
+        total_bytes = sum(size for _, size, _, _ in fields)
+        for i in range(total_bytes):
+            lbl = QLabel(f"Byte {i}")
+            lbl.setStyleSheet("font-size: 9px; font-weight: bold; margin-bottom: 2px;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(lbl, 0, i)
+
+        # Row 1: Spanned block fields
+        col_idx = 0
+        for label_text, size, color_name, tooltip in fields:
+            display_text = label_text
+            if len(display_text) > 12 and size <= 2:
+                display_text = display_text[:9] + "..."
+
+            lbl = QLabel(display_text)
+            lbl.setToolTip(tooltip)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setWordWrap(True)
+            
+            start_c, end_c, border_c = colors[color_name]
+            style = f"""
+                QLabel {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {start_c}, stop:1 {end_c});
+                    color: #FFFFFF;
+                    border: 1px solid {border_c};
+                    border-radius: 4px;
+                    font-weight: bold;
+                    font-size: 11px;
+                    padding: 8px 2px;
+                }}
+                QLabel:hover {{
+                    border-color: #FFFFFF;
+                }}
+            """
+            lbl.setStyleSheet(style)
+            layout.addWidget(lbl, 1, col_idx, 1, size)
+            col_idx += size
+
+        # Prevent squeezing by enforcing a minimum width per byte column (e.g. 45px)
+        self._grid_widget.setMinimumWidth(total_bytes * 45)
+        self._grid_widget.setMaximumHeight(85)
+        self._scroll_area.setWidget(self._grid_widget)
+

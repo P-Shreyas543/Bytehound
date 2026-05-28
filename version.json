@@ -1,10 +1,12 @@
 {
     "version": "0.3.1",
     "Developer": "Shreyas P",
+    "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "Bytehound Open Source Community",
     "publisher_webpage": "https://github.com/P-Shreyas543/Bytehound",
     "build_date": "2026-05-27",
     "license": "MIT",
+    "license_url": "https://github.com/P-Shreyas543/Bytehound/blob/master/LICENSE",
     "homepage": "https://github.com/P-Shreyas543/Bytehound",
     "issue_url": "https://github.com/P-Shreyas543/Bytehound/issues",
     "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",

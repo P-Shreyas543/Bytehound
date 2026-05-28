@@ -6,7 +6,7 @@ import pytest
 from PySide6.QtWidgets import QApplication
 from PySide6.QtCore import QSettings
 
-from app.ui.dialogs import PlotTriggerDialog, PollingConfigDialog
+from app.ui.dialogs import PlotTriggerDialog, PollingConfigDialog, AboutDialog
 from app.decoder.types import PollingScheduleSpec
 
 
@@ -74,3 +74,104 @@ def test_polling_config_dialog_modbus(qapp):
     assert depth == 4
 
     settings.clear()
+
+
+def test_about_dialog(qapp):
+    version_info = {
+        "version": "1.2.3",
+        "Developer": "Test Developer",
+        "developer_github": "https://github.com/testdev",
+        "publisher": "Test Publisher",
+        "publisher_webpage": "https://example.com/pub",
+        "build_date": "2026-01-01",
+        "license": "MIT",
+        "license_url": "https://example.com/license",
+        "homepage": "https://example.com/home"
+    }
+    dlg = AboutDialog(version_info, logo_path=None)
+    assert dlg.windowTitle() == "About Bytehound"
+    assert dlg.isModal() is True
+
+
+def test_frame_format_widget(qapp):
+    from app.ui.widgets import FrameFormatWidget
+    from app.decoder.types import ProtocolConfig, FrameConfig
+
+    # 1. Modbus RTU
+    p_modbus = ProtocolConfig(
+        profile_name="Modbus Test",
+        header=b"\x01",
+        frame_id_size=1,
+        frame_id_byte_order="big",
+        length_size=1,
+        length_meaning="payload_only",
+        crc_type="crc16_modbus",
+        crc_size=2,
+        crc_byte_order="little",
+        crc_coverage="header_to_payload",
+        footer=b"",
+        escape_mode="none",
+        enabled=True,
+        parser_type="modbus_rtu",
+        modbus_node_address=5
+    )
+    cfg_modbus = FrameConfig(protocol=p_modbus)
+    w_modbus = FrameFormatWidget(cfg_modbus)
+    # Check that it builds grid cells inside _grid_widget
+    layout = w_modbus._grid_widget.layout()
+    assert layout is not None
+    from PySide6.QtWidgets import QLabel
+    labels = [layout.itemAt(i).widget() for i in range(layout.count()) if isinstance(layout.itemAt(i).widget(), QLabel)]
+    # We should have "Byte 0" to "Byte 7" (8 bytes total) in row 0, and the spanned labels in row 1
+    assert len(labels) > 8
+
+    # 2. Framed Protocol
+    p_framed = ProtocolConfig(
+        profile_name="Framed Test",
+        header=b"\xAA\x55",
+        frame_id_size=2,
+        frame_id_byte_order="big",
+        length_size=1,
+        length_meaning="payload_only",
+        crc_type="crc16_modbus",
+        crc_size=2,
+        crc_byte_order="little",
+        crc_coverage="header_to_payload",
+        footer=b"\x0D",
+        escape_mode="none",
+        enabled=True,
+        parser_type="framed"
+    )
+    cfg_framed = FrameConfig(protocol=p_framed)
+    w_framed = FrameFormatWidget(cfg_framed)
+    layout_framed = w_framed._grid_widget.layout()
+    assert layout_framed is not None
+    labels_framed = [layout_framed.itemAt(i).widget() for i in range(layout_framed.count()) if isinstance(layout_framed.itemAt(i).widget(), QLabel)]
+    assert len(labels_framed) > 10
+
+    # 3. Framed Protocol with tx_pad_length
+    p_padded = ProtocolConfig(
+        profile_name="Padded Test",
+        header=b"\xAA\x55",
+        frame_id_size=2,
+        frame_id_byte_order="big",
+        length_size=1,
+        length_meaning="payload_only",
+        crc_type="crc16_modbus",
+        crc_size=2,
+        crc_byte_order="little",
+        crc_coverage="header_to_payload",
+        footer=b"",
+        escape_mode="none",
+        enabled=True,
+        parser_type="framed",
+        tx_pad_length=12
+    )
+    cfg_padded = FrameConfig(protocol=p_padded)
+    w_padded = FrameFormatWidget(cfg_padded)
+    layout_padded = w_padded._grid_widget.layout()
+    assert layout_padded is not None
+    labels_padded = [layout_padded.itemAt(i).widget() for i in range(layout_padded.count()) if isinstance(layout_padded.itemAt(i).widget(), QLabel)]
+    byte_labels = [l for l in labels_padded if l.text().startswith("Byte ")]
+    assert len(byte_labels) == 12
+

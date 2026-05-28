@@ -158,7 +158,7 @@ def _format_serial_open_error(port: str, exc: BaseException) -> str:
             f"Cannot open {port_label}.\n\n"
             "The port is unavailable. Common causes:\n"
             "  • The device was unplugged or its driver glitched — try unplugging and re-plugging it.\n"
-            "  • Another application is using the port (Arduino IDE Serial Monitor, PuTTY, another terminal, or a previous instance of this app).\n"
+            "  • Another application is using the port (Serial Monitor, PuTTY, another terminal, or a previous instance of this app).\n"
             "  • The port no longer exists — refresh the port list.\n"
         )
     elif "could not open port" in lower or "filenotfounderror" in lower:
@@ -279,6 +279,7 @@ class MainWindow(
         self._apply_logging_level(str(self._settings.value("logging/level", "INFO")))
         self._tx_field_inputs: Dict[str, QLineEdit] = {}
         self._seen_decode_warnings: set[tuple[int, str, int]] = set()
+        self._unsolicited_detected = False
 
         # Timer removed; using PollingWorker QThread
 
@@ -1296,6 +1297,7 @@ class MainWindow(
             stack.setCurrentIndex(1 if ready else 0)
 
     def _set_connection_ui(self, connected: bool) -> None:
+        self._unsolicited_detected = False
         self._connect_action.setText("Disconnect" if connected else "Connect")
         # Connect button: pink = active/danger (disconnect), green = safe/idle
         self._style_action_btn(

@@ -57,7 +57,9 @@ class _AppTheme(QObject):
     theme_changed = Signal(str)
 
     def theme(self) -> str:
-        return str(QSettings(APP_ORG, APP_NAME).value("ui/theme", "dark"))
+        from .theming import resolve_theme
+        raw_theme = str(QSettings(APP_ORG, APP_NAME).value("ui/theme", "dark"))
+        return resolve_theme(raw_theme)
 
     def c(self, key: str) -> str:
         palette = _LIGHT_PLOT_COLORS if self.theme() == "light" else _DARK_PLOT_COLORS

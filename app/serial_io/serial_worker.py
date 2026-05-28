@@ -216,6 +216,10 @@ class PollingWorker(QThread):
         self._last_metrics_emit: float = 0.0
         self._METRICS_INTERVAL = 0.1  # seconds
 
+        # Frame error reporting throttle
+        self._last_frame_error_emit: float = 0.0
+        self._last_frame_error_msg: str = ""
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -430,6 +434,8 @@ class PollingWorker(QThread):
             if not p.ok:
                 self._crc_errors += 1
                 self._batch.append((p, None))
+                if p.error:
+                    self._emit_frame_error_throttled(p.error)
                 continue
             # Any valid response counts as a "the device is alive" signal —
             # reset the counter even if the in-flight entry already expired.
@@ -473,6 +479,14 @@ class PollingWorker(QThread):
         if force or (now - self._last_metrics_emit) >= self._METRICS_INTERVAL:
             self.metrics_updated.emit(self._timeouts, self._crc_errors, self._rx_bytes)
             self._last_metrics_emit = now
+
+    def _emit_frame_error_throttled(self, msg: str) -> None:
+        """Emit a frame error warning, throttling identical messages to 1Hz."""
+        now = time.monotonic()
+        if msg != self._last_frame_error_msg or (now - self._last_frame_error_emit) >= 1.0:
+            self.warning_occurred.emit(f"Frame Error: {msg}")
+            self._last_frame_error_emit = now
+            self._last_frame_error_msg = msg
 
     def _effective_tx_gap_ms(self, min_gap_ms: int = 0) -> int:
         return max(
