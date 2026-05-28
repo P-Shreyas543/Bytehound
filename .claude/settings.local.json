@@ -15,7 +15,26 @@
       "Bash(python -c \"import sys; print\\(sys.executable\\)\")",
       "Bash(python -m pip install pyqtdarktheme)",
       "Bash(python -c \"import qdarktheme; print\\('OK'\\)\")",
-      "Bash(git config *)"
+      "Bash(git config *)",
+      "Bash(.venv\\\\Scripts\\\\pip list *)",
+      "Bash(findstr -i serial)",
+      "Bash(.venv/Scripts/pip.exe list *)",
+      "Bash(.venv/Scripts/python.exe -c \"import serial; print\\(serial.__file__\\); print\\(dir\\(serial\\)\\)\")",
+      "Bash(where python *)",
+      "Bash(python -c \"import serial; print\\(serial.__file__\\); print\\(hasattr\\(serial, 'Serial'\\)\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -c \"import serial; print\\(serial.__file__\\); print\\(hasattr\\(serial, 'Serial'\\)\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -m pip show serial)",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -m pip uninstall serial -y)",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -c \"import serial; print\\('serial.Serial:', serial.Serial\\); print\\('OK'\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -c \"import serial; print\\(serial.__file__\\); print\\(dir\\(serial\\)\\)\")",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -c \"import sys; sys.path.insert\\(0, ''\\); import serial; print\\(serial.__spec__\\)\")",
+      "Bash(ls \"C:\\\\Users\\\\Shreyas\\\\AppData\\\\Roaming\\\\Python\\\\Python310\\\\site-packages\\\\serial\" 2>&1)",
+      "Read(//c/Users/Shreyas/AppData/Roaming/Python/Python310/site-packages/serial/**)",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -m pip show pyserial)",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -c \"import serial; print\\(serial.__file__\\)\")",
+      "Bash(ls \"C:\\\\Users\\\\Shreyas\\\\AppData\\\\Roaming\\\\Python\\\\Python310\\\\site-packages\" | grep -i serial 2>&1)",
+      "Read(//c/Users/Shreyas/AppData/Roaming/Python/Python310/site-packages/**)",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -c \"import serial; print\\('serial.Serial:', serial.Serial\\); print\\('File:', serial.__file__\\)\")"
     ]
   }
 }
