@@ -38,7 +38,8 @@
       "Bash(python generate_docx.py)",
       "Bash(pip install *)",
       "Bash(python -m pip install beautifulsoup4 lxml python-docx)",
-      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -m pip install beautifulsoup4 lxml python-docx)"
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -m pip install beautifulsoup4 lxml python-docx)",
+      "Bash(.venv\\\\Scripts\\\\python.exe -m pip install pyinstaller)"
     ]
   }
 }
