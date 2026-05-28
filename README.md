@@ -2,6 +2,8 @@
 
 Python desktop tool for framed serial data logging, decoding, TX command building, and live visualization. Driven entirely by user-editable CSV/Excel configuration — no hard-coded frame layouts.
 
+**Key capabilities:** framed UART and Modbus RTU parsing · SLIP / HDLC / COBS byte-stuffing · live multi-grid oscilloscope plot · offline Analysis Suite with multi-run overlay · TX Commands and Parameter Editor · auto-reconnect with exponential backoff · config validator CLI · one-click installer.
+
 ## Requirements
 
 - **Python:** 3.10 – 3.12 (matches PySide6 6.11 wheels).
@@ -76,7 +78,17 @@ When filing a bug at <https://github.com/P-Shreyas543/Bytehound/issues>, please 
 
 ## In-app User Manual
 
-Help → View Documentation opens [`app/resources/index.html`](app/resources/index.html) — a complete handbook covering configuration, UART frame definition, TX commands, logging, plotting, and troubleshooting.
+Help → View Documentation opens [`app/resources/index.html`](app/resources/index.html) — a complete handbook covering configuration, UART frame definition, TX commands, logging, plotting, analysis suite, and troubleshooting.
+
+## What's new in v0.3.1
+
+| Feature | Details |
+|---|---|
+| Auto-Reconnect | Connection dialog checkbox — retries on USB drop with exponential backoff (1 s → 16 s). |
+| Memory Cap | Plot Settings — optional cap on in-memory samples per signal; configurable default display window. |
+| Import Schema Mapper | Analysis Suite → Tools — override sheet names, elapsed-time column names, and unit scale factors when importing external log files. |
+| Frame Format Diagram | View → Config Info — graphical byte-aligned on-wire frame layout alongside the existing config summary. |
+| Saturation Warning Badge | `⚠️ Queue Saturated` badge in the status bar; click to dismiss. |
 
 ## License
 

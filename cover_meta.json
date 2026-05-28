@@ -1,0 +1,10 @@
+{
+    "table": [
+        { "label": "Software Version",  "version_key": "version" },
+        { "label": "Build Date",         "version_key": "build_date" },
+        { "label": "Document Version",   "version_key": "document_version" },
+        { "label": "Number of Pages",    "version_key": "__NUMPAGES__" },
+        { "label": "Developer",          "version_key": "developer_short" },
+        { "label": "Approved By",        "version_key": "approved_by" }
+    ]
+}

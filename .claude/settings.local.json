@@ -34,7 +34,11 @@
       "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -c \"import serial; print\\(serial.__file__\\)\")",
       "Bash(ls \"C:\\\\Users\\\\Shreyas\\\\AppData\\\\Roaming\\\\Python\\\\Python310\\\\site-packages\" | grep -i serial 2>&1)",
       "Read(//c/Users/Shreyas/AppData/Roaming/Python/Python310/site-packages/**)",
-      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -c \"import serial; print\\('serial.Serial:', serial.Serial\\); print\\('File:', serial.__file__\\)\")"
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -c \"import serial; print\\('serial.Serial:', serial.Serial\\); print\\('File:', serial.__file__\\)\")",
+      "Bash(python generate_docx.py)",
+      "Bash(pip install *)",
+      "Bash(python -m pip install beautifulsoup4 lxml python-docx)",
+      "Bash(\"C:\\\\Program Files\\\\Python310\\\\python.exe\" -m pip install beautifulsoup4 lxml python-docx)"
     ]
   }
 }

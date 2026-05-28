@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bytehound - Comprehensive User Manual</title>
+    <title>Bytehound - Serial Telemetry &amp; Decoder Guide</title>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap');
         
@@ -238,7 +238,7 @@
 <body>
 
 <div class="container">
-    <h1>Bytehound: Comprehensive User Manual</h1>
+    <h1>Bytehound: Serial Telemetry &amp; Decoder Guide</h1>
     
     <p style="font-size: 18px; text-align: center; color: #7f8c8d;">
         This manual is your complete guide to Bytehound's panels, workflows, and configuration sheets. Whether you are connecting a simple microcontroller or validating complex Model-Based Design firmware, it shows you how to decode, visualize, log, control, and analyze serial hardware telemetry.
@@ -253,6 +253,7 @@
                     <li><a href="#what-is-it">What is the Bytehound?</a></li>
                     <li><a href="#connecting">Connecting Your Hardware</a></li>
                     <li><a href="#active-polling">Active Polling (Auto-Fetch)</a></li>
+                    <li><a href="#auto-reconnect">Auto-Reconnect</a></li>
                 </ul>
             </li>
             <li><a href="#section-2">2. Core UI Panels &amp; Features</a>
@@ -328,6 +329,7 @@
                 <li>Set the Baud Rate to match your hardware (e.g., <strong>115200</strong>).</li>
                 <li>Set Data bits, Stop bits, and Parity if needed (defaults suit most hardware).</li>
                 <li>Click <strong>Connect</strong> to open the port.</li>
+                <li>(Optional) Check <strong>Auto-reconnect on disconnect</strong> to have the app retry the connection automatically if the cable is pulled or the device resets.</li>
             </ul>
         </li>
         <li>The status LED turns <span style="color:#4CAF50"><strong>green</strong></span> and the toolbar button changes to <strong>Disconnect</strong> with a <span style="color:#e91e8c"><strong>pink</strong></span> background when connected.</li>
@@ -335,6 +337,21 @@
 
     <div class="note">
         If the device is unplugged while monitoring, Bytehound automatically stops logging, closes the worker, and returns the Connect button to its ready state. If the port stays open but no data arrives for several seconds, the LED turns amber and the status reads <em>Connected (No Data)</em>.
+    </div>
+
+    <h4 id="auto-reconnect">Auto-Reconnect</h4>
+    <p>When <strong>Auto-reconnect on disconnect</strong> is checked in the Connection dialog, the app monitors the serial worker for unexpected disconnects (USB pull, device reset, OS power management). On a drop it immediately schedules a reconnect attempt and uses <strong>exponential back-off</strong> so it doesn't hammer the USB stack:</p>
+    <table>
+        <tr><th>Attempt</th><th>Delay before retry</th></tr>
+        <tr><td>1</td><td>1 s</td></tr>
+        <tr><td>2</td><td>2 s</td></tr>
+        <tr><td>3</td><td>4 s</td></tr>
+        <tr><td>4</td><td>8 s</td></tr>
+        <tr><td>5+</td><td>16 s (capped)</td></tr>
+    </table>
+    <p>Each attempt is logged to the <strong>Activity Log</strong> (<code>[INFO] Auto-reconnect attempt N for COMx…</code>). On success the app resumes normally, resets the counter, and logs <code>[INFO] Auto-reconnect successful!</code>. To cancel, click <strong>Disconnect</strong> or disable the checkbox before the next attempt.</p>
+    <div class="note">
+        Auto-reconnect does not re-start logging or Auto-Fetch automatically — it only re-opens the serial port. If you need logging to resume, start it manually after the reconnect notification appears in the Activity Log.
     </div>
 
     <h3 id="active-polling">Active Polling (Auto-Fetch)</h3>
@@ -485,6 +502,9 @@
     <div class="note">
         <strong>Errors vs decode errors.</strong> The <strong>Errors</strong> counter only tracks wire-level CRC failures. Configuration-level problems — for example a frame ID with no matching <code>variables</code> row, a payload shorter than the configured signal layout, or an unsupported data type — are reported in the <strong>Raw Console</strong> as <code>[decode] …</code> lines and are not counted here.
     </div>
+    <div class="warning">
+        <strong>⚠️ Queue Saturated badge.</strong> When the serial packet queue or the raw-log flush queue fills up (e.g. very high baud rate, slow disk, or window drag stalling the GUI), a yellow <strong>⚠️ Queue Saturated</strong> badge appears to the left of the counters. Incoming packets or log entries are being dropped to protect memory. <strong>Click the badge to dismiss it.</strong> Investigate the cause — reduce baud rate, increase flush interval, or free up system resources — then clear the badge and monitor whether it reappears.
+    </div>
 
     <h3 id="keyboard-shortcuts">Keyboard Shortcuts</h3>
     <p>All shortcuts are visible in the menu bar next to each action. Here is the complete reference:</p>
@@ -556,7 +576,7 @@
             <br><em>Example:</em> You dragged the Live Plot to a second monitor and closed the console, and now your layout is disorganized. Pressing <code>Ctrl+Shift+R</code> snaps all panels back to their neat, default locations.
         </li>
         <li><strong>Config Info...</strong>
-            <br><em>What it does:</em> Displays a dialog summarizing the active configuration profile, showing the total number of parsed variables, valid frame IDs, CRC settings, and the serialdefaults configuration.
+            <br><em>What it does:</em> Displays a dialog summarizing the active configuration profile, showing the total number of parsed variables, valid frame IDs, CRC settings, and the serialdefaults configuration. Below the summary, a <strong>Frame Format Diagram</strong> renders a graphical byte-aligned layout of the on-wire packet structure for each configured frame — hover over any field block to see its name, byte offset, and width. Use the dropdown above the diagram to switch between frames.
         </li>
         <li><strong>Theme (Submenu)</strong>
             <br><em>What it does:</em> Switches the visual appearance of the application.
@@ -609,7 +629,8 @@
             <br><em>What it does:</em> Opens settings for the Live Plot panel.
             <br><em>Understanding the Settings:</em>
             <ul>
-                <li><strong>History Max Samples:</strong> Sets a limit on how many data points the Live Plot retains in memory per signal (default is 6,000). Setting it to <code>0</code> or blank means "unbounded" (no limit). If you are running high-speed tests (e.g. 1 kHz) and want to zoom out and view hours of data, increase this number, but be aware that setting it to unbounded will consume more system RAM over long sessions.</li>
+                <li><strong>Cap live plot memory history</strong> — checkbox that enables a hard limit on how many samples the Live Plot stores per signal. When checked, set the <strong>Memory cap limit</strong> spinbox to the desired maximum (1 000 – 10 000 000 samples). When unchecked the history grows unbounded for the lifetime of the session; on long or high-rate sessions this can consume significant RAM.</li>
+                <li><strong>Default display window</strong> — controls how wide the Live Plot X-axis is when first switched to Live mode. Options: <em>30 seconds</em>, <em>1 minute</em>, <em>2 minutes</em>, <em>5 minutes</em> (default), <em>10 minutes</em>, <em>30 minutes</em>, or <em>All session</em>. Choosing <em>All session</em> always shows every sample from t=0; on long sessions this can make individual events hard to see — switch to a shorter window for real-time monitoring.</li>
             </ul>
         </li>
     </ul>
@@ -835,6 +856,14 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         <li><strong>View:</strong> auto-fit Y, reset zoom, switch Cursors/Statistics tab, set smoothing window, toggle wall-clock time.</li>
         <li><strong>Layout:</strong> group/ungroup parameters, add a new empty subplot.</li>
         <li><strong>Tools:</strong> add or clear vertical/horizontal cursors.</li>
+        <li><strong>Tools → Import Schema Mapper...</strong>: configure how the Analysis Suite reads external log files that don't follow Bytehound's default decoded <code>.xlsx</code> format. Three settings are available:
+            <ul>
+                <li><strong>Sheet Names</strong> — comma-separated list of worksheet names to try when opening a workbook (e.g. <code>Data,Record,Sheet1</code>). The first matching sheet is used.</li>
+                <li><strong>Time Columns</strong> — comma-separated list of column headers that represent elapsed time (e.g. <code>Elapsed (s),elapsed_ms</code>). The first matching column is used as the X-axis.</li>
+                <li><strong>Time Scale Mapping</strong> — one <code>column_name: scale_factor</code> pair per line to convert the raw value to seconds (e.g. <code>elapsed_ms: 0.001</code> converts milliseconds to seconds). Leave blank for columns already in seconds.</li>
+            </ul>
+            Settings are persisted between sessions. Click <strong>Save</strong> to apply; changes take effect the next time you load a log file.
+        </li>
         <li><strong>Scatter:</strong> open the X-Y Plotter. The Plotter allows you to plot any two signals against each other (e.g., Voltage vs Current) across the visible time range, automatically applying 1D linear regression (best-fit line) and calculating the R-squared correlation coefficient.</li>
     </ul>
 
@@ -1290,7 +1319,7 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
     <h3>Performance &amp; Packet Processing Rates</h3>
     <ul>
         <li><strong>Maximum Frame Rate Limit:</strong> The Qt GUI telemetry pipeline is optimized and verified to handle packet rates up to <strong>1000 Hz (1 kHz)</strong>. Above this rate, packet processing and UI redraw operations may consume significant CPU resources.</li>
-        <li><strong>Queue Saturation (<code>⚠️ Queue Saturated</code>):</strong> If incoming serial data rates exceed the system's capacity, or if the OS stalls the GUI thread (e.g., during window dragging), the serial packet queue or log flush queue may saturate. When this happens, a yellow warning badge appears in the bottom status bar, and newer packets/logs will be dropped to protect system memory.</li>
+        <li><strong>Queue Saturation (<code>⚠️ Queue Saturated</code>):</strong> If incoming serial data rates exceed the system's capacity, or if the OS stalls the GUI thread (e.g., during window dragging), the serial packet queue or log flush queue may saturate. When this happens, a yellow warning badge appears in the bottom status bar, and newer packets/logs will be dropped to protect system memory. <strong>Click the badge to dismiss it.</strong> If it reappears, the underlying condition persists — reduce the incoming data rate, increase the flush interval under <strong>Tools → Logging Settings</strong>, or close unused dock panels to free up the GUI thread.</li>
         <li><strong>Odd Byte Widths:</strong> Decoded signal widths of 1, 2, 4, and 8 bytes use highly optimized struct unpacking routines. Signals with odd widths (3, 5, 6, and 7 bytes) fallback to slower binary conversions, which can impact performance at high frame rates.</li>
     </ul>
 
