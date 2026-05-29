@@ -115,6 +115,162 @@
             font-size: 0.95em;
         }
         
+        /* UI Mockup Styles for Manual */
+        .mockup-img {
+            max-width: 100%;
+            height: auto;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+            margin: 20px auto;
+            display: block;
+            border: 1px solid #ddd;
+        }
+        .mock-ui-dialog {
+            background-color: #0f172a;
+            color: #e2e8f0;
+            border-radius: 8px;
+            border: 1px solid #334155;
+            padding: 16px;
+            margin: 20px 0;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            box-shadow: 0 4px 12px rgba(0,0,0,0.25);
+        }
+        .mock-ui-titlebar {
+            font-size: 13px;
+            font-weight: bold;
+            color: #94a3b8;
+            margin-bottom: 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid #1e293b;
+            padding-bottom: 6px;
+        }
+        .mock-ui-form {
+            display: grid;
+            grid-template-columns: 120px 1fr;
+            gap: 8px;
+            margin-bottom: 12px;
+            font-size: 12px;
+        }
+        .mock-ui-form-label {
+            color: #94a3b8;
+            text-align: right;
+            padding-right: 8px;
+            line-height: 24px;
+        }
+        .mock-ui-form-value {
+            color: #f1f5f9;
+            line-height: 24px;
+        }
+        .mock-ui-tabs {
+            display: flex;
+            border-bottom: 2px solid #1e293b;
+            margin-bottom: 12px;
+        }
+        .mock-ui-tab {
+            padding: 6px 12px;
+            font-size: 12px;
+            font-weight: bold;
+            cursor: pointer;
+            border-radius: 4px 4px 0 0;
+            margin-right: 4px;
+        }
+        .mock-ui-tab.active {
+            background-color: #1e293b;
+            color: #38bdf8;
+            border-bottom: 2px solid #38bdf8;
+            margin-bottom: -2px;
+        }
+        .mock-ui-tab.inactive {
+            color: #64748b;
+        }
+        .mock-ui-dropdown-row {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 12px;
+            font-size: 12px;
+        }
+        .mock-ui-dropdown-label {
+            font-weight: bold;
+            color: #f1f5f9;
+        }
+        .mock-ui-dropdown {
+            background-color: #1e293b;
+            border: 1px solid #334155;
+            padding: 4px 8px;
+            border-radius: 4px;
+            color: #e2e8f0;
+            min-width: 180px;
+        }
+        .mock-byte-grid-container {
+            overflow-x: auto;
+            background-color: #020617;
+            padding: 10px;
+            border-radius: 6px;
+            border: 1px solid #1e293b;
+        }
+        .mock-byte-grid {
+            display: flex;
+            gap: 4px;
+            min-width: 400px;
+        }
+        .mock-byte-col {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            flex: 1;
+        }
+        .mock-byte-header {
+            font-size: 9px;
+            font-weight: bold;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+        .mock-byte-cell {
+            width: 100%;
+            height: 36px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #ffffff;
+            font-size: 10px;
+            font-weight: bold;
+            border-radius: 4px;
+            text-align: center;
+            border: 1px solid rgba(255,255,255,0.1);
+        }
+        /* Gradient colors matching PyQt classes */
+        .cell-amber {
+            background: linear-gradient(180deg, #F59E0B 0%, #D97706 100%);
+            border-color: #B45309;
+        }
+        .cell-emerald {
+            background: linear-gradient(180deg, #10B981 0%, #059669 100%);
+            border-color: #047857;
+        }
+        .cell-indigo {
+            background: linear-gradient(180deg, #6366F1 0%, #4F46E5 100%);
+            border-color: #4338CA;
+        }
+        .cell-teal {
+            background: linear-gradient(180deg, #06B6D4 0%, #0891B2 100%);
+            border-color: #0E7490;
+        }
+        .cell-pink {
+            background: linear-gradient(180deg, #EC4899 0%, #DB2777 100%);
+            border-color: #9D174D;
+        }
+        .cell-grey {
+            background: linear-gradient(180deg, #6B7280 0%, #4B5563 100%);
+            border-color: #374151;
+        }
+        .cell-muted {
+            background: linear-gradient(180deg, #64748B 0%, #475569 100%);
+            border-color: #334155;
+        }
+        
         /* A4 Printing Layout Styles */
         @media print {
             @page {
@@ -253,6 +409,7 @@
                     <li><a href="#what-is-it">What is the Bytehound?</a></li>
                     <li><a href="#connecting">Connecting Your Hardware</a></li>
                     <li><a href="#active-polling">Active Polling (Auto-Fetch)</a></li>
+                    <li><a href="#unsolicited-data-detection">Unsolicited Data Detection</a></li>
                     <li><a href="#auto-reconnect">Auto-Reconnect</a></li>
                 </ul>
             </li>
@@ -332,8 +489,17 @@
                 <li>(Optional) Check <strong>Auto-reconnect on disconnect</strong> to have the app retry the connection automatically if the cable is pulled or the device resets.</li>
             </ul>
         </li>
-        <li>The status LED turns <span style="color:#4CAF50"><strong>green</strong></span> and the toolbar button changes to <strong>Disconnect</strong> with a <span style="color:#e91e8c"><strong>pink</strong></span> background when connected.</li>
     </ol>
+
+    <img src="images/connection_dialog.png" alt="Serial Connection Settings Dialog Interface" class="mockup-img" />
+
+    <p>Once you click Connect:</p>
+    <ul>
+        <li>The connection status LED (the circular ⬤ indicator on the left side of the bottom status bar) turns <span style="color:#66BB6A"><strong>green</strong></span>.</li>
+        <li>The toolbar Connect button changes to <strong>Disconnect</strong> with a <span style="color:#DB2777"><strong>pink</strong></span> background.</li>
+    </ul>
+
+    <img src="images/connection_status.png" alt="Toolbar Disconnect Button and Status Bar LED Indicators when Connected" class="mockup-img" />
 
     <div class="note">
         If the device is unplugged while monitoring, Bytehound automatically stops logging, closes the worker, and returns the Connect button to its ready state. If the port stays open but no data arrives for several seconds, the LED turns amber and the status reads <em>Connected (No Data)</em>.
@@ -356,12 +522,23 @@
 
     <h3 id="active-polling">Active Polling (Auto-Fetch)</h3>
     <p>If your hardware only sends data when <em>asked</em> (request/response protocol), connect first, then use the <strong>Start Auto-Fetch</strong> toolbar button. A dialog lets you choose which configured targets are active. The background worker then sends requests based on your config's <code>polling_schedule</code> sheet.</p>
+    <img src="images/auto_fetch_dialog.png" alt="Start Auto-Fetch Polling Configuration Dialog" class="mockup-img" />
     <p><strong>Pipelining and Timings:</strong> The Auto-Fetch dialog also allows you to configure <strong>Pipeline poll requests</strong>. By default, Bytehound sends one request and waits for its response (sequential). Pipelining allows multiple in-flight requests (controlled by <em>Max in-flight</em>), dramatically increasing throughput on hardware that supports it. You can also tune the <strong>TX gap</strong> (default 100 ms) which enforces a safe minimum spacing between consecutive outgoing polls.</p>
     <p>When Auto-Fetch is active, the button text changes to <strong>Stop Auto-Fetch</strong> and turns <span style="color:#e91e8c"><strong>pink</strong></span>. Click it again to stop. If your device streams data on its own, leave Auto-Fetch off.</p>
+
+    <h3 id="unsolicited-data-detection">Unsolicited Data Detection</h3>
+    <p>In many telemetry setups, a connected hardware device streams data continuously and automatically (unsolicited) without needing to be polled. If you attempt to enable <strong>Auto-Fetch</strong> (polling) on such a device, it will cause transmission collisions, serial line corruption, and packets will be dropped.</p>
+    <p>To protect the communication link, Bytehound includes automatic unsolicited data detection. If the application receives valid telemetry packets while Auto-Fetch is disabled, it flags the link as containing unsolicited streaming data. If you then click <strong>Start Auto-Fetch</strong> (or press <kbd>F10</kbd>), Bytehound will show a <strong>Potential Collision Warning</strong> dialog:</p>
+    <div class="warning">
+        <strong>Potential Collision Warning:</strong> The connected device is already streaming data automatically (unsolicited). Enabling Auto-Fetch (polling) may cause transmission collisions and corrupt the data. Do you want to enable Auto-Fetch anyway?
+    </div>
+    <img src="images/collision_warning.png" alt="Potential Collision Warning Dialog" class="mockup-img" />
+    <p>Clicking <strong>No</strong> aborts the Auto-Fetch request, ensuring the serial line is not saturated with conflicting commands. If your device supports both modes or has a specific hybrid query scheme, you can click <strong>Yes</strong> to override the warning and start polling anyway.</p>
 
     <!-- Section 2 -->
     <h2 id="section-2">2. Core UI Panels &amp; Features</h2>
     <p>The application is modular. The central Data Table stays in the middle, while dock panels such as Live Plot, Bitfields, Enums, Raw Console, and Activity Log can be dragged, stacked, resized, or hidden. Panel visibility is controlled under <strong>View → Panels</strong>, and <strong>View → Reset Window Layout</strong> restores the default arrangement.</p>
+    <img src="images/main_window_overview.png" alt="Bytehound Main Application Window Layout Overview" class="mockup-img" />
 
     <h3 id="main-table">The Main Data Table</h3>
     <p>Located in the center of the screen, this read-only table displays all decoded variables in real time. The search box filters by text, the Group selector filters by configured signal group, and <strong>Show calculations</strong> controls whether calculated CalcGroups rows are visible. Columns include:</p>
@@ -397,9 +574,10 @@
         <tr><td>4×2</td><td>8</td><td>Tall, multi-lane overview</td></tr>
     </table>
     <p>All panels share the same X-axis (time) — panning or zooming one panel moves all of them simultaneously.</p>
+    <img src="images/live_plot_panel.png" alt="Live Plot Panel in a Multi-Grid Layout" class="mockup-img" />
 
     <h4>Assigning Signals to Panels</h4>
-    <p>Each panel has its own <strong>variable strip</strong> above it:</p>
+    <p>Each panel has its own <strong>variable strip</strong> (now laid out using grid alignment for consistent stretching across multi-grid layout changes) above it:</p>
     <ul>
         <li>Click <strong>+ Add</strong> next to a panel label to pick a signal from your loaded config.</li>
         <li>Each assigned signal appears as a coloured chip button (e.g. <code>● VoltageA  ✕</code>). Click the chip to remove it.</li>
@@ -441,6 +619,7 @@
         <li><strong>Start Logging</strong>: Automatically begins recording a Raw + Decoded telemetry session, capturing the event as it happens without manual intervention.</li>
     </ul>
     <p>The trigger disarms automatically after firing once. A <span style="color:#e91e8c"><strong>pink</strong></span> active state on the Trigger button indicates it is armed.</p>
+    <img src="images/plot_trigger_dialog.png" alt="Live Plot Auto-Pause &amp; Logging Trigger Settings Dialog" class="mockup-img" />
 
     <div class="note">
         In Live mode the X-axis is anchored at <strong>0 seconds</strong> (session start) and expands to the current elapsed time. Plot samples are kept in a bounded in-memory history (default 6,000 points per signal), so very long sessions may show older time ranges with sparse or no plotted points even though the axis still starts at zero.
@@ -451,12 +630,14 @@
 
     <h3 id="enums">Enums Panel</h3>
     <p>Sometimes hardware sends state integers (e.g. <code>0</code> = OFF, <code>1</code> = PRECHARGE, <code>2</code> = RUN). The <strong>Enums</strong> panel shows the latest mapping for each configured enum signal with <strong>Frame</strong>, <strong>Variable</strong>, <strong>Raw</strong>, and <strong>Label</strong> columns.</p>
+    <img src="images/bitfields_enums_panels.png" alt="Bitfields and Enums Translation Dock Panels" class="mockup-img" />
 
     <h3 id="raw-console">Raw Console</h3>
     <p>The <strong>Raw Console</strong> shows timestamped hexadecimal bytes flowing into and out of the application in real time. Lines are tagged as <code>RX</code>, <code>TX</code>, or <code>ERR</code>, and decode problems appear as <code>[decode]</code> or <code>[decode warning]</code> messages. Use it to debug communication errors or verify packet structures.</p>
 
     <h3 id="activity-log">Activity Log</h3>
     <p>The <strong>Activity Log</strong> tracks major application events: configurations loaded, connections established or lost, logging start/stop, and any error popups. Useful for post-mortem analysis of a test session.</p>
+    <img src="images/console_activity_log.png" alt="Raw Bytes Console and Activity Log Dock Panels" class="mockup-img" />
     
     <p><strong>Frame Errors:</strong> If the application receives corrupted telemetry packets (e.g., CRC mismatch, invalid payload length, or bad footer), the exact reason will be displayed here as a <code>[WARN] Frame Error</code> message (e.g. <code>[WARN] Frame Error: CRC mismatch on frame 0x9000...</code>). To prevent the log from being flooded during a noisy connection, identical error messages are throttled to appear at most once per second.</p>
 
@@ -505,6 +686,7 @@
     <div class="warning">
         <strong>⚠️ Queue Saturated badge.</strong> When the serial packet queue or the raw-log flush queue fills up (e.g. very high baud rate, slow disk, or window drag stalling the GUI), a yellow <strong>⚠️ Queue Saturated</strong> badge appears to the left of the counters. Incoming packets or log entries are being dropped to protect memory. <strong>Click the badge to dismiss it.</strong> Investigate the cause — reduce baud rate, increase flush interval, or free up system resources — then clear the badge and monitor whether it reappears.
     </div>
+    <img src="images/status_bar_counters.png" alt="QStatusBar Indicators, Telemetry Counters, and Queue Saturated badge" class="mockup-img" />
 
     <h3 id="keyboard-shortcuts">Keyboard Shortcuts</h3>
     <p>All shortcuts are visible in the menu bar next to each action. Here is the complete reference:</p>
@@ -575,9 +757,19 @@
             <br><em>What it does:</em> Restores all dock panels to their default positions and splits, and returns the window size to standard defaults.
             <br><em>Example:</em> You dragged the Live Plot to a second monitor and closed the console, and now your layout is disorganized. Pressing <code>Ctrl+Shift+R</code> snaps all panels back to their neat, default locations.
         </li>
-        <li><strong>Config Info...</strong>
-            <br><em>What it does:</em> Displays a dialog summarizing the active configuration profile, showing the total number of parsed variables, valid frame IDs, CRC settings, and the serialdefaults configuration. Below the summary, a <strong>Frame Format Diagram</strong> renders a graphical byte-aligned layout of the on-wire packet structure for each configured frame — hover over any field block to see its name, byte offset, and width. Use the dropdown above the diagram to switch between frames.
-        </li>
+    </ul>
+
+    <p><strong>Config Info...</strong></p>
+    <p>Displays a dialog summarizing the active configuration profile, showing the total number of parsed variables, valid frame IDs, CRC settings, and the serialdefaults configuration. Below the summary, the <strong>Frame Format Diagram</strong> renders a graphical, byte-aligned layout of the on-wire packet structure. When the loaded configuration defines both telemetry frames and TX commands, the visualizer is split into two tabs:</p>
+    <ul>
+        <li><strong>RX Frames / Registers:</strong> Shows the byte layout of incoming frames or Modbus read registers. Use the dropdown to inspect each frame's variables.</li>
+        <li><strong>TX Commands:</strong> Shows the byte layout of outgoing command packets, including static payload bytes, command fields, and any automatic packet padding. Use the dropdown to choose any configured command.</li>
+    </ul>
+    <p>Hover over any field block in either tab to see its name, byte offset, and size in bytes.</p>
+
+    <img src="images/config_info_dialog.png" alt="Config Info Dialog Interface with RX and TX Layout Tabs" class="mockup-img" />
+
+    <ul>
         <li><strong>Theme (Submenu)</strong>
             <br><em>What it does:</em> Switches the visual appearance of the application.
             <ul>
@@ -663,6 +855,8 @@
     <div class="note">
         <strong>Send requires a connection.</strong> Packet preview works from the loaded config even before a serial port is open, but <strong>Send</strong> will refuse to transmit until you connect.
     </div>
+    <img src="images/tx_commands_panel.png" alt="TX Commands Panel User Interface with Parameter Inputs and Hex Packet Preview" class="mockup-img" />
+
 
     <h3 id="parameter-editing">Parameter Editor</h3>
     <p>The <strong>Parameter Editor</strong> panel shows all signals in your config that are marked as writable (<code>read_write = RW</code> or <code>W</code>). For each signal you can:</p>
@@ -671,6 +865,7 @@
         <li>Type a new value (in engineering units, e.g. <code>12.5</code> for 12.5 V) in the <strong>Write</strong> column's input field. Hover over the input to see the numeric range inferred from <code>min_value</code>, <code>max_value</code>, and the signal type.</li>
         <li>Press <kbd>Enter</kbd> or click the <strong>Write</strong> button. The app validates the range, reverses the scale/offset, encodes the raw bytes, appends the correct checksum, and transmits the packet immediately as a priority TX.</li>
     </ul>
+    <img src="images/parameter_editor_panel.png" alt="Parameter Editor Panel with Live Values and Editable Fields" class="mockup-img" />
 
     <h4>How the value is encoded</h4>
     <p>The encoding formula is the exact inverse of how the signal is decoded:</p>
@@ -762,6 +957,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         </li>
         <li>When finished, click <strong>Device → Stop Logging</strong>. This finalises the decoded workbook.</li>
     </ol>
+    <img src="images/logging_dialog.png" alt="Start Logging Session Configuration Dialog" class="mockup-img" />
     <div class="note">
         The raw CSV is flushed periodically (default 0.5 s, configurable under <strong>Tools → Logging Settings</strong>) and once more on close. The decoded <code>.xlsx</code> is buffered in memory and saved on <strong>Stop Logging</strong> — if the app crashes before Stop, the decoded workbook is lost. A session config snapshot is saved beside the log so the same decoder can be re-applied later.
     </div>
@@ -775,6 +971,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
 
     <h3 id="analysis-suite">The Analysis Suite</h3>
     <p>For deep-diving into saved test data and comparing multiple runs. The window is non-modal, so you can keep it open while the main app is running.</p>
+    <img src="images/analysis_suite.png" alt="Offline Log Analysis Suite Interface" class="mockup-img" />
 
     <h4>Open and load logs</h4>
     <ol>
@@ -864,8 +1061,16 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             </ul>
             Settings are persisted between sessions. Click <strong>Save</strong> to apply; changes take effect the next time you load a log file.
         </li>
-        <li><strong>Scatter:</strong> open the X-Y Plotter. The Plotter allows you to plot any two signals against each other (e.g., Voltage vs Current) across the visible time range, automatically applying 1D linear regression (best-fit line) and calculating the R-squared correlation coefficient.</li>
     </ul>
+
+    <img src="images/schema_mapper.png" alt="Import Schema Mapper Dialog" class="mockup-img" />
+
+    <p>Additional Analysis tools include:</p>
+    <ul>
+        <li><strong>Scatter:</strong> open the X-Y Plotter. The Plotter allows you to plot any two signals against each other (e.g., Voltage vs Current) across the visible time range, automatically applying 1D linear regression (best-fit line) and calculating the R-squared correlation coefficient. The X-Y Plotter window fully respects the active Light/Dark/System theme for consistent visual appearance.</li>
+    </ul>
+
+    <img src="images/xy_plotter.png" alt="Scatter X-Y Plotter Window with Linear Regression" class="mockup-img" />
 
     <div class="note">
         <strong>Quick tips:</strong>
@@ -1202,6 +1407,15 @@ Cell Voltages | min|max|diff|avg   | V    | 0x2000   | TRUE</pre>
     <div class="warning">
         <strong>Duplicate names overwrite silently.</strong> Commands are stored by <code>command_name</code>, so if two enabled rows use the same name, the later row wins and no warning is emitted. Keep <code>command_name</code> unique.
     </div>
+    <div class="note">
+        <strong>Reusing Addresses for Telemetry and Commands:</strong>
+        Yes, you can (and often should) use the same <code>id_or_address</code> (frame ID or Modbus register address) in both the <strong>Variables</strong> sheet (Sheet 3) and the <strong>TxCommands</strong> sheet (Sheet 7).
+        <ul>
+            <li>In a custom <strong>framed</strong> protocol, telemetry variables you read from the device can share a frame ID with commands you write to the device. The device's firmware parses the frame ID to decide how to process it.</li>
+            <li>In a <strong>Modbus RTU</strong> protocol, a register address (like <code>0x1000</code>) represents a specific physical memory location on the slave device. You read its value by defining it in the <strong>Variables</strong> sheet and setting a poll interval in the <strong>PollingSchedule</strong> sheet. You write a value to it by defining a command with the same address in the <strong>TxCommands</strong> sheet.</li>
+        </ul>
+        Make sure that if you define a frame in the <strong>Frames</strong> sheet (Sheet 2) that is used for both RX and TX, its <code>direction</code> column is set to <code>rxtx</code> (which is the default). If it is set to <code>rx</code> (receive-only), the app will hide any TX commands using that frame ID to prevent accidental writes.
+    </div>
     <p><strong>Bundled template content</strong> (one static-payload command and one parameterized command — the latter has matching rows in TxCommandFields):</p>
     <pre>command_name      | id_or_address | payload_hex | description                                              | enabled
 Reset Faults      | 0x1000        | FF FF       | Clears all active fault flags on the BMS                 | TRUE
@@ -1284,7 +1498,7 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
         <li><strong>Light</strong> — white background with dark text. Best for outdoor / brightly lit environments and screenshots in reports.</li>
         <li><strong>System</strong> — asks Qt to follow the operating system's light/dark preference.</li>
     </ul>
-    <p>The theme switch is instant. The app reapplies its window styling, rebuilds toolbar/menu icons, retints the live plot canvas, updates the Analysis Suite if it is open, and remembers your choice between launches.</p>
+    <p>The theme switch is instant. The app reapplies its window styling, rebuilds toolbar/menu icons, retints the live plot canvas, updates the Analysis Suite and the X-Y Plotter windows if open, and remembers your choice between launches.</p>
     <div class="note">
         Toolbar and menu icons are theme-aware. In light theme they are drawn with a dark glyph so they remain readable on the white menu background; in dark theme they switch to a light glyph automatically. No restart needed.
     </div>

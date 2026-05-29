@@ -47,7 +47,7 @@
 //     0x1004 go_silent         payload uint8 seconds      - suppress all RX
 //                                                            for N seconds
 //                                                            (tests watchdog)
-//     0x1005 streaming_mode    payload uint8 (1=off, 0=on, default on) -
+//     0x1005 streaming_mode    payload uint8 (1=off, 0=on, default off) -
 //                                                            disables the
 //                                                            autonomous
 //                                                            telemetry timers
@@ -88,7 +88,7 @@ static uint16_t crc16_modbus(const uint8_t *data, uint16_t length) {
 static uint8_t        pending_crc_corruptions = 0;
 static unsigned long  silent_until_ms = 0;
 static bool           stress_mode_on = false;
-static bool           streaming_on   = true;
+static bool           streaming_on   = false;
 
 // ---------- Send one framed packet --------------------------------------
 static void sendFrame(uint16_t frame_id, const uint8_t *payload, uint8_t payload_length) {

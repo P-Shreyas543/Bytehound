@@ -415,17 +415,23 @@ class FrameFormatWidget(QWidget):
         self._config = config
         self._protocol = config.protocol
         self._grid_widget = None
+        self._tx_grid_widget = None
         self._init_ui()
 
     def _init_ui(self) -> None:
-        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QComboBox, QLabel
+        from PySide6.QtWidgets import QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QTabWidget, QScrollArea
         from PySide6.QtCore import Qt
 
         self._main_layout = QVBoxLayout(self)
         self._main_layout.setContentsMargins(0, 0, 0, 0)
         self._main_layout.setSpacing(6)
 
-        # Dropdown selection layout
+        # Dropdown selection layout for RX
+        self._rx_container = QWidget()
+        rx_layout = QVBoxLayout(self._rx_container)
+        rx_layout.setContentsMargins(0, 0, 0, 0)
+        rx_layout.setSpacing(6)
+
         selector_layout = QHBoxLayout()
         selector_layout.setContentsMargins(0, 0, 0, 0)
         
@@ -452,35 +458,97 @@ class FrameFormatWidget(QWidget):
         selector_layout.addWidget(self._combo)
         selector_layout.addStretch()
 
-        self._main_layout.addLayout(selector_layout)
+        rx_layout.addLayout(selector_layout)
 
-        from PySide6.QtWidgets import QScrollArea
         self._scroll_area = QScrollArea()
         self._scroll_area.setWidgetResizable(True)
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self._scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         self._scroll_area.setStyleSheet("background: transparent; border: none;")
-        self._main_layout.addWidget(self._scroll_area)
+        rx_layout.addWidget(self._scroll_area)
 
-        # Build initial grid
+        # Check if TX commands exist
+        if self._config.tx_commands:
+            self._tab_widget = QTabWidget(self)
+            self._tab_widget.addTab(self._rx_container, "RX Frames / Registers")
+
+            self._tx_container = QWidget()
+            tx_layout = QVBoxLayout(self._tx_container)
+            tx_layout.setContentsMargins(4, 4, 4, 4)
+            tx_layout.setSpacing(6)
+
+            tx_selector_layout = QHBoxLayout()
+            tx_selector_layout.setContentsMargins(0, 0, 0, 0)
+
+            tx_lbl_text = "Select TX Command:"
+            self._tx_select_lbl = QLabel(tx_lbl_text)
+            self._tx_select_lbl.setStyleSheet("font-weight: bold; font-size: 11px;")
+            tx_selector_layout.addWidget(self._tx_select_lbl)
+
+            self._tx_combo = QComboBox()
+            self._tx_combo.setMinimumWidth(220)
+
+            default_tx_item = "All Commands (General Template)"
+            self._tx_combo.addItem(default_tx_item, userData=None)
+
+            # Add all TX commands to the dropdown
+            for cmd_name in sorted(self._config.tx_commands.keys()):
+                cmd = self._config.tx_commands[cmd_name]
+                desc = cmd_name
+                if cmd.description:
+                    desc += f" ({cmd.description})"
+                self._tx_combo.addItem(desc, userData=cmd_name)
+
+            self._tx_combo.currentIndexChanged.connect(self._on_tx_selection_changed)
+            tx_selector_layout.addWidget(self._tx_combo)
+            tx_selector_layout.addStretch()
+
+            tx_layout.addLayout(tx_selector_layout)
+
+            self._tx_scroll_area = QScrollArea()
+            self._tx_scroll_area.setWidgetResizable(True)
+            self._tx_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+            self._tx_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+            self._tx_scroll_area.setFrameShape(QFrame.Shape.NoFrame)
+            self._tx_scroll_area.setStyleSheet("background: transparent; border: none;")
+            tx_layout.addWidget(self._tx_scroll_area)
+
+            self._tab_widget.addTab(self._tx_container, "TX Commands")
+            self._main_layout.addWidget(self._tab_widget)
+            
+            # Initial rebuild of TX grid
+            self._rebuild_tx_grid(None)
+        else:
+            self._main_layout.addWidget(self._rx_container)
+
+        # Build initial RX grid
         self._rebuild_grid(None)
 
     def _on_frame_selection_changed(self, index: int) -> None:
         frame_id = self._combo.itemData(index)
         self._rebuild_grid(frame_id)
 
-    def _rebuild_grid(self, frame_id: Optional[int]) -> None:
+    def _on_tx_selection_changed(self, index: int) -> None:
+        cmd_name = self._tx_combo.itemData(index)
+        self._rebuild_tx_grid(cmd_name)
+
+    def _hex_to_bytes(self, value: str) -> bytes:
+        cleaned = (value or "").replace(" ", "").replace("0x", "").replace("0X", "")
+        if not cleaned:
+            return b""
+        try:
+            return bytes.fromhex(cleaned)
+        except ValueError:
+            return b""
+
+    def _build_byte_grid(self, fields: list[tuple[str, int, str, str]]) -> QWidget:
         from PySide6.QtWidgets import QGridLayout, QLabel
         from PySide6.QtCore import Qt
 
-        if self._grid_widget:
-            self._grid_widget.deleteLater()
-            self._grid_widget = None
-
-        self._grid_widget = QWidget()
-        self._grid_widget.setStyleSheet("background: transparent;")
-        layout = QGridLayout(self._grid_widget)
+        grid_widget = QWidget()
+        grid_widget.setStyleSheet("background: transparent;")
+        layout = QGridLayout(grid_widget)
         layout.setSpacing(4)
         layout.setContentsMargins(0, 4, 0, 4)
 
@@ -493,6 +561,52 @@ class FrameFormatWidget(QWidget):
             "Grey": ("#6B7280", "#4B5563", "#374151"),
             "Muted": ("#64748B", "#475569", "#334155"),
         }
+
+        total_bytes = sum(size for _, size, _, _ in fields)
+        for i in range(total_bytes):
+            lbl = QLabel(f"Byte {i}")
+            lbl.setStyleSheet("font-size: 9px; font-weight: bold; margin-bottom: 2px;")
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            layout.addWidget(lbl, 0, i)
+
+        col_idx = 0
+        for label_text, size, color_name, tooltip in fields:
+            display_text = label_text
+            if len(display_text) > 12 and size <= 2:
+                display_text = display_text[:9] + "..."
+
+            lbl = QLabel(display_text)
+            lbl.setToolTip(tooltip)
+            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            lbl.setWordWrap(True)
+            
+            start_c, end_c, border_c = colors[color_name]
+            style = f"""
+                QLabel {{
+                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {start_c}, stop:1 {end_c});
+                    color: #FFFFFF;
+                    border: 1px solid {border_c};
+                    border-radius: 4px;
+                    font-weight: bold;
+                    font-size: 11px;
+                    padding: 8px 2px;
+                }}
+                QLabel:hover {{
+                    border-color: #FFFFFF;
+                }}
+            """
+            lbl.setStyleSheet(style)
+            layout.addWidget(lbl, 1, col_idx, 1, size)
+            col_idx += size
+
+        grid_widget.setMinimumWidth(total_bytes * 45)
+        grid_widget.setMaximumHeight(85)
+        return grid_widget
+
+    def _rebuild_grid(self, frame_id: Optional[int]) -> None:
+        if self._grid_widget:
+            self._grid_widget.deleteLater()
+            self._grid_widget = None
 
         # Define fields: (Label, Size in bytes, Color key, Tooltip description)
         if self._protocol.parser_type == "modbus_rtu":
@@ -621,47 +735,188 @@ class FrameFormatWidget(QWidget):
                     f"Frame Footer Hex: 0x{self._protocol.footer.hex().upper()}"
                 ))
 
-        # Row 0: Byte columns
-        total_bytes = sum(size for _, size, _, _ in fields)
-        for i in range(total_bytes):
-            lbl = QLabel(f"Byte {i}")
-            lbl.setStyleSheet("font-size: 9px; font-weight: bold; margin-bottom: 2px;")
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            layout.addWidget(lbl, 0, i)
-
-        # Row 1: Spanned block fields
-        col_idx = 0
-        for label_text, size, color_name, tooltip in fields:
-            display_text = label_text
-            if len(display_text) > 12 and size <= 2:
-                display_text = display_text[:9] + "..."
-
-            lbl = QLabel(display_text)
-            lbl.setToolTip(tooltip)
-            lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
-            lbl.setWordWrap(True)
-            
-            start_c, end_c, border_c = colors[color_name]
-            style = f"""
-                QLabel {{
-                    background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 {start_c}, stop:1 {end_c});
-                    color: #FFFFFF;
-                    border: 1px solid {border_c};
-                    border-radius: 4px;
-                    font-weight: bold;
-                    font-size: 11px;
-                    padding: 8px 2px;
-                }}
-                QLabel:hover {{
-                    border-color: #FFFFFF;
-                }}
-            """
-            lbl.setStyleSheet(style)
-            layout.addWidget(lbl, 1, col_idx, 1, size)
-            col_idx += size
-
-        # Prevent squeezing by enforcing a minimum width per byte column (e.g. 45px)
-        self._grid_widget.setMinimumWidth(total_bytes * 45)
-        self._grid_widget.setMaximumHeight(85)
+        self._grid_widget = self._build_byte_grid(fields)
         self._scroll_area.setWidget(self._grid_widget)
+
+    def _rebuild_tx_grid(self, command_name: Optional[str]) -> None:
+        if not hasattr(self, "_tx_scroll_area"):
+            return
+
+        if self._tx_grid_widget:
+            self._tx_grid_widget.deleteLater()
+            self._tx_grid_widget = None
+
+        if self._protocol.parser_type == "modbus_rtu":
+            if command_name is not None:
+                command = self._config.tx_commands.get(command_name)
+                if command is not None:
+                    static_bytes = self._hex_to_bytes(command.payload_hex)
+                    from ..decoder.types import FMT_SIZES
+                    fields_size = sum(FMT_SIZES.get(f.fmt, 1) for f in command.fields)
+                    total_payload_size = len(static_bytes) + fields_size
+                    
+                    if total_payload_size == 0:
+                        fields = [
+                            ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
+                            ("Func Code", 1, "Emerald", "Function Code: 0x03 (Read Holding Registers)"),
+                            ("Reg Addr", 2, "Indigo", f"Register Start Address: 0x{command.frame_id:04X} ({command.frame_id})"),
+                            ("Quantity", 2, "Teal", "Quantity of registers to read (2 bytes, default 1)"),
+                            ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)"),
+                        ]
+                    elif total_payload_size == 2:
+                        val_desc = "Register Write Value (2 bytes)"
+                        val_label = "Value"
+                        if command.fields:
+                            f = command.fields[0]
+                            val_label = f.field_name
+                            val_desc = f"Field: {f.field_name}\nType: {f.fmt}\nUnit: {f.unit or '-'}"
+                        elif static_bytes:
+                            val_desc = f"Static value hex: 0x{static_bytes.hex().upper()}"
+                            val_label = f"Value (0x{static_bytes.hex().upper()})"
+
+                        fields = [
+                            ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
+                            ("Func Code", 1, "Emerald", "Function Code: 0x06 (Write Single Register)"),
+                            ("Reg Addr", 2, "Indigo", f"Register Start Address: 0x{command.frame_id:04X} ({command.frame_id})"),
+                            (val_label, 2, "Teal", f"Register Data/Value (2-byte response/request, Big-endian)\n{val_desc}"),
+                            ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)"),
+                        ]
+                    else:
+                        qty = total_payload_size // 2
+                        fields = [
+                            ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
+                            ("Func Code", 1, "Emerald", "Function Code: 0x10 (Write Multiple Registers)"),
+                            ("Reg Addr", 2, "Indigo", f"Register Start Address: 0x{command.frame_id:04X} ({command.frame_id})"),
+                            ("Quantity", 2, "Teal", f"Quantity of registers (2 bytes, value: {qty})"),
+                            ("Byte Count", 1, "Teal", f"Byte count (1 byte, value: {total_payload_size})"),
+                        ]
+                        if static_bytes:
+                            fields.append((
+                                "Static Payload",
+                                len(static_bytes),
+                                "Teal",
+                                f"Static payload bytes: 0x{static_bytes.hex().upper()}"
+                            ))
+                        for f in command.fields:
+                            size = FMT_SIZES.get(f.fmt, 1)
+                            fields.append((
+                                f.field_name,
+                                size,
+                                "Teal",
+                                f"Field: {f.field_name}\nType: {f.fmt}\nUnit: {f.unit or '-'}\nByte Order: {f.byte_order}"
+                            ))
+                        fields.append(
+                            ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)")
+                        )
+                else:
+                    command_name = None
+            
+            if command_name is None:
+                fields = [
+                    ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
+                    ("Func Code", 1, "Emerald", "Function Code (e.g. 0x03 Read, 0x06/0x10 Write)"),
+                    ("Reg Addr", 2, "Indigo", "Register Start Address (2 bytes, Big-endian)"),
+                    ("Reg Value", 2, "Teal", "Register Data/Value (2-byte response/request, Big-endian)"),
+                    ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)"),
+                ]
+        else:
+            fields = []
+            if self._protocol.header:
+                fields.append((
+                    "Header",
+                    len(self._protocol.header),
+                    "Amber",
+                    f"Frame Header Hex: 0x{self._protocol.header.hex().upper()}"
+                ))
+            if self._protocol.frame_id_size > 0:
+                fid_val_desc = ""
+                if command_name is not None:
+                    command = self._config.tx_commands.get(command_name)
+                    if command is not None:
+                        fid_val_desc = f" (Value: 0x{command.frame_id:04X})"
+                fields.append((
+                    "Frame ID",
+                    self._protocol.frame_id_size,
+                    "Emerald",
+                    f"Frame Identifier ({self._protocol.frame_id_size} bytes, {self._protocol.frame_id_byte_order}-endian){fid_val_desc}"
+                ))
+            if self._protocol.length_size > 0:
+                len_bo = self._protocol.length_byte_order or self._protocol.frame_id_byte_order
+                fields.append((
+                    "Length",
+                    self._protocol.length_size,
+                    "Indigo",
+                    f"Payload Length ({self._protocol.length_size} bytes, {len_bo}-endian, meaning: {self._protocol.length_meaning})"
+                ))
+
+            if command_name is not None:
+                command = self._config.tx_commands.get(command_name)
+                if command is not None:
+                    static_bytes = self._hex_to_bytes(command.payload_hex)
+                    if static_bytes:
+                        fields.append((
+                            "Static Payload",
+                            len(static_bytes),
+                            "Teal",
+                            f"Static payload bytes: 0x{static_bytes.hex().upper()}"
+                        ))
+                    
+                    from ..decoder.types import FMT_SIZES
+                    for f in command.fields:
+                        size = FMT_SIZES.get(f.fmt, 1)
+                        fields.append((
+                            f.field_name,
+                            size,
+                            "Teal",
+                            f"Field: {f.field_name}\nType: {f.fmt}\nUnit: {f.unit or '-'}\nByte Order: {f.byte_order}\nScale: {f.factor}\nOffset: {f.offset}"
+                        ))
+                    
+                    if self._protocol.tx_pad_length is not None:
+                        fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
+                        payload_size = len(static_bytes) + sum(FMT_SIZES.get(f.fmt, 1) for f in command.fields)
+                        padding_size = self._protocol.tx_pad_length - fixed_size - payload_size
+                        if padding_size > 0:
+                            fields.append((
+                                "Padding",
+                                padding_size,
+                                "Muted",
+                                f"Zero padding to reach fixed tx_pad_length={self._protocol.tx_pad_length}"
+                            ))
+                else:
+                    command_name = None
+
+            if command_name is None:
+                fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
+                if self._protocol.tx_pad_length is not None:
+                    payload_size = max(0, self._protocol.tx_pad_length - fixed_size)
+                    data_label = f"Data ({payload_size}-Byte)"
+                else:
+                    payload_size = 8
+                    data_label = "Data (8-Byte)"
+
+                fields.append((
+                    data_label,
+                    payload_size,
+                    "Teal",
+                    "Payload Data (configured fields)"
+                ))
+
+            if self._protocol.crc_size > 0:
+                fields.append((
+                    f"CRC-{self._protocol.crc_size*8}",
+                    self._protocol.crc_size,
+                    "Pink",
+                    f"CRC Checksum ({self._protocol.crc_size} bytes, type: {self._protocol.crc_type}, {self._protocol.crc_byte_order}-endian)"
+                ))
+            if self._protocol.footer:
+                fields.append((
+                    "Footer",
+                    len(self._protocol.footer),
+                    "Grey",
+                    f"Frame Footer Hex: 0x{self._protocol.footer.hex().upper()}"
+                ))
+
+        self._tx_grid_widget = self._build_byte_grid(fields)
+        self._tx_scroll_area.setWidget(self._tx_grid_widget)
+
 

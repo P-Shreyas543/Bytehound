@@ -327,7 +327,50 @@ def add_html_table(doc, table_tag):
 
             c_idx += int(cell_tag.get("colspan", 1))
 
-    doc.add_paragraph().paragraph_format.space_after = Pt(6)
+def add_image_element(doc, img_tag):
+    """Render an <img> tag as a centered image with an optional caption."""
+    src = img_tag.get("src")
+    if not src:
+        return
+    
+    # Resolve relative paths
+    img_path = Path(src)
+    if not img_path.is_absolute():
+        # Relative to app/resources
+        img_path = BASE_DIR / "app" / "resources" / img_path
+
+    if not img_path.exists():
+        print(f"  Warning: Image file not found: {img_path}")
+        return
+
+    # Add picture (width 14cm is a safe choice to fit inside the margins)
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    p.paragraph_format.space_before = Pt(8)
+    p.paragraph_format.space_after = Pt(4)
+    
+    # Set keep_with_next if possible via pPr
+    pPr = p._p.get_or_add_pPr()
+    kn = OxmlElement("w:keepNext")
+    kn.set(qn("w:val"), "1")
+    pPr.append(kn)
+    
+    run = p.add_run()
+    run.add_picture(str(img_path), width=Cm(14))
+
+    # Alt text as caption below the image
+    alt = img_tag.get("alt")
+    if alt:
+        p_cap = doc.add_paragraph()
+        p_cap.alignment = WD_ALIGN_PARAGRAPH.CENTER
+        p_cap.paragraph_format.space_before = Pt(2)
+        p_cap.paragraph_format.space_after = Pt(12)
+        
+        run_cap = p_cap.add_run(f"Figure: {alt}")
+        run_cap.italic = True
+        run_cap.font.name = FONT_NAME
+        run_cap.font.size = Pt(9.5)
+        run_cap.font.color.rgb = RGBColor(0x7F, 0x8C, 0x8D)
 
 
 # ── List handling ──────────────────────────────────────────────────────────────
@@ -620,6 +663,9 @@ def process_element(doc, element):
 
     elif tag == "table":
         add_html_table(doc, element)
+
+    elif tag == "img":
+        add_image_element(doc, element)
 
     elif tag == "div":
         cls_list = element.get("class", [])

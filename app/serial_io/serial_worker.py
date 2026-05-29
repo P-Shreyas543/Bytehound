@@ -592,7 +592,7 @@ class PollingWorker(QThread):
                             time.sleep(0.01)
                     # Removed `continue` so RX can drain immediately after priority TX!
 
-                # 2. Handle Polling Engine
+                # 2. Read settings under the lock
                 with QMutexLocker(self._mutex):
                     polling_enabled = self._polling_global_enabled
                     pipelining = self._pipelining_enabled
@@ -604,6 +604,25 @@ class PollingWorker(QThread):
                 if flush_rx_before_polling:
                     self._reset_rx_state_for_polling_start()
 
+                # 3. Drain incoming data.
+                # In pipelined mode we ALWAYS drain RX here so that responses to in-flight requests
+                # are matched promptly before we check for expirations or send new requests.
+                # In serial mode, we also drain any unsolicited/late traffic.
+                if self._serial:
+                    w = self._serial.in_waiting
+                    if w > 0:
+                        data = self._serial.read(w)
+                        self._rx_bytes += len(data)
+                        self._last_rx_time = time.monotonic()
+                        self._watchdog_fired = False
+                        self._parser.feed(data)
+                        extracted = self._parser.extract_all()
+                        if pipelining and self._in_flight and extracted:
+                            self._match_in_flight_responses(extracted)
+                        self._accumulate(extracted)
+                        self._emit_metrics_throttled()
+
+                # 4. Handle Polling Engine
                 polled = False
                 # Polling gate: hold off until the device has either sent us
                 # at least one byte (proof it is alive) OR the boot-grace
@@ -616,7 +635,7 @@ class PollingWorker(QThread):
                     if pipelining:
                         # Pipelined: fire as many due polls as the depth budget
                         # allows; responses are matched by frame_id in the RX
-                        # drain below.
+                        # drain above.
                         self._expire_in_flight()
                         while len(self._in_flight) < pipe_depth:
                             sched = self._pick_due_schedule_for_pipeline()
@@ -648,24 +667,6 @@ class PollingWorker(QThread):
                             self._do_poll(chosen_sched)
                             chosen_sched["next_run"] = time.monotonic() + (chosen_sched["spec"].interval_ms / 1000.0)
                             polled = True
-
-                # 3. Drain incoming data. In pipelined mode we ALWAYS drain so
-                # responses to in-flight requests are matched promptly; in
-                # serial mode _do_poll already drained during _await_response,
-                # so we skip when we just polled to avoid a redundant read.
-                if self._serial and (pipelining or not polled):
-                    w = self._serial.in_waiting
-                    if w > 0:
-                        data = self._serial.read(w)
-                        self._rx_bytes += len(data)
-                        self._last_rx_time = time.monotonic()
-                        self._watchdog_fired = False
-                        self._parser.feed(data)
-                        extracted = self._parser.extract_all()
-                        if pipelining and self._in_flight and extracted:
-                            self._match_in_flight_responses(extracted)
-                        self._accumulate(extracted)
-                        self._emit_metrics_throttled()
 
                 # Always check the watchdog at the end of the iteration. If we
                 # only ran it inside the "not polled and no bytes waiting"

@@ -175,3 +175,111 @@ def test_frame_format_widget(qapp):
     byte_labels = [l for l in labels_padded if l.text().startswith("Byte ")]
     assert len(byte_labels) == 12
 
+    # 4. Framed Protocol with TX commands and Tab Widget
+    p_tx = ProtocolConfig(
+        profile_name="TX Test",
+        header=b"\xAA\x55",
+        frame_id_size=2,
+        frame_id_byte_order="big",
+        length_size=1,
+        length_meaning="payload_only",
+        crc_type="crc16_modbus",
+        crc_size=2,
+        crc_byte_order="little",
+        crc_coverage="header_to_payload",
+        footer=b"",
+        escape_mode="none",
+        enabled=True,
+        parser_type="framed",
+    )
+    from app.decoder.types import TxCommandSpec, TxCommandFieldSpec
+    tx_cmds = {
+        "TestCmd": TxCommandSpec(
+            command_name="TestCmd",
+            frame_id=0x1000,
+            payload_hex="AA BB",
+            description="Test Description",
+            enabled=True,
+            fields=[
+                TxCommandFieldSpec(
+                    command_name="TestCmd",
+                    field_name="Field1",
+                    fmt="uint16",
+                    byte_order="little",
+                    factor=1.0,
+                    offset=0.0
+                )
+            ]
+        )
+    }
+    cfg_tx = FrameConfig(protocol=p_tx, tx_commands=tx_cmds)
+    w_tx = FrameFormatWidget(cfg_tx)
+
+    assert hasattr(w_tx, "_tab_widget")
+    assert w_tx._tab_widget.count() == 2
+
+    assert w_tx._tx_combo.count() == 2  # default + TestCmd
+    w_tx._tx_combo.setCurrentIndex(1)
+    
+    assert w_tx._tx_grid_widget is not None
+    layout_tx = w_tx._tx_grid_widget.layout()
+    assert layout_tx is not None
+    labels_tx = [layout_tx.itemAt(i).widget() for i in range(layout_tx.count()) if isinstance(layout_tx.itemAt(i).widget(), QLabel)]
+    has_field_label = any(l.text() == "Field1" or "Field1" in l.text() for l in labels_tx)
+    assert has_field_label
+
+    # 5. Modbus RTU Protocol with TX commands and Tab Widget
+    p_modbus_tx = ProtocolConfig(
+        profile_name="Modbus TX Test",
+        header=b"\x01",
+        frame_id_size=1,
+        frame_id_byte_order="big",
+        length_size=1,
+        length_meaning="payload_only",
+        crc_type="crc16_modbus",
+        crc_size=2,
+        crc_byte_order="little",
+        crc_coverage="header_to_payload",
+        footer=b"",
+        escape_mode="none",
+        enabled=True,
+        parser_type="modbus_rtu",
+        modbus_node_address=5
+    )
+    tx_cmds_modbus = {
+        "WriteReg": TxCommandSpec(
+            command_name="WriteReg",
+            frame_id=0x2000,
+            payload_hex="CC DD",
+            description="Modbus Write Command",
+            enabled=True,
+            fields=[]
+        ),
+        "WriteMultiple": TxCommandSpec(
+            command_name="WriteMultiple",
+            frame_id=0x2000,
+            payload_hex="11 22 33 44",
+            description="Modbus Write Multiple Command",
+            enabled=True,
+            fields=[]
+        )
+    }
+    cfg_modbus_tx = FrameConfig(protocol=p_modbus_tx, tx_commands=tx_cmds_modbus)
+    w_modbus_tx = FrameFormatWidget(cfg_modbus_tx)
+
+    assert hasattr(w_modbus_tx, "_tab_widget")
+    assert w_modbus_tx._tx_combo.count() == 3  # default + WriteReg + WriteMultiple
+    
+    # Select WriteReg (total payload size = 2, so FC 06)
+    w_modbus_tx._tx_combo.setCurrentIndex(1)
+    layout_mr = w_modbus_tx._tx_grid_widget.layout()
+    labels_mr = [layout_mr.itemAt(i).widget() for i in range(layout_mr.count()) if isinstance(layout_mr.itemAt(i).widget(), QLabel)]
+    assert any("Func Code" in l.text() for l in labels_mr)
+    
+    # Select WriteMultiple (total payload size = 4, so FC 16)
+    w_modbus_tx._tx_combo.setCurrentIndex(2)
+    layout_wm = w_modbus_tx._tx_grid_widget.layout()
+    labels_wm = [layout_wm.itemAt(i).widget() for i in range(layout_wm.count()) if isinstance(layout_wm.itemAt(i).widget(), QLabel)]
+    assert any("Func Code" in l.text() for l in labels_wm)
+
+
