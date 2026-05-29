@@ -360,18 +360,21 @@ class AnalysisSuiteWindow(QMainWindow):
         subplot_settings_layout.addWidget(self._subplot_smooth_cb)
 
         self._subplot_up_btn = QPushButton("▲")
+        self._subplot_up_btn.setStyleSheet("padding: 0px;")
         self._subplot_up_btn.setToolTip("Move selected subplot up")
         self._subplot_up_btn.setFixedWidth(24)
         self._subplot_up_btn.clicked.connect(self._on_subplot_move_up)
         subplot_settings_layout.addWidget(self._subplot_up_btn)
 
         self._subplot_down_btn = QPushButton("▼")
+        self._subplot_down_btn.setStyleSheet("padding: 0px;")
         self._subplot_down_btn.setToolTip("Move selected subplot down")
         self._subplot_down_btn.setFixedWidth(24)
         self._subplot_down_btn.clicked.connect(self._on_subplot_move_down)
         subplot_settings_layout.addWidget(self._subplot_down_btn)
 
         self._subplot_delete_btn = QPushButton("✕")
+        self._subplot_delete_btn.setStyleSheet("padding: 0px;")
         self._subplot_delete_btn.setToolTip("Clear / delete selected subplot")
         self._subplot_delete_btn.setFixedWidth(24)
         self._subplot_delete_btn.clicked.connect(self._on_subplot_delete)
@@ -1850,11 +1853,12 @@ class AnalysisSuiteWindow(QMainWindow):
     # ------------------------------------------------------------------
     def _get_checked_params(self) -> list[str]:
         """Return a flat list of all currently checked parameter names."""
+        tree = self._param_tree
         params = []
-        for grp in self._iter_tree_groups():
-            for p, checked in grp:
-                if checked:
-                    params.append(p)
+        for i in range(tree.topLevelItemCount()):
+            item = tree.topLevelItem(i)
+            if item.checkState(0) == Qt.Checked:
+                params.append(item.text(0))
         return params
 
     # ------------------------------------------------------------------

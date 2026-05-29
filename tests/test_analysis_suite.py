@@ -321,3 +321,39 @@ def test_get_subplot_groups_flat_layout():
     groups = win._get_subplot_groups()
     assert groups == [["Speed"], ["Torque"]]
 
+
+def test_get_checked_params():
+    """Test that _get_checked_params returns a flat list of checked parameter names."""
+    win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
+    
+    class MockTree:
+        def __init__(self):
+            self.items = []
+        def topLevelItemCount(self):
+            return len(self.items)
+        def topLevelItem(self, idx):
+            return self.items[idx]
+            
+    class MockItem:
+        def __init__(self, text, checked):
+            self._text = text
+            self._checked = checked
+        def text(self, col):
+            return self._text
+        def checkState(self, col):
+            return Qt.Checked if self._checked else Qt.Unchecked
+            
+    tree = MockTree()
+    tree.items = [
+        MockItem("Speed", True),
+        MockItem("Power", False),
+        MockItem("Torque", True),
+        MockItem("Voltage", False)
+    ]
+    
+    win._param_tree = tree
+    
+    checked = win._get_checked_params()
+    assert checked == ["Speed", "Torque"]
+
+

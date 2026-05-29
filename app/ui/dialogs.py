@@ -58,6 +58,7 @@ class ConnectionDialog(QDialog):
         self._port_combo = QComboBox(port_row)
         self._port_combo.setMinimumWidth(180)
         refresh_btn = QPushButton("⟳", port_row)
+        refresh_btn.setStyleSheet("padding: 0px;")
         refresh_btn.setFixedWidth(28)
         refresh_btn.setToolTip("Refresh port list")
         refresh_btn.clicked.connect(self._refresh_ports)
