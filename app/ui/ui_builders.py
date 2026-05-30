@@ -756,6 +756,7 @@ class UIBuildersMixin:
         self._bitfield_table.setHorizontalHeaderLabels(["Frame", "Variable", "Bit", "State"])
         self._bitfield_table.verticalHeader().setVisible(False)
         self._bitfield_table.horizontalHeader().setStretchLastSection(True)
+        self._bitfield_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         # Side index: key_text -> row, kept in sync with the table by
         # _upsert_detail_row and reset alongside _bitfield_table.setRowCount(0)
         # in _on_clear. Turns the previous O(rows) linear scan per signal
@@ -786,6 +787,7 @@ class UIBuildersMixin:
         self._enum_table.setHorizontalHeaderLabels(["Frame", "Variable", "Raw", "Label"])
         self._enum_table.verticalHeader().setVisible(False)
         self._enum_table.horizontalHeader().setStretchLastSection(True)
+        self._enum_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         # See _bitfield_row_index — same pattern for the enum table.
         self._enum_row_index: Dict[str, int] = {}
         self._enum_last_values: Dict[str, tuple[str, ...]] = {}
