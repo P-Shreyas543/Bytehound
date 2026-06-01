@@ -31,11 +31,19 @@ SIGN_SCRIPT = ROOT / "tools" / "sign.ps1"
 
 
 def clean() -> None:
+    import stat
+    def remove_readonly(func, path, excinfo):
+        try:
+            os.chmod(path, stat.S_IWRITE)
+            func(path)
+        except Exception:
+            pass
+
     for name in ("build", "dist"):
         target = ROOT / name
         if target.exists():
             print(f"[build] removing {target}")
-            shutil.rmtree(target, ignore_errors=True)
+            shutil.rmtree(target, onerror=remove_readonly)
 
 
 def run_pyinstaller(extra_args: list[str]) -> int:
