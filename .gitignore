@@ -1,64 +1,101 @@
-# Byte-compiled / cache
+# ==============================================================================
+# Bytehound Industry-Standard .gitignore File
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 1. Byte-Compiled / Python Caches
+# ------------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 *.pyd
+.python-version
 
-# Virtual envs
+# ------------------------------------------------------------------------------
+# 2. Virtual Environments (Local Development Setup)
+# ------------------------------------------------------------------------------
 .venv/
 venv/
 env/
 ENV/
+lib/
+pip-selfcheck.json
 
-# PyInstaller / build output
+# ------------------------------------------------------------------------------
+# 3. IDEs, Editors & OS Files
+# ------------------------------------------------------------------------------
+# VS Code (except settings/launch configurations if team-shared; normally ignored)
+.vscode/
+# PyCharm / IntelliJ
+.idea/
+# Vim swap files
+*.swp
+*.swo
+# OS-generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# ------------------------------------------------------------------------------
+# 4. PyInstaller, Packaging & Distribution Outputs
+# ------------------------------------------------------------------------------
 build/
 dist/
 installer_output/
 *.manifest
 *.spec.bak
 *.egg-info/
+.eggs/
+*.egg
 
-# Auto-generated from version.json by build.py (single source of truth)
+# ------------------------------------------------------------------------------
+# 5. Inno Setup Auto-Generated Manifests & Bootstrappers
+# ------------------------------------------------------------------------------
 installer_version.iss
+innosetup-*.exe
 
-# Test / coverage
+# ------------------------------------------------------------------------------
+# 6. Test Runners, Coverage & Linters
+# ------------------------------------------------------------------------------
 .pytest_cache/
 .coverage
 .coverage.*
+cover_meta.json
 htmlcov/
 .tox/
 .nox/
+.ruff_cache/
+.mypy_cache/
 
-# Editors / OS
-.vscode/
-.idea/
-*.swp
-*.swo
-.DS_Store
-Thumbs.db
-
-# Logs / scratch
+# ------------------------------------------------------------------------------
+# 7. Runtime Data, Logs & Session Output (Local telemetries)
+# ------------------------------------------------------------------------------
 *.log
 logs/
 scratch/
 *.tmp
 *.bak
-
-# App-generated runtime files
 *.csv.lock
 session_*.json
+# Prevent committing local test log files generated during manual testing
+*_raw.csv
+*_decoded.xlsx
 
-# Code signing artifacts (NEVER commit private keys or passwords)
+# ------------------------------------------------------------------------------
+# 8. Private Keys, Certificates & Credentials (SECURITY SENSITIVE)
+# ------------------------------------------------------------------------------
 *.pfx
 *.p12
 tools/codesign.*
 tools/sign-runner.cmd
 sign-password.txt
 
-# Model artifacts and generated screenshots
+# ------------------------------------------------------------------------------
+# 9. Local AI Agents, Workspace Tooling & Subsystem Caches
+# ------------------------------------------------------------------------------
+.claude/
+.code-review-graph/
 artifacts/
+=3.5
 
-# Tooling and caches
-.ruff_cache/
-innosetup-*.exe
