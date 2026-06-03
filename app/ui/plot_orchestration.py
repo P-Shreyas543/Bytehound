@@ -870,7 +870,7 @@ class PlotOrchestrationMixin:
         Guard suppresses changes triggered by our own setXRange calls;
         any other change means the user panned/zoomed → switch to Explore.
         """
-        if self._plot_range_changing:
+        if self._plot_range_changing or not getattr(self, "_initial_show_done", True):
             return
         if self._plot_live:
             # User pan/zoom is functionally the same as Pausing.

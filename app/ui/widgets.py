@@ -41,7 +41,7 @@ try:
 except ImportError:  # pragma: no cover - icons degrade to empty if missing
     qta = None
 
-from ..decoder.types import FrameConfig, ProtocolConfig
+from ..decoder.types import FrameConfig
 
 
 # Primary toolbar button colour palette. Three semantic states; all buttons
@@ -434,7 +434,7 @@ class FrameFormatWidget(QWidget):
 
         selector_layout = QHBoxLayout()
         selector_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         lbl_text = "Select Register:" if self._protocol.parser_type == "modbus_rtu" else "Select Frame Structure:"
         self._select_lbl = QLabel(lbl_text)
         self._select_lbl.setStyleSheet("font-weight: bold; font-size: 11px;")
@@ -442,7 +442,7 @@ class FrameFormatWidget(QWidget):
 
         self._combo = QComboBox()
         self._combo.setMinimumWidth(220)
-        
+
         default_item = "All Registers (General)" if self._protocol.parser_type == "modbus_rtu" else "All Frames (General Template)"
         self._combo.addItem(default_item, userData=None)
 
@@ -516,7 +516,7 @@ class FrameFormatWidget(QWidget):
 
             self._tab_widget.addTab(self._tx_container, "TX Commands")
             self._main_layout.addWidget(self._tab_widget)
-            
+
             # Initial rebuild of TX grid
             self._rebuild_tx_grid(None)
         else:
@@ -579,7 +579,7 @@ class FrameFormatWidget(QWidget):
             lbl.setToolTip(tooltip)
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             lbl.setWordWrap(True)
-            
+
             start_c, end_c, border_c = colors[color_name]
             style = f"""
                 QLabel {{
@@ -620,7 +620,7 @@ class FrameFormatWidget(QWidget):
                 else:
                     data_desc = "No variables configured at this address"
                     data_label = "Reg Data"
-                
+
                 fields = [
                     ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
                     ("Func Code", 1, "Emerald", "Function Code (e.g. 0x03 Read, 0x06 Write)"),
@@ -666,10 +666,10 @@ class FrameFormatWidget(QWidget):
                 # Add specific signals for selected Frame ID
                 signals = self._config.signals_by_frame.get(frame_id, [])
                 sorted_signals = sorted(signals, key=lambda s: s.start_byte)
-                
+
                 frame_def = self._config.frames.get(frame_id)
                 expected_payload_len = frame_def.payload_length if frame_def else None
-                
+
                 current_byte = 0
                 for sig in sorted_signals:
                     if sig.start_byte > current_byte:
@@ -680,7 +680,7 @@ class FrameFormatWidget(QWidget):
                             "Muted",
                             f"Unused payload byte(s) ({gap_size} bytes)"
                         ))
-                    
+
                     fields.append((
                         sig.signal_name,
                         sig.byte_length,
@@ -688,7 +688,7 @@ class FrameFormatWidget(QWidget):
                         f"Signal: {sig.signal_name}\nData Type: {sig.data_type}\nByte offset: {sig.start_byte}\nSize: {sig.byte_length} bytes\nScale: {sig.scale}\nOffset: {sig.offset}\nUnit: {sig.unit or '-'}"
                     ))
                     current_byte = sig.end_byte
-                
+
                 if expected_payload_len is not None and expected_payload_len > current_byte:
                     gap_size = expected_payload_len - current_byte
                     fields.append((
@@ -754,7 +754,7 @@ class FrameFormatWidget(QWidget):
                     from ..decoder.types import FMT_SIZES
                     fields_size = sum(FMT_SIZES.get(f.fmt, 1) for f in command.fields)
                     total_payload_size = len(static_bytes) + fields_size
-                    
+
                     if total_payload_size == 0:
                         fields = [
                             ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
@@ -810,7 +810,7 @@ class FrameFormatWidget(QWidget):
                         )
                 else:
                     command_name = None
-            
+
             if command_name is None:
                 fields = [
                     ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
@@ -860,7 +860,7 @@ class FrameFormatWidget(QWidget):
                             "Teal",
                             f"Static payload bytes: 0x{static_bytes.hex().upper()}"
                         ))
-                    
+
                     from ..decoder.types import FMT_SIZES
                     for f in command.fields:
                         size = FMT_SIZES.get(f.fmt, 1)
@@ -870,7 +870,7 @@ class FrameFormatWidget(QWidget):
                             "Teal",
                             f"Field: {f.field_name}\nType: {f.fmt}\nUnit: {f.unit or '-'}\nByte Order: {f.byte_order}\nScale: {f.factor}\nOffset: {f.offset}"
                         ))
-                    
+
                     if self._protocol.tx_pad_length is not None:
                         fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
                         payload_size = len(static_bytes) + sum(FMT_SIZES.get(f.fmt, 1) for f in command.fields)

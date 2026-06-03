@@ -63,12 +63,12 @@ class ConfigLoaderMixin:
             line.setFrameShape(QFrame.Shape.HLine)
             line.setFrameShadow(QFrame.Shadow.Sunken)
             root.addWidget(line)
-            
+
             # Label header
             fmt_lbl = QLabel("On-Wire Frame Format (Hover for info):")
             fmt_lbl.setStyleSheet("font-weight: bold;")
             root.addWidget(fmt_lbl)
-            
+
             # Block diagram widget
             from .widgets import FrameFormatWidget
             fmt_widget = FrameFormatWidget(self._config, parent=dlg)

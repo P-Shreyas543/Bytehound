@@ -338,6 +338,7 @@ class MainWindow(
         self._plot_live: bool = True
         self._plot_trigger: Optional[dict] = None
         self._plot_range_changing: bool = False   # re-entrancy guard for setXRange calls
+        self._initial_show_done: bool = False     # startup guard to ignore initial resize event range changes
         self._seen_faults: set[Tuple[int, str]] = set()
 
         # Packet queue + 60 Hz throttle timer
@@ -657,6 +658,8 @@ class MainWindow(
         # Split right column after the window is fully shown so Qt honours it.
         if not self._settings.value("window/state"):  # only on first launch
             QTimer.singleShot(50, self._apply_default_dock_split)
+        # Clear the startup guard after layouts and resizes have settled
+        QTimer.singleShot(50, lambda: setattr(self, "_initial_show_done", True))
 
     def _apply_default_dock_split(self) -> None:
         """Split right column: panels top, logs bottom. Called once on first show."""

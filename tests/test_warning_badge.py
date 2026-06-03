@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 from PySide6.QtWidgets import QApplication
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QPointF
 from PySide6.QtGui import QMouseEvent
 
 from app.ui.main_window import MainWindow
@@ -22,10 +22,12 @@ def test_warning_badge_mouse_press_event(qapp):
     badge.setVisible(True)
     assert badge.isVisible()
 
-    # Simulate click event
+    # Simulate click event using the non-deprecated QMouseEvent constructor
+    pos = QPointF(badge.rect().center())
     event = QMouseEvent(
         QMouseEvent.Type.MouseButtonPress,
-        badge.rect().center(),
+        pos,
+        pos,
         Qt.MouseButton.LeftButton,
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,

@@ -702,7 +702,7 @@ class AboutDialog(QDialog):
         main_layout.setSpacing(24)
 
         # Import PySide6 GUI / Utility classes locally
-        from PySide6.QtGui import QPixmap, QFont, QDesktopServices
+        from PySide6.QtGui import QPixmap, QDesktopServices
         from PySide6.QtCore import QUrl, QSize
         from PySide6.QtWidgets import QToolButton
         try:
@@ -796,17 +796,17 @@ class AboutDialog(QDialog):
         # Developer Section with Inline GitHub Icon Button
         dev = version_info.get("Developer", "Shreyas P")
         dev_github = version_info.get("developer_github", "https://github.com/P-Shreyas543")
-        
+
         dev_widget = QWidget(self)
         dev_hl = QHBoxLayout(dev_widget)
         dev_hl.setContentsMargins(0, 0, 0, 0)
         dev_hl.setSpacing(4)
-        
+
         dev_label = QLabel(f"Developer: <a href='{dev_github}'><b>{dev}</b></a>", dev_widget)
         dev_label.setOpenExternalLinks(True)
         dev_label.setStyleSheet("font-size: 9.5pt;")
         dev_hl.addWidget(dev_label)
-        
+
         if dev_github:
             btn_dev_git = QToolButton(dev_widget)
             btn_dev_git.setCursor(Qt.PointingHandCursor)
@@ -827,7 +827,7 @@ class AboutDialog(QDialog):
         lic = version_info.get("license", "MIT")
         lic_url = version_info.get("license_url", "https://github.com/P-Shreyas543/Bytehound/blob/master/LICENSE")
         lic_text = f"<a href='{lic_url}'><b>{lic}</b></a>" if lic_url else f"<b>{lic}</b>"
-        
+
         license_label = QLabel(self)
         license_label.setText(f"License: {lic_text}")
         license_label.setOpenExternalLinks(True)

@@ -40,7 +40,7 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 |-----------------------|----------------------------------------------------|
 | **App Name**          | Bytehound                                     |
 | **Developer**         | Shreyas P                                          |
-| **Version**           | 0.4.0 (sourced from [version.json](version.json))  |
+| **Version**           | 0.4.1 (sourced from [version.json](version.json))  |
 | **Platform**          | Windows 10 / 11 (x64). Code is cross-platform but the shipped binary targets Windows. |
 | **Window Size**       | 1400 × 900 px                                      |
 | **Window Title**      | `Bytehound v<Version>` (e.g. `Bytehound v0.1.0`) |

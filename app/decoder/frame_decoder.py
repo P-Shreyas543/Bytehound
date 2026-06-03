@@ -166,12 +166,12 @@ def _decode_raw_at(payload: bytes, spec: SignalSpec) -> Union[int, float]:
         _DECODE_STRUCT_CACHE[cache_key] = s
     if s is not None:
         return s.unpack_from(payload, spec.start_byte)[0]
-    
+
     # Cached "no native struct code" — odd byte length int.
     W = spec.byte_length
     start = spec.start_byte
     signed = spec.data_type == "int"
-    
+
     if W == 3 and start + 4 <= len(payload):
         if spec.endianness == "little":
             val = struct.unpack_from("<I", payload, start)[0] & 0xFFFFFF

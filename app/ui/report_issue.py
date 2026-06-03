@@ -9,10 +9,9 @@ import sys
 import urllib.error
 import urllib.request
 from datetime import datetime
-from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtWidgets import QMessageBox, QProgressDialog
+from PySide6.QtWidgets import QProgressDialog
 
 from .dialogs import ReportIssueDialog
 

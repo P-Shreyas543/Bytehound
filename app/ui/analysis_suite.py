@@ -339,7 +339,7 @@ class AnalysisSuiteWindow(QMainWindow):
         # Subplot settings toolbar
         subplot_settings_layout = QHBoxLayout()
         subplot_settings_layout.setSpacing(4)
-        
+
         self._subplot_settings_combo = QComboBox()
         self._subplot_settings_combo.setFont(QFont("PT Sans", 8))
         self._subplot_settings_combo.setToolTip("Select subplot to configure settings below")
@@ -379,7 +379,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self._subplot_delete_btn.setFixedWidth(24)
         self._subplot_delete_btn.clicked.connect(self._on_subplot_delete)
         subplot_settings_layout.addWidget(self._subplot_delete_btn)
-        
+
         param_layout.addLayout(subplot_settings_layout)
 
         # Global actions
@@ -408,11 +408,11 @@ class AnalysisSuiteWindow(QMainWindow):
         self._param_tree.setSelectionMode(QAbstractItemView.SingleSelection)
         self._param_tree.setContextMenuPolicy(Qt.NoContextMenu)
         self._param_tree.itemChanged.connect(self._on_param_changed)
-        
+
         # Configure columns stretch
         self._param_tree.header().setSectionResizeMode(0, QHeaderView.Stretch)
         self._param_tree.header().setSectionResizeMode(1, QHeaderView.ResizeToContents)
-        
+
         param_layout.addWidget(self._param_tree)
 
         tip = QLabel(
@@ -628,7 +628,7 @@ class AnalysisSuiteWindow(QMainWindow):
         # Update crosshair pen styling
         try:
             crosshair_pen = pg.mkPen(THEME.c('crosshair'), width=1, style=Qt.DashLine)
-            for pw, lines in self._crosshair_lines.items():
+            for lines in self._crosshair_lines.values():
                 for line in lines:
                     line.setPen(crosshair_pen)
         except Exception:
@@ -939,7 +939,7 @@ class AnalysisSuiteWindow(QMainWindow):
             item = tree.topLevelItem(i)
             if item.checkState(0) == Qt.Checked:
                 prev_checked.add(item.text(0))
-        
+
         if uncheck_params:
             prev_checked.difference_update(uncheck_params)
 
@@ -974,7 +974,7 @@ class AnalysisSuiteWindow(QMainWindow):
         for p in sorted_params:
             item = QTreeWidgetItem(tree, [p, ""])
             item.setFlags(item.flags() | Qt.ItemIsUserCheckable | Qt.ItemIsEnabled)
-            
+
             is_checked = p in prev_checked
             item.setCheckState(0, Qt.Checked if is_checked else Qt.Unchecked)
             item.setData(0, Qt.UserRole, "param")
@@ -982,7 +982,7 @@ class AnalysisSuiteWindow(QMainWindow):
             # Create combobox for Column 1
             combo = QComboBox()
             combo.setFont(QFont("PT Sans", 8))
-            
+
             # Populate dropdown
             N = len(self._subplot_layout)
             for si in range(N):
@@ -1007,7 +1007,7 @@ class AnalysisSuiteWindow(QMainWindow):
 
             # Connect combo activation signal
             combo.activated.connect(lambda idx, param=p, cb=item: self._on_param_subplot_changed(param, cb, idx))
-            
+
             tree.addTopLevelItem(item)
             tree.setItemWidget(item, 1, combo)
 
@@ -1089,7 +1089,7 @@ class AnalysisSuiteWindow(QMainWindow):
         if role == "param":
             param = item.text(0)
             is_checked = item.checkState(0) == Qt.Checked
-            
+
             combo = self._param_tree.itemWidget(item, 1)
             if isinstance(combo, QComboBox):
                 N = len(self._subplot_layout)
@@ -1105,25 +1105,25 @@ class AnalysisSuiteWindow(QMainWindow):
                         combo.setCurrentIndex(0)
                 else:
                     combo.setCurrentIndex(N + 1)
-            
+
             self._rebuild_plots()
             self._refresh_subplot_control_states()
 
     def _on_param_subplot_changed(self, param: str, item: QTreeWidgetItem, combo_idx: int):
         """Callback when the user changes a parameter's subplot combobox."""
         N = len(self._subplot_layout)
-        
+
         if combo_idx == N + 1:
             # "Off" selected
             item.setCheckState(0, Qt.Unchecked)
         else:
             # Subplot 1..N or + New Subplot
             item.setCheckState(0, Qt.Checked)
-            
+
             for grp in self._subplot_layout:
                 if param in grp:
                     grp.remove(param)
-            
+
             if combo_idx == N:
                 self._subplot_layout.append([param])
             else:
@@ -1187,7 +1187,7 @@ class AnalysisSuiteWindow(QMainWindow):
 
         grp = self._subplot_layout[sub_idx]
         key = frozenset(grp)
-        
+
         self._subplot_normalize_cb.blockSignals(True)
         self._subplot_normalize_cb.setChecked(key in self._normalized_subplots)
         self._subplot_normalize_cb.blockSignals(False)
