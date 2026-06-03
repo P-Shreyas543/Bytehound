@@ -148,6 +148,14 @@
             border: 1px solid #ddd;
         }
 
+        .img-small {
+            max-width: 350px !important;
+        }
+
+        .img-medium {
+            max-width: 550px !important;
+        }
+
         .mock-ui-dialog {
             background-color: #0f172a;
             color: #e2e8f0;
@@ -762,7 +770,7 @@
             </li>
         </ol>
 
-        <img src="images/connection_dialog.png" alt="Serial Connection Settings Dialog Interface" class="mockup-img" />
+        <img src="images/connection_dialog.png" alt="Serial Connection Settings Dialog Interface" class="mockup-img img-medium" />
 
         <p>Once you click Connect:</p>
         <ul>
@@ -773,7 +781,7 @@
         </ul>
 
         <img src="images/connection_status.png"
-            alt="Toolbar Disconnect Button and Status Bar LED Indicators when Connected" class="mockup-img" />
+            alt="Toolbar Disconnect Button and Status Bar LED Indicators when Connected" class="mockup-img img-small" />
 
         <div class="note">
             If the device is unplugged while monitoring, Bytehound automatically stops logging, closes the worker, and
@@ -827,7 +835,7 @@
             active. The background worker then sends requests based on your config's <code>polling_schedule</code>
             sheet.</p>
         <img src="images/auto_fetch_dialog.png" alt="Start Auto-Fetch Polling Configuration Dialog"
-            class="mockup-img" />
+            class="mockup-img img-medium" />
         <p><strong>Pipelining and Timings:</strong> The Auto-Fetch dialog also allows you to configure <strong>Pipeline
                 poll requests</strong>. By default, Bytehound sends one request and waits for its response (sequential).
             Pipelining allows multiple in-flight requests (controlled by <em>Max in-flight</em>), dramatically
@@ -851,7 +859,7 @@
             (unsolicited). Enabling Auto-Fetch (polling) may cause transmission collisions and corrupt the data. Do you
             want to enable Auto-Fetch anyway?
         </div>
-        <img src="images/collision_warning.png" alt="Potential Collision Warning Dialog" class="mockup-img" />
+        <img src="images/collision_warning.png" alt="Potential Collision Warning Dialog" class="mockup-img img-medium" />
         <p>Clicking <strong>No</strong> aborts the Auto-Fetch request, ensuring the serial line is not saturated with
             conflicting commands. If your device supports both modes or has a specific hybrid query scheme, you can
             click <strong>Yes</strong> to override the warning and start polling anyway.</p>
@@ -1071,7 +1079,7 @@
                 style="color:#e91e8c"><strong>pink</strong></span> active state on the Trigger button indicates it is
             armed.</p>
         <img src="images/plot_trigger_dialog.png" alt="Live Plot Auto-Pause &amp; Logging Trigger Settings Dialog"
-            class="mockup-img" />
+            class="mockup-img img-medium" />
 
         <div class="note">
             In Live mode the X-axis is anchored at <strong>0 seconds</strong> (session start) and expands to the current
@@ -1192,7 +1200,7 @@
             it reappears.
         </div>
         <img src="images/status_bar_counters.png"
-            alt="QStatusBar Indicators, Telemetry Counters, and Queue Saturated badge" class="mockup-img" />
+            alt="QStatusBar Indicators, Telemetry Counters, and Queue Saturated badge" class="mockup-img img-medium" />
 
         <h3 id="keyboard-shortcuts">Keyboard Shortcuts</h3>
         <p>All shortcuts are visible in the menu bar next to each action. Here is the complete reference:</p>
@@ -1512,7 +1520,7 @@
             serial port is open, but <strong>Send</strong> will refuse to transmit until you connect.
         </div>
         <img src="images/tx_commands_panel.png"
-            alt="TX Commands Panel User Interface with Parameter Inputs and Hex Packet Preview" class="mockup-img" />
+            alt="TX Commands Panel User Interface with Parameter Inputs and Hex Packet Preview" class="mockup-img img-small" />
 
 
         <h3 id="parameter-editing">Parameter Editor</h3>
@@ -1528,7 +1536,7 @@
                 immediately as a priority TX.</li>
         </ul>
         <img src="images/parameter_editor_panel.png" alt="Parameter Editor Panel with Live Values and Editable Fields"
-            class="mockup-img" />
+            class="mockup-img img-medium" />
 
         <h4>How the value is encoded</h4>
         <p>The encoding formula is the exact inverse of how the signal is decoded:</p>
@@ -1689,7 +1697,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             </li>
             <li>When finished, click <strong>Device → Stop Logging</strong>. This finalises the decoded workbook.</li>
         </ol>
-        <img src="images/logging_dialog.png" alt="Start Logging Session Configuration Dialog" class="mockup-img" />
+        <img src="images/logging_dialog.png" alt="Start Logging Session Configuration Dialog" class="mockup-img img-medium" />
         <div class="note">
             The raw CSV is flushed periodically (default 0.5 s, configurable under <strong>Tools → Logging
                 Settings</strong>) and once more on close. The decoded <code>.xlsx</code> is buffered in memory and
@@ -1874,7 +1882,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             </li>
         </ul>
 
-        <img src="images/schema_mapper.png" alt="Import Schema Mapper Dialog" class="mockup-img" />
+        <img src="images/schema_mapper.png" alt="Import Schema Mapper Dialog" class="mockup-img img-medium" />
 
         <p>Additional Analysis tools include:</p>
         <ul>

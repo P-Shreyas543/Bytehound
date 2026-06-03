@@ -2,9 +2,11 @@
 Convert app/resources/index.html to a formatted DOCX (Bytehound User Manual).
 Run: python generate_docx.py
 Output: Documentation/Bytehound_User_Manual.docx
+taskkill /F /IM winword.exe ; .venv\Scripts\python.exe generate_docx.py
 """
 
 import json
+import re
 from pathlib import Path
 
 from bs4 import BeautifulSoup, NavigableString
@@ -21,7 +23,7 @@ from docx.oxml import OxmlElement
 BASE_DIR       = Path(__file__).resolve().parent
 HTML_PATH      = BASE_DIR / "app" / "resources" / "index.html"
 VERSION_PATH   = BASE_DIR / "version.json"
-TEMPLATE_PATH  = BASE_DIR / "Documentation" / "Multi Cell BMS Bytehound User Manual .docx"
+TEMPLATE_PATH  = BASE_DIR / "Documentation" / "Template.docx"
 COVER_META_PATH = BASE_DIR / "cover_meta.json"
 OUT_PATH       = BASE_DIR / "Documentation" / "Bytehound_User_Manual.docx"
 
@@ -148,10 +150,15 @@ def add_inline_runs(para, node, bold=False, italic=False, size=Pt(11)):
     """Recursively turn inline HTML nodes into Word runs on *para*."""
     if isinstance(node, NavigableString):
         text = str(node)
-        if not text.strip():
-            return  # skip pure whitespace / newline tokens
-        run = para.add_run(text)
-        apply_run_font(run, size=size, bold=bold, italic=italic)
+        text = re.sub(r'\s+', ' ', text)
+        if text == '' or text == ' ':
+            if len(para.runs) == 0:
+                return
+        if len(para.runs) == 0:
+            text = text.lstrip()
+        if text:
+            run = para.add_run(text)
+            apply_run_font(run, size=size, bold=bold, italic=italic)
         return
 
     tag = getattr(node, "name", None)
@@ -167,20 +174,32 @@ def add_inline_runs(para, node, bold=False, italic=False, size=Pt(11)):
     for child in node.children:
         if isinstance(child, NavigableString):
             text = str(child)
-            if not text.strip():
-                continue
-            run = para.add_run(text)
-            if is_code:
-                apply_run_font(run, size=Pt(10), bold=is_bold, italic=is_italic,
-                               mono=True, color=CODE_FG)
-            elif is_link:
-                apply_run_font(run, size=size, bold=is_bold, italic=is_italic,
-                               color=BRAND_ACCENT)
-                run.font.underline = True
-            else:
-                apply_run_font(run, size=size, bold=is_bold, italic=is_italic)
+            text = re.sub(r'\s+', ' ', text)
+            if text == '' or text == ' ':
+                if len(para.runs) == 0:
+                    continue
+            if len(para.runs) == 0:
+                text = text.lstrip()
+            if text:
+                run = para.add_run(text)
+                if is_code:
+                    apply_run_font(run, size=Pt(10), bold=is_bold, italic=is_italic,
+                                   mono=True, color=CODE_FG)
+                elif is_link:
+                    apply_run_font(run, size=size, bold=is_bold, italic=is_italic,
+                                   color=BRAND_ACCENT)
+                    run.font.underline = True
+                else:
+                    apply_run_font(run, size=size, bold=is_bold, italic=is_italic)
         elif hasattr(child, "name"):
             add_inline_runs(para, child, bold=is_bold, italic=is_italic, size=size)
+
+
+def strip_para_ends(para):
+    """Strip leading and trailing whitespace from the runs of a paragraph."""
+    if para.runs:
+        para.runs[0].text = para.runs[0].text.lstrip()
+        para.runs[-1].text = para.runs[-1].text.rstrip()
 
 
 # ── Callout blocks (note / warning / success) ──────────────────────────────────
@@ -227,6 +246,7 @@ def add_callout(doc, element):
         else:
             add_inline_runs(p, child, size=Pt(10))
 
+    strip_para_ends(p)
     doc.add_paragraph().paragraph_format.space_after = Pt(4)
 
 
@@ -314,17 +334,11 @@ def add_html_table(doc, table_tag):
                 pPr.append(kn)
 
             txt_color = RGBColor(0xFF, 0xFF, 0xFF) if is_header else RGBColor(0x33, 0x33, 0x33)
-            for child in cell_tag.children:
-                if isinstance(child, NavigableString):
-                    txt = str(child).strip()
-                    if txt:
-                        run = para.add_run(txt)
-                        apply_run_font(run, size=Pt(10), bold=is_header, color=txt_color)
-                elif hasattr(child, "name"):
-                    add_inline_runs(para, child, bold=is_header, size=Pt(10))
-                    for r in para.runs:
-                        r.font.color.rgb = txt_color
+            add_inline_runs(para, cell_tag, bold=is_header, size=Pt(10))
+            for r in para.runs:
+                r.font.color.rgb = txt_color
 
+            strip_para_ends(para)
             c_idx += int(cell_tag.get("colspan", 1))
 
 def add_image_element(doc, img_tag):
@@ -355,8 +369,19 @@ def add_image_element(doc, img_tag):
     kn.set(qn("w:val"), "1")
     pPr.append(kn)
     
+    # Determine layout width based on the CSS class from the HTML
+    cls_list = img_tag.get("class", [])
+    if isinstance(cls_list, str):
+        cls_list = cls_list.split()
+    
+    img_width = Cm(14)  # Default full page width
+    if "img-small" in cls_list:
+        img_width = Cm(7)
+    elif "img-medium" in cls_list:
+        img_width = Cm(11)
+
     run = p.add_run()
-    run.add_picture(str(img_path), width=Cm(14))
+    run.add_picture(str(img_path), width=img_width)
 
     # Alt text as caption below the image
     alt = img_tag.get("alt")
@@ -400,6 +425,8 @@ def add_list_items(doc, ul_tag, ordered=False, depth=0):
 
         for part in text_parts:
             add_inline_runs(p, part, size=Pt(11))
+
+        strip_para_ends(p)
 
         for nested_list in nested:
             add_list_items(doc, nested_list,
@@ -622,6 +649,8 @@ def add_heading(doc, element):
     p.paragraph_format.space_before = sp_before
     p.paragraph_format.space_after  = sp_after
 
+    strip_para_ends(p)
+
     if add_rule:
         add_bottom_border_to_para(p, "3498DB", sz="4")
 
@@ -648,6 +677,7 @@ def process_element(doc, element):
         p.paragraph_format.space_after  = Pt(6)
         p.paragraph_format.space_before = Pt(2)
         add_inline_runs(p, element, size=Pt(11))
+        strip_para_ends(p)
         return
 
     # ── Structural elements ────────────────────────────────────────────────
@@ -755,6 +785,7 @@ def build_header_footer(doc, version_info: dict):
     Mirrors the layout of the reference Multi Cell BMS document.
     """
     sec = doc.sections[0]
+    sec.different_first_page_header_footer = True
 
     # ── Header ────────────────────────────────────────────────────────────────
     hdr = sec.header
