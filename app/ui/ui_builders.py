@@ -185,6 +185,9 @@ class UIBuildersMixin:
         self._diagnostics_action = QAction(_icon("mdi6.clipboard-text-outline", _ic), "Copy Diagnostics", self)
         self._diagnostics_action.triggered.connect(self._on_copy_diagnostics)
 
+        self._report_issue_action = QAction(_icon("mdi6.bug", _ic), "Report Issue...", self)
+        self._report_issue_action.triggered.connect(self._on_report_issue)
+
         # chart-multiple distinguishes the offline "Analysis Suite" (which
         # overlays many recordings) from the Live Plot panel which uses
         # plain chart-line.
@@ -238,6 +241,7 @@ class UIBuildersMixin:
         help_menu.addAction(self._docs_action)
         help_menu.addAction(self._update_action)
         help_menu.addAction(self._diagnostics_action)
+        help_menu.addAction(self._report_issue_action)
         help_menu.addSeparator()
         help_menu.addAction(self._info_action)
 

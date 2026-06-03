@@ -23,6 +23,7 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 10. [Serial I/O & Polling Engine](#10-serial-io--polling-engine)
 11. [TX Commands & Parameter Editor](#11-tx-commands--parameter-editor)
 12. [Logging Formats](#12-logging-formats)
+13. [Advanced UI/IO Control & Performance](#13-advanced-uiio-control--performance)
 14. [UI Specification](#14-ui-specification)
 15. [Analysis Suite](#15-analysis-suite)
 16. [Auto-Updater](#16-auto-updater)
@@ -39,7 +40,7 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 |-----------------------|----------------------------------------------------|
 | **App Name**          | Bytehound                                     |
 | **Developer**         | Shreyas P                                          |
-| **Version**           | 0.1.0 (sourced from [version.json](version.json))  |
+| **Version**           | 0.4.0 (sourced from [version.json](version.json))  |
 | **Platform**          | Windows 10 / 11 (x64). Code is cross-platform but the shipped binary targets Windows. |
 | **Window Size**       | 1400 × 900 px                                      |
 | **Window Title**      | `Bytehound v<Version>` (e.g. `Bytehound v0.1.0`) |
@@ -126,7 +127,7 @@ frozen build.
 ## 5. Project Layout
 
 ```
-BMS-MonitorApp/
+Bytehound/
 ├── app/
 │   ├── main.py                         # entry point
 │   ├── commands/
@@ -146,17 +147,37 @@ BMS-MonitorApp/
 │   ├── serial_logging/
 │   │   ├── raw_logger.py               # CSV writer: timestamp,direction,hex,delta_t_ms
 │   │   └── decoded_logger.py           # xlsx writer: Metadata + Data sheets
-│   ├── ui/
-│   │   ├── main_window.py              # QMainWindow w/ docks, menus, panels
-│   │   ├── analysis_suite.py           # post-test multi-log analyzer
-│   │   └── updater.py                  # check version.json, download, install
+│   ├── ui/                             # Qt UI layer (fully modularized)
+│   │   ├── main_window.py              # QMainWindow coordinator & window events
+│   │   ├── ui_builders.py              # dock, widget, and menu bar assembly
+│   │   ├── theming.py                  # client styling & native OS titlebar
+│   │   ├── telemetry_model.py          # custom table model for main data grid
+│   │   ├── telemetry_pipeline.py       # 60 Hz GUI thread-safe flush pipeline
+│   │   ├── plot_orchestration.py       # live plot orchestration & coordinate math
+│   │   ├── plot_panel.py               # PlotPanel state & TimeSeriesBuffer store
+│   │   ├── parameter_editor.py         # write parameter editor table
+│   │   ├── tx_panel.py                 # dynamic command buttons & popup forms
+│   │   ├── detail_tabs.py              # bitfields & enums detail lists
+│   │   ├── polling_session.py          # auto-fetch trigger & sidebar managers
+│   │   ├── logging_session.py          # start/stop logging handlers
+│   │   ├── config_loader.py            # UI config file/mapper selectors
+│   │   ├── popups.py                   # unified dialog boxes wrapper
+│   │   ├── widgets.py                  # WarningBadge, FrameFormatWidget, StatusBadgeDelegate
+│   │   ├── dialogs.py                  # modal settings & mapper dialog definitions
+│   │   ├── analysis_suite.py           # post-test multi-log visualizer window
+│   │   ├── analysis_widgets.py         # cursors, readouts, stats widgets
+│   │   ├── analysis_theme.py           # Analysis Suite plot color palette
+│   │   ├── xy_plot.py                  # X-Y scatter plotter w/ linear regression
+│   │   ├── log_io.py                   # thread-safe background log file ingestion
+│   │   ├── updater.py                  # updater background threads
+│   │   └── updater_wiring.py           # updater GUI controller & installer launcher
 │   └── resources/
 │       ├── index.html                  # in-app docs (View → Documentation)
 │       └── sample_raw_log.txt          # bundled sample log
-├── tests/                              # pytest suite (see §17)
+├── tests/                              # pytest suite (see §19)
 ├── version.json                        # local version + update manifest pointer
 ├── requirements.txt
-├── Bytehound.spec              # PyInstaller spec
+├── Bytehound.spec                      # PyInstaller spec
 ├── build.py                            # convenience wrapper around PyInstaller
 ├── smoke_com7.py                       # optional serial decode smoke test (requires hardware)
 ├── smoke_headless.py                   # optional headless integration smoke test (requires hardware)
@@ -584,6 +605,16 @@ keeps a single bad row from flooding the error log every cycle.
 `available_ports()` wraps `serial.tools.list_ports.comports()` for the UI's
 port combo.
 
+### Unsolicited Data & Collision Detection
+
+To prevent hardware bus collisions on half-duplex UART configurations, the main window monitors incoming packets when the auto-fetch polling scheduler is disabled. 
+
+- **Trigger**: If a valid framed packet arrives while `polling_action` is unchecked, `_unsolicited_detected` is flagged `True` in [TelemetryPipelineMixin._handle_packet](file:///c:/Users/Shreyas/Documents/Python/Bytehound/app/ui/telemetry_pipeline.py#L138).
+- **Warning**: When the user subsequently requests to enable Auto-Fetch, the app detects this flag and prompts a `QMessageBox.warning` warning:
+  > **Potential Collision Warning**
+  > The connected device is already streaming data automatically (unsolicited). Enabling Auto-Fetch (polling) may cause transmission collisions and corrupt the data. Do you want to enable Auto-Fetch anyway?
+- **Behavior**: The user can choose to abort (defaulting the action check back to false) or explicitly override the warning to proceed with active polling. The flag resets to `False` on any serial connection state transition.
+
 ---
 
 ## 11. TX Commands & Parameter Editor
@@ -672,6 +703,47 @@ CSV is unaffected.
 
 When logging starts, the active config is snapshotted next to the log via
 `snapshot_config(...)` so the file is self-describing.
+
+---
+
+## 13. Advanced UI/IO Control & Performance
+
+This section documents the performance optimizations, failure recovery, and real-time safety mechanisms handling telemetry stream anomalies.
+
+### 13.1 Auto-Reconnect (Exponential Backoff)
+
+For rugged laboratory or field use where physical USB cables can be bumped, the app supports transparent port reopening:
+- **Trigger**: When `serial_worker` raises `connection_lost` (e.g., OS detects device unplugged), the app tears down the session status (without clearing live graphs or table values) and schedules reconnect.
+- **Backoff Interval**: Retry events occur on a timer sequence starting at 1.0 s, doubling every failed attempt up to a maximum interval of 16.0 s (e.g., 1s, 2s, 4s, 8s, 16s).
+- **Manual Control**: Toggling the connection button or disabling the "Auto-reconnect on disconnect" option in [ConnectionDialog](file:///c:/Users/Shreyas/Documents/Python/Bytehound/app/ui/dialogs.py) clears the timer and aborts the backoff schedule. Auto-reconnect re-establishes the port only; logging and active fetching are left stopped to prevent incomplete file writes or unexpected command streams.
+
+### 13.2 Live Plot Memory Cap (`TimeSeriesBuffer`)
+
+To prevent memory bloat and UI lag on multi-hour high-speed telemetry runs, the Live Plot utilizes `TimeSeriesBuffer` (defined in [plot_panel.py](file:///c:/Users/Shreyas/Documents/Python/Bytehound/app/ui/plot_panel.py)) instead of standard unbounded buffers:
+- **Chunked Layout**: Samples are stored in contiguous memory blocks of size 16,384 (`CHUNK_SIZE`). This drastically reduces the overhead of Python object allocations.
+- **Soft Cap Limit**: A user-configurable `max_samples` (configured under *Plot Settings*) triggers O(1) oldest chunk-dropping when exceeded.
+- **Render Optimization**: Instead of fetching the entire history, the plot panel requests only visible data using `arrays_since(t_min)`. Along with setting `setClipToView(True)` and `setDownsampling(auto=True, method='peak')`, this guarantees that plotting paint cost remains proportional to the visible width, not total session length.
+
+### 13.3 Queue Saturation Warning Badge
+
+When the system cannot process incoming serial packets or write raw log lines to disk fast enough:
+- **Detection**: If the priority queue fills up or the raw log flush queue becomes saturated, `error_occurred` notifies the UI with `"queue full"` or `"saturated"`.
+- **Indicator**: A yellow `⚠️ Queue Saturated` badge is displayed in the QStatusBar.
+- **Action**: Hovering details that data drops are occurring. Clicking the badge dismisses the indicator.
+
+### 13.4 Frame Format Diagram
+
+To aid developers in checking on-wire byte placement without inspecting the config spreadsheet:
+- **Widget**: `FrameFormatWidget` dynamically parses the loaded `FrameConfig` and constructs a color-coded graphic grid.
+- **Palette**: 
+  - **Amber**: Header
+  - **Emerald**: Frame ID
+  - **Indigo**: Length
+  - **Teal**: Signals / Payload Fields
+  - **Pink**: CRC Checksum
+  - **Grey**: Footer
+  - **Muted**: Unused payload gaps
+- **Interactive Tooltips**: Hovering over any signal byte slice reveals its data type, offset, size, and configured scaling values. It renders both RX frame structures and TX command definitions.
 
 ---
 
@@ -899,8 +971,8 @@ Frame | Group | Variable | Start B. | Data Type | Raw | Value | Unit | Status | 
 ```
 
 The `Variable` cell carries a small checkbox; checking it adds the signal to
-the **Live Plot**. Plot history is a `deque(maxlen=1500)` of `(t_seconds, value)`
-per signal.
+the Live Plot. Plot history is a `TimeSeriesBuffer` of `(t_seconds, value)`
+per signal (configured and capped in *Plot Settings*).
 
 ### Dockable panels (all `QDockWidget`)
 
@@ -1046,35 +1118,29 @@ All panels persist their dock area and visibility via `QMainWindow.saveState`.
 
 ## 15. Analysis Suite
 
-A separate non-modal `QMainWindow` launched from *Tools → Analysis Suite*.
+A separate non-modal `QMainWindow` (implemented in [analysis_suite.py](file:///c:/Users/Shreyas/Documents/Python/Bytehound/app/ui/analysis_suite.py)) launched from *Tools → Analysis Suite*.
 
-### Capabilities
+### 15.1 Ingestion & Multitasking
+- **Background Loader**: File loading runs in `LogLoaderThread` so GUI events (panning, rendering) never hitch.
+- **Log Ingestion**: Automatically reads files from local directories (`~/Documents/Bytehound/Logs/` and `~/Documents/Bytehound/Analysis/` are auto-created).
+- **Import Schema Mapper**: Uses [SchemaMapperDialog](file:///c:/Users/Shreyas/Documents/Python/Bytehound/app/ui/dialogs.py) to override sheet names, elapsed-time column headers, and scale factors. The mapper matches and scales raw timestamps into standard elapsed seconds on load.
 
-- Load multiple Excel `.xlsx` test logs concurrently (via a `QThread` so the
-  live test isn't blocked).
-- Overlay multiple parameters from multiple logs on a stacked plot grid.
-- Place draggable cursors; show value/time deltas at each cursor and between
-  cursors.
-- X–Y scatter mode: plot any two parameters against each other.
-- Color-pick per-trace, per-cursor.
-- Save/load session as JSON (`SESSION_VERSION = 3`).
+### 15.2 Advanced Visualization & Subplot Layouts
+- **Dynamic Stacked Layout**: Central plotting uses a custom grid with vertical splitters. The user can toggle subplots, mix multiple parameters in the same subplot, or reorder, split, merge, and delete subplots from the sidebar.
+- **Normalized View**: Toggling subplot normalization overlays signals with completely different physical units by scaling their curves to a unified 0-1 min-max range.
+- **Smoothing Filter**: Applies a rolling-average window filter per subplot to clean up high-frequency sensor noise.
+- **Time Offset Alignment**: Real-time offset entry fields in the sidebar shift individual log files by a designated delta-T (seconds) to align runs that did not start simultaneously.
+- **Axis Modes**: Toggles X-axis between elapsed duration (mm:ss) and absolute wall-clock timestamp (HH:MM:SS) derived from the log file's metadata header.
 
-### Storage locations
+### 15.3 Analytics & Math Channels
+- **Draggable Cursors**: Draggable vertical and horizontal crosshair cursors (placed on a single subplot or fanned out to all linked subplots) update a live cursor readout grid showing values and coordinate deltas.
+- **Statistics Panel**: Automatically calculates min, max, mean, standard deviation, count ($n$), and 5th/95th percentiles ($P_5/P_{95}$) for all checked parameters over the currently visible X zoom window.
+- **Custom Math Channels**: Allows developers to add virtual parameters defined by expressions, calculated vectorially using numpy. Supports derivative/gradient (`diff([Param])`, `deriv([Param])`) and trapezoidal integration (`integral([Param])`, `cumsum([Param])`). Channels are persisted globally in QSettings.
 
-- Logs: `~/Documents/Bytehound/Logs/`
-- Saved analysis sessions: `~/Documents/Bytehound/Analysis/`
-
-(directories auto-created on first use)
-
-### Plot behavior
-
-- Backed by `pyqtgraph` with OpenGL acceleration when available.
-- Minimum panel height 80 px; vertical splitters between subplots.
-
-The analysis suite is independent of the live decoder — it ingests rows
-from Bytehound `*_decoded.xlsx` logs (auto-detected via the `Data` sheet
-and `elapsed_ms` column) and from external Dyno-style `.xlsx` exports
-(`Record` sheet, `Elapsed (s)` column).
+### 15.4 Scatter Plotting (X-Y Plotter)
+- **Scatter Mode**: [XYPlotWindow](file:///c:/Users/Shreyas/Documents/Python/Bytehound/app/ui/xy_plot.py) displays one parameter directly against another to identify cross-signal correlations.
+- **Linear Regression Overlay**: Fits and renders a linear regression line, displaying the computed R-squared ($R^2$) coefficient.
+- **Theme-Awareness**: Scatter plotter adjusts symbols (circle, square, triangle, etc.), point sizes, grid alphas, and palette styles to match the active light/dark/system theme.
 
 ---
 
@@ -1155,6 +1221,14 @@ update check.
 | `config/last_path`     | str     | Auto-load on next launch                      |
 | `plot/layout`          | str     | Grid layout name, e.g. `"2×1"`                |
 | `plot/panel/{i}/keys`  | list    | `[[frame_id, signal_name], …]` per panel      |
+| `conn/auto_reconnect`  | bool    | Auto-reconnect enabled/disabled state         |
+| `plot/history_max_samples` | int | Soft limit capacity cap for Live Plot history |
+| `plot/window_seconds`  | int     | Live Plot default time window in seconds      |
+| `analysis/math_channels` | dict  | Custom math channel formulas by name          |
+| `import/sheet_names`   | str     | Import sheet list overrides (comma-separated) |
+| `import/elapsed_cols`  | str     | Import elapsed columns list overrides         |
+| `import/elapsed_scales`| str     | Import unit scale map (seconds multiplier)    |
+| `analysis/layout`      | str     | Grid layout configuration for Analysis subplots|
 
 Note: QSettings serialises all values (including int frame IDs) as strings.
 The restore path in `_rebuild_plot_grid` always casts via `(int(k[0]), str(k[1]))`

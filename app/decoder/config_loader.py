@@ -653,17 +653,42 @@ def _parse_bitfields(
     out: Dict[tuple[int, str], List[BitfieldSpec]] = {}
     known = {(s.frame_id, s.source_name or s.signal_name) for s in cfg.all_signals}
     known.update((s.frame_id, s.signal_name) for s in cfg.all_signals)
+    
+    seen_bit_indices = {}
+    seen_labels = {}
+    
     for row_no, row in enumerate(rows, start=2):
         frame_id = _parse_frame_id(row["id_or_address"], field_name="bitfields.id_or_address")
         variable_name = row["signal_name"]
         if (frame_id, variable_name) not in known:
             raise ConfigError(f"bitfields row {row_no}: unknown variable {variable_name!r}")
+        
+        bit_index = _to_int(row["bit_index"], field_name="bit_index")
+        label = row["label"]
+        
+        sig_key = (frame_id, variable_name)
+        if sig_key not in seen_bit_indices:
+            seen_bit_indices[sig_key] = set()
+        if bit_index in seen_bit_indices[sig_key]:
+            raise ConfigError(
+                f"bitfields row {row_no}: duplicate bit_index {bit_index} for signal {variable_name!r}"
+            )
+        seen_bit_indices[sig_key].add(bit_index)
+        
+        if sig_key not in seen_labels:
+            seen_labels[sig_key] = set()
+        if label in seen_labels[sig_key]:
+            raise ConfigError(
+                f"bitfields row {row_no}: duplicate bit label {label!r} for signal {variable_name!r}"
+            )
+        seen_labels[sig_key].add(label)
+        
         out.setdefault((frame_id, variable_name), []).append(
             BitfieldSpec(
                 frame_id=frame_id,
                 variable_name=variable_name,
-                bit_index=_to_int(row["bit_index"], field_name="bit_index"),
-                bit_name=row["label"],
+                bit_index=bit_index,
+                bit_name=label,
                 active_text=row.get("active_text", "ON") or "ON",
                 inactive_text=row.get("inactive_text", "OFF") or "OFF",
             )
@@ -696,22 +721,33 @@ def _parse_calc_groups(rows: List[Dict[str, str]], cfg: FrameConfig) -> List[Cal
     valid_stats = {"min", "max", "diff", "sum", "avg"}
     groups = {s.group for s in cfg.all_signals if s.group}
     out: List[CalcGroupSpec] = []
+    seen = set()
     for row_no, row in enumerate(rows, start=2):
         group = row["group_name"]
         if group not in groups:
             raise ConfigError(f"calc_groups row {row_no}: unknown group {group!r}")
+        frame_id = _to_optional_int(row.get("frame_id", ""), field_name="calc_groups.frame_id")
         for stat in row["operations"].split("|"):
             stat = stat.strip().lower()
             if not stat:
                 continue
             if stat not in valid_stats:
                 raise ConfigError(f"calc_groups row {row_no}: unsupported stat {stat!r}")
+            
+            key = (group, stat, frame_id)
+            if key in seen:
+                raise ConfigError(
+                    f"calc_groups row {row_no}: duplicate calculation {stat!r} "
+                    f"for group {group!r} (frame {f'0x{frame_id:X}' if frame_id is not None else 'all'})"
+                )
+            seen.add(key)
+            
             out.append(
                 CalcGroupSpec(
                     group=group,
                     stat=stat,
                     unit=row.get("unit", ""),
-                    frame_id=_to_optional_int(row.get("frame_id", ""), field_name="calc_groups.frame_id"),
+                    frame_id=frame_id,
                     enabled=_to_bool(row.get("enabled", "true"), default=True, field_name="calc_groups.enabled"),
                 )
             )
@@ -791,13 +827,18 @@ def _parse_polling_schedules(rows: List[Dict[str, str]]) -> List[PollingSchedule
         return []
     _optional_columns_ok(rows, _POLLING_SCHEDULE_REQUIRED, "polling_schedule")
     schedules: List[PollingScheduleSpec] = []
+    seen_ids = set()
     for row_no, row in enumerate(rows, start=2):
         enabled = _to_bool(row.get("enabled", "true"), default=True, field_name="polling_schedule.enabled")
         if not enabled:
             continue
+        target_id = _parse_frame_id(row["id_or_address"], field_name=f"polling_schedule row {row_no}.id_or_address")
+        if target_id in seen_ids:
+            raise ConfigError(f"polling_schedule row {row_no}: duplicate polling schedule for ID 0x{target_id:X}")
+        seen_ids.add(target_id)
         schedules.append(
             PollingScheduleSpec(
-                target_id=_parse_frame_id(row["id_or_address"], field_name=f"polling_schedule row {row_no}.id_or_address"),
+                target_id=target_id,
                 interval_ms=_to_int(row["interval_ms"], field_name="polling_schedule.interval_ms"),
                 timeout_ms=_to_int(row["timeout_ms"], field_name="polling_schedule.timeout_ms"),
                 enabled=enabled,

@@ -444,3 +444,64 @@ def test_modbus_rtu_endianness_checks(tmp_path):
     with pytest.raises(ConfigError, match="Modbus RTU data values .* must be big-endian"):
         load_config(tmp_path)
 
+
+def test_duplicate_bitfield_index_or_label_rejected(tmp_path):
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "variables.csv").write_text(
+        "id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,enabled\n"
+        "0x0010,Sig,uint16,1,big,1,0,,TRUE\n",
+        encoding="utf-8",
+    )
+    # 1. Duplicate bit_index
+    (tmp_path / "bitfields.csv").write_text(
+        "id_or_address,signal_name,bit_index,label\n"
+        "0x0010,Sig,0,Label1\n"
+        "0x0010,Sig,0,Label2\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate bit_index 0"):
+        load_config(tmp_path)
+
+    # 2. Duplicate label
+    (tmp_path / "bitfields.csv").write_text(
+        "id_or_address,signal_name,bit_index,label\n"
+        "0x0010,Sig,0,Label1\n"
+        "0x0010,Sig,1,Label1\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate bit label 'Label1'"):
+        load_config(tmp_path)
+
+
+def test_duplicate_calc_groups_rejected(tmp_path):
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "variables.csv").write_text(
+        "id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,enabled,group\n"
+        "0x0010,Sig,uint16,1,big,1,0,,TRUE,TempGroup\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "calc_groups.csv").write_text(
+        "group_name,operations,unit,frame_id,enabled\n"
+        "TempGroup,min|min,V,0x0010,TRUE\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate calculation 'min'"):
+        load_config(tmp_path)
+
+
+def test_duplicate_polling_schedule_rejected(tmp_path):
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "variables.csv").write_text(
+        "id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,enabled\n"
+        "0x0010,Sig,uint16,1,big,1,0,,TRUE\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "polling_schedule.csv").write_text(
+        "id_or_address,interval_ms,timeout_ms,enabled\n"
+        "0x0010,100,50,TRUE\n"
+        "0x0010,200,50,TRUE\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="duplicate polling schedule for ID 0x10"):
+        load_config(tmp_path)
+

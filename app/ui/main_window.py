@@ -215,6 +215,7 @@ from app.ui.theming import ThemingMixin, _PLOT_PALETTE_DARK
 from app.ui.tx_panel import TxPanelMixin
 from app.ui.ui_builders import UIBuildersMixin
 from app.ui.updater_wiring import UpdaterWiringMixin
+from app.ui.report_issue import ReportIssueMixin
 
 
 class MainWindow(
@@ -227,6 +228,7 @@ class MainWindow(
     DetailTabsMixin,
     TxPanelMixin,
     UpdaterWiringMixin,
+    ReportIssueMixin,
     PopupsMixin,
     TelemetryPipelineMixin,
     ParameterEditorMixin,
