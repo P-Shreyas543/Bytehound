@@ -12,6 +12,6 @@
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
     "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_0.4.2.exe",
-    "release_notes": "Patch Release - Stability and Bug Fixes.\n\nBug Fixes:\n  - Live Plot Mode: Fixed a startup race condition where initial window resize and layout-settling events were incorrectly detected as manual user pan gestures, which prematurely kicked the plot from Live mode into Explore mode.\n  - Deprecation Warnings: Resolved Qt deprecation warnings (such as QMouseEvent constructor warnings in test suite) and looping warnings (such as B007 loop warnings in analysis_suite.py by switching to dictionary values iteration).\n\nImprovements:\n  - Repository Cleanup: Removed untracked diagnostic/temp files from source control and updated .gitignore to robust industry standards.",
-    "sha256": "95d6545fbc1600d223615bd97703842518d38903643ac73785c9f8633d51e7a4"
+    "release_notes": "Patch Release - Manual Flowchart and Bug Reporting Enhancements.\n\nNew Features:\n  - Flowchart Integration: Added a beautiful system data flow and architecture flowchart to both the HTML user manual and compiled Word manual (automatically embedded as a high-resolution PNG).\n  - Diagnostics & Bug Reporting: Updated the Help \u2192 Report Issue... dialog to include an 'Include system & session diagnostics' checkbox (enabled by default) so users can choose whether to securely attach telemetry metrics, OS version, and Python/Qt context to speed up bug resolution.",
+    "sha256": "ec79f1626e4ad45111d4dc5f7665504469086159447a830a1ddd38f64d5690c5"
 }
