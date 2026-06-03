@@ -40,7 +40,7 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 |-----------------------|----------------------------------------------------|
 | **App Name**          | Bytehound                                     |
 | **Developer**         | Shreyas P                                          |
-| **Version**           | 0.4.1 (sourced from [version.json](version.json))  |
+| **Version**           | 0.4.2 (sourced from [version.json](version.json))  |
 | **Platform**          | Windows 10 / 11 (x64). Code is cross-platform but the shipped binary targets Windows. |
 | **Window Size**       | 1400 × 900 px                                      |
 | **Window Title**      | `Bytehound v<Version>` (e.g. `Bytehound v0.1.0`) |
@@ -798,8 +798,9 @@ Built dynamically in `_populate_view_menu()`. Items in order:
 | Item | Behavior |
 |------|----------|
 | **Panels** (submenu) | Toggle visibility of each dockable panel via `dock.toggleViewAction()`. Entries: **Connection**, **Live Plot**, **Bitfields**, **Enums**, **TX Commands**, **Parameter Editor**, **Raw Console**, **Activity Log**. State persists via `QMainWindow.saveState`. |
-| **Theme** (submenu) | Exclusive checkable group: **Dark** / **Light** / **System**. Calls `_apply_theme(key)`. Persists to `QSettings("ui/theme")` and immediately `sync()`s so a crash before normal shutdown cannot lose the selection. **System** stores `"auto"`; every downstream painter resolves that to the actual OS theme via `resolve_theme()` (see §Theme). Re-applies the Windows dark/light title bar to every open top-level widget. |
 | **Reset Window Layout** | Restores docks/toolbar to their default arrangement. |
+| **Config Info...** | Displays the active configuration profile summary and the graphical, byte-aligned **Frame Format Diagram** (slot `_on_show_config_info`). |
+| **Theme** (submenu) | Exclusive checkable group: **Dark** / **Light** / **System**. Calls `_apply_theme(key)`. Persists to `QSettings("ui/theme")` and immediately `sync()`s so a crash before normal shutdown cannot lose the selection. **System** stores `"auto"`; every downstream painter resolves that to the actual OS theme via `resolve_theme()` (see §Theme). Re-applies the Windows dark/light title bar to every open top-level widget. |
 
 #### Device
 | Item | Slot | Behavior |
@@ -818,6 +819,8 @@ Built dynamically in `_populate_view_menu()`. Items in order:
 |------|------|----------|
 | **View Documentation** | `_on_view_docs` | Opens [app/resources/index.html](app/resources/index.html) in the default browser. |
 | **Check for Updates** | `_on_check_updates` | Spawns `UpdateChecker` (see §16). |
+| **Copy Diagnostics** | `_on_copy_diagnostics` | Gathers system info, configuration, counters, and log tail to the clipboard for troubleshooting. |
+| **Report Issue...** | `_on_report_issue` | Opens a dialog to report software issues. |
 | — separator — |  |  |
 | **About Bytehound** | `_on_info` | Shows version + developer dialog. |
 

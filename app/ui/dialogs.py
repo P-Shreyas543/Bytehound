@@ -867,11 +867,20 @@ class ReportIssueDialog(QDialog):
         )
         self._desc_input.setMinimumHeight(150)
 
+        self._include_diag_chk = QCheckBox("Include system & session diagnostics", self)
+        self._include_diag_chk.setChecked(True)
+        self._include_diag_chk.setToolTip(
+            "Includes OS version, Python/Qt versions, frozen status, active configuration path, "
+            "connection status, serial port parameters, and telemetry packet/error counters."
+        )
+
         self._include_log_chk = QCheckBox("Include application log (tail)", self)
         self._include_log_chk.setChecked(True)
+        self._include_log_chk.setToolTip("Includes the last 200 lines of the internal application log.")
 
         form.addRow("Title", self._title_input)
         form.addRow("Description", self._desc_input)
+        form.addRow("", self._include_diag_chk)
         form.addRow("", self._include_log_chk)
 
         layout.addLayout(form)
@@ -894,11 +903,12 @@ class ReportIssueDialog(QDialog):
             return
         self.accept()
 
-    def get_data(self) -> tuple[str, str, bool]:
+    def get_data(self) -> tuple[str, str, bool, bool]:
         return (
             self._title_input.text().strip(),
             self._desc_input.toPlainText().strip(),
             self._include_log_chk.isChecked(),
+            self._include_diag_chk.isChecked(),
         )
 
 

@@ -82,9 +82,12 @@ class ReportIssueMixin:
         self._log_activity("[ACTION] Report Issue")
         dlg = ReportIssueDialog(self)
         if dlg.exec() == ReportIssueDialog.DialogCode.Accepted:
-            title, description, include_log = dlg.get_data()
+            title, description, include_log, include_diag = dlg.get_data()
 
-            diagnostics = self._gather_issue_diagnostics()
+            if include_diag:
+                diagnostics = self._gather_issue_diagnostics()
+            else:
+                diagnostics = "(diagnostics excluded by user)"
 
             log_content = None
             if include_log:

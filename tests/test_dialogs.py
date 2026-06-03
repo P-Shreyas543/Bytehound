@@ -315,10 +315,11 @@ def test_report_issue_dialog_and_reporter(qapp, monkeypatch):
     dlg._on_accept()
     assert len(warn_calls) == 2
 
-    title, desc, include_log = dlg.get_data()
+    title, desc, include_log, include_diag = dlg.get_data()
     assert title == "Test Title"
     assert desc == "Test Description"
     assert include_log is True
+    assert include_diag is True
 
     # Test IssueReporter
     class MockResponse:

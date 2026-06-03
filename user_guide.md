@@ -30,7 +30,7 @@ python -m app.main
 
 ## User Interface Overview
 
-- **Menu Bar**: `File`, `Edit`, `View`, `Run`, `Help`.
+- **Menu Bar**: `File`, `Edit`, `View`, `Device`, `Tools`, `Help`.
 - **Toolbar**: Port selector, Refresh, Baud, Connect.
 - **Left Dock — Settings & Status**: serial line settings, decoder status, recent configs, group filter.
 - **Center**: live decoded variables table with a search/filter input.
@@ -98,12 +98,12 @@ Tabs showing live ON/OFF state per named bit and the active enum label per varia
 ## Logging
 
 ### Recording
-1. **File → Start Logging** and choose a base filename.
+1. **Device → Start Logging** and choose a base filename.
 2. Three artifacts are produced alongside the chosen filename:
-   - `<name>.txt` — raw timestamped hex log.
+   - `<name>_raw.csv` — raw timestamped hex log.
    - `<name>_decoded.xlsx` — Excel workbook with a `Metadata` sheet (app, port, baud, config path, session start, etc.) and a `Data` sheet (decoded signals, one row per frame). Finalised on Stop Logging.
    - `<name>_session/` — snapshot of the active configuration.
-3. **File → Stop Logging** to finalize.
+3. **Device → Stop Logging** to finalize.
 
 The default log directory is `~/Documents/Bytehound` and a 📂 button next to the logging status opens it.
 

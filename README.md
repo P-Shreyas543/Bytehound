@@ -80,14 +80,18 @@ When filing a bug at <https://github.com/P-Shreyas543/Bytehound/issues>, please 
 
 Help → View Documentation opens [`app/resources/index.html`](app/resources/index.html) — a complete handbook covering configuration, UART frame definition, TX commands, logging, plotting, analysis suite, and troubleshooting.
 
-## What's new in v0.3.1
+## What's new in v0.4.1
 
 | Feature | Details |
 |---|---|
+| Live Plot Mode Fix | Fixed a startup race condition where initial window resize and layout-settling events were incorrectly detected as manual user pan gestures. |
+| Deprecation Warnings Fix | Resolved Qt deprecation warnings (QMouseEvent constructor warnings in test suite) and looping warnings in analysis_suite.py. |
+| Repository Cleanup | Removed untracked diagnostic/temp files from source control and updated .gitignore to robust industry standards. |
+| Modular Analysis Suite | In-depth log review panel with multi-run comparison tools, offset alignment, custom math channels, cursors, and statistics. |
+| Custom Schema Mapper | Override sheet names, elapsed-time column names, and unit scale factors when importing external log files into the Analysis Suite. |
+| Frame Format Diagram | View → Config Info — graphical byte-aligned on-wire frame layout alongside the existing config summary. |
 | Auto-Reconnect | Connection dialog checkbox — retries on USB drop with exponential backoff (1 s → 16 s). |
 | Memory Cap | Plot Settings — optional cap on in-memory samples per signal; configurable default display window. |
-| Import Schema Mapper | Analysis Suite → Tools — override sheet names, elapsed-time column names, and unit scale factors when importing external log files. |
-| Frame Format Diagram | View → Config Info — graphical byte-aligned on-wire frame layout alongside the existing config summary. |
 | Saturation Warning Badge | `⚠️ Queue Saturated` badge in the status bar; click to dismiss. |
 
 ## License

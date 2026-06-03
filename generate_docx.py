@@ -674,6 +674,27 @@ def process_element(doc, element):
         if "toc" in cls_str:
             return  # skip in-HTML TOC — Word TOC is on the cover page
 
+        if "flowchart-container" in cls_str:
+            h4_el = element.find("h4")
+            title = h4_el.get_text(strip=True) if h4_el else "Application Data Flow & Architecture"
+            if h4_el:
+                add_heading(doc, h4_el)
+            
+            # Use a mock object matching the BeautifulSoup tag interface for add_image_element
+            class MockImgTag:
+                def __init__(self, src, alt):
+                    self.src = src
+                    self.alt = alt
+                def get(self, key, default=None):
+                    if key == "src":
+                        return self.src
+                    if key == "alt":
+                        return self.alt
+                    return default
+
+            add_image_element(doc, MockImgTag("images/flowchart.png", title))
+            return
+
         add_callout(doc, element)  # handles note/warning/success; falls back to recurse
 
     elif tag == "hr":
