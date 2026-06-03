@@ -1528,30 +1528,30 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
 
     <!-- Section 7 -->
     <h2 id="section-7">7. Application Limitations &amp; Safety Caveats</h2>
-    <p>Bytehound is designed to be highly flexible and performant. However, when using the application for real-time telemetry and control, you must keep the following design limitations and safety constraints in mind:</p>
+    <p>Bytehound is designed to be highly flexible and performant. However, when using the application for real-time telemetry and control, you must keep the following design constraints and safety features in mind:</p>
 
     <h3>Performance &amp; Packet Processing Rates</h3>
     <ul>
         <li><strong>Maximum Frame Rate Limit:</strong> The Qt GUI telemetry pipeline is optimized and verified to handle packet rates up to <strong>1000 Hz (1 kHz)</strong>. Above this rate, packet processing and UI redraw operations may consume significant CPU resources.</li>
         <li><strong>Queue Saturation (<code>⚠️ Queue Saturated</code>):</strong> If incoming serial data rates exceed the system's capacity, or if the OS stalls the GUI thread (e.g., during window dragging), the serial packet queue or log flush queue may saturate. When this happens, a yellow warning badge appears in the bottom status bar, and newer packets/logs will be dropped to protect system memory. <strong>Click the badge to dismiss it.</strong> If it reappears, the underlying condition persists — reduce the incoming data rate, increase the flush interval under <strong>Tools → Logging Settings</strong>, or close unused dock panels to free up the GUI thread.</li>
-        <li><strong>Odd Byte Widths:</strong> Decoded signal widths of 1, 2, 4, and 8 bytes use highly optimized struct unpacking routines. Signals with odd widths (3, 5, 6, and 7 bytes) fallback to slower binary conversions, which can impact performance at high frame rates.</li>
+        <li><strong>Odd Byte Widths:</strong> Decoded signal widths of 3, 5, 6, and 7 bytes are optimized using zero-copy <code>struct.unpack_from</code> combined with bitwise shifting and masking, eliminating the performance penalty of slicing and matching power-of-two decoding performance.</li>
     </ul>
 
     <h3>Data Logging &amp; Buffer Safety</h3>
     <ul>
-        <li><strong>In-Memory Decoded Log Risk:</strong> While the Raw CSV log (<code>*_raw.csv</code>) is continuously flushed to disk at a configurable interval (default 0.5 seconds), the Decoded Excel log (<code>*_decoded.xlsx</code>) is buffered entirely in system memory. It is only written to disk when you click <strong>Stop Logging</strong>. If the application crashes, the computer loses power, or is killed before you stop logging, the decoded spreadsheet data will be lost. <strong>Always stop logging manually</strong> before closing the app or disconnecting power.</li>
+        <li><strong>Decoded Log Crash Safety:</strong> The Decoded Excel log (<code>*_decoded.xlsx</code>) is written incrementally to temporary files (<code>.tmp_data</code> and <code>.tmp_meta</code>) during the session and compiled at the end. If the application crashes, the unsaved data is not lost; Bytehound automatically scans and prompts to recover these logs on the next launch.</li>
         <li><strong>Plot History Limits:</strong> Plot history is stored in a fixed-capacity ring buffer (default 6,000 samples per signal). In long monitoring sessions, older points will wrap around and be discarded from memory to prevent memory leaks. Consequently, scrolling back to the beginning of a multi-hour test in the Live Plot is not supported; use the Analysis Suite on the saved log files instead.</li>
         <li><strong>Raw Console and Log line limits:</strong> The Raw Console is capped at 3,000 blocks/lines of history, and the Activity Log is capped at 5,000 blocks. Old messages are automatically truncated from the display buffer.</li>
     </ul>
 
     <h3>Dock Window CPU Optimization (Data Gaps)</h3>
     <ul>
-        <li><strong>Hidden Dock Optimization:</strong> To save CPU cycles on low-spec hardware, the application stops buffering plot history, formatting console strings, and generating bitfield/enum table items for any panel that is currently hidden or collapsed. If you close the <em>Live Plot</em>, <em>Raw Console</em>, <em>Bitfields</em>, or <em>Enums</em> dock, telemetry points for that period are skipped. When you re-open the dock, data resumes plotting from that moment onward, resulting in a gap in the timeline. Keep panels visible if you need continuous live visualization.</li>
+        <li><strong>Hidden Dock Optimization:</strong> To save CPU cycles on low-spec hardware, the application suspends UI rendering operations on hidden panels. However, plot history buffering remains fully active in the background for closed panels, ensuring that reopening the Live Plot displays a continuous timeline with no data gaps.</li>
     </ul>
 
     <h3>Configuration Constraints</h3>
     <ul>
-        <li><strong>Silent Overwriting:</strong> The configuration importer parses files sequentially. If you define duplicate entries—such as two <code>tx_commands</code> with the same name, or two <code>enums</code> values for the same signal—the latter entry overwrites the former silently without raising a warning. Make sure your names and enum states are unique.</li>
+        <li><strong>Strict Config Duplicate Validations:</strong> The configuration loader validates all sheets for duplicates. If you define duplicate entries—such as duplicate variables in a frame, duplicate <code>tx_commands</code>, duplicate <code>enums</code> values, duplicate <code>bit_index</code>/labels on the same bitfield signal, duplicate calculations, or duplicate polling schedules—the loader will raise a validation <code>ConfigError</code> rather than silently overwriting.</li>
         <li><strong>Modbus RTU Specifications:</strong> The Modbus RTU protocol specifies big-endian encoding for register addresses and data values, and little-endian encoding for the CRC checksum. Custom <code>byte_order</code> configurations in the Protocol sheet are ignored when <code>parser_type = modbus_rtu</code> is selected.</li>
         <li><strong>Polling vs. Streaming:</strong> Do not enable <strong>Auto-Fetch (F10)</strong> on a device that is already streaming data automatically (unsolicited). Sending poll requests to a streaming device will cause transmission collisions and corrupt the incoming data packets.</li>
     </ul>

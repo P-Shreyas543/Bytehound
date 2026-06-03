@@ -297,17 +297,7 @@ class TelemetryPipelineMixin:
                         self._console.appendPlainText(f"[FAULT ALARM] {sig.signal_name}: {sig.display_value}")
                         self._log_activity(f"[ALARM] Fault detected on {sig.signal_name}: {sig.display_value}")
 
-        # Skip per-signal work whose target dock is hidden. Each visibility
-        # check is a single Qt property read; doing them ONCE up here lets
-        # the inner loop branch directly on cached bools.
-        plot_dock = getattr(self, "_plot_dock", None)
-        plot_visible = plot_dock is None or plot_dock.isVisible()
-
-        elapsed = (
-            (datetime.now() - self._session_started).total_seconds()
-            if plot_visible
-            else 0.0
-        )
+        elapsed = (datetime.now() - self._session_started).total_seconds()
         for signal in [*decoded.signals, *decoded.calculations]:
             key = (signal.frame_id, signal.signal_name)
             # If the key isn't in the model yet, add it (calculated / late-arriving signals)
@@ -344,7 +334,7 @@ class TelemetryPipelineMixin:
             if hasattr(self, "_staged_signals_for_ui"):
                 self._staged_signals_for_ui[key] = signal
 
-            if plot_visible and signal.scaled_value is not None and signal.status == "ok":
+            if signal.scaled_value is not None and signal.status == "ok":
                 self._plot_history[key].append(elapsed, signal.scaled_value)
 
     def _status_text(self, signal: DecodedSignal) -> str:

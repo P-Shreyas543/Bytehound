@@ -128,3 +128,55 @@ def test_offset_applied_after_scale():
     cfg = _make_config([spec])
     decoded = decode_frame(cfg, 0x3, b"\x32")  # 50 - 40 = 10
     assert decoded.signals[0].scaled_value == pytest.approx(10.0)
+
+
+def test_odd_byte_widths_decodes():
+    # 3-byte unsigned little-endian
+    spec_3u_le = SignalSpec(
+        frame_id=0x4, frame_name="t", signal_name="3u_le",
+        start_byte=0, byte_length=3, endianness="little",
+        data_type="uint", scale=1.0, offset=0.0, unit="",
+    )
+    # 3-byte signed big-endian
+    spec_3s_be = SignalSpec(
+        frame_id=0x4, frame_name="t", signal_name="3s_be",
+        start_byte=3, byte_length=3, endianness="big",
+        data_type="int", scale=1.0, offset=0.0, unit="",
+    )
+    # 5-byte signed little-endian
+    spec_5s_le = SignalSpec(
+        frame_id=0x4, frame_name="t", signal_name="5s_le",
+        start_byte=6, byte_length=5, endianness="little",
+        data_type="int", scale=1.0, offset=0.0, unit="",
+    )
+    # 6-byte unsigned big-endian
+    spec_6u_be = SignalSpec(
+        frame_id=0x4, frame_name="t", signal_name="6u_be",
+        start_byte=11, byte_length=6, endianness="big",
+        data_type="uint", scale=1.0, offset=0.0, unit="",
+    )
+    # 7-byte signed big-endian near the edge (overshoots 8 bytes, so falls back to int.from_bytes)
+    spec_7s_be_edge = SignalSpec(
+        frame_id=0x4, frame_name="t", signal_name="7s_be_edge",
+        start_byte=17, byte_length=7, endianness="big",
+        data_type="int", scale=1.0, offset=0.0, unit="",
+    )
+
+    cfg = _make_config([spec_3u_le, spec_3s_be, spec_5s_le, spec_6u_be, spec_7s_be_edge])
+
+    # 3u_le = 0x123456 -> 56 34 12
+    # 3s_be = -1 -> FF FF FF
+    # 5s_le = -2 -> FE FF FF FF FF
+    # 6u_be = 0x112233445566 -> 11 22 33 44 55 66
+    # 7s_be_edge = -3 -> FF FF FF FF FF FF FD
+    payload = bytes.fromhex("563412" + "FFFFFF" + "FEFFFFFFFF" + "112233445566" + "FFFFFFFFFFFFFD")
+
+    decoded = decode_frame(cfg, 0x4, payload)
+    assert decoded.error is None
+
+    signals = {sig.signal_name: sig.raw_value for sig in decoded.signals}
+    assert signals["3u_le"] == 0x123456
+    assert signals["3s_be"] == -1
+    assert signals["5s_le"] == -2
+    assert signals["6u_be"] == 0x112233445566
+    assert signals["7s_be_edge"] == -3

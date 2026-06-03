@@ -283,3 +283,78 @@ def test_frame_format_widget(qapp):
     assert any("Func Code" in l.text() for l in labels_wm)
 
 
+def test_report_issue_dialog_and_reporter(qapp, monkeypatch):
+    import urllib.request
+    from app.ui.dialogs import ReportIssueDialog, QMessageBox
+    from app.ui.report_issue import IssueReporter
+
+    # Mock QMessageBox warning
+    warn_calls = []
+    monkeypatch.setattr(
+        QMessageBox,
+        "warning",
+        lambda parent, title, message: warn_calls.append((title, message)),
+    )
+
+    dlg = ReportIssueDialog()
+    assert dlg.windowTitle() == "Report Issue"
+
+    # Test validation on empty
+    dlg._on_accept()
+    assert len(warn_calls) == 1
+    assert "Title" in warn_calls[0][1]
+
+    # Test description validation
+    dlg._title_input.setText("Test Title")
+    dlg._on_accept()
+    assert len(warn_calls) == 2
+    assert "Description" in warn_calls[1][1]
+
+    # Test valid accept
+    dlg._desc_input.setPlainText("Test Description")
+    dlg._on_accept()
+    assert len(warn_calls) == 2
+
+    title, desc, include_log = dlg.get_data()
+    assert title == "Test Title"
+    assert desc == "Test Description"
+    assert include_log is True
+
+    # Test IssueReporter
+    class MockResponse:
+        def __init__(self, status):
+            self.status = status
+        def __enter__(self):
+            return self
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    reporter = IssueReporter("My Title", "My Desc", "My Diag", "My Log")
+    finished_calls = []
+    reporter.finished.connect(lambda s, m: finished_calls.append((s, m)))
+
+    # Mock successful POST (HTTP 201)
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda req, *args, **kwargs: MockResponse(201),
+    )
+    reporter.run()
+    assert len(finished_calls) == 1
+    assert finished_calls[0][0] is True
+    assert "successfully" in finished_calls[0][1]
+
+    # Mock failed POST (HTTP 400)
+    finished_calls.clear()
+    monkeypatch.setattr(
+        urllib.request,
+        "urlopen",
+        lambda req, *args, **kwargs: MockResponse(400),
+    )
+    reporter.run()
+    assert len(finished_calls) == 1
+    assert finished_calls[0][0] is False
+    assert "Status code: 400" in finished_calls[0][1]
+
+
+

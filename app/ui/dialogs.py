@@ -6,8 +6,8 @@ from pathlib import Path
 from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
-    QHBoxLayout, QLabel, QLineEdit, QListWidget, QListWidgetItem, QPlainTextEdit,
-    QPushButton, QSpinBox, QVBoxLayout, QWidget
+    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QListWidget, QListWidgetItem,
+    QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget
 )
 
 from ..decoder.types import SerialDefaults
@@ -842,4 +842,63 @@ class AboutDialog(QDialog):
         details_layout.addWidget(button_box)
 
         main_layout.addWidget(details_widget, 1)
+
+
+class ReportIssueDialog(QDialog):
+    """Modal dialog for submitting a bug report or issue to the developers."""
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Report Issue")
+        self.setMinimumWidth(450)
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(12)
+
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+
+        self._title_input = QLineEdit(self)
+        self._title_input.setPlaceholderText("Brief summary of the issue")
+
+        self._desc_input = QPlainTextEdit(self)
+        self._desc_input.setPlaceholderText(
+            "Please describe the issue in detail, including steps to reproduce..."
+        )
+        self._desc_input.setMinimumHeight(150)
+
+        self._include_log_chk = QCheckBox("Include application log (tail)", self)
+        self._include_log_chk.setChecked(True)
+
+        form.addRow("Title", self._title_input)
+        form.addRow("Description", self._desc_input)
+        form.addRow("", self._include_log_chk)
+
+        layout.addLayout(form)
+
+        buttons = QDialogButtonBox(
+            QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
+            self,
+        )
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Submit")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+        layout.addWidget(buttons)
+
+    def _on_accept(self) -> None:
+        if not self._title_input.text().strip():
+            QMessageBox.warning(self, "Validation Error", "Title is required.")
+            return
+        if not self._desc_input.toPlainText().strip():
+            QMessageBox.warning(self, "Validation Error", "Description is required.")
+            return
+        self.accept()
+
+    def get_data(self) -> tuple[str, str, bool]:
+        return (
+            self._title_input.text().strip(),
+            self._desc_input.toPlainText().strip(),
+            self._include_log_chk.isChecked(),
+        )
+
 

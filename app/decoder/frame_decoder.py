@@ -153,9 +153,11 @@ def _decode_raw_at(payload: bytes, spec: SignalSpec) -> Union[int, float]:
     bytes allocation per int/float signal and is faster than
     ``int.from_bytes`` for every fixed-width type benchmarked
     (microbench: ~1.9× faster for uint16). Odd-byte-length ints
-    (3 / 5 / 6 / 7) have no native struct format code and fall back to
-    the original ``int.from_bytes`` path; that "no struct" verdict is
-    also cached so the fallback decision is a single dict lookup.
+    (3 / 5 / 6 / 7) have no native struct format code. To avoid slicing
+    and allocation, they are unpacked using a wider struct.unpack_from
+    (4 or 8 bytes) combined with bitwise shifting and masking, provided
+    there are enough remaining bytes in the payload. Otherwise, they
+    fallback to the slice + ``int.from_bytes`` path.
     """
     cache_key = (spec.endianness, spec.byte_length, spec.data_type)
     s = _DECODE_STRUCT_CACHE.get(cache_key, _UNCACHED)
@@ -164,9 +166,36 @@ def _decode_raw_at(payload: bytes, spec: SignalSpec) -> Union[int, float]:
         _DECODE_STRUCT_CACHE[cache_key] = s
     if s is not None:
         return s.unpack_from(payload, spec.start_byte)[0]
+    
     # Cached "no native struct code" — odd byte length int.
-    chunk = payload[spec.start_byte : spec.end_byte]
+    W = spec.byte_length
+    start = spec.start_byte
     signed = spec.data_type == "int"
+    
+    if W == 3 and start + 4 <= len(payload):
+        if spec.endianness == "little":
+            val = struct.unpack_from("<I", payload, start)[0] & 0xFFFFFF
+        else:
+            val = struct.unpack_from(">I", payload, start)[0] >> 8
+        if signed and (val & 0x800000):
+            val -= 0x1000000
+        return val
+    elif W in (5, 6, 7) and start + 8 <= len(payload):
+        if spec.endianness == "little":
+            val = struct.unpack_from("<Q", payload, start)[0]
+            mask = (1 << (8 * W)) - 1
+            val = val & mask
+        else:
+            val = struct.unpack_from(">Q", payload, start)[0]
+            shift = 8 * (8 - W)
+            val = val >> shift
+        if signed:
+            sign_bit = 1 << (8 * W - 1)
+            if val & sign_bit:
+                val -= 1 << (8 * W)
+        return val
+
+    chunk = payload[start : spec.end_byte]
     return int.from_bytes(chunk, byteorder=spec.endianness, signed=signed)
 
 

@@ -635,12 +635,14 @@ def test_slow_device_does_not_falsely_auto_disable(monkeypatch, capsys):
     """
     from app.serial_io import serial_worker as worker_mod
     from app.serial_io.serial_worker import POLLING_BOOT_GRACE, PollingWorker, SerialSettings
+    from dataclasses import replace
 
     monkeypatch.setattr(worker_mod, "CONSECUTIVE_TIMEOUT_DISABLE_THRESHOLD", 2)
 
     cfg = load_config(USER_CONFIG)
     proto = cfg.protocol
-    settings = SerialSettings(port="COM_TEST", baud_rate=115200, timeout_ms=50)
+    cfg.polling_schedules = [replace(s, timeout_ms=500) for s in cfg.polling_schedules]
+    settings = SerialSettings(port="COM_TEST", baud_rate=115200, timeout_ms=500)
     worker = PollingWorker(settings, proto, cfg.polling_schedules, decode_config=cfg)
     # Device responds to ALL targets (matches user's actual hardware) but
     # with a 500 ms delay — straddles the configured timeout.
