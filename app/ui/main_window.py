@@ -248,7 +248,13 @@ class MainWindow(
 
     def __init__(self) -> None:
         super().__init__()
-        self._version = _read_version()
+        try:
+            import json as _json
+            with (_project_root() / "version.json").open("r", encoding="utf-8") as fp:
+                self._version_info = _json.load(fp)
+        except Exception:
+            self._version_info = {}
+        self._version = self._version_info.get("version", "0.0.0")
         self.setWindowTitle(f"{APP_DISPLAY_NAME} v{self._version}")
         self.resize(1280, 780)
         # Explicit minimum so the user can snap the window to half-screen on
@@ -419,17 +425,10 @@ class MainWindow(
         self._log_activity("[ACTION] Copy table snapshot")
 
     def _on_info(self) -> None:
-        import json as _json
-        _vpath = _project_root() / "version.json"
-        try:
-            _v = _json.loads(_vpath.read_text(encoding="utf-8"))
-        except Exception:
-            _v = {}
-
         logo_path = _find_logo("logo_sq.png") or _find_logo("logo.png")
 
         self._log_activity("[ACTION] Open About Dialog")
-        dlg = AboutDialog(_v, logo_path, self)
+        dlg = AboutDialog(self._version_info, logo_path, self)
         dlg.exec()
 
     def _on_view_docs(self) -> None:

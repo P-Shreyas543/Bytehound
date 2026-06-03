@@ -329,7 +329,7 @@ def test_report_issue_dialog_and_reporter(qapp, monkeypatch):
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    reporter = IssueReporter("My Title", "My Desc", "My Diag", "My Log")
+    reporter = IssueReporter("My Title", "My Desc", "My Diag", "My Log", "http://dummy")
     finished_calls = []
     reporter.finished.connect(lambda s, m: finished_calls.append((s, m)))
 

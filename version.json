@@ -7,11 +7,11 @@
     "publisher_webpage": "https://lms.decibelslab.com/",
     "build_date": "2026-06-03",
     "license": "MIT",
-    "license_url": "https://github.com/P-Shreyas543/Bytehound/blob/master/LICENSE",
-    "homepage": "https://github.com/P-Shreyas543/Bytehound",
-    "issue_url": "https://github.com/P-Shreyas543/Bytehound/issues",
-    "manifest_url": "https://raw.githubusercontent.com/P-Shreyas543/Bytehound/master/version.json",
-    "installer_url": "https://github.com/P-Shreyas543/Bytehound/releases/download/v0.4.1/Bytehound_Setup_0.4.1.exe",
+    "license_url": "https://bytehound.shreyasp182002.workers.dev/LICENSE",
+    "homepage": "https://bytehound.shreyasp182002.workers.dev/",
+    "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
+    "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
+    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_0.4.1.exe",
     "release_notes": "Patch Release - Stability and Bug Fixes.\n\nBug Fixes:\n  - Live Plot Mode: Fixed a startup race condition where initial window resize and layout-settling events were incorrectly detected as manual user pan gestures, which prematurely kicked the plot from Live mode into Explore mode.\n  - Deprecation Warnings: Resolved Qt deprecation warnings (such as QMouseEvent constructor warnings in test suite) and looping warnings (such as B007 loop warnings in analysis_suite.py by switching to dictionary values iteration).\n\nImprovements:\n  - Repository Cleanup: Removed untracked diagnostic/temp files from source control and updated .gitignore to robust industry standards.",
     "sha256": "95d6545fbc1600d223615bd97703842518d38903643ac73785c9f8633d51e7a4"
 }

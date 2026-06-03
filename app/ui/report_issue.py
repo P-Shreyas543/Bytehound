@@ -16,9 +16,6 @@ from PySide6.QtWidgets import QProgressDialog
 from .dialogs import ReportIssueDialog
 
 _LOG = logging.getLogger("bytehound.reporter")
-WORKER_URL = "https://issue-proxy.bytehound.workers.dev/"
-
-
 class IssueReporter(QThread):
     """Submits the issue details to the Cloudflare proxy Worker on a background thread."""
 
@@ -30,6 +27,7 @@ class IssueReporter(QThread):
         description: str,
         diagnostics: str,
         log_content: str | None,
+        worker_url: str,
         parent=None,
     ) -> None:
         super().__init__(parent)
@@ -37,6 +35,7 @@ class IssueReporter(QThread):
         self.description = description
         self.diagnostics = diagnostics
         self.log_content = log_content
+        self.worker_url = worker_url
 
     def run(self) -> None:
         body_text = self.description
@@ -58,7 +57,7 @@ class IssueReporter(QThread):
             "labels": ["user-reported"],
         }
 
-        req = urllib.request.Request(WORKER_URL, method="POST")
+        req = urllib.request.Request(self.worker_url, method="POST")
         req.add_header("Content-Type", "application/json")
         req.add_header("User-Agent", "BMSConfigurator-App")  # Matches proxy filter
 
@@ -105,8 +104,9 @@ class ReportIssueMixin:
             self._progress_dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
             self._progress_dialog.show()
 
+            worker_url = self._version_info.get("issue_url", "https://bytehound.shreyasp182002.workers.dev/report_issue")
             self._reporter = IssueReporter(
-                title, description, diagnostics, log_content, self
+                title, description, diagnostics, log_content, worker_url, self
             )
             self._reporter.finished.connect(self._on_report_finished)
             self._progress_dialog.canceled.connect(self._reporter.requestInterruption)

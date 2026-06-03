@@ -738,13 +738,13 @@ class AboutDialog(QDialog):
         left_layout.addWidget(logo_label)
 
         # Homepage / GitHub Repository Button
-        homepage = version_info.get("homepage", "https://github.com/P-Shreyas543/Bytehound")
-        btn_repo = QPushButton("GitHub Repo", left_column)
+        homepage = version_info.get("homepage", "https://bytehound.shreyasp182002.workers.dev/")
+        btn_repo = QPushButton("Visit Homepage", left_column)
         btn_repo.setCursor(Qt.PointingHandCursor)
-        btn_repo.setToolTip("View project GitHub repository")
+        btn_repo.setToolTip("View project homepage")
         btn_repo.setStyleSheet("font-size: 9pt; font-weight: bold; padding: 4px 8px;")
         if qta:
-            btn_repo.setIcon(qta.icon("mdi6.github", color=icon_color))
+            btn_repo.setIcon(qta.icon("mdi6.earth", color=icon_color))
         btn_repo.clicked.connect(lambda: QDesktopServices.openUrl(QUrl(homepage)))
         left_layout.addWidget(btn_repo)
         left_layout.addStretch(1)
@@ -784,8 +784,8 @@ class AboutDialog(QDialog):
         details_layout.addWidget(divider)
 
         # Publisher section (name and webpage link)
-        publisher = version_info.get("publisher", "Bytehound Open Source Community")
-        pub_webpage = version_info.get("publisher_webpage", "https://github.com/P-Shreyas543/Bytehound")
+        publisher = version_info.get("publisher", "DECIBELS LAB PRIVATE LIMITED")
+        pub_webpage = version_info.get("publisher_webpage", "https://lms.decibelslab.com/")
         publisher_label = QLabel(self)
         publisher_label.setText(f"Publisher: <b>{publisher}</b> &nbsp;(<a href='{pub_webpage}'>Website</a>)")
         publisher_label.setOpenExternalLinks(True)
@@ -825,7 +825,7 @@ class AboutDialog(QDialog):
 
         # License Section (clickable hyperlink)
         lic = version_info.get("license", "MIT")
-        lic_url = version_info.get("license_url", "https://github.com/P-Shreyas543/Bytehound/blob/master/LICENSE")
+        lic_url = version_info.get("license_url", "https://bytehound.shreyasp182002.workers.dev/LICENSE")
         lic_text = f"<a href='{lic_url}'><b>{lic}</b></a>" if lic_url else f"<b>{lic}</b>"
 
         license_label = QLabel(self)
