@@ -80,13 +80,13 @@ class LoggingSessionMixin:
         default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
         default_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_file = default_dir / f"serial_log_{timestamp}.csv"
+        default_file = default_dir / f"serial_log_{timestamp}.xlsx"
 
         target, _ = QFileDialog.getSaveFileName(
             self,
             "Select log file",
             str(default_file),
-            "Log files (*.csv *.xlsx);;All files (*)",
+            "Log files (*.xlsx);;All files (*)",
         )
         if not target:
             return
@@ -101,10 +101,10 @@ class LoggingSessionMixin:
         raw_path: Optional[Path] = None
         decoded_path: Optional[Path] = None
         if log_raw and log_decoded:
-            raw_path = base.with_name(f"{base_stem}_raw.csv")
+            raw_path = base.with_name(f"{base_stem}_raw.xlsx")
             decoded_path = base.with_name(f"{base_stem}_decoded.xlsx")
         elif log_raw:
-            raw_path = base.with_name(f"{base_stem}.csv")
+            raw_path = base.with_name(f"{base_stem}.xlsx")
         else:
             decoded_path = base.with_name(f"{base_stem}.xlsx")
 
@@ -167,8 +167,7 @@ class LoggingSessionMixin:
             self._popup_critical("Start Logging", f"Could not open log file:\n\n{exc}")
             return
 
-        if self._config_path is not None:
-            snapshot_config(self._config_path, base.with_name(f"{base_stem}_session"))
+        # Config snapshot removed per user request
 
         self._logging = True
         self._logging_action.setText("Stop Logging")

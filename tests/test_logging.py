@@ -13,50 +13,41 @@ from app.serial_logging.raw_logger import RawLogger
 from tests.conftest import dummy_protocol_config
 
 
-def test_raw_logger_writes_csv_with_header(tmp_path):
-    path = tmp_path / "raw.csv"
+def test_raw_logger_writes_xlsx_with_header(tmp_path):
+    path = tmp_path / "raw.xlsx"
     with RawLogger(path) as logger:
         logger.log(
             "RX",
             bytes.fromhex("AA550010040FA00BB8BE70"),
             datetime(2026, 5, 4, 12, 37, 37, 125000),
         )
-    text = path.read_text(encoding="utf-8")
-    lines = text.splitlines()
-    assert lines[0] == "timestamp,direction,hex,delta_t_ms"
-    assert lines[1] == "2026-05-04 12:37:37.125,RX,AA 55 00 10 04 0F A0 0B B8 BE 70,0.0"
+    wb = load_workbook(path, read_only=True)
+    assert wb.sheetnames == ["Metadata", "Data"]
+    data_rows = list(wb["Data"].iter_rows(values_only=True))
+    wb.close()
+    assert data_rows[0] == ("timestamp", "direction", "hex", "delta_t_ms")
+    assert data_rows[1] == ("2026-05-04 12:37:37.125", "RX", "AA 55 00 10 04 0F A0 0B B8 BE 70", 0.0)
 
 
 def test_raw_logger_compact_hex_format(tmp_path):
     """hex_format='compact' writes contiguous uppercase bytes (no spaces)."""
-    path = tmp_path / "raw.csv"
+    path = tmp_path / "raw.xlsx"
     with RawLogger(path, hex_format="compact") as logger:
         logger.log(
             "RX",
             bytes.fromhex("AA550010040FA00BB8BE70"),
             datetime(2026, 5, 4, 12, 37, 37, 125000),
         )
-    lines = path.read_text(encoding="utf-8").splitlines()
-    assert lines[1] == "2026-05-04 12:37:37.125,RX,AA550010040FA00BB8BE70,0.0"
+    wb = load_workbook(path, read_only=True)
+    data_rows = list(wb["Data"].iter_rows(values_only=True))
+    wb.close()
+    assert data_rows[1] == ("2026-05-04 12:37:37.125", "RX", "AA550010040FA00BB8BE70", 0.0)
 
 
 def test_raw_logger_invalid_hex_format_rejected(tmp_path):
     import pytest
     with pytest.raises(ValueError, match="hex_format must be"):
-        RawLogger(tmp_path / "raw.csv", hex_format="binary")
-
-
-def test_raw_logger_appends_without_duplicating_header(tmp_path):
-    path = tmp_path / "raw.csv"
-    ts = datetime(2026, 5, 4, 12, 37, 37, 125000)
-    with RawLogger(path) as logger:
-        logger.log("RX", bytes.fromhex("AA55"), ts)
-    with RawLogger(path) as logger:
-        logger.log("TX", bytes.fromhex("BBCC"), ts)
-    lines = path.read_text(encoding="utf-8").splitlines()
-    assert lines[0] == "timestamp,direction,hex,delta_t_ms"
-    assert sum(1 for line in lines if line.startswith("timestamp,")) == 1
-    assert len(lines) == 3
+        RawLogger(tmp_path / "raw.xlsx", hex_format="binary")
 
 
 def _make_test_config(signal_b_name: str = "Pack_V") -> FrameConfig:
@@ -340,7 +331,7 @@ def _shorten_join(thread, timeout_sec: float = 0.05):
 
 
 def test_raw_logger_persists_all_rows_when_close_join_times_out(tmp_path):
-    path = tmp_path / "slow_drain.csv"
+    path = tmp_path / "slow_drain.xlsx"
     rl = RawLogger(path)
     rl.open()
 
@@ -370,16 +361,16 @@ def test_raw_logger_persists_all_rows_when_close_join_times_out(tmp_path):
         "Writer thread should have completed its drain + close cleanly"
     )
 
-    lines = path.read_text(encoding="utf-8").splitlines()
-    # 1 header row + N data rows. Without the fix, several rows would be
-    # missing (or the file would be unreadable due to a half-written final
-    # row from a ValueError mid-writerow).
-    assert len(lines) == N + 1, (
-        f"Expected {N + 1} lines after slow-drain shutdown, got {len(lines)}"
+    wb = load_workbook(path, read_only=True)
+    data_rows = list(wb["Data"].iter_rows(values_only=True))
+    wb.close()
+    
+    # 1 header row + N data rows.
+    assert len(data_rows) == N + 1, (
+        f"Expected {N + 1} lines after slow-drain shutdown, got {len(data_rows)}"
     )
     # Each data row's hex column reflects one of the bytes we logged.
-    data_rows = lines[1:]
-    written_hex = {row.split(",")[2] for row in data_rows}
+    written_hex = {row[2] for row in data_rows[1:]}
     expected_hex = {f"{i & 0xFF:02X} {(i + 1) & 0xFF:02X}" for i in range(N)}
     assert written_hex == expected_hex
 
@@ -391,7 +382,7 @@ def test_raw_logger_await_drain_blocks_until_writer_finishes(tmp_path):
     zero-data-loss guarantee — without it, the daemon writer thread
     would be killed at interpreter exit mid-flush.
     """
-    path = tmp_path / "await_drain.csv"
+    path = tmp_path / "await_drain.xlsx"
     rl = RawLogger(path)
     rl.open()
 
@@ -427,9 +418,11 @@ def test_raw_logger_await_drain_blocks_until_writer_finishes(tmp_path):
     assert not rl.is_draining(), "is_draining() must be False once writer exits"
 
     # File on disk has every row.
-    lines = path.read_text(encoding="utf-8").splitlines()
-    assert len(lines) == N + 1, (
-        f"Expected {N + 1} lines on disk after await_drain, got {len(lines)}"
+    wb = load_workbook(path, read_only=True)
+    data_rows = list(wb["Data"].iter_rows(values_only=True))
+    wb.close()
+    assert len(data_rows) == N + 1, (
+        f"Expected {N + 1} lines on disk after await_drain, got {len(data_rows)}"
     )
 
 

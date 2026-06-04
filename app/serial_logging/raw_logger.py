@@ -102,33 +102,30 @@ class RawLogger:
         if self._writer_thread is not None:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        new_file = not self.path.exists() or self.path.stat().st_size == 0
 
-        # Refuse to append to an existing file whose header does not match
-        # the current schema. Silently writing rows with a different column
-        # count corrupts the CSV (header says 3 cols, data has 4) and breaks
-        # pandas and Excel.
-        if not new_file:
-            existing = self._read_existing_header()
-            if existing != self.COLUMNS:
-                raise ValueError(
-                    f"Cannot append to {self.path.name}: existing header "
-                    f"{existing} does not match expected {self.COLUMNS}. "
-                    f"Choose a new filename or delete the old log."
-                )
+        self._tmp_data_path = self.path.parent / (self.path.name + ".tmp_data")
+        self._tmp_meta_path = self.path.parent / (self.path.name + ".tmp_meta")
 
-        self._fp = self.path.open("a", encoding="utf-8", newline="")
-        self._writer = csv.writer(self._fp)
-        self._last_flush = time.monotonic()
-        if new_file:
-            self._write_metadata()
+        # Write metadata JSON
+        import json
+        try:
+            with self._tmp_meta_path.open("w", encoding="utf-8") as f:
+                json.dump(self._metadata, f)
+        except Exception as exc:
+            self._handle_error("open", exc)
+            return
+
+        # Open temp CSV file
+        try:
+            self._fp = self._tmp_data_path.open("w", encoding="utf-8", newline="")
+            self._writer = csv.writer(self._fp)
             self._writer.writerow(self.COLUMNS)
-            # Pre-flush header so a crash before the first frame still leaves
-            # a recognisable file behind.
-            try:
-                self._fp.flush()
-            except Exception:
-                pass
+            self._fp.flush()
+        except Exception as exc:
+            self._handle_error("open", exc)
+            return
+
+        self._last_flush = time.monotonic()
 
         self._stop_event.clear()
         self._dropped_count = 0
@@ -273,13 +270,76 @@ class RawLogger:
                     continue
                 if not self._write_one(writer, item):
                     break
-            if fp is not None:
+            self._save_and_close_workbook(writer, fp)
+
+    def _save_and_close_workbook(self, writer, fp) -> None:
+        if fp is not None:
+            try:
+                fp.flush()
+            except Exception as exc:
+                self._record_error("flush", exc)
+            try:
+                fp.close()
+            except Exception:
+                pass
+        self._compile_workbook()
+
+    def _compile_workbook(self) -> None:
+        if not hasattr(self, "_tmp_data_path") or not self._tmp_data_path.exists():
+            return
+
+        import json
+        from openpyxl import Workbook
+        wb = Workbook(write_only=True)
+        try:
+            meta_ws = wb.create_sheet(title="Metadata")
+            meta_ws.append(["Key", "Value"])
+            metadata = {}
+            if self._tmp_meta_path.exists():
                 try:
-                    fp.flush()
-                except Exception as exc:
-                    self._record_error("flush", exc)
+                    with self._tmp_meta_path.open("r", encoding="utf-8") as f:
+                        metadata = json.load(f)
+                except Exception:
+                    metadata = self._metadata
+            for key in sorted(metadata):
+                value = str(metadata[key]).replace("\n", " ").strip()
+                meta_ws.append([key, value])
+
+            data_ws = wb.create_sheet(title="Data")
+            with self._tmp_data_path.open("r", encoding="utf-8", newline="") as f:
+                reader = csv.reader(f)
+                header_skipped = False
+                for row in reader:
+                    if not header_skipped:
+                        data_ws.append(row)
+                        header_skipped = True
+                        continue
+                    typed_row = []
+                    for cell in row:
+                        if cell == "":
+                            typed_row.append("")
+                        else:
+                            try:
+                                if "." in cell or "e" in cell.lower():
+                                    typed_row.append(float(cell))
+                                else:
+                                    typed_row.append(int(cell))
+                            except ValueError:
+                                typed_row.append(cell)
+                    data_ws.append(typed_row)
+
+            wb.save(self.path)
+        except Exception as exc:
+            self._record_error("compile", exc)
+        finally:
+            try:
+                wb.close()
+            except Exception:
+                pass
+            if self.path.exists() and self.path.stat().st_size > 0:
                 try:
-                    fp.close()
+                    self._tmp_data_path.unlink(missing_ok=True)
+                    self._tmp_meta_path.unlink(missing_ok=True)
                 except Exception:
                     pass
 

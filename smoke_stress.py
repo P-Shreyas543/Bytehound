@@ -88,7 +88,7 @@ def main() -> int:
     cfg = load_config(Path("app/resources/config_template"))
 
     Path("scratch").mkdir(exist_ok=True)
-    raw_path = Path("scratch/stress_raw.csv")
+    raw_path = Path("scratch/stress_raw.xlsx")
     dec_path = Path("scratch/stress_decoded.xlsx")
     raw_path.unlink(missing_ok=True)
     dec_path.unlink(missing_ok=True)
@@ -125,54 +125,56 @@ def main() -> int:
     hdr("Phase 0  Config sanity")
     if 0x3000 in cfg.signals_by_frame: rep.ok("Frame 0x3000 in config")
     else: rep.fail("Frame 0x3000 missing")
-    if (0x3000, "Status_Bits") in cfg.bitfields and len(cfg.bitfields[(0x3000, "Status_Bits")]) == 8:
-        rep.ok("Status_Bits has 8 named bits")
-    else: rep.fail("Status_Bits bitfield missing/wrong count")
-    if (0x3000, "Mode") in cfg.enums and len(cfg.enums[(0x3000, "Mode")]) == 5:
-        rep.ok("Mode enum has 5 labels")
-    else: rep.fail("Mode enum missing/wrong count")
-    if "Set_Voltage_Limit" in cfg.tx_commands and cfg.tx_commands["Set_Voltage_Limit"].fields:
-        rep.ok("Set_Voltage_Limit is parameterized")
-    else: rep.fail("Set_Voltage_Limit not parameterized")
+    if (0x3000, "Fault Flags") in cfg.bitfields and len(cfg.bitfields[(0x3000, "Fault Flags")]) == 8:
+        rep.ok("Fault Flags has 8 named bits")
+    else: rep.fail("Fault Flags bitfield missing/wrong count")
+    if (0x3000, "BMS State") in cfg.enums and len(cfg.enums[(0x3000, "BMS State")]) == 5:
+        rep.ok("BMS State enum has 5 labels")
+    else: rep.fail("BMS State enum missing/wrong count")
+    if "Set Voltage Limit" in cfg.tx_commands and cfg.tx_commands["Set Voltage Limit"].fields:
+        rep.ok("Set Voltage Limit is parameterized")
+    else: rep.fail("Set Voltage Limit not parameterized")
 
     # ---------- Phase 1 — parameter editor offline ------------------------
     hdr("Phase 1  Parameter editor (offline)")
-    pkt = build_tx_command(cfg, "Set_Voltage_Limit", {"voltage_v": 58.5})
-    expected = bytes.fromhex("AA5501200249023C9EEE")
+    pkt = build_tx_command(cfg, "Set Voltage Limit", {"Voltage Limit (V)": 58.5})
+    expected = bytes.fromhex("AA55002002DA166DA1EE")
     if pkt == expected:
-        rep.ok("Set_Voltage_Limit(58.5) byte-exact", pkt.hex().upper())
+        rep.ok("Set Voltage Limit(58.5) byte-exact", pkt.hex().upper())
     else:
-        rep.fail("Set_Voltage_Limit byte mismatch",
+        rep.fail("Set Voltage Limit byte mismatch",
                  f"got {pkt.hex().upper()} want {expected.hex().upper()}")
     try:
-        build_tx_command(cfg, "Set_Voltage_Limit", {"voltage_v": 99.0})
-        rep.fail("Set_Voltage_Limit(99V) should be rejected by max_value")
+        build_tx_command(cfg, "Set Voltage Limit", {"Voltage Limit (V)": 99.0})
+        rep.fail("Set Voltage Limit(99V) should be rejected by max_value")
     except Exception:
-        rep.ok("Set_Voltage_Limit max-bound enforced")
+        rep.ok("Set Voltage Limit max-bound enforced")
 
     # ---------- Worker setup ---------------------------------------------
     app = QCoreApplication.instance() or QCoreApplication(sys.argv)
     settings = SerialSettings(port=args.port, baud_rate=115200)
     worker = PollingWorker(settings, cfg.protocol, cfg.polling_schedules)
+    worker.set_pipelining(True, depth=2, gap_ms=30)
 
     def on_packets(batch: List[Any]) -> None:
         nonlocal pkt_total, crc_errors_observed
-        for p in batch:
+        for item in batch:
+            p, pre_decoded = item if isinstance(item, tuple) else (item, None)
             pkt_total += 1
             raw_logger.log("RX", p.raw)
             if not p.ok:
                 crc_errors_observed += 1
                 continue
             seen_ids.add(p.frame_id)
-            decoded = decode_frame(cfg, p.frame_id, p.payload)
+            decoded = pre_decoded if pre_decoded is not None else decode_frame(cfg, p.frame_id, p.payload)
             elapsed_ms = int((time.perf_counter() - log_start) * 1000)
             decoded_logger.log_frame(decoded, elapsed_ms)
             for sig in decoded.signals:
-                if sig.frame_id == 0x2000 and sig.signal_name == "Voltage_Limit" and sig.scaled_value is not None:
+                if sig.frame_id == 0x2000 and sig.signal_name == "Voltage Limit" and sig.scaled_value is not None:
                     voltage_limits.append(sig.scaled_value)
-                if sig.frame_id == 0x3000 and sig.signal_name == "Status_Bits" and sig.bit_values:
+                if sig.frame_id == 0x3000 and sig.signal_name == "Fault Flags" and sig.bit_values:
                     bitfield_samples.append(dict(sig.bit_values))
-                if sig.frame_id == 0x3000 and sig.signal_name == "Mode" and sig.enum_label:
+                if sig.frame_id == 0x3000 and sig.signal_name == "BMS State" and sig.enum_label:
                     enum_samples.append(sig.enum_label)
 
     def on_metrics(timeouts: int, crc: int, rx_bytes: int) -> None:
@@ -188,6 +190,10 @@ def main() -> int:
         error_messages.append(msg)
         rep.note(f"worker error: {msg}")
 
+    def on_warning(msg: str) -> None:
+        error_messages.append(msg)
+        rep.note(f"worker warning: {msg}")
+
     def on_device_timeout() -> None:
         nonlocal device_timeout_count
         device_timeout_count += 1
@@ -198,6 +204,7 @@ def main() -> int:
     worker.tx_recorded.connect(on_tx)
     worker.error_occurred.connect(on_error)
     worker.device_timeout.connect(on_device_timeout)
+    worker.warning_occurred.connect(on_warning)
 
     # Open + boot delay
     worker.open()
@@ -229,6 +236,8 @@ def main() -> int:
     # ---------- Phase 3 — polling baseline --------------------------------
     hdr("Phase 3  Polling baseline (5 s)")
     reset_collectors()
+    # Turn off autonomous streaming so we only communicate via polling responses
+    worker.enqueue_priority_tx(build_packet(cfg.protocol, 0x1005, b"\x01"))
     worker.set_polling_global(True)
     run_for(app, 5.0)
     rate3 = pkt_total / 5.0
@@ -328,13 +337,17 @@ def main() -> int:
         run_for(app, 2.0)
         try:
             worker = PollingWorker(settings, cfg.protocol, cfg.polling_schedules)
+            worker.set_pipelining(True, depth=2, gap_ms=30)
             worker.packets_received.connect(on_packets)
             worker.metrics_updated.connect(on_metrics)
             worker.tx_recorded.connect(on_tx)
             worker.error_occurred.connect(on_error)
             worker.device_timeout.connect(on_device_timeout)
+            worker.warning_occurred.connect(on_warning)
             worker.open()
             worker.set_polling_global(True)
+            # Turn off autonomous streaming again
+            worker.enqueue_priority_tx(build_packet(cfg.protocol, 0x1005, b"\x01"))
             rep.note(f"cycle {cycle + 1}: opened, is_open={worker.is_open}")
             run_for(app, args.boot_delay)
             rep.note(
@@ -361,7 +374,7 @@ def main() -> int:
     # ---------- Phase 9 — TX flood (over the 256 cap) --------------------
     hdr("Phase 9  TX flood (300 commands rapid-fire)")
     err_before = len(error_messages)
-    burst_pkt = build_tx_command(cfg, "Reset", {})
+    burst_pkt = build_tx_command(cfg, "Reset Faults", {})
     drops = 0
     for _ in range(300):
         try:
@@ -382,17 +395,21 @@ def main() -> int:
 
     # Drain the queue
     run_for(app, 3.0)
+    # Resynchronize the board's RX state machine by sending non-header bytes
+    # to force it out of any partial packet parsing state back to RX_HDR1.
+    worker._write_serial(b"\x00" * 75)
+    run_for(app, 1.0)
 
     # ---------- Phase 10 — parameter editor round-trip x3 -----------------
     hdr("Phase 10  Parameter editor round-trip (3 set-points)")
     for target in (45.2, 58.5, 50.0):
         run_for(app, 0.5)
         before_count = len(voltage_limits)
-        send("Set_Voltage_Limit", {"voltage_v": target})
+        send("Set Voltage Limit", {"Voltage Limit (V)": target})
         run_for(app, 1.5)
         recent = voltage_limits[before_count:]
         if any(abs(v - target) < 0.05 for v in recent):
-            rep.ok(f"Round-trip Voltage_Limit -> {target} V",
+            rep.ok(f"Round-trip Voltage Limit -> {target} V",
                    f"{len(recent)} samples after write")
         else:
             rep.fail(f"Round-trip {target} V failed",

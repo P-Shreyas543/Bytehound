@@ -246,7 +246,7 @@ def main() -> int:
         worker.set_pipelining(True, depth=args.pipeline_depth, gap_ms=args.pipeline_gap)
 
     Path("scratch").mkdir(exist_ok=True)
-    raw_path = Path("scratch/test_raw.csv")
+    raw_path = Path("scratch/test_raw.xlsx")
     if raw_path.exists():
         raw_path.unlink()
     dec_path = Path("scratch/test_decoded.xlsx")
@@ -568,21 +568,25 @@ def _phase_12_raw_log_format(rep: Report) -> None:
         ("hex",     "AA 55 00 10 04 0F A0 0B B8 BE 70"),
         ("compact", "AA550010040FA00BB8BE70"),
     ]:
-        path = Path(f"scratch/_fmt_{mode}.csv")
+        path = Path(f"scratch/_fmt_{mode}.xlsx")
         if path.exists():
             path.unlink()
         with RawLogger(path, hex_format=mode) as lg:
             lg.log("RX", payload)
-        lines = path.read_text(encoding="utf-8").splitlines()
-        # Header line is COLUMNS; data line is line 1.
-        if len(lines) >= 2 and expected_hex in lines[1]:
+        
+        from openpyxl import load_workbook
+        wb = load_workbook(path, read_only=True)
+        data_rows = list(wb["Data"].iter_rows(values_only=True))
+        wb.close()
+        
+        if len(data_rows) >= 2 and data_rows[1][2] == expected_hex:
             rep.ok(f"raw_log_format={mode!r} wrote {expected_hex!r}")
         else:
-            rep.fail(f"raw_log_format={mode!r} content wrong", str(lines))
+            rep.fail(f"raw_log_format={mode!r} content wrong", str(data_rows))
 
     # Invalid value should be rejected with a clear error.
     try:
-        RawLogger(Path("scratch/_fmt_bad.csv"), hex_format="binary")
+        RawLogger(Path("scratch/_fmt_bad.xlsx"), hex_format="binary")
         rep.fail("RawLogger should have rejected hex_format='binary'")
     except ValueError:
         rep.ok("RawLogger rejects invalid hex_format values")
