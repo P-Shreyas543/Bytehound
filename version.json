@@ -1,17 +1,17 @@
 {
-    "version": "0.4.2",
-    "document_version": "0.4.2",
+    "version": "0.4.3",
+    "document_version": "0.4.3",
     "Developer": "Shreyas P",
     "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "DECIBELS LAB PRIVATE LIMITED",
     "publisher_webpage": "https://lms.decibelslab.com/",
-    "build_date": "2026-06-03",
+    "build_date": "2026-06-04",
     "license": "MIT",
     "license_url": "https://bytehound.shreyasp182002.workers.dev/LICENSE",
     "homepage": "https://bytehound.shreyasp182002.workers.dev/",
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
-    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_0.4.2.exe",
-    "release_notes": "Patch Release - Manual Flowchart and Bug Reporting Enhancements.\n\nNew Features:\n  - Flowchart Integration: Added a beautiful system data flow and architecture flowchart to both the HTML user manual and compiled Word manual (automatically embedded as a high-resolution PNG).\n  - Diagnostics & Bug Reporting: Updated the Help \u2192 Report Issue... dialog to include an 'Include system & session diagnostics' checkbox (enabled by default) so users can choose whether to securely attach telemetry metrics, OS version, and Python/Qt context to speed up bug resolution.",
-    "sha256": "ec79f1626e4ad45111d4dc5f7665504469086159447a830a1ddd38f64d5690c5"
+    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_0.4.3.exe",
+    "release_notes": "Patch Release - XY Plotter Uniformity, Dynamic Theming, and Advanced Issue Reporting.\n\nNew Features:\n  - XY Plotter Uniformity: Promoted the XY Plotter window to a QMainWindow, granting standard minimize/maximize/close title bar buttons and theme consistency.\n  - Help Action Icons: Wired Copy Diagnostics, Report Issue, and Plot Settings QActions to dynamically update their colors when the theme is toggled.\n  - Advanced Bug Reporting: Removed the diagnostics selection checkboxes and enabled full Diagnostic Info, QSettings preferences dump, and RotatingFileHandler log tail by default. Added drag-and-drop file attachments and paste clipboard screenshot support. Active configuration file is now automatically attached to report submissions.",
+    "sha256": "12a96a0e4a4ef00215e65bf686bc90b59812ba2ea3b54e39b7634dc8bbc6ac42"
 }

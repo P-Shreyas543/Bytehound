@@ -70,3 +70,25 @@ def test_xy_plot_regression_valid_data(qapp):
     win._do_plot()
     # 1 scatter + 1 regression line
     assert len(win._curves) == 2
+
+
+def test_xy_plot_min_max_markers(qapp):
+    entry = LogEntry("dummy_id", "test.csv", "Test Log", "#000")
+    entry.columns = {
+        "Voltage": np.array([10, 20, 30, 40, 50]),
+        "Current": np.array([1, 5, 2, 8, 3]),
+    }
+    logs = {"dummy_id": entry}
+    win = XYPlotWindow(logs)
+    
+    win._x_combo.setCurrentText("Voltage")
+    win._y_combo.setCurrentText("Current")
+    
+    # Enable Min and Max markers
+    win._show_min_cb.setChecked(True)
+    win._show_max_cb.setChecked(True)
+    
+    win._do_plot()
+    
+    # 1 scatter + 2 min items (Min X, Min Y same point) + 4 max items (Max X, Max Y distinct points)
+    assert len(win._curves) == 7

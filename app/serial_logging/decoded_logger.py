@@ -132,6 +132,7 @@ class DecodedLogger:
         metadata: Mapping[str, str] | None = None,
         on_error: ErrorCallback | None = None,
         on_warning: Callable[[str], None] | None = None,
+        polling_mode: bool = False,
     ) -> None:
         self.path = Path(path)
         self._config = config
@@ -141,6 +142,7 @@ class DecodedLogger:
         self._on_error = on_error
         self._on_warning = on_warning
         self._disabled = False
+        self.polling_mode = polling_mode
 
         (
             self._columns,
@@ -235,6 +237,9 @@ class DecodedLogger:
         self._writer_thread.start()
 
     def close(self) -> None:
+        if self.polling_mode and self._cycle_buffer:
+            self._maybe_emit_row(force=True)
+            self._cycle_buffer.clear()
         # Signal the writer thread to drain remaining rows, save the
         # workbook, and exit. We join before clearing references so the file
         # is on disk by the time close() returns (callers — including the
@@ -351,6 +356,10 @@ class DecodedLogger:
                 # Frame not represented in the schema — nothing to do.
                 return
 
+            if self.polling_mode and decoded.frame_id in self._cycle_buffer:
+                self._maybe_emit_row(force=True)
+                self._cycle_buffer.clear()
+
             slot = self._cycle_buffer.setdefault(decoded.frame_id, {})
             # Each frame has its own elapsed_ms and frame_id columns.
             if _SLOT_ELAPSED in block:
@@ -390,17 +399,20 @@ class DecodedLogger:
                 slot[pos] = _format_number(signal.scaled_value)
 
             if self._trigger_id is not None and decoded.frame_id == self._trigger_id:
-                self._maybe_emit_row()
-                # Always clear so the next cycle starts fresh — no stale carry-over.
-                self._cycle_buffer.clear()
+                if self.polling_mode:
+                    pass
+                else:
+                    self._maybe_emit_row(force=False)
+                    # Always clear so the next cycle starts fresh — no stale carry-over.
+                    self._cycle_buffer.clear()
         except Exception as exc:
             self._handle_error("write", exc)
 
-    def _maybe_emit_row(self) -> None:
+    def _maybe_emit_row(self, force: bool = False) -> None:
         """Assemble the cycle row and hand it off to the writer thread."""
-        if self._data_ws is None:
+        if self._data_ws is None or not self._cycle_buffer:
             return
-        if not all(fid in self._cycle_buffer for fid in self._cycle_frame_ids):
+        if not force and not all(fid in self._cycle_buffer for fid in self._cycle_frame_ids):
             return
         # Position-keyed merge: each frame writes into its own column slots,
         # so even when two frames share a header text they land in distinct

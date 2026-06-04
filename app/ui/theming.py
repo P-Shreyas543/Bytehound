@@ -854,6 +854,9 @@ class ThemingMixin:
             (self._info_action,             "mdi6.information-outline"),
             (self._analysis_action,         "mdi6.chart-multiple"),
             (self._logging_settings_action, "mdi6.tune-vertical"),
+            (self._plot_settings_action,    "mdi6.chart-line"),
+            (self._diagnostics_action,      "mdi6.clipboard-text-outline"),
+            (self._report_issue_action,     "mdi6.bug"),
             # Names MUST match the icons used at QAction construction in
             # _create_actions(); otherwise the menu icon silently changes
             # shape the first time the user switches theme.

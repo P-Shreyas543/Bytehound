@@ -872,6 +872,14 @@ class PlotOrchestrationMixin:
         """
         if self._plot_range_changing or not getattr(self, "_initial_show_done", True):
             return
+        self._plot_range_changing = True
+        try:
+            if self._plot_panels:
+                first_vb = self._plot_panels[0].plot_item.getViewBox()
+                if first_vb is not None and first_vb is not vb:
+                    first_vb.setXRange(*x_range, padding=0)
+        finally:
+            self._plot_range_changing = False
         if self._plot_live:
             # User pan/zoom is functionally the same as Pausing.
             self._set_plot_live(False, source="pan")
@@ -1105,6 +1113,7 @@ class PlotOrchestrationMixin:
                     ax = pi.getAxis('right')
                     ax.linkToView(panel.right_vb)
                     panel.right_vb.setXLink(pi.getViewBox())
+                    panel.right_vb.sigXRangeChanged.connect(self._on_plot_range_changed)
                     panel.right_axis = ax
 
                     from .theming import resolve_theme
@@ -1126,6 +1135,13 @@ class PlotOrchestrationMixin:
 
                 panel.right_axis.setLabel(text=right_unit)
                 panel.right_axis.show()
+
+                # Sync geometry of the overlayed right ViewBox with the main ViewBox on every redraw
+                # to prevent layout mismatch when axis labels change size.
+                vb = pi.getViewBox()
+                if vb is not None and panel.right_vb is not None:
+                    panel.right_vb.setGeometry(vb.sceneBoundingRect())
+                    panel.right_vb.linkedViewChanged(vb, panel.right_vb.XAxis)
             elif panel.right_axis is not None:
                 panel.right_axis.hide()
 

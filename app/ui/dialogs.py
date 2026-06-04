@@ -371,7 +371,7 @@ class LoggingSettingsDialog(QDialog):
         self._restore_from_settings()
 
     def _restore_from_settings(self) -> None:
-        level = str(self._settings.value("logging/level", "INFO")).upper()
+        level = str(self._settings.value("logging/level", "DEBUG")).upper()
         if level not in self._LEVELS:
             level = "INFO"
         self._level_combo.setCurrentText(level)
@@ -844,13 +844,64 @@ class AboutDialog(QDialog):
         main_layout.addWidget(details_widget, 1)
 
 
+from PySide6.QtCore import Signal
+
+class GithubDescriptionEdit(QPlainTextEdit):
+    file_dropped = Signal(str)
+    image_pasted = Signal(bytes, str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAcceptDrops(True)
+        self.setPlaceholderText(
+            "Please describe the issue in detail, including steps to reproduce...\n"
+            "Attach files by dragging & dropping, selecting or pasting them."
+        )
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragEnterEvent(event)
+
+    def dragMoveEvent(self, event):
+        if event.mimeData().hasUrls():
+            event.acceptProposedAction()
+        else:
+            super().dragMoveEvent(event)
+
+    def dropEvent(self, event):
+        if event.mimeData().hasUrls():
+            for url in event.mimeData().urls():
+                file_path = url.toLocalFile()
+                if file_path:
+                    self.file_dropped.emit(file_path)
+            event.acceptProposedAction()
+        else:
+            super().dropEvent(event)
+
+    def insertFromMimeData(self, source):
+        if source.hasImage():
+            image = source.imageData()
+            from PySide6.QtCore import QBuffer, QByteArray
+            ba = QByteArray()
+            buf = QBuffer(ba)
+            buf.open(QBuffer.OpenModeFlag.WriteOnly)
+            if image.save(buf, "PNG"):
+                self.image_pasted.emit(ba.data(), "PNG")
+                self.insertPlainText("\n[Pasted Image Attachment]\n")
+                return
+        super().insertFromMimeData(source)
+
+
 class ReportIssueDialog(QDialog):
     """Modal dialog for submitting a bug report or issue to the developers."""
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
         self.setWindowTitle("Report Issue")
-        self.setMinimumWidth(450)
+        self.setMinimumWidth(500)
+        self._attachments: list[dict] = []
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
@@ -861,27 +912,47 @@ class ReportIssueDialog(QDialog):
         self._title_input = QLineEdit(self)
         self._title_input.setPlaceholderText("Brief summary of the issue")
 
-        self._desc_input = QPlainTextEdit(self)
-        self._desc_input.setPlaceholderText(
-            "Please describe the issue in detail, including steps to reproduce..."
-        )
+        self._desc_input = GithubDescriptionEdit(self)
         self._desc_input.setMinimumHeight(150)
-
-        self._include_diag_chk = QCheckBox("Include system & session diagnostics", self)
-        self._include_diag_chk.setChecked(True)
-        self._include_diag_chk.setToolTip(
-            "Includes OS version, Python/Qt versions, frozen status, active configuration path, "
-            "connection status, serial port parameters, and telemetry packet/error counters."
-        )
-
-        self._include_log_chk = QCheckBox("Include application log (tail)", self)
-        self._include_log_chk.setChecked(True)
-        self._include_log_chk.setToolTip("Includes the last 200 lines of the internal application log.")
+        self._desc_input.file_dropped.connect(self._add_attachment)
+        self._desc_input.image_pasted.connect(self._add_pasted_image)
 
         form.addRow("Title", self._title_input)
         form.addRow("Description", self._desc_input)
-        form.addRow("", self._include_diag_chk)
-        form.addRow("", self._include_log_chk)
+
+        # Attachment row controls
+        attach_control_row = QWidget(self)
+        attach_hl = QHBoxLayout(attach_control_row)
+        attach_hl.setContentsMargins(0, 0, 0, 0)
+        
+        self._btn_attach = QPushButton("📎 Attach files / images...", attach_control_row)
+        self._btn_attach.clicked.connect(self._browse_attachments)
+        attach_hl.addWidget(self._btn_attach)
+        
+        hint = QLabel("Pasting images or dragging & dropping files also works.", attach_control_row)
+        hint.setStyleSheet("color: gray; font-size: 9pt;")
+        attach_hl.addWidget(hint)
+        attach_hl.addStretch(1)
+        
+        form.addRow("", attach_control_row)
+
+        # List of attached files
+        list_container = QWidget(self)
+        list_vl = QVBoxLayout(list_container)
+        list_vl.setContentsMargins(0, 0, 0, 0)
+        list_vl.setSpacing(4)
+        
+        self._list_widget = QListWidget(list_container)
+        self._list_widget.setMaximumHeight(80)
+        self._list_widget.setVisible(False)
+        list_vl.addWidget(self._list_widget)
+        
+        self._btn_remove = QPushButton("Remove Selected Attachment", list_container)
+        self._btn_remove.clicked.connect(self._remove_selected_attachment)
+        self._btn_remove.setVisible(False)
+        list_vl.addWidget(self._btn_remove)
+        
+        form.addRow("Attachments", list_container)
 
         layout.addLayout(form)
 
@@ -894,6 +965,107 @@ class ReportIssueDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _browse_attachments(self) -> None:
+        from PySide6.QtWidgets import QFileDialog
+        files, _ = QFileDialog.getOpenFileNames(
+            self,
+            "Select Files or Images to Attach",
+            "",
+            "All Files (*.*);;Images (*.png *.jpg *.jpeg *.gif *.bmp);;Logs/Data (*.csv *.txt *.log *.xlsx)"
+        )
+        for f in files:
+            self._add_attachment(f)
+
+    def _add_attachment(self, file_path: str) -> None:
+        from datetime import datetime
+        import base64
+        path = Path(file_path)
+        if not path.is_file():
+            return
+        
+        size = path.stat().st_size
+        if size > 2 * 1024 * 1024:
+            QMessageBox.warning(
+                self, 
+                "File Too Large", 
+                f"The file '{path.name}' is {size / 1024 / 1024:.1f}MB.\n"
+                "Please attach files smaller than 2MB to keep report submission reliable."
+            )
+            return
+        
+        total_size = sum(att['size'] for att in self._attachments) + size
+        if total_size > 5 * 1024 * 1024:
+            QMessageBox.warning(
+                self, 
+                "Attachment Limit Exceeded", 
+                "Total size of all attachments exceeds 5MB."
+            )
+            return
+
+        try:
+            with path.open("rb") as f:
+                data = f.read()
+        except Exception as e:
+            QMessageBox.warning(self, "Read Error", f"Could not read '{path.name}':\n{e}")
+            return
+
+        is_image = path.suffix.lower() in ('.png', '.jpg', '.jpeg', '.gif', '.bmp')
+        b64_data = base64.b64encode(data).decode('utf-8')
+
+        name = path.name
+        if any(att['name'] == name for att in self._attachments):
+            name = f"{path.stem}_{datetime.now().strftime('%M%S')}{path.suffix}"
+
+        self._attachments.append({
+            'name': name,
+            'data': data,
+            'b64_data': b64_data,
+            'is_image': is_image,
+            'size': size
+        })
+        self._update_attachments_list()
+
+    def _add_pasted_image(self, data: bytes, format_name: str) -> None:
+        from datetime import datetime
+        import base64
+        size = len(data)
+        if size > 2 * 1024 * 1024:
+            QMessageBox.warning(self, "Image Too Large", "Pasted image is too large.")
+            return
+
+        total_size = sum(att['size'] for att in self._attachments) + size
+        if total_size > 5 * 1024 * 1024:
+            QMessageBox.warning(self, "Attachment Limit Exceeded", "Total size of all attachments exceeds 5MB.")
+            return
+
+        b64_data = base64.b64encode(data).decode('utf-8')
+        name = f"pasted_image_{datetime.now().strftime('%Y%m%d_%H%M%S')}.png"
+
+        self._attachments.append({
+            'name': name,
+            'data': data,
+            'b64_data': b64_data,
+            'is_image': True,
+            'size': size
+        })
+        self._update_attachments_list()
+
+    def _update_attachments_list(self) -> None:
+        self._list_widget.clear()
+        for att in self._attachments:
+            size_kb = att['size'] / 1024
+            self._list_widget.addItem(f"{att['name']} ({size_kb:.1f} KB)")
+        
+        has_items = len(self._attachments) > 0
+        self._list_widget.setVisible(has_items)
+        self._btn_remove.setVisible(has_items)
+
+    def _remove_selected_attachment(self) -> None:
+        row = self._list_widget.currentRow()
+        if row >= 0 and row < len(self._attachments):
+            del self._attachments[row]
+            self._update_attachments_list()
+
     def _on_accept(self) -> None:
         if not self._title_input.text().strip():
             QMessageBox.warning(self, "Validation Error", "Title is required.")
@@ -903,12 +1075,11 @@ class ReportIssueDialog(QDialog):
             return
         self.accept()
 
-    def get_data(self) -> tuple[str, str, bool, bool]:
+    def get_data(self) -> tuple[str, str, list[dict]]:
         return (
             self._title_input.text().strip(),
             self._desc_input.toPlainText().strip(),
-            self._include_log_chk.isChecked(),
-            self._include_diag_chk.isChecked(),
+            self._attachments,
         )
 
 

@@ -671,3 +671,38 @@ def test_decoded_logger_queue_saturation_warning(tmp_path):
     
     logger.close()
     assert any("dropped" in w for w in warnings)
+
+
+def test_decoded_logger_retains_incomplete_cycles_in_polling_mode(tmp_path):
+    """With polling_mode=True, incomplete cycles are NOT dropped. They are written to disk."""
+    config = _make_test_config()
+    path = tmp_path / "decoded_polling.xlsx"
+
+    frame_a = DecodedFrame(
+        frame_id=0x0100,
+        frame_name="FrameA",
+        signals=[
+            DecodedSignal(
+                frame_id=0x0100,
+                frame_name="FrameA",
+                signal_name="Cell_V1",
+                raw_value=3850,
+                scaled_value=3.85,
+                unit="V",
+                status="ok",
+                group="Cells",
+            )
+        ],
+    )
+
+    with DecodedLogger(path, config, polling_mode=True) as logger:
+        logger.log_frame(frame_a, 1000)
+        logger.log_frame(frame_a, 2000)
+        logger.log_frame(frame_a, 3000)
+
+    wb = load_workbook(path, read_only=True)
+    data_rows = list(wb[DecodedLogger.DATA_SHEET].iter_rows(values_only=True))
+    wb.close()
+
+    # Header row + 3 cycle rows (1000, 2000, 3000)
+    assert len(data_rows) == 4

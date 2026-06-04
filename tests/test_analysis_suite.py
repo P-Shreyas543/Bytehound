@@ -357,3 +357,43 @@ def test_get_checked_params():
     assert checked == ["Speed", "Torque"]
 
 
+def test_plot_scoped_v_cursor_readout_params():
+    """Verify that _update_cursor_readout propagates all active parameters on the subplot for plot-scoped cursors."""
+    from unittest.mock import MagicMock
+    win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
+    
+    mock_pw1 = object()
+    mock_pw2 = object()
+    
+    win._plot_widgets = [mock_pw1, mock_pw2]
+    win._plot_groups = [["Speed", "Power"], ["Torque"]]
+    win._logs = {}
+    win._h_cursors = []
+    
+    win._get_checked_params = lambda: ["Speed", "Power", "Torque"]
+    
+    # Plot-scoped cursor on first subplot (which has Speed & Power)
+    cursor_data = {
+        'id': 'cursor_1',
+        'scope': 'plot',
+        'plot_param': 'Speed',
+        'lines': {mock_pw1: object()},
+        'time': 5.0,
+        'color': '#ff0000',
+    }
+    win._v_cursors = [cursor_data]
+    
+    # Mock readout panel
+    win._cursor_readout = MagicMock()
+    
+    win._update_cursor_readout()
+    
+    # Verify update_readout call arguments
+    args, kwargs = win._cursor_readout.update_readout.call_args
+    v_cursors_passed = args[0]
+    
+    assert len(v_cursors_passed) == 1
+    # For the plot-scoped cursor, it should have the parameters on its subplot (Speed & Power)
+    assert v_cursors_passed[0]['params'] == ["Speed", "Power"]
+
+

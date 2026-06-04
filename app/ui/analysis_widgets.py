@@ -201,6 +201,8 @@ class CursorReadoutPanel(QGroupBox):
             self._delta_label.setText("")
 
         def params_for_cursor(cursor: dict) -> list[str]:
+            if 'params' in cursor:
+                return cursor['params']
             if cursor.get('scope') == 'plot' and cursor.get('plot_param'):
                 return [cursor.get('plot_param')]
             return active_params

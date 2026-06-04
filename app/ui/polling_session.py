@@ -75,6 +75,8 @@ class PollingSessionMixin:
         )
         if self._serial:
             self._serial.set_polling_global(enabled)
+        if getattr(self, "_decoded_logger", None) is not None:
+            self._decoded_logger.polling_mode = enabled
         self._log_activity(f"[ACTION] Auto-Fetch {'started' if enabled else 'stopped'}")
 
     def _open_poll_config_dialog(self) -> None:

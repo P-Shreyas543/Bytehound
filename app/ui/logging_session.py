@@ -133,6 +133,10 @@ class LoggingSessionMixin:
             if self._config is None:
                 self._popup_critical("Start Logging", "No configuration loaded.")
                 return
+            polling_active = False
+            if hasattr(self, "_polling_action") and self._polling_action.isChecked():
+                polling_active = True
+
             self._decoded_logger = DecodedLogger(
                 decoded_path,
                 self._config,
@@ -140,6 +144,7 @@ class LoggingSessionMixin:
                 metadata=metadata,
                 on_error=self._on_logger_error,
                 on_warning=self._log_activity,
+                polling_mode=polling_active,
             )
         else:
             self._decoded_logger = None

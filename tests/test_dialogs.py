@@ -315,11 +315,10 @@ def test_report_issue_dialog_and_reporter(qapp, monkeypatch):
     dlg._on_accept()
     assert len(warn_calls) == 2
 
-    title, desc, include_log, include_diag = dlg.get_data()
+    title, desc, attachments = dlg.get_data()
     assert title == "Test Title"
     assert desc == "Test Description"
-    assert include_log is True
-    assert include_diag is True
+    assert isinstance(attachments, list)
 
     # Test IssueReporter
     class MockResponse:
@@ -330,7 +329,7 @@ def test_report_issue_dialog_and_reporter(qapp, monkeypatch):
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    reporter = IssueReporter("My Title", "My Desc", "My Diag", "My Log", "http://dummy")
+    reporter = IssueReporter("My Title", "My Desc", "My Diag", "My Log", [], "http://dummy")
     finished_calls = []
     reporter.finished.connect(lambda s, m: finished_calls.append((s, m)))
 
@@ -356,6 +355,42 @@ def test_report_issue_dialog_and_reporter(qapp, monkeypatch):
     assert len(finished_calls) == 1
     assert finished_calls[0][0] is False
     assert "Status code: 400" in finished_calls[0][1]
+
+
+def test_report_issue_dialog_attachments(qapp, tmp_path):
+    from app.ui.dialogs import ReportIssueDialog
+    
+    dlg = ReportIssueDialog()
+    assert dlg.windowTitle() == "Report Issue"
+    assert len(dlg._attachments) == 0
+    
+    # Create a dummy attachment file
+    file_path = tmp_path / "test_log.txt"
+    file_path.write_text("Hello developer log contents", encoding="utf-8")
+    
+    # Simulate dropping the file
+    dlg._add_attachment(str(file_path))
+    
+    assert len(dlg._attachments) == 1
+    assert dlg._attachments[0]["name"] == "test_log.txt"
+    assert dlg._attachments[0]["is_image"] is False
+    assert dlg._attachments[0]["size"] > 0
+    assert dlg._attachments[0]["b64_data"] != ""
+    
+    # Simulate pasting an image
+    dummy_image_data = b"dummy_png_bytes"
+    dlg._add_pasted_image(dummy_image_data, "PNG")
+    
+    assert len(dlg._attachments) == 2
+    assert dlg._attachments[1]["name"].startswith("pasted_image_")
+    assert dlg._attachments[1]["is_image"] is True
+    
+    # Test remove
+    dlg._list_widget.setCurrentRow(0)
+    dlg._remove_selected_attachment()
+    assert len(dlg._attachments) == 1
+    assert dlg._attachments[0]["is_image"] is True
+
 
 
 

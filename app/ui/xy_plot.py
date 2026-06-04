@@ -13,8 +13,8 @@ import pyqtgraph as pg
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QHBoxLayout, QLabel, QPushButton,
-    QSpinBox, QVBoxLayout,
+    QCheckBox, QComboBox, QHBoxLayout, QLabel, QMainWindow, QPushButton,
+    QSpinBox, QVBoxLayout, QWidget,
 )
 
 from .analysis_theme import APP_NAME, THEME
@@ -32,7 +32,7 @@ _XY_SYMBOLS = [
 ]
 
 
-class XYPlotWindow(QDialog):
+class XYPlotWindow(QMainWindow):
     """Scatter / X-Y plot window for cross-parameter analysis."""
 
     def __init__(self, logs: dict[str, LogEntry], parent=None):
@@ -47,7 +47,9 @@ class XYPlotWindow(QDialog):
         self._logs = logs
         self._curves: list = []
 
-        layout = QVBoxLayout(self)
+        central_widget = QWidget(self)
+        self.setCentralWidget(central_widget)
+        layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(6, 6, 6, 6)
 
         # ── Row 1: axis selectors ─────────────────────────────────
@@ -84,6 +86,17 @@ class XYPlotWindow(QDialog):
         self._regress_cb = QCheckBox("Regression")
         self._regress_cb.setToolTip("Show linear regression line with R²")
         ctrl.addWidget(self._regress_cb)
+        ctrl.addSpacing(8)
+
+        # ── Min/Max checkboxes ───────────────────────────────────
+        self._show_min_cb = QCheckBox("Show Min")
+        self._show_min_cb.setToolTip("Highlight the minimum X and Y data points for each log")
+        ctrl.addWidget(self._show_min_cb)
+        ctrl.addSpacing(8)
+
+        self._show_max_cb = QCheckBox("Show Max")
+        self._show_max_cb.setToolTip("Highlight the maximum X and Y data points for each log")
+        ctrl.addWidget(self._show_max_cb)
         ctrl.addSpacing(8)
 
         btn_plot = QPushButton("Plot")
@@ -123,6 +136,18 @@ class XYPlotWindow(QDialog):
 
         self.apply_theme(THEME.theme())
 
+        # ── Connect signals for dynamic updates ──────────────────
+        self._x_combo.currentIndexChanged.connect(self._on_check_changed)
+        self._y_combo.currentIndexChanged.connect(self._on_check_changed)
+        self._sym_combo.currentIndexChanged.connect(self._on_check_changed)
+        self._size_spin.valueChanged.connect(self._on_check_changed)
+        self._regress_cb.stateChanged.connect(self._on_check_changed)
+        self._show_min_cb.stateChanged.connect(self._on_check_changed)
+        self._show_max_cb.stateChanged.connect(self._on_check_changed)
+
+        # Render plot initially
+        self._do_plot()
+
     def apply_theme(self, theme: str) -> None:
         """Apply stylesheet and update plot background/foreground colors."""
         try:
@@ -154,6 +179,7 @@ class XYPlotWindow(QDialog):
         self._plot.update()
 
     def _do_plot(self):
+        self._clear_plot()
         x_param = self._x_combo.currentText()
         y_param = self._y_combo.currentText()
         if not x_param or not y_param:
@@ -207,6 +233,149 @@ class XYPlotWindow(QDialog):
                 self._plot.addItem(reg_line)
                 self._curves.append(reg_line)
 
+            # Highlight Min/Max if enabled
+            if len(x[mask]) > 0:
+                xm, ym = x[mask], y[mask]
+
+                if self._show_min_cb.isChecked():
+                    min_x_idx = np.argmin(xm)
+                    min_y_idx = np.argmin(ym)
+
+                    if min_x_idx == min_y_idx:
+                        val_x = xm[min_x_idx]
+                        val_y = ym[min_x_idx]
+
+                        marker = pg.ScatterPlotItem(
+                            x=[val_x], y=[val_y],
+                            pen=pg.mkPen(entry.color, width=2),
+                            brush=pg.mkBrush(None),
+                            symbol='o', size=size + 6
+                        )
+                        self._plot.addItem(marker)
+                        self._curves.append(marker)
+
+                        label = pg.TextItem(
+                            f"Min X&Y ({val_x:.4g}, {val_y:.4g})",
+                            anchor=(0.5, 1.3),
+                            color=entry.color
+                        )
+                        label.setPos(val_x, val_y)
+                        self._plot.addItem(label)
+                        self._curves.append(label)
+                    else:
+                        # Min X
+                        val_x1 = xm[min_x_idx]
+                        val_y1 = ym[min_x_idx]
+                        marker_x = pg.ScatterPlotItem(
+                            x=[val_x1], y=[val_y1],
+                            pen=pg.mkPen(entry.color, width=2),
+                            brush=pg.mkBrush(None),
+                            symbol='o', size=size + 6
+                        )
+                        self._plot.addItem(marker_x)
+                        self._curves.append(marker_x)
+
+                        label_x = pg.TextItem(
+                            f"Min X ({val_x1:.4g})",
+                            anchor=(0.5, 1.3),
+                            color=entry.color
+                        )
+                        label_x.setPos(val_x1, val_y1)
+                        self._plot.addItem(label_x)
+                        self._curves.append(label_x)
+
+                        # Min Y
+                        val_x2 = xm[min_y_idx]
+                        val_y2 = ym[min_y_idx]
+                        marker_y = pg.ScatterPlotItem(
+                            x=[val_x2], y=[val_y2],
+                            pen=pg.mkPen(entry.color, width=2),
+                            brush=pg.mkBrush(None),
+                            symbol='o', size=size + 6
+                        )
+                        self._plot.addItem(marker_y)
+                        self._curves.append(marker_y)
+
+                        label_y = pg.TextItem(
+                            f"Min Y ({val_y2:.4g})",
+                            anchor=(0.5, -0.3),
+                            color=entry.color
+                        )
+                        label_y.setPos(val_x2, val_y2)
+                        self._plot.addItem(label_y)
+                        self._curves.append(label_y)
+
+                if self._show_max_cb.isChecked():
+                    max_x_idx = np.argmax(xm)
+                    max_y_idx = np.argmax(ym)
+
+                    if max_x_idx == max_y_idx:
+                        val_x = xm[max_x_idx]
+                        val_y = ym[max_x_idx]
+
+                        marker = pg.ScatterPlotItem(
+                            x=[val_x], y=[val_y],
+                            pen=pg.mkPen(entry.color, width=2),
+                            brush=pg.mkBrush(None),
+                            symbol='o', size=size + 6
+                        )
+                        self._plot.addItem(marker)
+                        self._curves.append(marker)
+
+                        label = pg.TextItem(
+                            f"Max X&Y ({val_x:.4g}, {val_y:.4g})",
+                            anchor=(0.5, -0.3),
+                            color=entry.color
+                        )
+                        label.setPos(val_x, val_y)
+                        self._plot.addItem(label)
+                        self._curves.append(label)
+                    else:
+                        # Max X
+                        val_x1 = xm[max_x_idx]
+                        val_y1 = ym[max_x_idx]
+                        marker_x = pg.ScatterPlotItem(
+                            x=[val_x1], y=[val_y1],
+                            pen=pg.mkPen(entry.color, width=2),
+                            brush=pg.mkBrush(None),
+                            symbol='o', size=size + 6
+                        )
+                        self._plot.addItem(marker_x)
+                        self._curves.append(marker_x)
+
+                        label_x = pg.TextItem(
+                            f"Max X ({val_x1:.4g})",
+                            anchor=(0.5, -0.3),
+                            color=entry.color
+                        )
+                        label_x.setPos(val_x1, val_y1)
+                        self._plot.addItem(label_x)
+                        self._curves.append(label_x)
+
+                        # Max Y
+                        val_x2 = xm[max_y_idx]
+                        val_y2 = ym[max_y_idx]
+                        marker_y = pg.ScatterPlotItem(
+                            x=[val_x2], y=[val_y2],
+                            pen=pg.mkPen(entry.color, width=2),
+                            brush=pg.mkBrush(None),
+                            symbol='o', size=size + 6
+                        )
+                        self._plot.addItem(marker_y)
+                        self._curves.append(marker_y)
+
+                        label_y = pg.TextItem(
+                            f"Max Y ({val_y2:.4g})",
+                            anchor=(0.5, 1.3),
+                            color=entry.color
+                        )
+                        label_y.setPos(val_x2, val_y2)
+                        self._plot.addItem(label_y)
+                        self._curves.append(label_y)
+
+    def _on_check_changed(self):
+        self._do_plot()
+
     def _swap_axes(self):
         """Swap the X and Y axis parameter selections and re-render.
 
@@ -228,7 +397,6 @@ class XYPlotWindow(QDialog):
         finally:
             self._x_combo.blockSignals(False)
             self._y_combo.blockSignals(False)
-        self._clear_plot()
         self._do_plot()
 
     def _clear_plot(self):

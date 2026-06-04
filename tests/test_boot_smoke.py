@@ -618,3 +618,42 @@ def test_plot_dual_axis_resize_callback(window: MainWindow, monkeypatch) -> None
     pi.vb.sigResized.emit(pi.vb)
 
 
+def test_plot_range_synchronization(window: MainWindow, monkeypatch) -> None:
+    """Verify X-axis range synchronization across multiple panels and Y-axes in Explore mode."""
+    window._rebuild_plot_grid(2, 1)
+    
+    panel1 = window._plot_panels[0]
+    panel2 = window._plot_panels[1]
+    
+    # Mock visibility so redraw doesn't skip
+    monkeypatch.setattr(panel1.plot_item, "isVisible", lambda: True)
+    monkeypatch.setattr(panel2.plot_item, "isVisible", lambda: True)
+    if hasattr(window, "_plot_dock") and window._plot_dock is not None:
+        monkeypatch.setattr(window._plot_dock, "isVisible", lambda: True)
+        
+    key1 = (1, "SignalA")
+    key2 = (2, "SignalB")
+    
+    panel1.assigned_keys = [key1]
+    panel2.assigned_keys = [key2]
+    
+    window._signal_unit_map[key1] = "V"
+    window._signal_unit_map[key2] = "A"
+    
+    buf1 = window._plot_history.setdefault(key1, window._make_history_buffer())
+    buf2 = window._plot_history.setdefault(key2, window._make_history_buffer())
+    buf1.append(0.0, 1.0)
+    buf2.append(0.0, 2.0)
+    
+    window._redraw_plot()
+    
+    # Simulate a user panning panel 2 to [10.0, 20.0]
+    panel2_vb = panel2.plot_item.getViewBox()
+    window._on_plot_range_changed(panel2_vb, (10.0, 20.0))
+    
+    # Check that panel 1's main ViewBox has updated its range to [10.0, 20.0]
+    panel1_vb = panel1.plot_item.getViewBox()
+    assert panel1_vb.viewRange()[0] == [10.0, 20.0]
+
+
+

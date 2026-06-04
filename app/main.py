@@ -59,7 +59,7 @@ def _create_file_handler(log_path: Path) -> RotatingFileHandler | None:
         return None
 
 
-def configure_logging(level: int = logging.INFO) -> None:
+def configure_logging(level: int = logging.DEBUG) -> None:
     global _LOGGING_CONFIGURED
     root = logging.getLogger()
     if _LOGGING_CONFIGURED:

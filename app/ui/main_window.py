@@ -284,7 +284,7 @@ class MainWindow(
         self._decoded_logger: Optional[DecodedLogger] = None
         self._settings = QSettings(APP_ORG, APP_NAME)
         _migrate_settings(self._settings)
-        self._apply_logging_level(str(self._settings.value("logging/level", "INFO")))
+        self._apply_logging_level(str(self._settings.value("logging/level", "DEBUG")))
         self._tx_field_inputs: Dict[str, QLineEdit] = {}
         self._seen_decode_warnings: set[tuple[int, str, int]] = set()
         self._unsolicited_detected = False

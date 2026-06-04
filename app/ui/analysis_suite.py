@@ -2176,6 +2176,27 @@ class AnalysisSuiteWindow(QMainWindow):
     def _update_cursor_readout(self):
         visible_logs = [e for e in self._logs.values() if e.visible]
         params = self._get_checked_params()
+        # Enrich each V-cursor with the active params of the subplot it's
+        # placed on (for plot-scoped cursors) or all checked params (for global ones).
+        v_cursor_views: list[dict] = []
+        for vc in self._v_cursors:
+            if vc.get('scope') == 'plot':
+                vc_params = []
+                for pw in vc.get('lines', {}).keys():
+                    if pw in self._plot_widgets:
+                        pi = self._plot_widgets.index(pw)
+                        if 0 <= pi < len(self._plot_groups):
+                            group = self._plot_groups[pi]
+                            for p in group:
+                                if p in params and p not in vc_params:
+                                    vc_params.append(p)
+            else:
+                vc_params = params
+            v_cursor_views.append({
+                **vc,
+                'params': vc_params,
+            })
+
         # Enrich each H-cursor with the param list of the subplot it's
         # anchored on so the readout panel can render it with the same
         # "C1  t  [param] / ● log / param  value" structure as V-cursors.
@@ -2196,7 +2217,7 @@ class AnalysisSuiteWindow(QMainWindow):
                 'plot_widget_id': id(pw),
             })
         self._cursor_readout.update_readout(
-            self._v_cursors, visible_logs, params,
+            v_cursor_views, visible_logs, params,
             h_cursors=h_cursor_views,
         )
 

@@ -27,6 +27,7 @@ class IssueReporter(QThread):
         description: str,
         diagnostics: str,
         log_content: str | None,
+        attachments: list[dict],
         worker_url: str,
         parent=None,
     ) -> None:
@@ -35,6 +36,7 @@ class IssueReporter(QThread):
         self.description = description
         self.diagnostics = diagnostics
         self.log_content = log_content
+        self.attachments = attachments
         self.worker_url = worker_url
 
     def run(self) -> None:
@@ -50,6 +52,31 @@ class IssueReporter(QThread):
                 f"\n\n<details><summary>Application Log</summary>\n\n"
                 f"```text\n{self.log_content}\n```\n</details>"
             )
+
+        if self.attachments:
+            body_text += "\n\n### Attachments\n"
+            for att in self.attachments:
+                name = att['name']
+                b64_data = att['b64_data']
+                is_image = att['is_image']
+                if is_image:
+                    body_text += (
+                        f"\n<details><summary>🖼️ Image Attachment: {name}</summary>\n\n"
+                        f"Please copy the base64 block below to decode and view the image:\n\n"
+                        f"```text\n{b64_data}\n```\n</details>\n"
+                    )
+                else:
+                    try:
+                        content = att['data'].decode('utf-8')
+                        body_text += (
+                            f"\n<details><summary>📄 File Attachment: {name}</summary>\n\n"
+                            f"```text\n{content}\n```\n</details>\n"
+                        )
+                    except Exception:
+                        body_text += (
+                            f"\n<details><summary>📦 Binary Attachment: {name}</summary>\n\n"
+                            f"```text\n{b64_data}\n```\n</details>\n"
+                        )
 
         data = {
             "title": f"[App Report] {self.title}",
@@ -82,20 +109,40 @@ class ReportIssueMixin:
         self._log_activity("[ACTION] Report Issue")
         dlg = ReportIssueDialog(self)
         if dlg.exec() == ReportIssueDialog.DialogCode.Accepted:
-            title, description, include_log, include_diag = dlg.get_data()
+            title, description, attachments = dlg.get_data()
 
-            if include_diag:
-                diagnostics = self._gather_issue_diagnostics()
+            # Automatically attach the loaded configuration file if present
+            if getattr(self, "_config_path", None) is not None:
+                from pathlib import Path
+                config_path = Path(self._config_path)
+                if config_path.is_file():
+                    try:
+                        import base64
+                        size = config_path.stat().st_size
+                        # Restrict automatic config file attachment to 4MB just in case
+                        if size <= 4 * 1024 * 1024:
+                            with config_path.open("rb") as f:
+                                config_data = f.read()
+                            b64_config = base64.b64encode(config_data).decode('utf-8')
+                            
+                            # Append it to the attachments list
+                            attachments.append({
+                                'name': f"auto_config_{config_path.name}",
+                                'data': config_data,
+                                'b64_data': b64_config,
+                                'is_image': False,
+                                'size': size
+                            })
+                    except Exception as e:
+                        _LOG.warning("Failed to automatically attach configuration file: %s", e)
+
+            diagnostics = self._gather_issue_diagnostics()
+
+            log_path = self._find_log_file_path()
+            if log_path:
+                log_content = self._read_log_tail(log_path, lines=200)
             else:
-                diagnostics = "(diagnostics excluded by user)"
-
-            log_content = None
-            if include_log:
-                log_path = self._find_log_file_path()
-                if log_path:
-                    log_content = self._read_log_tail(log_path, lines=200)
-                else:
-                    log_content = "(log file not found)"
+                log_content = "(log file not found)"
 
             self._progress_dialog = QProgressDialog(
                 "Submitting issue report...", "Cancel", 0, 0, self
@@ -109,7 +156,7 @@ class ReportIssueMixin:
 
             worker_url = self._version_info.get("issue_url", "https://bytehound.shreyasp182002.workers.dev/report_issue")
             self._reporter = IssueReporter(
-                title, description, diagnostics, log_content, worker_url, self
+                title, description, diagnostics, log_content, attachments, worker_url, self
             )
             self._reporter.finished.connect(self._on_report_finished)
             self._progress_dialog.canceled.connect(self._reporter.requestInterruption)
@@ -173,4 +220,13 @@ class ReportIssueMixin:
             f"RX bytes:    {self._rx_bytes}",
             f"TX bytes:    {self._tx_bytes}",
         ]
+        
+        diag.append("")
+        diag.append("--- QSettings ---")
+        try:
+            for key in sorted(self._settings.allKeys()):
+                diag.append(f"{key}: {self._settings.value(key)}")
+        except Exception as e:
+            diag.append(f"(failed to dump QSettings: {e})")
+
         return "\n".join(diag)
