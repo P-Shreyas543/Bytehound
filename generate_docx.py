@@ -919,6 +919,9 @@ def main():
     print("Building cover page...")
     build_cover_page(doc, version_info)
 
+    print("Building headers and footers...")
+    build_header_footer(doc, version_info)
+
     print("Parsing HTML...")
     with open(HTML_PATH, encoding="utf-8") as f:
         soup = BeautifulSoup(f.read(), "lxml")
