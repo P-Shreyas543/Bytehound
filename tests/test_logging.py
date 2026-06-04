@@ -706,3 +706,172 @@ def test_decoded_logger_retains_incomplete_cycles_in_polling_mode(tmp_path):
 
     # Header row + 3 cycle rows (1000, 2000, 3000)
     assert len(data_rows) == 4
+
+
+def test_decoded_logger_handles_tx_only_frames(tmp_path):
+    """TX-only frames are excluded from required cycle frame IDs, and do not block logging."""
+    protocol = dummy_protocol_config()
+    frame_rx = FrameDefinition(frame_id=0x0100, frame_name="FrameRX", direction="rx")
+    frame_tx = FrameDefinition(frame_id=0x0200, frame_name="FrameTX", direction="tx")
+
+    signals_rx = [
+        SignalSpec(
+            frame_id=0x0100,
+            frame_name="FrameRX",
+            signal_name="SigRX",
+            start_byte=0,
+            byte_length=2,
+            endianness="little",
+            data_type="uint16",
+            scale=1.0,
+            offset=0.0,
+            unit="",
+        )
+    ]
+    signals_tx = [
+        SignalSpec(
+            frame_id=0x0200,
+            frame_name="FrameTX",
+            signal_name="SigTX",
+            start_byte=0,
+            byte_length=2,
+            endianness="little",
+            data_type="uint16",
+            scale=1.0,
+            offset=0.0,
+            unit="",
+        )
+    ]
+
+    config = FrameConfig(
+        protocol=protocol,
+        frames={0x0100: frame_rx, 0x0200: frame_tx},
+        signals_by_frame={0x0100: signals_rx, 0x0200: signals_tx},
+        frame_names={0x0100: "FrameRX", 0x0200: "FrameTX"},
+    )
+
+    path = tmp_path / "decoded_tx.xlsx"
+
+    # FrameRX is the trigger because it's the last (and only) RX-capable frame.
+    logger = DecodedLogger(path, config)
+    assert logger._required_cycle_frame_ids == [0x0100]
+    assert logger._trigger_id == 0x0100
+
+    frame_rx_dec = DecodedFrame(
+        frame_id=0x0100,
+        frame_name="FrameRX",
+        signals=[
+            DecodedSignal(
+                frame_id=0x0100,
+                frame_name="FrameRX",
+                signal_name="SigRX",
+                raw_value=42,
+                scaled_value=42.0,
+                unit="",
+                status="ok",
+            )
+        ]
+    )
+
+    frame_tx_dec = DecodedFrame(
+        frame_id=0x0200,
+        frame_name="FrameTX",
+        signals=[
+            DecodedSignal(
+                frame_id=0x0200,
+                frame_name="FrameTX",
+                signal_name="SigTX",
+                raw_value=100,
+                scaled_value=100.0,
+                unit="",
+                status="ok",
+            )
+        ]
+    )
+
+    with logger:
+        # Cycle 1: Only RX arrives. Trigger fires immediately because only RX is required.
+        logger.log_frame(frame_rx_dec, 1000)
+
+        # Cycle 2: TX arrives, then RX. Trigger fires and both are written.
+        logger.log_frame(frame_tx_dec, 1900)
+        logger.log_frame(frame_rx_dec, 2000)
+
+    wb = load_workbook(path, read_only=True)
+    data_rows = list(wb[DecodedLogger.DATA_SHEET].iter_rows(values_only=True))
+    wb.close()
+
+    # Header + 2 data rows
+    assert len(data_rows) == 3
+
+    # Headers check
+    headers = data_rows[0]
+    assert "FrameRX.SigRX" in headers
+    assert "FrameTX.SigTX" in headers
+
+    # Row 1 (Cycle 1): RX present, TX empty/None
+    row1 = dict(zip(headers, data_rows[1]))
+    assert row1["FrameRX.SigRX"] == 42.0
+    assert row1["FrameTX.SigTX"] in (None, "", " ")
+
+    # Row 2 (Cycle 2): Both present
+    row2 = dict(zip(headers, data_rows[2]))
+    assert row2["FrameRX.SigRX"] == 42.0
+    assert row2["FrameTX.SigTX"] == 100.0
+
+
+def test_decoded_logger_rxtx_with_command_does_not_block_cycle(tmp_path):
+    """An RXTX frame that has an associated TX command is excluded from required cycle frame IDs."""
+    protocol = dummy_protocol_config()
+    frame_rx = FrameDefinition(frame_id=0x0100, frame_name="FrameRX", direction="rx")
+    frame_cmd = FrameDefinition(frame_id=0x0200, frame_name="FrameCMD", direction="rxtx")
+
+    signals_rx = [
+        SignalSpec(
+            frame_id=0x0100,
+            frame_name="FrameRX",
+            signal_name="SigRX",
+            start_byte=0,
+            byte_length=2,
+            endianness="little",
+            data_type="uint16",
+            scale=1.0,
+            offset=0.0,
+            unit="",
+        )
+    ]
+    signals_cmd = [
+        SignalSpec(
+            frame_id=0x0200,
+            frame_name="FrameCMD",
+            signal_name="SigCMD",
+            start_byte=0,
+            byte_length=2,
+            endianness="little",
+            data_type="uint16",
+            scale=1.0,
+            offset=0.0,
+            unit="",
+        )
+    ]
+
+    # Create a TX command on FrameCMD (0x0200)
+    from app.decoder.types import TxCommandSpec
+    tx_commands = {
+        "TestCommand": TxCommandSpec(command_name="TestCommand", frame_id=0x0200)
+    }
+
+    config = FrameConfig(
+        protocol=protocol,
+        frames={0x0100: frame_rx, 0x0200: frame_cmd},
+        signals_by_frame={0x0100: signals_rx, 0x0200: signals_cmd},
+        frame_names={0x0100: "FrameRX", 0x0200: "FrameCMD"},
+        tx_commands=tx_commands,
+    )
+
+    path = tmp_path / "decoded_rxtx_cmd.xlsx"
+
+    # FrameRX is strictly RX, FrameCMD is RXTX but has a TX command, so it is excluded.
+    logger = DecodedLogger(path, config)
+    assert logger._required_cycle_frame_ids == [0x0100]
+    assert logger._trigger_id == 0x0100

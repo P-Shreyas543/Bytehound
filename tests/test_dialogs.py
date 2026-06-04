@@ -392,5 +392,55 @@ def test_report_issue_dialog_attachments(qapp, tmp_path):
     assert dlg._attachments[0]["is_image"] is True
 
 
+def test_report_issue_body_truncation_on_overflow(qapp):
+    from app.ui.report_issue import IssueReporter
+    import urllib.request
+    import json
+    
+    large_data = b"\xff" * 50000
+    large_b64 = "x" * 67000
+    attachments = [
+        {
+            'name': 'very_large_file.bin',
+            'data': large_data,
+            'b64_data': large_b64,
+            'is_image': False,
+            'size': len(large_data)
+        }
+    ]
+    
+    reporter = IssueReporter(
+        title="Test Overflow",
+        description="User Description",
+        diagnostics="System Diagnostics",
+        log_content="Log Tail Content",
+        attachments=attachments,
+        worker_url="http://dummy"
+    )
+    
+    captured_payload = None
+    
+    def mock_urlopen(req, data=None, timeout=None):
+        nonlocal captured_payload
+        captured_payload = json.loads(data.decode('utf-8'))
+        class FakeResponse:
+            status = 201
+            def __enter__(self): return self
+            def __exit__(self, exc_type, exc_val, exc_tb): pass
+        return FakeResponse()
+        
+    urllib.request.urlopen = mock_urlopen
+    
+    reporter.run()
+    
+    assert captured_payload is not None
+    body = captured_payload["body"]
+    
+    assert len(body) <= 64000
+    assert "removed because the total issue size exceeded" in body
+    assert "very_large_file.bin" in body
+
+
+
 
 

@@ -40,43 +40,74 @@ class IssueReporter(QThread):
         self.worker_url = worker_url
 
     def run(self) -> None:
-        body_text = self.description
-
-        body_text += (
+        diag_section = (
             f"\n\n<details><summary>Diagnostics Info</summary>\n\n"
             f"```text\n{self.diagnostics}\n```\n</details>"
         )
 
+        log_section = ""
         if self.log_content:
-            body_text += (
+            log_section = (
                 f"\n\n<details><summary>Application Log</summary>\n\n"
                 f"```text\n{self.log_content}\n```\n</details>"
             )
 
-        if self.attachments:
-            body_text += "\n\n### Attachments\n"
-            for att in self.attachments:
-                name = att['name']
-                b64_data = att['b64_data']
-                is_image = att['is_image']
-                if is_image:
-                    body_text += (
-                        f"\n<details><summary>🖼️ Image Attachment: {name}</summary>\n\n"
-                        f"Please copy the base64 block below to decode and view the image:\n\n"
+        formatted_attachments = []
+        for att in self.attachments:
+            name = att['name']
+            b64_data = att['b64_data']
+            is_image = att['is_image']
+            if is_image:
+                block = (
+                    f"\n<details><summary>🖼️ Image Attachment: {name}</summary>\n\n"
+                    f"Please copy the base64 block below to decode and view the image:\n\n"
+                    f"```text\n{b64_data}\n```\n</details>\n"
+                )
+            else:
+                try:
+                    content = att['data'].decode('utf-8')
+                    block = (
+                        f"\n<details><summary>📄 File Attachment: {name}</summary>\n\n"
+                        f"```text\n{content}\n```\n</details>\n"
+                    )
+                except Exception:
+                    block = (
+                        f"\n<details><summary>📦 Binary Attachment: {name}</summary>\n\n"
                         f"```text\n{b64_data}\n```\n</details>\n"
                     )
+            formatted_attachments.append((att, block))
+
+        MAX_BODY_LEN = 64000
+        desc = self.description
+
+        while True:
+            att_text = ""
+            if formatted_attachments:
+                att_text = "\n\n### Attachments\n" + "".join(block for _, block in formatted_attachments)
+
+            body_text = desc + diag_section + log_section + att_text
+
+            if len(body_text) <= MAX_BODY_LEN:
+                break
+
+            if formatted_attachments:
+                # Find the largest attachment that is not yet a warning note
+                non_notes = [i for i, (_, block) in enumerate(formatted_attachments) if not block.startswith("\n*[Attachment")]
+                if non_notes:
+                    largest_idx = max(non_notes, key=lambda i: len(formatted_attachments[i][1]))
+                    att_item, _ = formatted_attachments[largest_idx]
+                    note = f"\n*[Attachment '{att_item['name']}' ({att_item['size']/1024:.1f} KB) removed because the total issue size exceeded GitHub's 65KB limit]*\n"
+                    formatted_attachments[largest_idx] = (att_item, note)
                 else:
-                    try:
-                        content = att['data'].decode('utf-8')
-                        body_text += (
-                            f"\n<details><summary>📄 File Attachment: {name}</summary>\n\n"
-                            f"```text\n{content}\n```\n</details>\n"
-                        )
-                    except Exception:
-                        body_text += (
-                            f"\n<details><summary>📦 Binary Attachment: {name}</summary>\n\n"
-                            f"```text\n{b64_data}\n```\n</details>\n"
-                        )
+                    # All are already notes, pop the largest note completely
+                    largest_note_idx = max(range(len(formatted_attachments)), key=lambda i: len(formatted_attachments[i][1]))
+                    formatted_attachments.pop(largest_note_idx)
+            else:
+                if log_section:
+                    log_section = "\n\n*[Application Log tail truncated due to size limit]*"
+                else:
+                    desc = desc[:MAX_BODY_LEN - len(diag_section) - 100] + "\n\n*[Description truncated due to size limit]*"
+                    break
 
         data = {
             "title": f"[App Report] {self.title}",

@@ -1,6 +1,6 @@
 {
-    "version": "0.4.3",
-    "document_version": "0.4.3",
+    "version": "0.4.5",
+    "document_version": "0.4.5",
     "Developer": "Shreyas P",
     "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "DECIBELS LAB PRIVATE LIMITED",
@@ -11,7 +11,7 @@
     "homepage": "https://bytehound.shreyasp182002.workers.dev/",
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
-    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_0.4.3.exe",
-    "release_notes": "Patch Release - XY Plotter Uniformity, Dynamic Theming, and Advanced Issue Reporting.\n\nNew Features:\n  - XY Plotter Uniformity: Promoted the XY Plotter window to a QMainWindow, granting standard minimize/maximize/close title bar buttons and theme consistency.\n  - Help Action Icons: Wired Copy Diagnostics, Report Issue, and Plot Settings QActions to dynamically update their colors when the theme is toggled.\n  - Advanced Bug Reporting: Removed the diagnostics selection checkboxes and enabled full Diagnostic Info, QSettings preferences dump, and RotatingFileHandler log tail by default. Added drag-and-drop file attachments and paste clipboard screenshot support. Active configuration file is now automatically attached to report submissions.",
-    "sha256": "12a96a0e4a4ef00215e65bf686bc90b59812ba2ea3b54e39b7634dc8bbc6ac42"
+    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_0.4.5.exe",
+    "release_notes": "Patch Release - Decoded Logger unblocking for RX/TX mixed configs, raw TX packet logging, and automated unit tests validation.\n\nNew Features:\n  - Decoded Logger Unblocking: Dynamically filters out transmit-only frames from the required cycle list, preventing log blockage when both RX and TX frames are configured.\n  - Transmitted Packet Logging: Hooked into raw wire recording to decode and log TX packets on the fly, ensuring all signals are correctly represented in the decoded Excel log.\n  - Automated Test Suite: Added new unit tests for TX-only logging verifying cycle integrity and correctness.",
+    "sha256": "66903e535d7ab44eb8d7942e9ed0d19984dd1240cf4a06cb082d263c054a7569"
 }

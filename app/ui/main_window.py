@@ -1088,6 +1088,26 @@ class MainWindow(
         direction = direction.upper()
         if self._raw_logger:
             self._raw_logger.log(direction, packet, timestamp=timestamp)
+        if direction == "TX" and self._decoded_logger and self._config:
+            import time
+            from ..protocol.packet_parser import create_parser
+            from ..decoder.frame_decoder import decode_frame
+            try:
+                temp_parser = create_parser(self._config.protocol)
+                temp_parser.feed(packet)
+                parsed = temp_parser.extract_all()
+                for p in parsed:
+                    if p.ok and p.frame_id is not None:
+                        decoded = decode_frame(self._config, p.frame_id, p.payload)
+                        if self._log_started_perf is not None:
+                            elapsed_ms = int((time.perf_counter() - self._log_started_perf) * 1000)
+                        else:
+                            t0 = self._log_started or self._session_started or datetime.now()
+                            elapsed_ms = int((datetime.now() - t0).total_seconds() * 1000)
+                        self._decoded_logger.log_frame(decoded, elapsed_ms)
+            except Exception as e:
+                import logging
+                logging.getLogger("bytehound.ui").exception("Failed to parse/decode TX packet: %s", e)
         self._console.appendPlainText(
             f"{timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, "
             f"{direction}, {packet.hex(' ').upper()}"

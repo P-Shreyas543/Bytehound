@@ -153,7 +153,7 @@ class DecodedLogger:
             self._cycle_frame_ids,
         ) = self._build_columns()
         self._trigger_id: Optional[int] = (
-            self._cycle_frame_ids[-1] if self._cycle_frame_ids else None
+            self._required_cycle_frame_ids[-1] if self._required_cycle_frame_ids else None
         )
         # Per-frame slot keyed by column POSITION (int), not name. Lets two
         # frames write into independently-positioned cells even if their
@@ -175,6 +175,33 @@ class DecodedLogger:
         self._pending_error: Optional[str] = None
         self._dropped_count = 0  # rows dropped because the queue was full
         self._last_drop_warning_time = 0.0
+
+    @property
+    def _required_cycle_frame_ids(self) -> List[int]:
+        tx_command_fids = {cmd.frame_id for cmd in self._config.tx_commands.values()}
+        
+        # If there are strictly RX frames, prioritize those
+        rx_only = [
+            fid for fid in self._cycle_frame_ids
+            if fid in self._config.frames and self._config.frames[fid].direction == "rx"
+        ]
+        if rx_only:
+            return rx_only
+            
+        # Otherwise, require RX-capable frames that don't have TX commands
+        candidates = [
+            fid for fid in self._cycle_frame_ids
+            if (fid not in self._config.frames or self._config.frames[fid].is_rx_capable)
+            and fid not in tx_command_fids
+        ]
+        if candidates:
+            return candidates
+            
+        # Absolute fallback to avoid empty list
+        return [
+            fid for fid in self._cycle_frame_ids
+            if fid not in self._config.frames or self._config.frames[fid].is_rx_capable
+        ]
 
     def __enter__(self) -> "DecodedLogger":
         self.open()
@@ -412,7 +439,7 @@ class DecodedLogger:
         """Assemble the cycle row and hand it off to the writer thread."""
         if self._data_ws is None or not self._cycle_buffer:
             return
-        if not force and not all(fid in self._cycle_buffer for fid in self._cycle_frame_ids):
+        if not force and not all(fid in self._cycle_buffer for fid in self._required_cycle_frame_ids):
             return
         # Position-keyed merge: each frame writes into its own column slots,
         # so even when two frames share a header text they land in distinct

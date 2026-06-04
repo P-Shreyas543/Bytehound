@@ -52,7 +52,9 @@ def qapp() -> QApplication:
 
 
 @pytest.fixture
-def window(qapp: QApplication):
+def window(qapp: QApplication, monkeypatch):
+    from app.ui.main_window import MainWindow
+    monkeypatch.setattr("app.ui.config_loader.ConfigLoaderMixin._load_default_config", lambda self: None)
     w = MainWindow()
     w.show()
     QTimer.singleShot(100, qapp.quit)

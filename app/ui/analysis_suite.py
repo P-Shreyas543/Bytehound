@@ -186,7 +186,7 @@ class AnalysisSuiteWindow(QMainWindow):
         self._h_cursors: list[dict] = []
         self._crosshair_lines: dict[pg.PlotWidget, tuple] = {}
         self._selected_v_cursor: str = ''   # cursor ID string, '' = none
-        self._selected_h_cursor: int = -1
+        self._selected_h_cursor: str = ''   # cursor ID string, '' = none
         self._cursor_dots: dict[str, list] = {}   # cursor_id → [{'pw', 'item'}]
         self._v_cursor_counter: int = 0          # ever-increasing label counter
         self._xy_window = None                   # keep reference to non-modal XY window
@@ -567,7 +567,7 @@ class AnalysisSuiteWindow(QMainWindow):
             if self._selected_v_cursor:
                 self._delete_v_cursor(self._selected_v_cursor)
                 return
-            if self._selected_h_cursor >= 0:
+            if self._selected_h_cursor:
                 self._delete_h_cursor(self._selected_h_cursor)
                 return
         super().keyPressEvent(event)
@@ -930,6 +930,8 @@ class AnalysisSuiteWindow(QMainWindow):
     def _rebuild_param_list(self, uncheck_params: set[str] = None):
         """Rebuild the flat parameter list with inline dropdowns."""
         tree = self._param_tree
+        scrollbar = tree.verticalScrollBar()
+        scroll_pos = scrollbar.value()
         tree.blockSignals(True)
         self._populating_tree = True
 
@@ -1019,6 +1021,7 @@ class AnalysisSuiteWindow(QMainWindow):
 
         # Rebuild settings combo choices
         self._rebuild_subplot_settings_combo()
+        scrollbar.setValue(scroll_pos)
 
     @staticmethod
     def _strip_units(name: str) -> str:
@@ -1540,6 +1543,13 @@ class AnalysisSuiteWindow(QMainWindow):
             QApplication.restoreOverrideCursor()
 
     def _do_rebuild_plots(self):
+        prev_x_range = None
+        if self._plot_widgets:
+            try:
+                prev_x_range = self._plot_widgets[0].getPlotItem().vb.viewRange()[0]
+            except Exception:
+                pass
+
         for pw in self._plot_widgets:
             self._plot_layout.removeWidget(pw)
             pw.deleteLater()
@@ -1556,6 +1566,8 @@ class AnalysisSuiteWindow(QMainWindow):
 
         groups = self._get_subplot_groups()
         if not groups or not self._logs:
+            self._update_cursor_readout()
+            self._refresh_stats_panel()
             return
 
         bg = THEME.c('plot_bg')
@@ -1728,7 +1740,16 @@ class AnalysisSuiteWindow(QMainWindow):
         # is distributed by Qt's grid policy. Calling addStretch() used
         # to crash _do_rebuild_plots whenever the user re-arranged params.
         self._restore_v_cursors()
+        self._restore_h_cursors()
         self._update_cursor_dots()
+
+        # Restore X range if it was saved and we have new plots
+        if prev_x_range is not None and self._plot_widgets:
+            try:
+                self._plot_widgets[0].setXRange(prev_x_range[0], prev_x_range[1], padding=0)
+            except Exception:
+                pass
+
         # Trigger an initial stats compute on the freshly rendered subplots.
         self._stats_timer.start()
         # (wait cursor released by _rebuild_plots wrapper)
@@ -2101,6 +2122,40 @@ class AnalysisSuiteWindow(QMainWindow):
         if self._selected_v_cursor:
             self._select_v_cursor(self._selected_v_cursor)
 
+    def _restore_h_cursors(self):
+        """Re-add existing horizontal cursor lines to newly rebuilt plots."""
+        for hc in self._h_cursors:
+            hc['line'] = None
+            hc['plot_widget'] = None
+
+            pi = hc.get('plot_index', -1)
+            if 0 <= pi < len(self._plot_widgets):
+                pw = self._plot_widgets[pi]
+                val = hc['value']
+                color = hc['color']
+                label_num = hc['label']
+                cid = hc['id']
+                line = pg.InfiniteLine(
+                    pos=val, angle=0, movable=True,
+                    pen=pg.mkPen(color, width=2, style=Qt.DashDotLine),
+                    label=f'H{label_num}: {val:.2f}',
+                    labelOpts={'position': 0.05, 'color': color,
+                               'fill': THEME.c('cursor_label_bg'),
+                               'movable': True})
+                pw.addItem(line, ignoreBounds=True)
+
+                line.sigPositionChanged.connect(
+                    lambda l, _cid=cid: self._on_h_cursor_moved(_cid, l))
+                line.sigClicked.connect(
+                    lambda *a, _cid=cid: self._select_h_cursor(_cid))
+
+                hc['line'] = line
+                hc['plot_widget'] = pw
+
+        # Re-apply selected highlight
+        if self._selected_h_cursor:
+            self._select_h_cursor(self._selected_h_cursor)
+
     def _on_v_cursor_moved(self, cursor_id: str, moved_line: pg.InfiniteLine):
         cdata = self._find_cursor_by_id(cursor_id)
         if cdata is None:
@@ -2183,7 +2238,13 @@ class AnalysisSuiteWindow(QMainWindow):
             if vc.get('scope') == 'plot':
                 vc_params = []
                 for pw in vc.get('lines', {}).keys():
-                    if pw in self._plot_widgets:
+                    pw_deleted = False
+                    if hasattr(pw, 'parent'):
+                        try:
+                            pw.parent()
+                        except RuntimeError:
+                            pw_deleted = True
+                    if not pw_deleted and pw in self._plot_widgets:
                         pi = self._plot_widgets.index(pw)
                         if 0 <= pi < len(self._plot_groups):
                             group = self._plot_groups[pi]
@@ -2206,7 +2267,14 @@ class AnalysisSuiteWindow(QMainWindow):
         for idx, hc in enumerate(self._h_cursors, start=1):
             pw = hc.get('plot_widget')
             group: list[str] = []
-            if pw is not None and pw in self._plot_widgets:
+            pw_deleted = False
+            if pw is not None:
+                if hasattr(pw, 'parent'):
+                    try:
+                        pw.parent()
+                    except RuntimeError:
+                        pw_deleted = True
+            if not pw_deleted and pw is not None and pw in self._plot_widgets:
                 pi = self._plot_widgets.index(pw)
                 if 0 <= pi < len(self._plot_groups):
                     group = list(self._plot_groups[pi])
@@ -2214,7 +2282,7 @@ class AnalysisSuiteWindow(QMainWindow):
                 **hc,
                 'label': hc.get('label', idx),
                 'plot_group': group,
-                'plot_widget_id': id(pw),
+                'plot_widget_id': id(pw) if not pw_deleted else 0,
             })
         self._cursor_readout.update_readout(
             v_cursor_views, visible_logs, params,
@@ -2294,9 +2362,9 @@ class AnalysisSuiteWindow(QMainWindow):
             y_range = pw.getPlotItem().vb.viewRange()[1]
             val = (y_range[0] + y_range[1]) / 2.0
 
-        ci = len(self._h_cursors)
-        label_num = ci + 1
-        color = CURSOR_COLORS[(ci + 2) % len(CURSOR_COLORS)]
+        label_num = len(self._h_cursors) + 1
+        color = CURSOR_COLORS[(len(self._h_cursors) + 2) % len(CURSOR_COLORS)]
+        cid = uuid.uuid4().hex[:8]
         line = pg.InfiniteLine(
             pos=val, angle=0, movable=True,
             pen=pg.mkPen(color, width=2, style=Qt.DashDotLine),
@@ -2305,55 +2373,86 @@ class AnalysisSuiteWindow(QMainWindow):
                        'fill': THEME.c('cursor_label_bg'),
                        'movable': True})
         pw.addItem(line, ignoreBounds=True)
+
+        pi = self._plot_widgets.index(pw) if pw in self._plot_widgets else -1
+
+        hc = {
+            'id': cid,
+            'line': line,
+            'plot_widget': pw,
+            'plot_index': pi,
+            'value': val,
+            'color': color,
+            'label': label_num,
+        }
+        self._h_cursors.append(hc)
+
         # On drag: keep the label fresh, keep the cached `value` in sync
         # with the line position, and refresh the readout so the bottom
         # panel always reflects the displayed Y.
         line.sigPositionChanged.connect(
-            lambda l, _ci=ci: self._on_h_cursor_moved(_ci, l))
+            lambda l, _cid=cid: self._on_h_cursor_moved(_cid, l))
         line.sigClicked.connect(
-            lambda *a, _ci=ci: self._on_h_cursor_selected(_ci))
-        self._h_cursors.append({
-            'line': line, 'plot_widget': pw,
-            'value': val, 'color': color,
-            'label': label_num,
-        })
+            lambda *a, _cid=cid: self._select_h_cursor(_cid))
+
+        self._select_h_cursor(cid)
         self._update_cursor_readout()
 
-    def _on_h_cursor_moved(self, cursor_index: int, line: pg.InfiniteLine) -> None:
+    def _find_h_cursor_by_id(self, cursor_id: str) -> Optional[dict]:
+        for hc in self._h_cursors:
+            if hc.get('id') == cursor_id:
+                return hc
+        return None
+
+    def _on_h_cursor_moved(self, cursor_id: str, line: pg.InfiniteLine) -> None:
         """Sync the H-cursor's cached value + label + readout after a drag."""
+        hc = self._find_h_cursor_by_id(cursor_id)
+        if hc is None:
+            return
         v = float(line.value())
-        label_num = None
-        if 0 <= cursor_index < len(self._h_cursors):
-            label_num = self._h_cursors[cursor_index].get('label')
+        label_num = hc.get('label')
         label_txt = f'H{label_num}: {v:.2f}' if label_num else f'{v:.2f}'
         line.label.setText(label_txt)
-        if 0 <= cursor_index < len(self._h_cursors):
-            self._h_cursors[cursor_index]['value'] = v
+        hc['value'] = v
+        self._select_h_cursor(cursor_id)
         self._update_cursor_readout()
 
-    def _on_h_cursor_selected(self, cursor_index: int):
+    def _select_h_cursor(self, cursor_id: str):
         """Mark h-cursor as selected (red pen), deselect others."""
-        prev = self._selected_h_cursor
-        self._selected_h_cursor = cursor_index
-        if 0 <= prev < len(self._h_cursors) and prev != cursor_index:
-            hc = self._h_cursors[prev]
-            hc['line'].setPen(pg.mkPen(hc['color'], width=2, style=Qt.DashDotLine))
-        if 0 <= cursor_index < len(self._h_cursors):
-            self._h_cursors[cursor_index]['line'].setPen(
+        prev_id = self._selected_h_cursor
+        self._selected_h_cursor = cursor_id
+        # Restore previous cursor color
+        if prev_id and prev_id != cursor_id:
+            prev = self._find_h_cursor_by_id(prev_id)
+            if prev and prev.get('line'):
+                prev['line'].setPen(pg.mkPen(prev['color'], width=2, style=Qt.DashDotLine))
+        # Highlight new selected cursor
+        cur = self._find_h_cursor_by_id(cursor_id)
+        if cur and cur.get('line'):
+            cur['line'].setPen(
                 pg.mkPen(SELECTED_CURSOR_COLOR, width=3, style=Qt.DashDotLine))
 
-    def _delete_h_cursor(self, cursor_index: int):
-        if cursor_index < 0 or cursor_index >= len(self._h_cursors):
+    def _delete_h_cursor(self, cursor_id: str):
+        hc = self._find_h_cursor_by_id(cursor_id)
+        if hc is None:
             return
-        hc = self._h_cursors.pop(cursor_index)
-        try:
-            hc['plot_widget'].removeItem(hc['line'])
-        except Exception:
-            pass
-        if self._selected_h_cursor == cursor_index:
-            self._selected_h_cursor = -1
-        elif self._selected_h_cursor > cursor_index:
-            self._selected_h_cursor -= 1
+        self._h_cursors.remove(hc)
+        pw = hc.get('plot_widget')
+        line = hc.get('line')
+        pw_deleted = False
+        if pw is not None:
+            if hasattr(pw, 'parent'):
+                try:
+                    pw.parent()
+                except RuntimeError:
+                    pw_deleted = True
+        if not pw_deleted and pw is not None and line is not None:
+            try:
+                pw.removeItem(line)
+            except Exception:
+                pass
+        if self._selected_h_cursor == cursor_id:
+            self._selected_h_cursor = ''
         self._update_cursor_readout()
 
     def _clear_all_cursors(self):
@@ -2361,7 +2460,14 @@ class AnalysisSuiteWindow(QMainWindow):
         for cdata in self._v_cursors:
             for pw, line in cdata['lines'].items():
                 try:
-                    pw.removeItem(line)
+                    pw_deleted = False
+                    if hasattr(pw, 'parent'):
+                        try:
+                            pw.parent()
+                        except RuntimeError:
+                            pw_deleted = True
+                    if not pw_deleted and line is not None:
+                        pw.removeItem(line)
                 except Exception:
                     pass
         self._v_cursors.clear()
@@ -2371,7 +2477,16 @@ class AnalysisSuiteWindow(QMainWindow):
         for _cid, dots in self._cursor_dots.items():
             for dot in dots:
                 try:
-                    dot['pw'].removeItem(dot['item'])
+                    pw = dot['pw']
+                    pw_deleted = False
+                    if hasattr(pw, 'parent'):
+                        try:
+                            pw.parent()
+                        except RuntimeError:
+                            pw_deleted = True
+                    item = dot['item']
+                    if not pw_deleted and item is not None:
+                        pw.removeItem(item)
                 except Exception:
                     pass
         self._cursor_dots.clear()
@@ -2379,11 +2494,21 @@ class AnalysisSuiteWindow(QMainWindow):
         # Horizontal
         for hc in self._h_cursors:
             try:
-                hc['plot_widget'].removeItem(hc['line'])
+                pw = hc.get('plot_widget')
+                pw_deleted = False
+                if pw is not None:
+                    if hasattr(pw, 'parent'):
+                        try:
+                            pw.parent()
+                        except RuntimeError:
+                            pw_deleted = True
+                line = hc.get('line')
+                if not pw_deleted and pw is not None and line is not None:
+                    pw.removeItem(line)
             except Exception:
                 pass
         self._h_cursors.clear()
-        self._selected_h_cursor = -1
+        self._selected_h_cursor = ''
 
         self._update_cursor_readout()
 
@@ -2462,14 +2587,29 @@ class AnalysisSuiteWindow(QMainWindow):
             })
 
         for hi, hc in enumerate(self._h_cursors, start=1):
-            pi = -1
-            for i, pw in enumerate(self._plot_widgets):
-                if pw is hc['plot_widget']:
-                    pi = i
-                    break
+            pi = hc.get('plot_index', -1)
+            pw = hc.get('plot_widget')
+            pw_deleted = False
+            if pw is not None:
+                if hasattr(pw, 'parent'):
+                    try:
+                        pw.parent()
+                    except RuntimeError:
+                        pw_deleted = True
+            if not pw_deleted and pw is not None and pw in self._plot_widgets:
+                pi = self._plot_widgets.index(pw)
+
+            val = hc['value']
+            line = hc.get('line')
+            if line is not None:
+                try:
+                    val = line.value()
+                except (RuntimeError, AttributeError):
+                    pass
+
             data['cursors']['horizontal'].append({
                 'plot_index': pi,
-                'value': hc['line'].value(),
+                'value': val,
                 'color': hc['color'],
                 'label': hc.get('label', hi),
             })
@@ -2614,6 +2754,7 @@ class AnalysisSuiteWindow(QMainWindow):
                 val = hc_data.get('value', 0)
                 color = hc_data.get('color', '#e63946')
                 label_num = hc_data.get('label', len(self._h_cursors) + 1)
+                cid = uuid.uuid4().hex[:8]
                 line = pg.InfiniteLine(
                     pos=val, angle=0, movable=True,
                     pen=pg.mkPen(color, width=2, style=Qt.DashDotLine),
@@ -2622,14 +2763,19 @@ class AnalysisSuiteWindow(QMainWindow):
                                'fill': THEME.c('cursor_label_bg'),
                                'movable': True})
                 pw.addItem(line, ignoreBounds=True)
-                ci = len(self._h_cursors)
+
                 line.sigPositionChanged.connect(
-                    lambda l, _ci=ci: self._on_h_cursor_moved(_ci, l))
+                    lambda l, _cid=cid: self._on_h_cursor_moved(_cid, l))
                 line.sigClicked.connect(
-                    lambda *a, _ci=ci: self._on_h_cursor_selected(_ci))
+                    lambda *a, _cid=cid: self._select_h_cursor(_cid))
+
                 self._h_cursors.append({
-                    'line': line, 'plot_widget': pw,
-                    'value': val, 'color': color,
+                    'id': cid,
+                    'line': line,
+                    'plot_widget': pw,
+                    'plot_index': pi,
+                    'value': val,
+                    'color': color,
                     'label': label_num,
                 })
 
