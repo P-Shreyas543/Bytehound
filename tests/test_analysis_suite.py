@@ -534,6 +534,48 @@ def test_rebuild_plots_saves_x_range():
     mock_view_box.viewRange.assert_called_once()
 
 
+@pytest.mark.parametrize(
+    "name, expected",
+    [
+        ("Vehicle Speed (Kmph)", "Kmph"),
+        ("Dyno Act Torque (Nm)", "Nm"),
+        ("Power (W) ", "W"),
+        ("No Units Here", ""),
+        ("Weird (a)(b)", "b"),
+        ("  Padded  (V)  ", "V"),
+    ],
+)
+def test_extract_unit(name, expected):
+    assert AnalysisSuiteWindow._extract_unit(name) == expected
+
+
+def test_subplot_dual_y_axes_unit_classification():
+    from unittest.mock import MagicMock
+    win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
+    
+    # Subplot group with same unit
+    group1 = ["Speed (Kmph)", "Target Speed (Kmph)"]
+    # Subplot group with different units
+    group2 = ["Speed (Kmph)", "Torque (Nm)", "Power (W)"]
+    # Subplot group with no units
+    group3 = ["Voltage", "Current"]
+    
+    def get_left_right(group):
+        left_unit = None
+        right_unit = None
+        for param in group:
+            unit = win._extract_unit(param)
+            if left_unit is None:
+                left_unit = unit
+            elif unit != left_unit and right_unit is None:
+                right_unit = unit
+        return left_unit, right_unit
+        
+    assert get_left_right(group1) == ("Kmph", None)
+    assert get_left_right(group2) == ("Kmph", "Nm")
+    assert get_left_right(group3) == ("", None)
+
+
 
 
 

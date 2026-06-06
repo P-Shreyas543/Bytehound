@@ -22,7 +22,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from PySide6.QtCore import QCoreApplication
 import openpyxl
 import pandas as pd
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+
 
 from app.commands.tx_command_builder import build_tx_command
 from app.decoder.config_loader import load_config
@@ -114,13 +117,13 @@ def generate_plot(decoded_path: Path, plot_output_path: Path) -> None:
 
     # Plot 2: Cell Voltages
     ax2 = axs[1]
-    cell_cols = [c for c in df.columns if "Cell Voltage" in c]
+    cell_cols = [c for c in df.columns if "Cell Voltage" in c and "frame_id" not in c and "elapsed_ms" not in c and not any(x in c for x in ["min", "max", "diff", "avg"])]
     if cell_cols:
         colors = plt.cm.plasma(plt.cm.colors.Normalize(0, len(cell_cols))(range(len(cell_cols))))
         for idx, col in enumerate(sorted(cell_cols)):
             ax2.plot(df["Time (s)"], df[col], label=col.split(".")[-1], color=colors[idx], linewidth=1, alpha=0.8)
     ax2.set_ylabel("Cell Voltage (V)", fontsize=11, fontweight="semibold", color="#475569")
-    ax2.set_title("Individual Cell Voltages (8 Channels)", fontsize=12, fontweight="semibold", color="#1E293B", loc="left")
+    ax2.set_title(f"Individual Cell Voltages ({len(cell_cols)} Channels)", fontsize=12, fontweight="semibold", color="#1E293B", loc="left")
     # Show legend only for first and last to keep it tidy
     if len(cell_cols) > 0:
         ax2.legend(loc="upper right", frameon=True, facecolor="white", edgecolor="#E2E8F0", ncol=4)
@@ -129,7 +132,7 @@ def generate_plot(decoded_path: Path, plot_output_path: Path) -> None:
     # Plot 3: Pack Current & SOC
     ax3 = axs[2]
     current_col = find_col("Pack Current")
-    soc_col = find_col("Pack SOC")
+    soc_col = find_col("Pack SOC") or find_col("SOC (CC)") or find_col("SOC")
     
     if current_col:
         ax3.plot(df["Time (s)"], df[current_col], label="Current (A)", color="#10B981", linewidth=2)
@@ -148,7 +151,7 @@ def generate_plot(decoded_path: Path, plot_output_path: Path) -> None:
 
     # Plot 4: BMS State & Mode
     ax4 = axs[3]
-    state_col = find_col("BMS State.label")
+    state_col = find_col("BMS State.label") or find_col("BMS Status.label")
     mode_col = find_col("mode") # or Mode.label
     
     if state_col:
@@ -180,10 +183,12 @@ def main() -> int:
                         help="duration of the test in seconds (default 600s / 10mins)")
     parser.add_argument("--boot-delay", type=float, default=3.0,
                         help="delay after opening serial port before starting operations")
+    parser.add_argument("--config", default="MultiCell-BMS-OverAllFrame.xlsx",
+                        help="path to config file (default: MultiCell-BMS-OverAllFrame.xlsx)")
     args = parser.parse_args()
 
     rep = Report()
-    cfg = load_config(Path("app/resources/config_template"))
+    cfg = load_config(Path(args.config))
 
     # Output paths
     Path("scratch").mkdir(exist_ok=True)
@@ -280,28 +285,33 @@ def main() -> int:
     worker.set_polling_global(True)
     print("Active polling enabled.")
 
-    # Autonomous streaming OFF command
-    # Turns off streaming so we only receive response to poll requests
-    try:
-        worker.enqueue_priority_tx(build_packet(cfg.protocol, 0x1005, b"\x01"))
-        print("Autonomous streaming disabled on board (polling-only active).")
-    except Exception as e:
-        rep.note(f"Failed to send streaming OFF command: {e}")
+    # Check configuration type
+    is_multicell = "Pack Voltage & Current" in [f.frame_name for f in cfg.frames.values()]
+
+    # Autonomous streaming OFF command (simulator only)
+    if not is_multicell:
+        try:
+            worker.enqueue_priority_tx(build_packet(cfg.protocol, 0x1005, b"\x01"))
+            print("Autonomous streaming disabled on board (polling-only active).")
+        except Exception as e:
+            rep.note(f"Failed to send streaming OFF command: {e}")
 
     # Reset initial state
     try:
-        worker.enqueue_priority_tx(build_tx_command(cfg, "Reset Faults", {}))
-        print("Initial Reset Faults command sent.")
+        reset_cmd = "Fault Reset" if is_multicell else "Reset Faults"
+        worker.enqueue_priority_tx(build_tx_command(cfg, reset_cmd, {}))
+        print(f"Initial {reset_cmd} command sent.")
     except Exception as e:
         rep.note(f"Failed to send initial reset faults command: {e}")
 
-    # Initial voltage limit set
-    current_limit = 55.0
-    try:
-        worker.enqueue_priority_tx(build_tx_command(cfg, "Set Voltage Limit", {"Voltage Limit (V)": current_limit}))
-        print(f"Initial Voltage Limit set to {current_limit} V.")
-    except Exception as e:
-        rep.note(f"Failed to send initial voltage limit: {e}")
+    # Initial voltage limit set (simulator only)
+    if not is_multicell:
+        current_limit = 55.0
+        try:
+            worker.enqueue_priority_tx(build_tx_command(cfg, "Set Voltage Limit", {"Voltage Limit (V)": current_limit}))
+            print(f"Initial Voltage Limit set to {current_limit} V.")
+        except Exception as e:
+            rep.note(f"Failed to send initial voltage limit: {e}")
 
     # Main run loop
     next_status_print = log_start + 10.0
@@ -309,17 +319,30 @@ def main() -> int:
 
     # Commands timeline
     # {time_offset_seconds: (type, value)}
-    command_schedule = {
-        60:  ("Set Voltage Limit", 52.0),
-        120: ("Set Voltage Limit", 58.0),
-        180: ("Reset Faults", None),
-        240: ("Set Voltage Limit", 45.0),
-        300: ("Inject Stress Mode", True),
-        360: ("Inject Stress Mode", False),
-        420: ("Set Voltage Limit", 58.5),
-        480: ("Reset Faults", None),
-        540: ("Set Voltage Limit", 50.0)
-    }
+    if is_multicell:
+        command_schedule = {
+            60:  ("Fault Reset", None),
+            120: ("Fault Reset", None),
+            180: ("Fault Reset", None),
+            240: ("Fault Reset", None),
+            300: ("Inject Stress Mode", True),
+            360: ("Inject Stress Mode", False),
+            420: ("Fault Reset", None),
+            480: ("Fault Reset", None),
+            540: ("Fault Reset", None)
+        }
+    else:
+        command_schedule = {
+            60:  ("Set Voltage Limit", 52.0),
+            120: ("Set Voltage Limit", 58.0),
+            180: ("Reset Faults", None),
+            240: ("Set Voltage Limit", 45.0),
+            300: ("Inject Stress Mode", True),
+            360: ("Inject Stress Mode", False),
+            420: ("Set Voltage Limit", 58.5),
+            480: ("Reset Faults", None),
+            540: ("Set Voltage Limit", 50.0)
+        }
     
     commands_sent = set()
 
@@ -349,8 +372,8 @@ def main() -> int:
                             pkt = build_tx_command(cfg, "Set Voltage Limit", {"Voltage Limit (V)": cmd_val})
                             worker.enqueue_priority_tx(pkt)
                             current_limit = cmd_val
-                        elif cmd_type == "Reset Faults":
-                            pkt = build_tx_command(cfg, "Reset Faults", {})
+                        elif cmd_type in ("Reset Faults", "Fault Reset"):
+                            pkt = build_tx_command(cfg, cmd_type, {})
                             worker.enqueue_priority_tx(pkt)
                         elif cmd_type == "Inject Stress Mode":
                             # 0x1002 is stress mode frame
@@ -369,7 +392,8 @@ def main() -> int:
         decoded_logger.close()
         
     print("Logs closed. Awaiting writer threads to completely save files...")
-    time.sleep(3.0)
+    raw_logger.await_drain(timeout=60.0)
+    decoded_logger.await_drain(timeout=60.0)
 
     # ========================== VERIFICATION PHASE ==========================
     print("\n=================== VERIFICATION PHASE ===================")
@@ -395,10 +419,10 @@ def main() -> int:
                 directions = set()
                 rows_count = 0
                 timestamps = []
-                for row in data_ws.iter_rows(min_row=2, max_row=200, values_only=True):
+                for row in data_ws.iter_rows(min_row=2, values_only=True):
                     if row[1]:
                         directions.add(row[1])
-                    if row[0]:
+                    if row[0] and len(timestamps) < 1000:
                         timestamps.append(row[0])
                     rows_count += 1
                 
@@ -443,40 +467,50 @@ def main() -> int:
                 data_ws = wb_dec["Data"]
                 headers = [cell.value for cell in next(data_ws.iter_rows(max_row=1))]
                 
-                # Verify that BMS Status, BMS Settings, and Status Flags are in headers
-                has_status = any("BMS Status" in h for h in headers if h)
-                has_settings = any("BMS Settings" in h for h in headers if h)
-                has_flags = any("Status Flags" in h for h in headers if h)
-                
-                if has_status and has_settings and has_flags:
-                    rep.ok("Decoded log contains columns for all frame groups")
-                else:
-                    rep.fail("Decoded log headers missing frame groups", f"status={has_status}, settings={has_settings}, flags={has_flags}")
-                
-                # Verify that Voltage Limit changes are reflected in the log
-                # We can find the column for Voltage Limit
-                v_lim_idx = None
-                for idx, h in enumerate(headers):
-                    if h and "Voltage Limit" in h:
-                        v_lim_idx = idx
-                        break
-                
-                if v_lim_idx is not None:
-                    logged_limits = set()
-                    for row in data_ws.iter_rows(min_row=2, values_only=True):
-                        val = row[v_lim_idx]
-                        if val is not None:
-                            logged_limits.add(float(val))
+                # Verify that expected frame groups are in headers
+                if is_multicell:
+                    has_voltage = any("Pack Voltage & Current" in h for h in headers if h)
+                    has_cells = any("Cell Voltages" in h for h in headers if h)
+                    has_temp = any("Pack Temperature Sensors" in h for h in headers if h)
                     
-                    expected_set = {55.0, 52.0, 58.0, 45.0, 58.5, 50.0}
-                    # Filter out any other transient limits or seed value (firmware defaults)
-                    intersection = expected_set.intersection(logged_limits)
-                    if len(intersection) >= 4: # allow some tolerance if command was sent at the very end
-                        rep.ok(f"Voltage Limit updates correctly captured in log: {sorted(intersection)} V")
+                    if has_voltage and has_cells and has_temp:
+                        rep.ok("Decoded log contains columns for all MultiCell frame groups")
                     else:
-                        rep.fail("Voltage Limit updates missing in log", f"expected {expected_set}, logged {logged_limits}")
+                        rep.fail("Decoded log headers missing MultiCell frame groups", f"voltage={has_voltage}, cells={has_cells}, temp={has_temp}")
                 else:
-                    rep.fail("Voltage Limit column missing in decoded log")
+                    has_status = any("BMS Status" in h for h in headers if h)
+                    has_settings = any("BMS Settings" in h for h in headers if h)
+                    has_flags = any("Status Flags" in h for h in headers if h)
+                    
+                    if has_status and has_settings and has_flags:
+                        rep.ok("Decoded log contains columns for all frame groups")
+                    else:
+                        rep.fail("Decoded log headers missing frame groups", f"status={has_status}, settings={has_settings}, flags={has_flags}")
+                
+                # Verify that Voltage Limit changes are reflected in the log (only for simulator)
+                if not is_multicell:
+                    v_lim_idx = None
+                    for idx, h in enumerate(headers):
+                        if h and "Voltage Limit" in h:
+                            v_lim_idx = idx
+                            break
+                    
+                    if v_lim_idx is not None:
+                        logged_limits = set()
+                        for row in data_ws.iter_rows(min_row=2, values_only=True):
+                            val = row[v_lim_idx]
+                            if val is not None:
+                                logged_limits.add(float(val))
+                        
+                        expected_set = {55.0, 52.0, 58.0, 45.0, 58.5, 50.0}
+                        # Filter out any other transient limits or seed value (firmware defaults)
+                        intersection = expected_set.intersection(logged_limits)
+                        if len(intersection) >= 4: # allow some tolerance if command was sent at the very end
+                            rep.ok(f"Voltage Limit updates correctly captured in log: {sorted(intersection)} V")
+                        else:
+                            rep.fail("Voltage Limit updates missing in log", f"expected {expected_set}, logged {logged_limits}")
+                    else:
+                        rep.fail("Voltage Limit column missing in decoded log")
             else:
                 rep.fail("Decoded log missing required sheets", f"found {wb_dec.sheetnames}")
             wb_dec.close()

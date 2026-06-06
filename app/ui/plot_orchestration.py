@@ -44,6 +44,8 @@ from .plot_panel import (
     _configure_live_curve,
     _format_elapsed_time,
 )
+from .analysis_widgets import OverlayViewBox
+
 
 
 class PlotOrchestrationMixin:
@@ -1107,7 +1109,7 @@ class PlotOrchestrationMixin:
 
             if right_unit is not None:
                 if panel.right_vb is None:
-                    panel.right_vb = pg.ViewBox()
+                    panel.right_vb = OverlayViewBox()
                     pi.scene().addItem(panel.right_vb)
                     pi.showAxis('right')
                     ax = pi.getAxis('right')

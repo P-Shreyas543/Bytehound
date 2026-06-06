@@ -465,3 +465,28 @@ class StatisticsPanel(QWidget):
                 cell = QTableWidgetItem(txt)
                 cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self._table.setItem(r, c, cell)
+
+
+# ─────────────────────────────────────────────────────────────────────
+# Custom overlay ViewBox — ignores direct mouse interaction on plot area
+# ─────────────────────────────────────────────────────────────────────
+class OverlayViewBox(pg.ViewBox):
+    """A ViewBox that ignores mouse events so they pass through to the main ViewBox underneath.
+    
+    This ensures that panning and zooming on the plot area affects the main ViewBox
+    (which is linked to the overlay ViewBox in X), rather than only scaling the overlay.
+    """
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Enable Y-axis mouse interaction by dragging the right axis,
+        # but disable direct mouse drag/click/wheel on the plot area for this ViewBox.
+        self.setMouseEnabled(x=False, y=True)
+
+    def mouseDragEvent(self, ev, axis=None):
+        ev.ignore()
+
+    def mouseClickEvent(self, ev):
+        ev.ignore()
+
+    def wheelEvent(self, ev, axis=None):
+        ev.ignore()

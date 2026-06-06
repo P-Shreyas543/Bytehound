@@ -477,7 +477,7 @@
     <div class="container">
         <h1>Bytehound: Serial Telemetry &amp; Decoder Guide</h1>
         <p style="text-align: center; font-weight: bold; color: #7f8c8d; margin-top: -15px; font-size: 15px;">User
-            Manual — Version 0.4.2</p>
+            Manual — Version 1.0.0</p>
 
         <p style="font-size: 18px; text-align: center; color: #7f8c8d;">
             This manual is your complete guide to Bytehound's panels, workflows, and configuration sheets. Whether you
@@ -1704,6 +1704,29 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             saved on <strong>Stop Logging</strong> — if the app crashes before Stop, the decoded workbook is lost. A
             session config snapshot is saved beside the log so the same decoder can be re-applied later.
         </div>
+
+        <h4>Decoded Log Cycle Buffer &amp; Synchronization</h4>
+        <p>The decoded Excel workbook (<code>*_decoded.xlsx</code>) stores telemetry in a wide format, where each row represents a complete cycle of all active frames. Individual frames arrive asynchronously and are stashed in an in-memory cycle buffer. When the <strong>trigger frame</strong> (the last RX-capable frame declared in the configuration) is received:</p>
+        <ul>
+            <li>Bytehound checks if all required frames for the cycle have been received.</li>
+            <li>If the cycle is complete, a wide row is appended to the <code>Data</code> sheet containing timestamps and signal values for all frames.</li>
+            <li>The cycle buffer is cleared upon trigger arrival to prevent carrying stale values forward to the next cycle.</li>
+        </ul>
+
+        <h4>Decoded Logger Unblocking for Mixed RX/TX Profiles</h4>
+        <p>In telemetry configurations containing both incoming receive (RX) frames and outgoing transmit (TX) commands, requiring all frames to complete a cycle would cause logging to stall indefinitely (as commands are only sent on-demand). To prevent this, Bytehound implements <strong>Decoded Logger Unblocking</strong>:</p>
+        <ul>
+            <li>Transmit-only frames (those marked with <code>direction = tx</code> in the Frames sheet, or associated with TX commands) are dynamically excluded from the list of required cycle frames.</li>
+            <li>The cycle is driven entirely by incoming receive-capable telemetry frames, ensuring that logging proceeds smoothly without stalling.</li>
+        </ul>
+
+        <h4>Transmitted (TX) Packet Decoding &amp; Logging</h4>
+        <p>To ensure that outbound controls and parameter modifications are fully captured, Bytehound hooks into raw wire transmissions to log outbound packets in the decoded stream on the fly:</p>
+        <ul>
+            <li>Whenever a command packet is sent (via the TX Commands panel, the Parameter Editor, or Auto-Fetch polling), Bytehound intercepts the raw bytes, parses them, and decodes the signals.</li>
+            <li>These decoded TX values are stashed in the active cycle buffer.</li>
+            <li>When the next trigger frame arrives, these stashed TX values are committed to the <code>*_decoded.xlsx</code> file along with the RX telemetry, creating a unified, chronological log of all input/output signals.</li>
+        </ul>
 
         <h3 id="logging-settings">Logging Settings</h3>
         <p>Under <strong>Tools → Logging Settings</strong>, you can configure application-level diagnostic logging and

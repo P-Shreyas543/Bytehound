@@ -47,7 +47,7 @@ from .analysis_theme import (
     APP_NAME, APP_ORG, CURSOR_COLORS, LOG_COLORS, SELECTED_CURSOR_COLOR,
     THEME, get_analysis_dir, get_datalogs_dir,
 )
-from .analysis_widgets import CursorReadoutPanel, StatisticsPanel, TimeAxisItem
+from .analysis_widgets import CursorReadoutPanel, StatisticsPanel, TimeAxisItem, OverlayViewBox
 from .log_io import (
     LogEntry, LogLoaderThread, _CSV_CACHE,
 )
@@ -64,7 +64,7 @@ DEFAULT_PARAMS = [
 SESSION_VERSION = 4
 MIN_PLOT_HEIGHT = 80
 MAX_PLOT_HEIGHT = 600
-DEFAULT_PLOT_HEIGHT = 200
+DEFAULT_PLOT_HEIGHT = 250
 
 
 # ─────────────────────────────────────────────────────────────────────
@@ -428,13 +428,20 @@ class AnalysisSuiteWindow(QMainWindow):
 
         # ── Middle: plot area ────────────────────────────────────────
         from PySide6.QtWidgets import QGridLayout
+        self._plot_scroll = QScrollArea()
+        self._plot_scroll.setWidgetResizable(True)
+        self._plot_scroll.setFrameShape(QFrame.NoFrame)
+        self._plot_scroll.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+
         self._plot_container = QWidget()
         self._plot_layout = QGridLayout(self._plot_container)
         # Generous outer padding + spacing so axis tick labels at the edges
         # don't collide with the sidebar/scrollbar or the next subplot below.
         self._plot_layout.setContentsMargins(8, 8, 8, 8)
         self._plot_layout.setSpacing(10)
-        self._splitter.addWidget(self._plot_container)
+
+        self._plot_scroll.setWidget(self._plot_container)
+        self._splitter.addWidget(self._plot_scroll)
 
         # ── Bottom: tabbed analyst panels (cursor readout + statistics) ──
         # Moved out of the right column into the vertical outer splitter so
@@ -599,6 +606,13 @@ class AnalysisSuiteWindow(QMainWindow):
         alpha = THEME.plot_grid_alpha()
         border_color = THEME.c('border')
 
+        if hasattr(self, '_plot_scroll') and self._plot_scroll is not None:
+            self._plot_scroll.setStyleSheet(f"QScrollArea {{ background-color: {bg}; border: none; }}")
+            if self._plot_scroll.viewport() is not None:
+                self._plot_scroll.viewport().setStyleSheet(f"background-color: {bg};")
+        if hasattr(self, '_plot_container') and self._plot_container is not None:
+            self._plot_container.setStyleSheet(f"background-color: {bg};")
+
         for pw in self._plot_widgets:
             pw.setBackground(bg)
             pw.setStyleSheet(f"border: 1px solid {border_color}; border-radius: 4px;")
@@ -611,6 +625,16 @@ class AnalysisSuiteWindow(QMainWindow):
                     style = dict(ax.labelStyle)
                     style['color'] = fg
                     pw.setLabel(axis_name, **style)
+            
+            if hasattr(pw, 'right_axis') and pw.right_axis is not None:
+                pen = pg.mkPen(fg)
+                pw.right_axis.setPen(pen)
+                pw.right_axis.setTextPen(pen)
+                if hasattr(pw.right_axis, 'labelStyle'):
+                    style = dict(pw.right_axis.labelStyle)
+                    style['color'] = fg
+                    pw.setLabel('right', **style)
+
             pw.showGrid(x=True, y=True, alpha=alpha)
             # Update legend styling
             try:
@@ -1029,6 +1053,12 @@ class AnalysisSuiteWindow(QMainWindow):
         Keeps interior parens intact (rare). ``Vehicle Speed (Kmph)`` → ``Vehicle Speed``."""
         return re.sub(r'\s*\([^()]*\)\s*$', '', name).strip() or name
 
+    @staticmethod
+    def _extract_unit(name: str) -> str:
+        match = re.search(r'\(([^()]*)\)\s*$', name)
+        return match.group(1).strip() if match else ""
+
+
     def _axis_title_for_group(self, group: list[str]) -> str:
         """Compact label suitable for a rotated Y-axis title — strips units
         and tops out at two params + '+N' so it never overshoots vertically."""
@@ -1351,9 +1381,15 @@ class AnalysisSuiteWindow(QMainWindow):
             except Exception:
                 continue
             normalized = self._is_subplot_normalized(group)
-            ymin = np.inf
-            ymax = -np.inf
+            left_unit = getattr(pw, 'left_unit', None)
+            right_unit = getattr(pw, 'right_unit', None)
+
+            ymin_left, ymax_left = np.inf, -np.inf
+            ymin_right, ymax_right = np.inf, -np.inf
+
             for param in group:
+                unit = self._extract_unit(param)
+                is_right = (hasattr(pw, 'right_vb') and pw.right_vb is not None and right_unit is not None and unit != left_unit)
                 for entry in self._logs.values():
                     if not entry.visible or param not in entry.columns:
                         continue
@@ -1366,19 +1402,36 @@ class AnalysisSuiteWindow(QMainWindow):
                     mask = (x >= x_range[0]) & (x <= x_range[1]) & np.isfinite(y)
                     if not np.any(mask):
                         continue
-                    ymin = min(ymin, float(np.min(y[mask])))
-                    ymax = max(ymax, float(np.max(y[mask])))
-            if ymin == np.inf or ymax == -np.inf:
-                continue
-            if ymax - ymin < 1e-12:
-                pad = max(abs(ymax) * 0.05, 0.5)
-                ymin -= pad
-                ymax += pad
-            else:
-                pad = (ymax - ymin) * 0.05
-                ymin -= pad
-                ymax += pad
-            pw.getPlotItem().vb.setYRange(ymin, ymax, padding=0)
+                    val_min = float(np.min(y[mask]))
+                    val_max = float(np.max(y[mask]))
+                    if is_right:
+                        ymin_right = min(ymin_right, val_min)
+                        ymax_right = max(ymax_right, val_max)
+                    else:
+                        ymin_left = min(ymin_left, val_min)
+                        ymax_left = max(ymax_left, val_max)
+
+            if ymin_left != np.inf and ymax_left != -np.inf:
+                if ymax_left - ymin_left < 1e-12:
+                    pad = max(abs(ymax_left) * 0.05, 0.5)
+                    ymin_left -= pad
+                    ymax_left += pad
+                else:
+                    pad = (ymax_left - ymin_left) * 0.05
+                    ymin_left -= pad
+                    ymax_left += pad
+                pw.getPlotItem().vb.setYRange(ymin_left, ymax_left, padding=0)
+
+            if hasattr(pw, 'right_vb') and pw.right_vb is not None and ymin_right != np.inf and ymax_right != -np.inf:
+                if ymax_right - ymin_right < 1e-12:
+                    pad = max(abs(ymax_right) * 0.05, 0.5)
+                    ymin_right -= pad
+                    ymax_right += pad
+                else:
+                    pad = (ymax_right - ymin_right) * 0.05
+                    ymin_right -= pad
+                    ymax_right += pad
+                pw.right_vb.setYRange(ymin_right, ymax_right, padding=0)
 
     def _export_visible_csv(self):
         """Wide-format CSV export of every visible (log, param) curve, sliced
@@ -1576,18 +1629,29 @@ class AnalysisSuiteWindow(QMainWindow):
 
         first_pw = None
         for gi, group in enumerate(groups):
+            # Determine left and right units
+            left_unit = None
+            right_unit = None
+            for param in group:
+                unit = self._extract_unit(param)
+                if left_unit is None:
+                    left_unit = unit
+                elif unit != left_unit and right_unit is None:
+                    right_unit = unit
+
             pw = pg.PlotWidget(
                 axisItems={'bottom': TimeAxisItem(orientation='bottom')})
             pw.setBackground(bg)
             pw.showGrid(x=True, y=True, alpha=alpha)
             normalized = self._is_subplot_normalized(group)
             smoothed = self._is_subplot_smoothed(group)
-            # No rotated y-axis title — the parameter name now lives in
-            # the legend (see ``legend_name`` below). Empty-string label
-            # keeps pyqtgraph from reserving extra space on the left
-            # margin where the title used to render.
-            pw.setLabel('left', '')
-            pw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+            pw.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            pw.setFixedHeight(self._plot_height)
+
+            pw.left_unit = left_unit
+            pw.right_unit = right_unit
+            pw.right_vb = None
+            pw.right_axis = None
 
             # Visible card-style border around each subplot so the boundary
             # is unambiguous, and internal padding so axis tick labels never
@@ -1605,6 +1669,37 @@ class AnalysisSuiteWindow(QMainWindow):
             # don't fight for the same pixels when values are big or names
             # are long. Width auto-grows beyond this if needed.
             plot_item.getAxis('left').setWidth(64)
+            pw.setLabel('left', left_unit if left_unit else '')
+
+            if right_unit is not None:
+                pw.right_vb = OverlayViewBox()
+                plot_item.scene().addItem(pw.right_vb)
+                plot_item.showAxis('right')
+                ax = plot_item.getAxis('right')
+                ax.linkToView(pw.right_vb)
+                pw.right_vb.setXLink(plot_item.getViewBox())
+                pw.right_axis = ax
+                ax.setWidth(64)
+
+                pen = pg.mkPen(fg)
+                ax.setPen(pen)
+                ax.setTextPen(pen)
+                if hasattr(ax, 'labelStyle'):
+                    style = dict(ax.labelStyle)
+                    style['color'] = fg
+                    pw.setLabel('right', right_unit, **style)
+                else:
+                    pw.setLabel('right', right_unit)
+
+                def updateViews(dummy_arg=None, target_pi=plot_item, target_vb=pw.right_vb):
+                    if target_vb is not None and target_pi is not None:
+                        vb = target_pi.getViewBox()
+                        if vb is not None:
+                            target_vb.setGeometry(vb.sceneBoundingRect())
+                            target_vb.linkedViewChanged(vb, target_vb.XAxis)
+
+                plot_item.getViewBox().sigResized.connect(updateViews)
+                updateViews()
 
             from .plot_panel import GRID_LAYOUTS
             rows, cols = GRID_LAYOUTS.get(self._layout_combo.currentText(), (2, 1))
@@ -1695,7 +1790,17 @@ class AnalysisSuiteWindow(QMainWindow):
                         if smoothed:
                             suffix_parts.append(f"smooth N={self._smoothing_window}")
                         legend_name = f"{legend_name}  ({', '.join(suffix_parts)})"
-                    curve = pw.plot(x[mask], y[mask], pen=pen, name=legend_name)
+
+                    # Decouple left and right viewbox curves:
+                    unit = self._extract_unit(param)
+                    is_right = (right_unit is not None and unit != left_unit)
+                    target_vb = pw.right_vb if is_right else plot_item.vb
+
+                    curve = pg.PlotDataItem(x[mask], y[mask], pen=pen, name=legend_name)
+                    target_vb.addItem(curve)
+                    if legend is not None:
+                        legend.addItem(curve, name=legend_name)
+
                     curve.setVisible(entry.visible)
                     curve.setClipToView(True)
                     self._curves.setdefault(entry.id, {})[param] = curve
@@ -1739,6 +1844,18 @@ class AnalysisSuiteWindow(QMainWindow):
         # (that's QBoxLayout). Subplots fill the grid cells; extra room
         # is distributed by Qt's grid policy. Calling addStretch() used
         # to crash _do_rebuild_plots whenever the user re-arranged params.
+
+        # Reset row stretches from prior layout cycles
+        for r in range(self._plot_layout.rowCount()):
+            self._plot_layout.setRowStretch(r, 0)
+
+        # Add a stretch factor to the row after the last subplot row to push them to the top
+        if self._plot_widgets:
+            from .plot_panel import GRID_LAYOUTS
+            rows, cols = GRID_LAYOUTS.get(self._layout_combo.currentText(), (2, 1))
+            last_row = (len(groups) - 1) // cols
+            self._plot_layout.setRowStretch(last_row + 1, 1)
+
         self._restore_v_cursors()
         self._restore_h_cursors()
         self._update_cursor_dots()
@@ -2220,7 +2337,8 @@ class AnalysisSuiteWindow(QMainWindow):
         if cid in self._cursor_dots:
             for dot in self._cursor_dots.pop(cid):
                 try:
-                    dot['pw'].removeItem(dot['item'])
+                    target_vb = dot.get('vb', dot['pw'].getPlotItem().vb)
+                    target_vb.removeItem(dot['item'])
                 except Exception:
                     pass
         # Reset selection
@@ -2293,7 +2411,11 @@ class AnalysisSuiteWindow(QMainWindow):
         """Rebuild tracking dots for all cursors on all plots."""
         for _cid, dots in self._cursor_dots.items():
             for dot in dots:
-                dot['pw'].removeItem(dot['item'])
+                try:
+                    target_vb = dot.get('vb', dot['pw'].getPlotItem().vb)
+                    target_vb.removeItem(dot['item'])
+                except Exception:
+                    pass
         self._cursor_dots.clear()
         for cdata in self._v_cursors:
             self._update_cursor_dots_for_id(cdata['id'])
@@ -2306,7 +2428,11 @@ class AnalysisSuiteWindow(QMainWindow):
         # Remove old dots for this cursor
         if cursor_id in self._cursor_dots:
             for dot in self._cursor_dots[cursor_id]:
-                dot['pw'].removeItem(dot['item'])
+                try:
+                    target_vb = dot.get('vb', dot['pw'].getPlotItem().vb)
+                    target_vb.removeItem(dot['item'])
+                except Exception:
+                    pass
         dots = []
         t = cdata['time']
         log_list = list(self._logs.values())
@@ -2315,6 +2441,11 @@ class AnalysisSuiteWindow(QMainWindow):
                 continue
             pi = self._plot_widgets.index(pw)
             group = self._plot_groups[pi]
+
+            # Determine left and right units
+            left_unit = getattr(pw, 'left_unit', None)
+            right_unit = getattr(pw, 'right_unit', None)
+
             for param in group:
                 for li, entry in enumerate(log_list):
                     if not entry.visible or param not in entry.columns:
@@ -2333,8 +2464,13 @@ class AnalysisSuiteWindow(QMainWindow):
                         [t], [yv], size=8,
                         pen=pg.mkPen(THEME.c('plot_bg'), width=1),
                         brush=pg.mkBrush(dot_color))
-                    pw.addItem(dot_item, ignoreBounds=True)
-                    dots.append({'pw': pw, 'item': dot_item})
+
+                    unit = self._extract_unit(param)
+                    is_right = (hasattr(pw, 'right_vb') and pw.right_vb is not None and right_unit is not None and unit != left_unit)
+                    target_vb = pw.right_vb if is_right else pw.getPlotItem().vb
+
+                    target_vb.addItem(dot_item)
+                    dots.append({'pw': pw, 'vb': target_vb, 'item': dot_item})
         self._cursor_dots[cursor_id] = dots
 
     # ──────────────────────────────────────────────────────────────────
@@ -2486,7 +2622,8 @@ class AnalysisSuiteWindow(QMainWindow):
                             pw_deleted = True
                     item = dot['item']
                     if not pw_deleted and item is not None:
-                        pw.removeItem(item)
+                        target_vb = dot.get('vb', pw.getPlotItem().vb)
+                        target_vb.removeItem(item)
                 except Exception:
                     pass
         self._cursor_dots.clear()
@@ -2515,6 +2652,8 @@ class AnalysisSuiteWindow(QMainWindow):
     def _reset_zoom(self):
         for pw in self._plot_widgets:
             pw.autoRange()
+            if hasattr(pw, 'right_vb') and pw.right_vb is not None:
+                pw.right_vb.autoRange()
 
     def _set_plot_export_theme(self, pw: pg.PlotWidget, dark: bool = False):
         """Temporarily set plot to white bg + black axes for export."""
