@@ -13,5 +13,5 @@
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
     "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.0.0.exe",
     "release_notes": "Official v1.0.0 Release - Decoded Logger unblocking for RX/TX mixed configs, raw TX packet logging, and automated unit tests validation.\n\nNew Features:\n  - Decoded Logger Unblocking: Dynamically filters out transmit-only frames from the required cycle list, preventing log blockage when both RX and TX frames are configured.\n  - Transmitted Packet Logging: Hooked into raw wire recording to decode and log TX packets on the fly, ensuring all signals are correctly represented in the decoded Excel log.\n  - Automated Test Suite: Added new unit tests for TX-only logging verifying cycle integrity and correctness.",
-    "sha256": "66903e535d7ab44eb8d7942e9ed0d19984dd1240cf4a06cb082d263c054a7569"
+    "sha256": "747fbf647cb90c86fb869dda7c09f8811721c4619895e92f21c078693caaecf0"
 }

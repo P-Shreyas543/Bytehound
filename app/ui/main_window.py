@@ -434,6 +434,21 @@ class MainWindow(
     def _on_view_docs(self) -> None:
         self._log_activity("[ACTION] View documentation")
         docs_path = Path(__file__).resolve().parents[1] / "resources" / "index.html"
+        try:
+            version = _read_version()
+            if version != "0.0.0" and docs_path.exists():
+                content = docs_path.read_text(encoding="utf-8")
+                import re
+                new_content, count = re.subn(
+                    r"Manual — Version \d+\.\d+\.\d+",
+                    f"Manual — Version {version}",
+                    content
+                )
+                if count > 0 and new_content != content:
+                    docs_path.write_text(new_content, encoding="utf-8")
+                    self._log_activity(f"[INFO] Dynamically updated index.html version to {version}")
+        except Exception as e:
+            self._log_activity(f"[WARN] Failed to dynamically update index.html version: {e}")
         QDesktopServices.openUrl(QUrl.fromLocalFile(str(docs_path)))
 
     def _on_copy_diagnostics(self) -> None:

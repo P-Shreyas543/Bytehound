@@ -93,6 +93,33 @@ def write_installer_version_iss() -> Path:
     return out
 
 
+def update_index_html_version() -> None:
+    """Ensure app/resources/index.html version matches version.json."""
+    version = read_version()
+    if version == "0.0.0":
+        return
+    docs_path = ROOT / "app" / "resources" / "index.html"
+    if not docs_path.exists():
+        print(f"[build] WARNING: User Manual not found at {docs_path}")
+        return
+    try:
+        content = docs_path.read_text(encoding="utf-8")
+        import re
+        new_content, count = re.subn(
+            r"Manual — Version \d+\.\d+\.\d+",
+            f"Manual — Version {version}",
+            content
+        )
+        if count > 0 and new_content != content:
+            docs_path.write_text(new_content, encoding="utf-8")
+            print(f"[build] dynamically updated User Manual version to {version} in {docs_path.name}")
+        else:
+            print(f"[build] User Manual version is already up to date ({version})")
+    except Exception as exc:
+        print(f"[build] WARNING: could not update User Manual version: {exc}")
+
+
+
 def write_sha256(exe: Path) -> tuple[str, bool]:
     """Compute SHA-256 of the built exe and write it into version.json.
 
@@ -341,6 +368,7 @@ def main() -> int:
     # --no-installer is set. Keeps the include file fresh for users who want
     # to compile installer.iss directly from the Inno Setup IDE later.
     write_installer_version_iss()
+    update_index_html_version()
 
     if not args.no_clean:
         clean()
