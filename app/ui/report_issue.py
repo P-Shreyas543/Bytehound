@@ -219,12 +219,21 @@ class ReportIssueMixin:
         port_info = ""
         if self._serial is not None and self._serial.is_open:
             conn = "connected"
-            port_info = (
-                f"  Port: {self._serial.settings.port} @ "
-                f"{self._serial.settings.baud_rate} "
-                f"{self._serial.settings.data_bits}{self._serial.settings.parity}"
-                f"{self._serial.settings.stop_bits:g}"
-            )
+            if self._serial.settings.connection_type in ("tcp", "udp"):
+                port_info = (
+                    f"  Connection Type: {self._serial.settings.connection_type.upper()}\n"
+                    f"  Host: {self._serial.settings.host}\n"
+                    f"  Port: {self._serial.settings.port_num}"
+                )
+                if self._serial.settings.connection_type == "udp":
+                    port_info += f"\n  Local Port: {self._serial.settings.local_port}"
+            else:
+                port_info = (
+                    f"  Port: {self._serial.settings.port} @ "
+                    f"{self._serial.settings.baud_rate} "
+                    f"{self._serial.settings.data_bits}{self._serial.settings.parity}"
+                    f"{self._serial.settings.stop_bits:g}"
+                )
 
         diag = [
             f"Captured: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",

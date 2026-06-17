@@ -756,16 +756,20 @@
                 <code>parser_type = modbus_rtu</code>. See <a href="#section-5">Section 5</a> for protocol details.</li>
             <li>Launch <strong>Bytehound</strong>. A bundled example config loads automatically; use <strong>Import
                     Config</strong> if you want to load your own Excel workbook or CSV config folder.</li>
-            <li>Click <strong>Connect</strong> in the toolbar. A <strong>Serial Connection Settings</strong> dialog will
+            <li>Click <strong>Connect</strong> in the toolbar. A <strong>Connection Settings</strong> dialog will
                 appear:
                 <ul>
-                    <li>Select your hardware's COM port (e.g. <strong>COM7</strong>). Click <em>Refresh</em> if it isn't
-                        listed.</li>
-                    <li>Set the Baud Rate to match your hardware (e.g., <strong>115200</strong>).</li>
-                    <li>Set Data bits, Stop bits, and Parity if needed (defaults suit most hardware).</li>
-                    <li>Click <strong>Connect</strong> to open the port.</li>
-                    <li>(Optional) Check <strong>Auto-reconnect on disconnect</strong> to have the app retry the
-                        connection automatically if the cable is pulled or the device resets.</li>
+                    <li>Choose your <strong>Connection Type</strong> (<strong>Serial</strong>, <strong>TCP Client</strong>, or <strong>UDP Client</strong>) from the dropdown.</li>
+                    <li>Configure the connection parameters depending on the selected type:
+                        <ul>
+                            <li><strong>Serial</strong>: Select the COM port (e.g. <strong>COM7</strong>). Click <em>Refresh</em> if it isn't listed. Set the Baud rate, Data bits, Stop bits, and Parity.</li>
+                            <li><strong>TCP Client</strong>: Enter the target <strong>Host / IP</strong> and <strong>Port</strong> of the remote TCP server.</li>
+                            <li><strong>UDP Client</strong>: Enter the target <strong>Host / IP</strong>, <strong>Remote Port</strong>, and an optional <strong>Local Port</strong> (binds locally, set to 0 for automatic port allocation).</li>
+                        </ul>
+                    </li>
+                    <li>Set the common <strong>Timeout (ms)</strong> representing the read/response timing constraint.</li>
+                    <li>(Optional) Check <strong>Auto-reconnect on disconnect</strong> to have the app retry the connection automatically if the connection is dropped or a socket error occurs.</li>
+                    <li>Click <strong>Connect</strong> to establish the connection or socket wrapper.</li>
                 </ul>
             </li>
         </ol>
@@ -791,9 +795,9 @@
 
         <h4 id="auto-reconnect">Auto-Reconnect</h4>
         <p>When <strong>Auto-reconnect on disconnect</strong> is checked in the Connection dialog, the app monitors the
-            serial worker for unexpected disconnects (USB pull, device reset, OS power management). On a drop it
+            worker for unexpected disconnects (USB pull, device reset, TCP connection drop, socket read errors, or OS power management). On a drop it
             immediately schedules a reconnect attempt and uses <strong>exponential back-off</strong> so it doesn't
-            hammer the USB stack:</p>
+            hammer the serial/network stack:</p>
         <table>
             <tr>
                 <th>Attempt</th>
@@ -3026,6 +3030,7 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
             <strong>QSettings (your last-used choice) if present, otherwise from this sheet</strong>. That means a fresh
             install — or a freshly loaded config you've never connected with before — opens the Connect dialog already
             showing this config's expected baud rate, parity, etc.; subsequent runs keep whatever you explicitly chose.
+            <em>Note: TCP and UDP connection defaults (Host, Ports, etc.) are managed and persisted directly via QSettings, as they represent host-level network configurations independent of the microcontroller's on-wire framing protocol defaults.</em>
         </p>
         <table>
             <tr>

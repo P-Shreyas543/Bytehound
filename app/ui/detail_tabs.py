@@ -129,6 +129,15 @@ class DetailTabsMixin:
             return
         groups = sorted({signal.group for signal in self._config.all_signals if signal.group})
         self._group_combo.set_groups(groups)
+
+        has_groups = len(groups) > 0
+        if hasattr(self, "_group_label"):
+            self._group_label.setVisible(has_groups)
+        if hasattr(self, "_group_combo"):
+            self._group_combo.setVisible(has_groups)
+        if hasattr(self, "_table"):
+            self._table.setColumnHidden(1, not has_groups)
+
         # Refresh the per-(frame,signal) → group lookup used by the dock filters.
         self._signal_group_map = {
             (s.frame_id, s.signal_name): (s.group or "")
@@ -150,8 +159,19 @@ class DetailTabsMixin:
         # After that they behave independently of the main combo.
         if hasattr(self, "_bitfield_group_combo"):
             self._bitfield_group_combo.set_groups(bitfield_groups)
+        has_bf_groups = len(bitfield_groups) > 0
+        if hasattr(self, "_bitfield_group_label"):
+            self._bitfield_group_label.setVisible(has_bf_groups)
+        if hasattr(self, "_bitfield_group_combo"):
+            self._bitfield_group_combo.setVisible(has_bf_groups)
+
         if hasattr(self, "_enum_group_combo"):
             self._enum_group_combo.set_groups(enum_groups)
+        has_en_groups = len(enum_groups) > 0
+        if hasattr(self, "_enum_group_label"):
+            self._enum_group_label.setVisible(has_en_groups)
+        if hasattr(self, "_enum_group_combo"):
+            self._enum_group_combo.setVisible(has_en_groups)
 
     def _row_visible_for_group(self, selected: set, group: str) -> bool:
         return (not selected) or (group in selected)

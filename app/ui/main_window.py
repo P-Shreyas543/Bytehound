@@ -474,12 +474,21 @@ class MainWindow(
         port_info = ""
         if self._serial is not None and self._serial.is_open:
             conn = "connected"
-            port_info = (
-                f"  Port: {self._serial.settings.port} @ "
-                f"{self._serial.settings.baud_rate} "
-                f"{self._serial.settings.data_bits}{self._serial.settings.parity}"
-                f"{self._serial.settings.stop_bits:g}"
-            )
+            if self._serial.settings.connection_type in ("tcp", "udp"):
+                port_info = (
+                    f"  Connection Type: {self._serial.settings.connection_type.upper()}\n"
+                    f"  Host: {self._serial.settings.host}\n"
+                    f"  Port: {self._serial.settings.port_num}"
+                )
+                if self._serial.settings.connection_type == "udp":
+                    port_info += f"\n  Local Port: {self._serial.settings.local_port}"
+            else:
+                port_info = (
+                    f"  Port: {self._serial.settings.port} @ "
+                    f"{self._serial.settings.baud_rate} "
+                    f"{self._serial.settings.data_bits}{self._serial.settings.parity}"
+                    f"{self._serial.settings.stop_bits:g}"
+                )
 
         log_path = self._find_log_file_path()
         log_tail = self._read_log_tail(log_path, lines=200) if log_path else "(log file not found)"
@@ -962,8 +971,12 @@ class MainWindow(
             self._ui_timer.start()
 
             self._set_connection_ui(True)
-            self._set_status(f"Connected to {settings.port}")
-            self._log_activity(f"Connected to {settings.port} @ {settings.baud_rate}")
+            if settings.connection_type in ("tcp", "udp"):
+                self._set_status(f"Connected via {settings.connection_type.upper()} to {settings.port}")
+                self._log_activity(f"Connected via {settings.connection_type.upper()} to {settings.port}")
+            else:
+                self._set_status(f"Connected to {settings.port}")
+                self._log_activity(f"Connected to {settings.port} @ {settings.baud_rate}")
             self._saved_settings = settings
             self._reconnect_attempts = 0
             if hasattr(self, "_reconnect_timer") and self._reconnect_timer.isActive():
@@ -1159,8 +1172,15 @@ class MainWindow(
         if self._config_path is not None:
             metadata["config_source"] = str(self._config_path)
         if self._serial is not None:
-            metadata["serial_port"] = self._serial.settings.port
-            metadata["baud_rate"] = str(self._serial.settings.baud_rate)
+            metadata["connection_type"] = self._serial.settings.connection_type
+            if self._serial.settings.connection_type in ("tcp", "udp"):
+                metadata["host"] = self._serial.settings.host
+                metadata["port"] = str(self._serial.settings.port_num)
+                if self._serial.settings.connection_type == "udp":
+                    metadata["local_port"] = str(self._serial.settings.local_port)
+            else:
+                metadata["serial_port"] = self._serial.settings.port
+                metadata["baud_rate"] = str(self._serial.settings.baud_rate)
         return metadata
 
 

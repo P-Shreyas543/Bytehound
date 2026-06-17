@@ -352,7 +352,8 @@ class UIBuildersMixin:
         self._search_input.textChanged.connect(self._apply_group_filter)
 
         top_row.addWidget(self._search_input, 1)
-        top_row.addWidget(QLabel("Group", center_widget))
+        self._group_label = QLabel("Group", center_widget)
+        top_row.addWidget(self._group_label)
         top_row.addWidget(self._group_combo)
         top_row.addWidget(self._show_calcs_check)
 
@@ -750,7 +751,8 @@ class UIBuildersMixin:
 
         bar = QHBoxLayout()
         bar.setSpacing(6)
-        bar.addWidget(QLabel("Group:", outer))
+        self._bitfield_group_label = QLabel("Group:", outer)
+        bar.addWidget(self._bitfield_group_label)
         self._bitfield_group_combo = _CheckableGroupCombo(outer)
         self._bitfield_group_combo.selection_changed.connect(self._apply_bitfield_group_filter)
         bar.addWidget(self._bitfield_group_combo, 1)
@@ -781,7 +783,8 @@ class UIBuildersMixin:
 
         bar = QHBoxLayout()
         bar.setSpacing(6)
-        bar.addWidget(QLabel("Group:", outer))
+        self._enum_group_label = QLabel("Group:", outer)
+        bar.addWidget(self._enum_group_label)
         self._enum_group_combo = _CheckableGroupCombo(outer)
         self._enum_group_combo.selection_changed.connect(self._apply_enum_group_filter)
         bar.addWidget(self._enum_group_combo, 1)
