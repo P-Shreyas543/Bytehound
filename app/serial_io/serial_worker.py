@@ -24,6 +24,8 @@ from __future__ import annotations
 
 import logging
 import queue
+import select
+import socket
 import threading
 import time
 from dataclasses import dataclass, replace as dataclass_replace
@@ -40,48 +42,216 @@ from ..decoder.types import FrameConfig, PollingScheduleSpec, ProtocolConfig
 
 _LOG = logging.getLogger("bytehound.serial_io.worker")
 
-# ------------------------------------------------------------------
+
+class TcpSocketWrapper:
+    def __init__(self, host: str, port: int, timeout: float = 0.05):
+        self.host = host
+        self.port = port
+        self.timeout = timeout
+        self._socket = None
+        self._is_open = False
+        self._buffer = bytearray()
+        
+    def open(self):
+        try:
+            self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self._socket.settimeout(2.0)  # connection timeout
+            self._socket.connect((self.host, self.port))
+            self._socket.setblocking(False)
+            self._is_open = True
+            self._buffer = bytearray()
+        except Exception as e:
+            self._is_open = False
+            if self._socket:
+                self._socket.close()
+            raise serial.SerialException(f"Failed to connect to TCP server {self.host}:{self.port}: {e}")
+
+    @property
+    def is_open(self) -> bool:
+        return self._is_open
+
+    def write(self, data: bytes) -> int:
+        if not self._is_open or not self._socket:
+            raise serial.SerialException("Socket not open")
+        try:
+            return self._socket.send(data)
+        except Exception as e:
+            raise serial.SerialException(f"TCP socket write error: {e}")
+
+    def read(self, size: int = 1) -> bytes:
+        if not self._is_open or not self._socket:
+            raise serial.SerialException("Socket not open")
+        try:
+            self._fill_buffer()
+        except serial.SerialException:
+            raise
+        except Exception as e:
+            raise serial.SerialException(str(e))
+        res = bytes(self._buffer[:size])
+        del self._buffer[:size]
+        return res
+
+    @property
+    def in_waiting(self) -> int:
+        if not self._is_open or not self._socket:
+            return 0
+        try:
+            self._fill_buffer()
+        except serial.SerialException:
+            raise
+        except Exception as e:
+            raise serial.SerialException(str(e))
+        return len(self._buffer)
+
+    def reset_input_buffer(self):
+        self._buffer.clear()
+        while True:
+            try:
+                data = self._socket.recv(4096)
+                if not data:
+                    break
+            except (BlockingIOError, socket.timeout):
+                break
+            except Exception:
+                break
+
+    def close(self):
+        self._is_open = False
+        if self._socket:
+            try:
+                self._socket.close()
+            except Exception:
+                pass
+            self._socket = None
+
+    def _fill_buffer(self):
+        while True:
+            try:
+                r, _, _ = select.select([self._socket], [], [], 0)
+                if not r:
+                    break
+                data = self._socket.recv(4096)
+                if not data:
+                    raise serial.SerialException("TCP connection closed by remote peer")
+                self._buffer.extend(data)
+            except BlockingIOError:
+                break
+            except socket.timeout:
+                break
+            except serial.SerialException:
+                raise
+            except OSError as e:
+                raise serial.SerialException(f"TCP socket read error: {e}")
+
+
+class UdpSocketWrapper:
+    def __init__(self, host: str, port: int, local_port: int = 0, timeout: float = 0.05):
+        self.host = host
+        self.port = port
+        self.local_port = local_port
+        self.timeout = timeout
+        self._socket = None
+        self._is_open = False
+        self._buffer = bytearray()
+        
+    def open(self):
+        try:
+            self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            if self.local_port > 0:
+                self._socket.bind(("", self.local_port))
+            self._socket.connect((self.host, self.port))
+            self._socket.setblocking(False)
+            self._is_open = True
+            self._buffer = bytearray()
+        except Exception as e:
+            self._is_open = False
+            if self._socket:
+                self._socket.close()
+            raise serial.SerialException(f"Failed to initialize UDP socket: {e}")
+
+    @property
+    def is_open(self) -> bool:
+        return self._is_open
+
+    def write(self, data: bytes) -> int:
+        if not self._is_open or not self._socket:
+            raise serial.SerialException("Socket not open")
+        try:
+            return self._socket.send(data)
+        except Exception as e:
+            raise serial.SerialException(f"UDP socket write error: {e}")
+
+    def read(self, size: int = 1) -> bytes:
+        if not self._is_open or not self._socket:
+            raise serial.SerialException("Socket not open")
+        try:
+            self._fill_buffer()
+        except serial.SerialException:
+            raise
+        except Exception as e:
+            raise serial.SerialException(str(e))
+        res = bytes(self._buffer[:size])
+        del self._buffer[:size]
+        return res
+
+    @property
+    def in_waiting(self) -> int:
+        if not self._is_open or not self._socket:
+            return 0
+        try:
+            self._fill_buffer()
+        except serial.SerialException:
+            raise
+        except Exception as e:
+            raise serial.SerialException(str(e))
+        return len(self._buffer)
+
+    def reset_input_buffer(self):
+        self._buffer.clear()
+        while True:
+            try:
+                data = self._socket.recv(4096)
+                if not data:
+                    break
+            except (BlockingIOError, socket.timeout):
+                break
+            except Exception:
+                break
+
+    def close(self):
+        self._is_open = False
+        if self._socket:
+            try:
+                self._socket.close()
+            except Exception:
+                pass
+            self._socket = None
+
+    def _fill_buffer(self):
+        while True:
+            try:
+                r, _, _ = select.select([self._socket], [], [], 0)
+                if not r:
+                    break
+                data = self._socket.recv(4096)
+                self._buffer.extend(data)
+            except BlockingIOError:
+                break
+            except socket.timeout:
+                break
+            except OSError as e:
+                raise serial.SerialException(f"UDP socket read error: {e}")
+
+
 # Tuning constants
-# ------------------------------------------------------------------
 _BATCH_SIZE = 50          # emit after accumulating this many packets …
 _BATCH_INTERVAL = 0.016  # … or after this many seconds (≈ 60 Hz), whichever is first
 WATCHDOG_TIMEOUT = 3.0   # seconds of silence before emitting device_timeout
-# Hold off polling for this long after open() if the device has not yet sent
-# anything. Cover Arduino bootloader (~1.5 s) plus a margin. Once the first
-# byte arrives the gate opens immediately, so request/response-only devices
-# still see polling start as soon as the user enables it AND the timeout
-# elapses (whichever comes second).
 POLLING_BOOT_GRACE = 2.5
-
-# Auto-disable a poll schedule after this many consecutive timeouts.
-# Rationale: with N enabled schedules in serial mode, every silent target
-# burns its full timeout_ms each cycle. A config with 10 targets at 500 ms
-# timeout and only 1 responsive target means the responsive one only gets
-# served every ~4.5 s. After ~5 misses the silent target has clearly gone
-# AWOL — drop it from the rotation so the responsive ones get serviced.
-# The schedule can be re-enabled from the poll-config dialog when the
-# user wants to retry it. Reset on any successful response.
 CONSECUTIVE_TIMEOUT_DISABLE_THRESHOLD = 5
-
-# Small scheduling/USB-driver slack added to poll waits. Some boards answer at
-# the edge of the configured timeout (for example 500-520 ms with a 500 ms
-# timeout); without a little slack the next poll can be sent just before the
-# matching response lands, which makes the raw log look out of order.
 POLL_RESPONSE_GRACE_MS = 50
-
-# COM-port probe runs against the BMS hardware showed 10-50 ms command spacing
-# can drop whole poll replies even though successful replies arrive in ~16 ms.
-# Keep polling conservative; manual priority TX still uses protocol settings.
 POLL_TX_GAP_FLOOR_MS = 100
-
-# Default TX-gap floor for pipelined polling. Lower-bound only — the user
-# can tune it down via Configure Poll Schedule if their device tolerates
-# tighter spacing. 100 ms matches the proven-working value from real
-# hardware testing on a multi-target BMS; smaller gaps (25-75 ms) caused
-# the device to drop the poll immediately after a successful response.
 POLL_PIPELINE_TX_GAP_FLOOR_MS = 100
-
-# OS error codes that indicate a physical disconnect on Windows.
 _DISCONNECT_WINERRORS = {5, 22, 31, 1167}
 
 
@@ -94,6 +264,10 @@ class SerialSettings:
     parity: str = "N"
     timeout_ms: int = 50
     auto_reconnect: bool = False
+    connection_type: str = "serial"
+    host: str = "127.0.0.1"
+    port_num: int = 8000
+    local_port: int = 0
 
 
 class PollingWorker(QThread):
@@ -231,18 +405,34 @@ class PollingWorker(QThread):
     def open(self) -> None:
         if self.is_open:
             return
-        self._serial = serial.Serial(
-            port=self.settings.port,
-            baudrate=self.settings.baud_rate,
-            bytesize=self.settings.data_bits,
-            stopbits=self.settings.stop_bits,
-            parity=self.settings.parity,
-            # Hardcode OS read timeout to 50ms so the run loop frequently checks
-            # _stop_event. The user's protocol timeout is enforced logically.
-            # Prevents main-thread close() from crashing if protocol timeout > 2s.
-            timeout=0.05,
-            write_timeout=0.05,
-        )
+        if self.settings.connection_type == "tcp":
+            self._serial = TcpSocketWrapper(
+                host=self.settings.host,
+                port=self.settings.port_num,
+                timeout=0.05,
+            )
+            self._serial.open()
+        elif self.settings.connection_type == "udp":
+            self._serial = UdpSocketWrapper(
+                host=self.settings.host,
+                port=self.settings.port_num,
+                local_port=self.settings.local_port,
+                timeout=0.05,
+            )
+            self._serial.open()
+        else:
+            self._serial = serial.Serial(
+                port=self.settings.port,
+                baudrate=self.settings.baud_rate,
+                bytesize=self.settings.data_bits,
+                stopbits=self.settings.stop_bits,
+                parity=self.settings.parity,
+                # Hardcode OS read timeout to 50ms so the run loop frequently checks
+                # _stop_event. The user's protocol timeout is enforced logically.
+                # Prevents main-thread close() from crashing if protocol timeout > 2s.
+                timeout=0.05,
+                write_timeout=0.05,
+            )
         self._stop_event.clear()
         self._last_rx_time = time.monotonic()
         self._last_emit_time = time.monotonic()

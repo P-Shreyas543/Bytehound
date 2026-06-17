@@ -7,7 +7,7 @@ from PySide6.QtCore import Qt, QSettings
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QListWidget, QListWidgetItem,
-    QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget
+    QPlainTextEdit, QPushButton, QSpinBox, QVBoxLayout, QWidget, QStackedWidget
 )
 
 from ..decoder.types import SerialDefaults
@@ -19,14 +19,12 @@ from ..serial_io.serial_worker import (
 
 
 class ConnectionDialog(QDialog):
-    """Modal dialog for configuring and opening a serial connection.
+    """Modal dialog for configuring and opening a connection (Serial, TCP, or UDP).
 
     Field-priority order on open is QSettings → loaded config's
     ``SerialDefaults`` → hard-coded fallback. That means the user's
     explicit last-used choice always wins, but a freshly loaded config
-    with bespoke serial defaults (say, 9600 / E / 2 stop bits for a
-    Modbus device) pre-populates the dialog on first open instead of
-    showing the generic 115200 / N / 1 fallback.
+    with bespoke serial defaults pre-populates the dialog on first open.
 
     On Accept the chosen values are persisted back to ``QSettings`` and
     exposed via ``get_settings()``.
@@ -40,16 +38,35 @@ class ConnectionDialog(QDialog):
         config_defaults: SerialDefaults | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Serial Connection Settings")
-        self.setMinimumWidth(360)
+        self.setWindowTitle("Connection Settings")
+        self.setMinimumWidth(380)
         self._settings = settings
         self._config_defaults = config_defaults or SerialDefaults()
 
         layout = QVBoxLayout(self)
         layout.setSpacing(12)
 
-        form = QFormLayout()
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        # 1. Connection Type Row
+        type_row = QWidget(self)
+        type_hl = QHBoxLayout(type_row)
+        type_hl.setContentsMargins(0, 0, 0, 0)
+        self._type_combo = QComboBox(type_row)
+        self._type_combo.addItem("Serial", "serial")
+        self._type_combo.addItem("TCP Client", "tcp")
+        self._type_combo.addItem("UDP Client", "udp")
+        type_hl.addWidget(QLabel("Connection Type:", type_row))
+        type_hl.addWidget(self._type_combo, 1)
+        layout.addWidget(type_row)
+
+        # 2. Stacked Widget for settings
+        self._stack = QStackedWidget(self)
+        layout.addWidget(self._stack)
+
+        # -- Page 0: Serial Settings
+        self._serial_page = QWidget(self)
+        serial_form = QFormLayout(self._serial_page)
+        serial_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        serial_form.setContentsMargins(0, 0, 0, 0)
 
         # Port row with inline Refresh button
         port_row = QWidget(self)
@@ -78,20 +95,68 @@ class ConnectionDialog(QDialog):
         self._parity_combo = QComboBox(self)
         self._parity_combo.addItems(["N", "E", "O"])
 
+        serial_form.addRow("Port", port_row)
+        serial_form.addRow("Baud rate", self._baud_combo)
+        serial_form.addRow("Data bits", self._data_bits_combo)
+        serial_form.addRow("Stop bits", self._stop_bits_combo)
+        serial_form.addRow("Parity", self._parity_combo)
+        self._stack.addWidget(self._serial_page)
+
+        # -- Page 1: TCP Settings
+        self._tcp_page = QWidget(self)
+        tcp_form = QFormLayout(self._tcp_page)
+        tcp_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        tcp_form.setContentsMargins(0, 0, 0, 0)
+
+        self._tcp_host = QLineEdit(self)
+        self._tcp_host.setPlaceholderText("127.0.0.1")
+        self._tcp_port = QSpinBox(self)
+        self._tcp_port.setRange(1, 65535)
+        self._tcp_port.setValue(8000)
+
+        tcp_form.addRow("Host / IP", self._tcp_host)
+        tcp_form.addRow("Port", self._tcp_port)
+        self._stack.addWidget(self._tcp_page)
+
+        # -- Page 2: UDP Settings
+        self._udp_page = QWidget(self)
+        udp_form = QFormLayout(self._udp_page)
+        udp_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        udp_form.setContentsMargins(0, 0, 0, 0)
+
+        self._udp_host = QLineEdit(self)
+        self._udp_host.setPlaceholderText("127.0.0.1")
+        self._udp_port = QSpinBox(self)
+        self._udp_port.setRange(1, 65535)
+        self._udp_port.setValue(8000)
+        self._udp_local_port = QSpinBox(self)
+        self._udp_local_port.setRange(0, 65535)
+        self._udp_local_port.setValue(0)
+        self._udp_local_port.setToolTip("Optional local bind port (0 for auto)")
+
+        udp_form.addRow("Host / IP", self._udp_host)
+        udp_form.addRow("Remote Port", self._udp_port)
+        udp_form.addRow("Local Port", self._udp_local_port)
+        self._stack.addWidget(self._udp_page)
+
+        # Connect Type Combo index change to QStackedWidget
+        self._type_combo.currentIndexChanged.connect(self._stack.setCurrentIndex)
+
+        # 3. Common Settings Form (Timeout & Auto-reconnect)
+        common_form = QFormLayout()
+        common_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
+        common_form.setContentsMargins(0, 0, 0, 0)
+
         self._timeout_combo = QComboBox(self)
         self._timeout_combo.addItems(["20", "50", "100", "250", "500", "1000"])
 
         self._auto_reconnect_chk = QCheckBox("Auto-reconnect on disconnect", self)
 
-        form.addRow("Port", port_row)
-        form.addRow("Baud rate", self._baud_combo)
-        form.addRow("Data bits", self._data_bits_combo)
-        form.addRow("Stop bits", self._stop_bits_combo)
-        form.addRow("Parity", self._parity_combo)
-        form.addRow("Timeout (ms)", self._timeout_combo)
-        form.addRow("", self._auto_reconnect_chk)
-        layout.addLayout(form)
+        common_form.addRow("Timeout (ms)", self._timeout_combo)
+        common_form.addRow("", self._auto_reconnect_chk)
+        layout.addLayout(common_form)
 
+        # 4. Action Buttons
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
             self,
@@ -122,46 +187,97 @@ class ConnectionDialog(QDialog):
 
     def _restore_from_settings(self) -> None:
         s = self._settings
+
+        # Connection type
+        saved_type = s.value("conn/type", "serial")
+        type_idx = self._type_combo.findData(saved_type)
+        if type_idx >= 0:
+            self._type_combo.setCurrentIndex(type_idx)
+            self._stack.setCurrentIndex(type_idx)
+
+        # Serial settings
         saved_port = s.value("conn/port", "")
         for i in range(self._port_combo.count()):
             if self._port_combo.itemData(i, Qt.ItemDataRole.UserRole) == saved_port:
                 self._port_combo.setCurrentIndex(i)
                 break
-        # The config's SerialDefaults becomes the per-key fallback when
-        # QSettings has no stored value yet. Stop_bits uses ``%g`` so 1.0
-        # renders as "1" and matches the combo items "1", "1.5", "2".
         cd = self._config_defaults
         self._baud_combo.setCurrentText(str(s.value("conn/baud", str(cd.baud_rate))))
         self._data_bits_combo.setCurrentText(str(s.value("conn/data_bits", str(cd.data_bits))))
         self._stop_bits_combo.setCurrentText(str(s.value("conn/stop_bits", f"{cd.stop_bits:g}")))
         self._parity_combo.setCurrentText(str(s.value("conn/parity", cd.parity)))
-        self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", str(cd.timeout_ms))))
 
-        # Auto-reconnect default is False
+        # TCP Settings
+        self._tcp_host.setText(str(s.value("conn/tcp_host", "127.0.0.1")))
+        self._tcp_port.setValue(int(s.value("conn/tcp_port", 8000)))
+
+        # UDP Settings
+        self._udp_host.setText(str(s.value("conn/udp_host", "127.0.0.1")))
+        self._udp_port.setValue(int(s.value("conn/udp_port", 8000)))
+        self._udp_local_port.setValue(int(s.value("conn/udp_local_port", 0)))
+
+        # Common settings
+        self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", str(cd.timeout_ms))))
         auto_rec_val = s.value("conn/auto_reconnect", "false")
         self._auto_reconnect_chk.setChecked(str(auto_rec_val).lower() == "true")
 
     def _on_accept(self) -> None:
         s = self._settings
+        s.setValue("conn/type",           self._type_combo.currentData())
+
+        # Serial settings
         s.setValue("conn/port",           self._port_combo.currentData(Qt.ItemDataRole.UserRole) or "")
         s.setValue("conn/baud",           self._baud_combo.currentText())
         s.setValue("conn/data_bits",      self._data_bits_combo.currentText())
         s.setValue("conn/stop_bits",      self._stop_bits_combo.currentText())
         s.setValue("conn/parity",         self._parity_combo.currentText())
+
+        # TCP Settings
+        s.setValue("conn/tcp_host",       self._tcp_host.text().strip())
+        s.setValue("conn/tcp_port",       self._tcp_port.value())
+
+        # UDP Settings
+        s.setValue("conn/udp_host",       self._udp_host.text().strip())
+        s.setValue("conn/udp_port",       self._udp_port.value())
+        s.setValue("conn/udp_local_port", self._udp_local_port.value())
+
+        # Common settings
         s.setValue("conn/timeout_ms",     self._timeout_combo.currentText())
         s.setValue("conn/auto_reconnect", "true" if self._auto_reconnect_chk.isChecked() else "false")
         self.accept()
 
     def get_settings(self) -> "SerialSettings":
-        return SerialSettings(
-            port=self._port_combo.currentData(Qt.ItemDataRole.UserRole) or self._port_combo.currentText(),
-            baud_rate=int(self._baud_combo.currentText()),
-            data_bits=int(self._data_bits_combo.currentText()),
-            stop_bits=float(self._stop_bits_combo.currentText()),
-            parity=self._parity_combo.currentText(),
-            timeout_ms=int(self._timeout_combo.currentText()),
-            auto_reconnect=self._auto_reconnect_chk.isChecked(),
-        )
+        conn_type = self._type_combo.currentData()
+        if conn_type == "tcp":
+            return SerialSettings(
+                connection_type="tcp",
+                port=f"{self._tcp_host.text().strip()}:{self._tcp_port.value()}",
+                host=self._tcp_host.text().strip(),
+                port_num=self._tcp_port.value(),
+                timeout_ms=int(self._timeout_combo.currentText()),
+                auto_reconnect=self._auto_reconnect_chk.isChecked(),
+            )
+        elif conn_type == "udp":
+            return SerialSettings(
+                connection_type="udp",
+                port=f"{self._udp_host.text().strip()}:{self._udp_port.value()}",
+                host=self._udp_host.text().strip(),
+                port_num=self._udp_port.value(),
+                local_port=self._udp_local_port.value(),
+                timeout_ms=int(self._timeout_combo.currentText()),
+                auto_reconnect=self._auto_reconnect_chk.isChecked(),
+            )
+        else:
+            return SerialSettings(
+                connection_type="serial",
+                port=self._port_combo.currentData(Qt.ItemDataRole.UserRole) or self._port_combo.currentText(),
+                baud_rate=int(self._baud_combo.currentText()),
+                data_bits=int(self._data_bits_combo.currentText()),
+                stop_bits=float(self._stop_bits_combo.currentText()),
+                parity=self._parity_combo.currentText(),
+                timeout_ms=int(self._timeout_combo.currentText()),
+                auto_reconnect=self._auto_reconnect_chk.isChecked(),
+            )
 
 
 class PollingConfigDialog(QDialog):
