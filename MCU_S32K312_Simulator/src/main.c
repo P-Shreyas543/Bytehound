@@ -260,7 +260,7 @@ int main(void)
     SWT_0->CR &= ~SWT_CR_WEN_MASK;
 
     /* Configure clock mode */
-    CLOCK_Init(CLOCK_MODE_1_CONFIG);
+    CLOCK_Init(CLOCK_MODE_0_CONFIG);
 
     /* Enable all on-chip peripherals */
     MCME_PeriphCtrl(MCME_ALL_PERIPH_EN_CONFIG);
@@ -286,24 +286,70 @@ int main(void)
 
     for (;;)
     {
-        /* Simple Echo Test */
+        /* Drain LPUART1 RX bytes into the parser state machine */
         while (LPUART_RxFull(LPUART1))
         {
             uint8_t rx_char = (uint8_t)LPUART_GetChar(LPUART1);
-            uint8_t *p_rx = &rx_char;
-            /* Echo it back */
-            LPUART_Wr(LPUART1, p_rx, 1);
+            rx_feed(rx_char);
         }
 
-        /* Periodically send 'A' every 1000ms */
-        static uint32_t last_test_ms = 0;
         uint32_t now = millis();
-        if (now - last_test_ms >= 1000)
+
+        /* Silent mode check */
+        uint8_t silent = (now < silent_until_ms) || !streaming_on;
+
+        /* Stress mode timings */
+        uint32_t iv_1000  = stress_mode_on ?  20 : 100;
+        uint32_t iv_2000  = stress_mode_on ? 100 : 500;
+        uint32_t iv_3000  = stress_mode_on ?  40 : 200;
+        uint32_t iv_cycle = stress_mode_on ? 200 : 1000;
+
+        if (!silent && now - last_1000_ms >= iv_1000)
         {
-            last_test_ms = now;
-            uint8_t test_char = 'A';
-            uint8_t *p_test = &test_char;
-            LPUART_Wr(LPUART1, p_test, 1);
+            last_1000_ms = now;
+            emit_1000();
+        }
+        if (!silent && now - last_2000_ms >= iv_2000)
+        {
+            last_2000_ms = now;
+            emit_2000();
+        }
+        if (!silent && now - last_3000_ms >= iv_3000)
+        {
+            last_3000_ms = now;
+            emit_3000();
+        }
+
+        /* Periodically walk telemetry variables */
+        if (now - last_cycle_ms >= iv_cycle)
+        {
+            last_cycle_ms = now;
+
+            pack_voltage_cv += 10;
+            if (pack_voltage_cv > 6000) pack_voltage_cv = 4000;
+
+            pack_current_dA += 1;
+            if (pack_current_dA > 100) pack_current_dA = -50;
+
+            pack_soc_pct = (pack_soc_pct >= 80) ? 70 : (pack_soc_pct + 1);
+
+            pack_temp_dC += 1;
+            if (pack_temp_dC > 300) pack_temp_dC = 200;
+
+            for (uint8_t i = 0; i < 8; i++)
+            {
+                int16_t delta = ((int16_t)((now ^ (i * 17)) & 0x7)) - 3; // -3..+4 mV
+                int32_t next = (int32_t)cell_mV[i] + delta;
+                if (next < 3650) next = 3650;
+                if (next > 3750) next = 3750;
+                cell_mV[i] = (uint16_t)next;
+            }
+
+            uint8_t low = (status_bits & 0x0F) << 1;
+            if (low == 0 || low > 0x0F) low = 0x01;
+            status_bits = (status_bits & 0xF0) | low;
+
+            mode = (mode + 1) % 5;
         }
     }
 
