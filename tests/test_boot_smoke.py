@@ -658,4 +658,96 @@ def test_plot_range_synchronization(window: MainWindow, monkeypatch) -> None:
     assert panel1_vb.viewRange()[0] == [10.0, 20.0]
 
 
+def test_dynamic_group_visibility(window: MainWindow) -> None:
+    """Verify that Group columns and filters are dynamically shown or hidden based on whether groups exist in the config."""
+    from app.decoder.types import ProtocolConfig, FrameConfig, SignalSpec
+
+    # 1. Test case: Config with groups
+    p_with = ProtocolConfig(
+        profile_name="With Groups Test",
+        header=b"\xAA\x55",
+        frame_id_size=2,
+        frame_id_byte_order="big",
+        length_size=1,
+        length_meaning="payload_only",
+        crc_type="crc16_modbus",
+        crc_size=2,
+        crc_byte_order="little",
+        crc_coverage="header_to_payload",
+        footer=b"",
+        escape_mode="none",
+        enabled=True,
+        parser_type="framed"
+    )
+    sig_with = SignalSpec(
+        frame_id=0x10,
+        frame_name="FrameWith",
+        signal_name="SigWith",
+        start_byte=0,
+        byte_length=2,
+        endianness="little",
+        data_type="uint16",
+        scale=1.0,
+        offset=0.0,
+        unit="V",
+        group="BMS_Group",  # Has a group!
+        read_write="R",
+        enabled=True
+    )
+    cfg_with = FrameConfig(protocol=p_with, signals_by_frame={0x10: [sig_with]})
+    window._config = cfg_with
+    
+    # Run selector populator
+    window._populate_group_selector()
+    
+    # Verify everything is visible
+    assert window._group_label.isHidden() is False
+    assert window._group_combo.isHidden() is False
+    assert window._table.isColumnHidden(1) is False
+
+    # 2. Test case: Config without groups
+    p_without = ProtocolConfig(
+        profile_name="Without Groups Test",
+        header=b"\xAA\x55",
+        frame_id_size=2,
+        frame_id_byte_order="big",
+        length_size=1,
+        length_meaning="payload_only",
+        crc_type="crc16_modbus",
+        crc_size=2,
+        crc_byte_order="little",
+        crc_coverage="header_to_payload",
+        footer=b"",
+        escape_mode="none",
+        enabled=True,
+        parser_type="framed"
+    )
+    sig_without = SignalSpec(
+        frame_id=0x20,
+        frame_name="FrameWithout",
+        signal_name="SigWithout",
+        start_byte=0,
+        byte_length=2,
+        endianness="little",
+        data_type="uint16",
+        scale=1.0,
+        offset=0.0,
+        unit="V",
+        group="",  # No group!
+        read_write="R",
+        enabled=True
+    )
+    cfg_without = FrameConfig(protocol=p_without, signals_by_frame={0x20: [sig_without]})
+    window._config = cfg_without
+    
+    # Run selector populator
+    window._populate_group_selector()
+    
+    # Verify everything is hidden
+    assert window._group_label.isHidden() is True
+    assert window._group_combo.isHidden() is True
+    assert window._table.isColumnHidden(1) is True
+
+
+
 

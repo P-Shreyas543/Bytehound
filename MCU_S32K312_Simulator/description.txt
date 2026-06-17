@@ -1,0 +1,33 @@
+Application description
+=======================
+The purpose of this example is to highlight the usage of FreeMASTER Driver implemented over LPUART module on S32K312 CPU.
+
+Build Prerequisites
+=======================
+Test project (all source files are included)
+
+Run Prerequisites
+=======================
+To run the example you will need to have the following items:
+
+* 1 XS32K3X2CVB-Q172 daughter board
+* 1 S32K312 chip
+* 1 USB to TTL Serial Cable
+* 1 Power Adapters 12V
+* 1 Personal Computer
+* 1 PEmicro Multilink Debug Probe
+
+Hardware Wiring
+=======================
+Serial Cable TX and RX should be connected to J417 Pin 3 (PTA8<->LPUART2_RX) and RX to J422 Pin 4 (PTA9<->LPUART2_TX) respectively.
+The debugger must be connected to J7 10-pin SWD Cortex Debug connector.
+
+How to run
+=======================
+1. Import the project into S32 Design Studio
+
+2. Build and flash the application to the target board
+
+3. Open FreeMASTER Example Project
+
+4. Connect to the board using RS232 (115200 baud rate)
