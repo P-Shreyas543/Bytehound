@@ -780,107 +780,33 @@ def _add_page_field(para):
 
 def build_header_footer(doc, version_info: dict):
     """
-    Header (right-aligned):  blue rule  →  logo  →  3 text lines
-    Footer:                  PAGE field (right)  +  URL / doc name (centre)
-    Mirrors the layout of the reference Multi Cell BMS document.
+    Update the template's existing headers and footers in-place,
+    substituting Decibels Lab references with Bytehound branding.
+    This preserves the exact design, formatting, and embedded shapes/lines.
     """
     sec = doc.sections[0]
     sec.different_first_page_header_footer = True
+    version = version_info.get("version", "1.0.0")
 
-    # ── Header ────────────────────────────────────────────────────────────────
-    hdr = sec.header
-    # Clear any default paragraphs
-    for p in list(hdr.paragraphs):
-        p._element.getparent().remove(p._element)
+    ns = {'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'}
 
-    # 1. Blue rule — thin paragraph bottom-border, right-aligned
-    p_rule = hdr.add_paragraph()
-    p_rule.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p_rule.paragraph_format.space_before = Pt(0)
-    p_rule.paragraph_format.space_after  = Pt(4)
-    add_bottom_border_to_para(p_rule, "3498DB", sz="12")
+    # Update Header text nodes in-place
+    for t in sec.header._element.findall('.//w:t', ns):
+        if t.text == "Decibels Lab Private Limited":
+            t.text = "Bytehound Open Source Community"
+        elif t.text == "CIN: U80904KA2019PTC126675":
+            t.text = "Serial Telemetry & Decoder Guide"
+        elif t.text == "+":
+            t.text = "github.com/P-Shreyas543/Bytehound"
+        elif t.text and ("91 89515 03455" in t.text or "contact@decibelslab.com" in t.text):
+            t.text = ""
 
-    # 2. Logo image (if the PNG exists; skip gracefully otherwise)
-    if LOGO_PATH.exists():
-        p_logo = hdr.add_paragraph()
-        p_logo.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        p_logo.paragraph_format.space_before = Pt(0)
-        p_logo.paragraph_format.space_after  = Pt(2)
-        run = p_logo.add_run()
-        run.add_picture(str(LOGO_PATH), height=Cm(1.0))
-
-    # 3–5. Three right-aligned text lines
-    hdr_lines = [
-        ("Bytehound Open Source Community", True),
-        ("Serial Telemetry & Decoder Guide", False),
-        ("github.com/P-Shreyas543/Bytehound", False),
-    ]
-    for text, bold in hdr_lines:
-        p = hdr.add_paragraph()
-        p.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-        p.paragraph_format.space_before = Pt(0)
-        p.paragraph_format.space_after  = Pt(0)
-        # widowControl off (matches reference)
-        pPr = p._p.get_or_add_pPr()
-        wc = OxmlElement("w:widowControl")
-        wc.set(qn("w:val"), "0")
-        pPr.insert(0, wc)
-        sp = OxmlElement("w:spacing")
-        sp.set(qn("w:before"), "0")
-        sp.set(qn("w:after"), "0")
-        pPr.append(sp)
-        r = p.add_run(text)
-        r.font.name  = FONT_NAME
-        r.font.size  = Pt(9)
-        r.bold       = bold
-        r.font.color.rgb = BRAND_DARK
-
-    # ── Footer ────────────────────────────────────────────────────────────────
-    ftr = sec.footer
-    for p in list(ftr.paragraphs):
-        p._element.getparent().remove(p._element)
-
-    # Para 1: PAGE field, right-aligned, 11 pt black (matches reference sz=22 half-pts)
-    p_page = ftr.add_paragraph()
-    p_page.alignment = WD_ALIGN_PARAGRAPH.RIGHT
-    p_page.paragraph_format.space_before = Pt(0)
-    p_page.paragraph_format.space_after  = Pt(0)
-    # pPr with tabs and no spacing — mirrors reference
-    pPr = p_page._p.get_or_add_pPr()
-    pBdr = OxmlElement("w:pBdr")
-    for side in ("top", "left", "bottom", "right", "between"):
-        el = OxmlElement(f"w:{side}")
-        el.set(qn("w:val"), "nil")
-        pBdr.append(el)
-    pPr.append(pBdr)
-    tabs = OxmlElement("w:tabs")
-    for pos, val in (("4513", "center"), ("9026", "right")):
-        tab = OxmlElement("w:tab")
-        tab.set(qn("w:val"), val)
-        tab.set(qn("w:pos"), pos)
-        tabs.append(tab)
-    pPr.append(tabs)
-    sp = OxmlElement("w:spacing")
-    sp.set(qn("w:before"), "0")
-    sp.set(qn("w:after"), "0")
-    pPr.append(sp)
-    _add_page_field(p_page)
-
-    # Para 2: URL / document description, centre-aligned (matches reference layout)
-    version = version_info.get("version", "")
-    p_doc = ftr.add_paragraph()
-    p_doc.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p_doc.paragraph_format.space_before = Pt(0)
-    p_doc.paragraph_format.space_after  = Pt(0)
-    r_url = p_doc.add_run("github.com/P-Shreyas543/Bytehound")
-    r_url.font.name      = FONT_NAME
-    r_url.font.size      = Pt(9)
-    r_url.font.color.rgb = RGBColor(0x11, 0x55, 0xCC)
-    r_url.font.underline = True
-    r_sep = p_doc.add_run(f"  /  Bytehound v{version} — Serial Telemetry & Decoder Guide")
-    r_sep.font.name      = FONT_NAME
-    r_sep.font.size      = Pt(9)
-    r_sep.font.color.rgb = TEXT_BODY
+    # Update Footer text nodes in-place
+    for t in sec.footer._element.findall('.//w:t', ns):
+        if t.text == "lms.decibelslab.com":
+            t.text = "github.com/P-Shreyas543/Bytehound"
+        elif t.text and "Multi-Cell BMS Algorithm Development Kit" in t.text:
+            t.text = f"  /  Bytehound v{version} \u2014 Serial Telemetry & Decoder Guide"
 
 
 # ── Body-content wipe (preserves headers / footers / section properties) ──────
