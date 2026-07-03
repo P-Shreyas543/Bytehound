@@ -12,9 +12,31 @@ from .packet_parser import encode_length_field, crc_coverage_bytes, escape_frame
 from ..decoder.types import ProtocolConfig
 
 
+def build_waveshare_can_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> bytes:
+    dlc = len(payload)
+    if dlc > 8:
+        raise ValueError(f"Waveshare CAN payload must be <= 8 bytes (got {dlc})")
+    
+    is_extended = (protocol.frame_id_size == 4) or (frame_id > 0x7FF)
+    type_byte = 0xE0 | dlc if is_extended else 0xC0 | dlc
+    
+    packet = bytearray()
+    packet.append(0xAA)
+    packet.append(type_byte)
+    if is_extended:
+        packet.extend(frame_id.to_bytes(4, byteorder='little'))
+    else:
+        packet.extend(frame_id.to_bytes(2, byteorder='little'))
+    packet.extend(payload)
+    packet.append(0x55)
+    return bytes(packet)
+
+
 def build_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> bytes:
     if protocol.parser_type == "modbus_rtu":
         return build_modbus_packet(protocol, frame_id, payload)
+    if protocol.parser_type == "waveshare_can":
+        return build_waveshare_can_packet(protocol, frame_id, payload)
 
     pc = protocol
     fid_bytes = frame_id.to_bytes(pc.frame_id_size, pc.frame_id_byte_order)

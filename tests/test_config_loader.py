@@ -505,3 +505,42 @@ def test_duplicate_polling_schedule_rejected(tmp_path):
     with pytest.raises(ConfigError, match="duplicate polling schedule for ID 0x10"):
         load_config(tmp_path)
 
+
+def test_waveshare_can_config_loading(tmp_path):
+    source = tmp_path / "config.json"
+    import json
+    data = {
+        "protocol": [
+            {
+                "profile_name": "Waveshare Test",
+                "parser_type": "waveshare_can",
+                "enabled": "TRUE"
+            }
+        ],
+        "variables": [
+            {
+                "id_or_address": "0x0123",
+                "signal_name": "CAN_Signal",
+                "data_type": "uint16",
+                "count": 1,
+                "byte_order": "little",
+                "scale": 1.0,
+                "offset": 0,
+                "unit": "V",
+                "enabled": "TRUE"
+            }
+        ]
+    }
+    with source.open("w", encoding="utf-8") as f:
+        json.dump(data, f)
+    cfg = load_config(source)
+    assert cfg.protocol.profile_name == "Waveshare Test"
+    assert cfg.protocol.parser_type == "waveshare_can"
+    assert cfg.protocol.header == b"\xAA"
+    assert cfg.protocol.frame_id_size == 2
+    assert cfg.protocol.length_size == 1
+    assert cfg.protocol.length_meaning == "payload_only"
+    assert cfg.protocol.crc_type == "none"
+    assert cfg.protocol.crc_size == 0
+    assert cfg.protocol.footer == b"\x55"
+

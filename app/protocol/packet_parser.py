@@ -561,7 +561,144 @@ class ModbusRtuParser(ParserProtocol):
         )
 
 
+class WaveshareCanParser(ParserProtocol):
+    def __init__(self, protocol: ProtocolConfig) -> None:
+        self.protocol = protocol
+        self._buf = bytearray()
+
+    def feed(self, data: bytes) -> None:
+        self._buf.extend(data)
+        _trim_if_overflow(self._buf, "WaveshareCanParser")
+
+    def extract_all(self) -> List[ParsedPacket]:
+        out: List[ParsedPacket] = []
+        while True:
+            pkt, consumed = self._try_parse_one()
+            if pkt is None and consumed == 0:
+                break
+            del self._buf[:consumed]
+            if pkt is not None:
+                out.append(pkt)
+        return out
+
+    @property
+    def buffered_bytes(self) -> int:
+        return len(self._buf)
+
+    def _try_parse_one(self) -> Tuple[Optional[ParsedPacket], int]:
+        if len(self._buf) < 1:
+            return None, 0
+
+        # Check for Fixed 20-byte Protocol header directly
+        if len(self._buf) >= 2 and self._buf[0] == 0xAA and self._buf[1] == 0x55:
+            if len(self._buf) < 20:
+                return None, 0
+
+            # Verify checksum: (sum of first 19 bytes + 1) & 0xFF
+            expected_chk = (sum(self._buf[:19]) + 1) & 0xFF
+            received_chk = self._buf[19]
+            if expected_chk != received_chk:
+                # Checksum mismatch; discard the first byte to resync
+                return None, 1
+
+            raw = bytes(self._buf[:20])
+            dlc = self._buf[9]
+            if dlc > 8:
+                dlc = 8
+            
+            # Frame ID is 4 bytes at index 5, little-endian
+            frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
+            payload = bytes(self._buf[10 : 10 + dlc])
+
+            pkt = ParsedPacket(
+                raw=raw,
+                frame_id=frame_id,
+                payload=payload,
+                ok=True,
+                error=None
+            )
+            return pkt, 20
+
+        # Find 0xAA header index
+        idx = self._buf.find(0xAA)
+        if idx == -1:
+            return None, len(self._buf)
+        if idx > 0:
+            return None, idx
+
+        # Header AA is at index 0. We need type byte at index 1.
+        if len(self._buf) < 2:
+            return None, 0
+
+        type_byte = self._buf[1]
+        
+        # If type_byte is 0x55, it's a Fixed 20-byte frame (AA 55)
+        if type_byte == 0x55:
+            if len(self._buf) < 20:
+                return None, 0
+            
+            expected_chk = (sum(self._buf[:19]) + 1) & 0xFF
+            received_chk = self._buf[19]
+            if expected_chk != received_chk:
+                return None, 1
+
+            raw = bytes(self._buf[:20])
+            dlc = self._buf[9]
+            if dlc > 8:
+                dlc = 8
+            frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
+            payload = bytes(self._buf[10 : 10 + dlc])
+
+            pkt = ParsedPacket(
+                raw=raw,
+                frame_id=frame_id,
+                payload=payload,
+                ok=True,
+                error=None
+            )
+            return pkt, 20
+
+        # Otherwise, check if type_byte is valid for Variable-Length Protocol
+        if (type_byte & 0xC0) != 0xC0:
+            # Not a valid frame start. Drop the 0xAA byte to resync.
+            return None, 1
+
+        is_extended = bool(type_byte & 0x20)
+        dlc = type_byte & 0x0F
+
+        if dlc > 8:
+            return None, 1
+
+        id_size = 4 if is_extended else 2
+        total_size = 1 + 1 + id_size + dlc + 1  # header + type + id + data + footer
+
+        if len(self._buf) < total_size:
+            return None, 0
+
+        footer_byte = self._buf[total_size - 1]
+        if footer_byte != 0x55:
+            return None, 1
+
+        raw = bytes(self._buf[:total_size])
+        id_offset = 2
+        fid_bytes = bytes(self._buf[id_offset : id_offset + id_size])
+        frame_id = int.from_bytes(fid_bytes, byteorder='little')
+        payload_offset = id_offset + id_size
+        payload = bytes(self._buf[payload_offset : payload_offset + dlc])
+
+        pkt = ParsedPacket(
+            raw=raw,
+            frame_id=frame_id,
+            payload=payload,
+            ok=True,
+            error=None
+        )
+        return pkt, total_size
+
+
 def create_parser(protocol: ProtocolConfig) -> ParserProtocol:
     if protocol.parser_type == "modbus_rtu":
         return ModbusRtuParser(protocol)
+    if protocol.parser_type == "waveshare_can":
+        return WaveshareCanParser(protocol)
     return FramedParser(protocol)

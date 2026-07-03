@@ -84,7 +84,7 @@ class ConnectionDialog(QDialog):
 
         self._baud_combo = QComboBox(self)
         self._baud_combo.addItems(["9600", "19200", "38400", "57600", "115200",
-                                    "230400", "460800", "921600"])
+                                    "230400", "460800", "921600", "1000000", "2000000"])
 
         self._data_bits_combo = QComboBox(self)
         self._data_bits_combo.addItems(["8", "7"])

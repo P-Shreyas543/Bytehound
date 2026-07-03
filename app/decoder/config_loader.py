@@ -106,8 +106,17 @@ def load_config(path: str | Path) -> FrameConfig:
         base_label = str(source)
     else:
         raise ConfigError(f"Config path does not exist or format unsupported: {source}")
+    protocol_rows = tables.get("protocol", [])
+    required_cols = set(_PROTOCOL_REQUIRED)
+    if protocol_rows:
+        try:
+            parser_type_val = ParserType.parse(protocol_rows[0].get("parser_type", "")).value
+            if parser_type_val == "waveshare_can":
+                required_cols = {"profile_name"}
+        except ValueError:
+            pass
 
-    protocol = _parse_protocol(_required_table(tables, "protocol", _PROTOCOL_REQUIRED))
+    protocol = _parse_protocol(_required_table(tables, "protocol", required_cols))
 
     if "variables" in tables:
         if "frames" in tables:
@@ -378,8 +387,12 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         raise ConfigError("protocol: more than one enabled profile")
 
     row = enabled_rows[0]
+    parser_type_val = ParserType.parse(row.get("parser_type", "")).value
+    is_modbus = parser_type_val == "modbus_rtu"
+    is_waveshare = parser_type_val == "waveshare_can"
+
     try:
-        crc_type = CrcType.parse(row["crc_type"]).value
+        crc_type = CrcType.parse(row.get("crc_type", "none" if is_waveshare else "")).value
     except ValueError as exc:
         raise ConfigError(f"protocol: {exc}") from exc
     length_byte_order_raw = (row.get("length_byte_order") or "").strip().lower()
@@ -399,30 +412,61 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
             f"protocol: raw_log_format must be 'hex' or 'compact' (got {raw_log_format_raw!r})"
         )
 
-    is_modbus = ParserType.parse(row.get("parser_type", "")).value == "modbus_rtu"
     frame_id_default = "big" if is_modbus else "little"
     crc_default = "little" if is_modbus else "little"
 
+    header_hex_val = row.get("header_hex", "")
+    if is_waveshare and not header_hex_val:
+        header_hex_val = "AA"
+
+    frame_id_size_val = row.get("frame_id_size", "")
+    if is_waveshare and not frame_id_size_val:
+        frame_id_size = 2
+    else:
+        frame_id_size = _to_int(frame_id_size_val, field_name="frame_id_size")
+
+    length_size_val = row.get("length_size", "")
+    if is_waveshare and not length_size_val:
+        length_size = 1
+    else:
+        length_size = _to_int(length_size_val, field_name="length_size")
+
+    length_meaning_val = (row.get("length_meaning") or "").strip().lower()
+    if is_waveshare and not length_meaning_val:
+        length_meaning = "payload_only"
+    else:
+        length_meaning = length_meaning_val
+
+    crc_size_val = row.get("crc_size", "")
+    if is_waveshare and not crc_size_val:
+        crc_size = 0
+    else:
+        crc_size = _to_int(crc_size_val, field_name="crc_size")
+
+    footer_hex_val = row.get("footer_hex", "")
+    if is_waveshare and not footer_hex_val:
+        footer_hex_val = "55"
+
     protocol = ProtocolConfig(
         profile_name=row["profile_name"],
-        header=_hex_to_bytes(row["header_hex"], "header_hex"),
-        frame_id_size=_to_int(row["frame_id_size"], field_name="frame_id_size"),
+        header=_hex_to_bytes(header_hex_val, "header_hex"),
+        frame_id_size=frame_id_size,
         frame_id_byte_order=_normalize_byte_order(
-            row["frame_id_byte_order"], source="protocol", column="frame_id_byte_order", default=frame_id_default),
-        length_size=_to_int(row["length_size"], field_name="length_size"),
-        length_meaning=row["length_meaning"].strip().lower(),
+            row.get("frame_id_byte_order", ""), source="protocol", column="frame_id_byte_order", default=frame_id_default),
+        length_size=length_size,
+        length_meaning=length_meaning,
         crc_type=crc_type,
-        crc_size=_to_int(row["crc_size"], field_name="crc_size"),
+        crc_size=crc_size,
         crc_byte_order=_normalize_byte_order(
-            row["crc_byte_order"], source="protocol", column="crc_byte_order", default=crc_default),
+            row.get("crc_byte_order", ""), source="protocol", column="crc_byte_order", default=crc_default),
         # crc_coverage: only "header_to_payload" is implemented; default to it
         # so the column can be omitted from user-facing config sheets.
         crc_coverage=(row.get("crc_coverage") or "header_to_payload").strip().lower(),
-        footer=_hex_to_bytes(row.get("footer_hex", ""), "footer_hex"),
+        footer=_hex_to_bytes(footer_hex_val, "footer_hex"),
         # escape_mode: only "none" is implemented; default to it.
         escape_mode=(row.get("escape_mode") or "none").strip().lower(),
         enabled=True,
-        parser_type=ParserType.parse(row.get("parser_type", "")).value,
+        parser_type=parser_type_val,
         tx_pad_length=_to_optional_int(row.get("tx_pad_length", ""), field_name="tx_pad_length"),
         inter_frame_delay_ms=_to_int(row.get("inter_frame_delay_ms", "10"), field_name="inter_frame_delay_ms"),
         length_byte_order=length_byte_order,
@@ -439,8 +483,14 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
             raise ConfigError("protocol: Modbus RTU register addresses (frame_id_byte_order) must be big-endian")
         if protocol.crc_byte_order != "little":
             raise ConfigError("protocol: Modbus RTU CRC checksum (crc_byte_order) must be little-endian")
-    if not protocol.header:
-        raise ConfigError("protocol: header_hex must not be empty")
+    if protocol.parser_type == "waveshare_can":
+        if protocol.header != b"\xAA":
+            raise ConfigError("protocol: Waveshare CAN header must be 0xAA")
+        if protocol.footer != b"\x55":
+            raise ConfigError("protocol: Waveshare CAN footer must be 0x55")
+    else:
+        if not protocol.header:
+            raise ConfigError("protocol: header_hex must not be empty")
     if protocol.frame_id_byte_order not in {"big", "little"}:
         raise ConfigError("protocol: frame_id_byte_order must be big or little")
     if protocol.crc_byte_order not in {"big", "little"}:
@@ -462,8 +512,8 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
             f"protocol: escape_mode must be one of "
             f"'none', 'slip', 'hdlc', 'cobs' (got {protocol.escape_mode!r})"
         )
-    if protocol.parser_type not in {"framed", "modbus_rtu"}:
-        raise ConfigError("protocol: parser_type must be framed or modbus_rtu")
+    if protocol.parser_type not in {"framed", "modbus_rtu", "waveshare_can"}:
+        raise ConfigError("protocol: parser_type must be framed, modbus_rtu, or waveshare_can")
 
 
 def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:

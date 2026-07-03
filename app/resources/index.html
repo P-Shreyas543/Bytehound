@@ -753,7 +753,8 @@
             <li>Connect your hardware to your computer using a USB cable or Serial adapter.</li>
             <li>Make sure your loaded config matches the bytes your device sends. For a framed protocol that usually
                 means <code>[Header] + [ID] + [Length] + [Data] + [CRC]</code>; for Modbus RTU, set
-                <code>parser_type = modbus_rtu</code>. See <a href="#section-5">Section 5</a> for protocol details.</li>
+                <code>parser_type = modbus_rtu</code>; for Waveshare USB-CAN-A adapters, set
+                <code>parser_type = waveshare_can</code>. See <a href="#section-5">Section 5</a> for protocol details.</li>
             <li>Launch <strong>Bytehound</strong>. A bundled example config loads automatically; use <strong>Import
                     Config</strong> if you want to load your own Excel workbook or CSV config folder.</li>
             <li>Click <strong>Connect</strong> in the toolbar. A <strong>Connection Settings</strong> dialog will
@@ -2215,6 +2216,13 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             TX builder switch to standard Modbus RTU mode automatically. In this mode the <code>id_or_address</code>
             column in Variables and PollingSchedule is the Modbus register address (not a frame ID).
         </div>
+        <div class="note">
+            <strong>waveshare_can is fully supported.</strong> Set <code>parser_type = waveshare_can</code> to interface
+            with Waveshare USB-CAN-A adapters over virtual serial ports. This parser automatically decodes both
+            <strong>Variable-Length Protocol</strong> frames and <strong>Fixed 20-Byte Protocol</strong> frames (checksum validated).
+            When active, the <code>id_or_address</code> column represents the CAN ID (e.g. <code>0x0123</code>). Columns like
+            <code>header_hex</code>, <code>footer_hex</code>, and <code>length_size</code> can be omitted or left blank in your configuration, as they automatically fallback to Waveshare defaults.
+        </div>
 
         <h4 id="tx-pad-length">Fixed-length TX (<code>tx_pad_length</code>) — for buffer-full RX interrupts</h4>
         <p>
@@ -2266,7 +2274,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             — blanks for <code>length_byte_order</code>, <code>crc_coverage</code>, <code>escape_mode</code>, and
             <code>tx_pad_length</code> mean "use the sensible default"):</p>
         <pre>profile_name           = Default
-parser_type            = framed
+parser_type            = framed              ← `framed`, `modbus_rtu`, or `waveshare_can`
 header_hex             = AA 55
 frame_id_size          = 2
 frame_id_byte_order    = little
