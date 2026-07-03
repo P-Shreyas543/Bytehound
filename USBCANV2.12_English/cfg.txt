@@ -1,0 +1,1 @@
+2000000,Normal,Standard Frame,500K,CAN_BS1_6tq,CAN_BS2_5tq,6,500.000kbps,00000000,00000000,Manual BPS FALSE,SendAlways,Fixed,
