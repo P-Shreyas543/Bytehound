@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSizePolicy,
     QStackedWidget,
+    QSplitter,
     QStatusBar,
     QTableView,
     QTableWidget,
@@ -713,18 +714,21 @@ class UIBuildersMixin:
             self._panel_strip_container = None
             return outer
 
+        # Create a vertical splitter for the variable chips and the graphics canvas
+        self._plot_splitter = QSplitter(Qt.Orientation.Vertical, outer)
+
         # ── Per-panel variable-strip container ─────────────────────────────
         # Strips live in a QWidget ABOVE the GraphicsLayoutWidget because
         # pg.GraphicsLayoutWidget is an OpenGL canvas and cannot host Qt widgets.
-        self._panel_strip_container = QWidget(outer)
+        self._panel_strip_container = QWidget(self._plot_splitter)
         self._panel_strip_layout = QGridLayout(self._panel_strip_container)
         self._panel_strip_layout.setContentsMargins(0, 0, 0, 0)
         self._panel_strip_layout.setHorizontalSpacing(4)
         self._panel_strip_layout.setVerticalSpacing(2)
-        root_layout.addWidget(self._panel_strip_container)
+        self._plot_splitter.addWidget(self._panel_strip_container)
 
         # ── Graphics canvas ────────────────────────────────────────────────
-        self._gl_widget = pg.GraphicsLayoutWidget(outer)
+        self._gl_widget = pg.GraphicsLayoutWidget(self._plot_splitter)
         # GraphicsLayoutWidget has no intrinsic minimum size, so without
         # this the layout would happily squash it to 0 when the dock
         # shrinks. 80 px keeps at least one curve visible without forcing
@@ -735,7 +739,13 @@ class UIBuildersMixin:
         # paint it; we tint it explicitly per theme. Re-applied on every
         # theme switch by _apply_plot_theme().
         self._apply_plot_theme(str(self._settings.value("ui/theme", "dark")))
-        root_layout.addWidget(self._gl_widget, 1)
+        self._plot_splitter.addWidget(self._gl_widget)
+
+        # Set stretch factors: the canvas gets stretch priority
+        self._plot_splitter.setStretchFactor(0, 0)
+        self._plot_splitter.setStretchFactor(1, 1)
+
+        root_layout.addWidget(self._plot_splitter, 1)
 
         # Build the initial grid from saved (or default) layout
         rows, cols = GRID_LAYOUTS.get(self._layout_combo.currentText(), (2, 1))

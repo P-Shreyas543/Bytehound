@@ -400,12 +400,14 @@ class FramedParser(ParserProtocol):
         if len(self._buf) < fixed_size:
             return None, 0
 
+        buf_mv = memoryview(self._buf)
+
         length_off = len(header) + pc.frame_id_size
-        length_bytes = bytes(self._buf[length_off : length_off + pc.length_size])
+        length_bytes_mv = buf_mv[length_off : length_off + pc.length_size]
         # length_byte_order falls back to frame_id_byte_order when not
         # explicitly configured. Backward-compatible with existing configs.
         length_endian = pc.length_byte_order or pc.frame_id_byte_order
-        length_value = int.from_bytes(length_bytes, length_endian)
+        length_value = int.from_bytes(length_bytes_mv, length_endian)
 
         # Translate the on-wire length value into the payload size per the
         # protocol's length_meaning. A negative result means the value is
@@ -425,25 +427,24 @@ class FramedParser(ParserProtocol):
         if len(self._buf) < total_size:
             return None, 0
 
-        raw = bytes(self._buf[:total_size])
-        fid_bytes = bytes(self._buf[len(header) : len(header) + pc.frame_id_size])
-        frame_id = int.from_bytes(fid_bytes, pc.frame_id_byte_order)
+        raw = bytes(buf_mv[:total_size])
+        fid_bytes = bytes(buf_mv[len(header) : len(header) + pc.frame_id_size])
+        frame_id = int.from_bytes(buf_mv[len(header) : len(header) + pc.frame_id_size], pc.frame_id_byte_order)
 
         payload_off = length_off + pc.length_size
-        payload = bytes(self._buf[payload_off : payload_off + payload_len])
+        payload = bytes(buf_mv[payload_off : payload_off + payload_len])
 
         crc_off = payload_off + payload_len
-        crc_bytes = bytes(self._buf[crc_off : crc_off + pc.crc_size])
         received_crc = (
-            int.from_bytes(crc_bytes, pc.crc_byte_order)
+            int.from_bytes(buf_mv[crc_off : crc_off + pc.crc_size], pc.crc_byte_order)
             if pc.crc_size > 0 else 0
         )
 
         footer_off = crc_off + pc.crc_size
-        footer_bytes = bytes(self._buf[footer_off : footer_off + len(pc.footer)])
+        footer_bytes = bytes(buf_mv[footer_off : footer_off + len(pc.footer)])
 
         coverage = crc_coverage_bytes(
-            header, fid_bytes, length_bytes, payload, footer_bytes, pc,
+            header, fid_bytes, bytes(length_bytes_mv), payload, footer_bytes, pc,
         )
 
         if pc.crc_type != "none":
@@ -529,19 +530,18 @@ class ModbusRtuParser(ParserProtocol):
         if len(self._buf) < expected_len:
             return None, 0
 
-        frame = bytes(self._buf[:expected_len])
+        buf_mv = memoryview(self._buf)
+        frame = bytes(buf_mv[:expected_len])
 
         if fc in (3, 4):
-            payload = frame[3:-2]
-        elif fc == 6:
-            payload = frame[4:6]
-        elif fc == 16:
-            payload = frame[4:6]
+            payload = bytes(buf_mv[3 : expected_len - 2])
+        elif fc in (6, 16):
+            payload = bytes(buf_mv[4:6])
         else:
             payload = b""
 
-        received_crc = int.from_bytes(frame[-2:], "little")
-        expected_crc = crc_mod.compute("crc16_modbus", frame[:-2])
+        received_crc = int.from_bytes(buf_mv[expected_len - 2 : expected_len], "little")
+        expected_crc = crc_mod.compute("crc16_modbus", bytes(buf_mv[:expected_len - 2]))
 
         if received_crc != expected_crc:
             return (
@@ -589,26 +589,28 @@ class WaveshareCanParser(ParserProtocol):
         if len(self._buf) < 1:
             return None, 0
 
+        buf_mv = memoryview(self._buf)
+
         # Check for Fixed 20-byte Protocol header directly
-        if len(self._buf) >= 2 and self._buf[0] == 0xAA and self._buf[1] == 0x55:
+        if len(self._buf) >= 2 and buf_mv[0] == 0xAA and buf_mv[1] == 0x55:
             if len(self._buf) < 20:
                 return None, 0
 
             # Verify checksum: (sum of first 19 bytes + 1) & 0xFF
-            expected_chk = (sum(self._buf[:19]) + 1) & 0xFF
-            received_chk = self._buf[19]
+            expected_chk = (sum(buf_mv[:19]) + 1) & 0xFF
+            received_chk = buf_mv[19]
             if expected_chk != received_chk:
                 # Checksum mismatch; discard the first byte to resync
                 return None, 1
 
-            raw = bytes(self._buf[:20])
-            dlc = self._buf[9]
+            raw = bytes(buf_mv[:20])
+            dlc = buf_mv[9]
             if dlc > 8:
                 dlc = 8
             
             # Frame ID is 4 bytes at index 5, little-endian
-            frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
-            payload = bytes(self._buf[10 : 10 + dlc])
+            frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
+            payload = bytes(buf_mv[10 : 10 + dlc])
 
             pkt = ParsedPacket(
                 raw=raw,
@@ -630,24 +632,24 @@ class WaveshareCanParser(ParserProtocol):
         if len(self._buf) < 2:
             return None, 0
 
-        type_byte = self._buf[1]
+        type_byte = buf_mv[1]
         
         # If type_byte is 0x55, it's a Fixed 20-byte frame (AA 55)
         if type_byte == 0x55:
             if len(self._buf) < 20:
                 return None, 0
             
-            expected_chk = (sum(self._buf[:19]) + 1) & 0xFF
-            received_chk = self._buf[19]
+            expected_chk = (sum(buf_mv[:19]) + 1) & 0xFF
+            received_chk = buf_mv[19]
             if expected_chk != received_chk:
                 return None, 1
 
-            raw = bytes(self._buf[:20])
-            dlc = self._buf[9]
+            raw = bytes(buf_mv[:20])
+            dlc = buf_mv[9]
             if dlc > 8:
                 dlc = 8
-            frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
-            payload = bytes(self._buf[10 : 10 + dlc])
+            frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
+            payload = bytes(buf_mv[10 : 10 + dlc])
 
             pkt = ParsedPacket(
                 raw=raw,
@@ -675,16 +677,15 @@ class WaveshareCanParser(ParserProtocol):
         if len(self._buf) < total_size:
             return None, 0
 
-        footer_byte = self._buf[total_size - 1]
+        footer_byte = buf_mv[total_size - 1]
         if footer_byte != 0x55:
             return None, 1
 
-        raw = bytes(self._buf[:total_size])
+        raw = bytes(buf_mv[:total_size])
         id_offset = 2
-        fid_bytes = bytes(self._buf[id_offset : id_offset + id_size])
-        frame_id = int.from_bytes(fid_bytes, byteorder='little')
+        frame_id = int.from_bytes(buf_mv[id_offset : id_offset + id_size], byteorder='little')
         payload_offset = id_offset + id_size
-        payload = bytes(self._buf[payload_offset : payload_offset + dlc])
+        payload = bytes(buf_mv[payload_offset : payload_offset + dlc])
 
         pkt = ParsedPacket(
             raw=raw,

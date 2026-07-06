@@ -30,7 +30,7 @@ import pyqtgraph as pg
 
 # ── Global pyqtgraph config (must run before any PlotWidget is created) ──
 pg.setConfigOptions(antialias=True, useOpenGL=True)
-from PySide6.QtCore import Qt, QSettings, QTimer
+from PySide6.QtCore import Qt, QSettings, QTimer, QThread, Signal
 from PySide6.QtGui import (
     QAction, QColor, QFont, QKeySequence, QPainter,
 )
@@ -124,6 +124,205 @@ def _curve_visuals(group: list[str], param: str, log_index: int, log_color: str
 # XYPlotWindow lives in ``xy_plot``. Imports at the top of this file
 # re-expose the names so existing code keeps working unchanged.
 
+
+
+class CSVExportThread(QThread):
+    """Background thread to align, interpolate, and write visible log curves to CSV."""
+    sigProgress = Signal(int)
+    sigFinished = Signal(str, int)
+    sigError = Signal(str)
+
+    def __init__(self, path: str, rows: list[dict], rate: int, parent=None):
+        super().__init__(parent)
+        self.path = path
+        self.rows = rows
+        self.rate = rate
+
+    def run(self):
+        try:
+            # Slices and extracts x arrays
+            masters = []
+            for r in self.rows:
+                x = r["x"]
+                x_range = r.get("x_range")
+                if x_range is not None:
+                    mask = (x >= x_range[0]) & (x <= x_range[1])
+                    masters.append(x[mask])
+                else:
+                    masters.append(x)
+            
+            if not masters:
+                self.sigError.emit("No samples found to export.")
+                return
+
+            merged = np.unique(np.concatenate(masters))
+            if merged.size == 0:
+                self.sigError.emit("No samples in the selected view range.")
+                return
+
+            if self.rate > 1:
+                merged = merged[::self.rate]
+
+            headers = ["time"]
+            data_cols = []
+            for r in self.rows:
+                if self.isInterruptionRequested():
+                    return
+                x = r["x"]
+                y = r["y"]
+                order = np.argsort(x)
+                x_sorted = x[order]
+                y_sorted = y[order]
+                interp = np.interp(merged, x_sorted, y_sorted, left=np.nan, right=np.nan)
+                headers.append(r["curve"])
+                data_cols.append(interp)
+
+            total_rows = merged.size
+            if self.isInterruptionRequested():
+                return
+
+            with open(self.path, "w", newline="", encoding="utf-8") as f:
+                w = csv.writer(f)
+                w.writerow(headers)
+                
+                # Write in chunks of 500 rows to support cancellation & progress dialogs
+                chunk_size = 500
+                for start_idx in range(0, total_rows, chunk_size):
+                    if self.isInterruptionRequested():
+                        f.close()
+                        try:
+                            os.remove(self.path)
+                        except Exception:
+                            pass
+                        return
+                    
+                    end_idx = min(start_idx + chunk_size, total_rows)
+                    for i in range(start_idx, end_idx):
+                        row = [f"{merged[i]:.6f}"]
+                        for col in data_cols:
+                            v = col[i]
+                            row.append("" if not np.isfinite(v) else f"{v:.6g}")
+                        w.writerow(row)
+                    
+                    progress_pct = int((end_idx / total_rows) * 100)
+                    self.sigProgress.emit(progress_pct)
+                    
+            self.sigFinished.emit(self.path, total_rows)
+        except Exception as e:
+            self.sigError.emit(str(e))
+
+
+class SessionSaveThread(QThread):
+    """Background thread to write session state JSON file."""
+    sigFinished = Signal(str)
+    sigError = Signal(str)
+
+    def __init__(self, path: str, data: dict, parent=None):
+        super().__init__(parent)
+        self.path = path
+        self.data = data
+
+    def run(self):
+        try:
+            with open(self.path, 'w') as f:
+                json.dump(self.data, f, indent=2)
+            self.sigFinished.emit(self.path)
+        except Exception as e:
+            self.sigError.emit(str(e))
+
+
+class SessionLoadThread(QThread):
+    """Background thread to read and parse session state JSON file."""
+    sigFinished = Signal(dict)
+    sigError = Signal(str)
+
+    def __init__(self, path: str, parent=None):
+        super().__init__(parent)
+        self.path = path
+
+    def run(self):
+        try:
+            with open(self.path, 'r') as f:
+                data = json.load(f)
+            self.sigFinished.emit(data)
+        except Exception as e:
+            self.sigError.emit(str(e))
+
+
+class PlotImageExportThread(QThread):
+    """Background thread to stitch, format, and compile composite images and PDFs."""
+    sigFinished = Signal(str)
+    sigError = Signal(str)
+
+    def __init__(self, path: str, mode: str, images: list, plot_bg: str, parent=None):
+        super().__init__(parent)
+        self.path = path
+        self.mode = mode
+        self.images = images  # List of QImage objects
+        self.plot_bg = plot_bg
+
+    def run(self):
+        try:
+            from PySide6.QtGui import QImage, QColor, QPainter, QPixmap
+            from PySide6.QtCore import QMarginsF, Qt
+            
+            if self.mode == "PDF":
+                from PySide6.QtPrintSupport import QPrinter
+                from PySide6.QtGui import QPageSize, QPageLayout
+                
+                # Stitch vertically onto one canvas with white bg
+                export_width = 1600
+                total_h = sum(img.height() for img in self.images) + 8 * max(len(self.images) - 1, 0)
+                canvas = QImage(export_width, total_h, QImage.Format_ARGB32)
+                canvas.fill(QColor('#ffffff'))
+                
+                painter_c = QPainter(canvas)
+                y = 0
+                for img in self.images:
+                    painter_c.drawImage(0, y, img)
+                    y += img.height() + 8
+                painter_c.end()
+
+                printer = QPrinter(QPrinter.HighResolution)
+                printer.setOutputFormat(QPrinter.PdfFormat)
+                printer.setOutputFileName(self.path)
+                printer.setPageSize(QPageSize(QPageSize.A4))
+                printer.setPageOrientation(QPageLayout.Landscape)
+                printer.setPageMargins(QMarginsF(10, 10, 10, 10))
+
+                painter = QPainter()
+                painter.begin(printer)
+                page_rect = printer.pageRect(QPrinter.DevicePixel)
+                pixmap = QPixmap.fromImage(canvas)
+                # Scale to fit page preserving aspect ratio
+                scaled = pixmap.scaled(
+                    page_rect.width(), page_rect.height(),
+                    Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                x_off = int((page_rect.width() - scaled.width()) / 2)
+                y_off = int((page_rect.height() - scaled.height()) / 2)
+                painter.drawPixmap(x_off, y_off, scaled)
+                painter.end()
+            else:
+                # PNG composite
+                total_height = 0
+                width = 0
+                for img in self.images:
+                    total_height += img.height() + 10
+                    width = max(width, img.width())
+
+                composite = QImage(width, total_height, QImage.Format_ARGB32)
+                composite.fill(QColor(self.plot_bg))
+                painter = QPainter(composite)
+                y_offset = 0
+                for img in self.images:
+                    painter.drawImage(0, y_offset, img)
+                    y_offset += img.height() + 10
+                painter.end()
+                composite.save(self.path)
+                
+            self.sigFinished.emit(self.path)
+        except Exception as e:
+            self.sigError.emit(str(e))
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -1473,22 +1672,6 @@ class AnalysisSuiteWindow(QMainWindow):
         if not ok:
             return
 
-        if rate > 1:
-            merged = merged[::rate]
-
-        headers = ["time"]
-        data_cols: list[np.ndarray] = []
-        for r in rows:
-            x = r["x"]
-            y = r["y"]
-            order = np.argsort(x)
-            x_sorted = x[order]
-            y_sorted = y[order]
-            interp = np.interp(merged, x_sorted, y_sorted,
-                               left=np.nan, right=np.nan)
-            headers.append(f"{r['log_name']} · {r['param']}")
-            data_cols.append(interp)
-
         suggested = os.path.join(
             get_analysis_dir(),
             f"{APP_NAME}_visible_data.csv")
@@ -1499,22 +1682,38 @@ class AnalysisSuiteWindow(QMainWindow):
         if not path.lower().endswith(".csv"):
             path += ".csv"
 
-        try:
-            with open(path, "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow(headers)
-                for i in range(merged.size):
-                    row = [f"{merged[i]:.6f}"]
-                    for col in data_cols:
-                        v = col[i]
-                        row.append("" if not np.isfinite(v) else f"{v:.6g}")
-                    w.writerow(row)
-        except Exception as exc:
-            self._popup_warning("Export Failed", str(exc))
-            return
-        self._status.showMessage(
-            f"Exported {len(rows)} curve(s) × {merged.size} rows to "
-            f"{os.path.basename(path)}", 6000)
+        from PySide6.QtWidgets import QProgressDialog
+        progress_dlg = QProgressDialog(
+            "Preparing export...", "Cancel", 0, 100, self
+        )
+        progress_dlg.setWindowTitle("Exporting CSV")
+        progress_dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress_dlg.setMinimumDuration(0)
+        progress_dlg.setAutoClose(True)
+        progress_dlg.setAutoReset(True)
+        progress_dlg.setValue(0)
+        progress_dlg.show()
+
+        thread = CSVExportThread(path, rows, rate, self)
+        thread.sigProgress.connect(progress_dlg.setValue)
+
+        def on_error(err_msg):
+            progress_dlg.close()
+            self._popup_warning("Export Failed", err_msg)
+
+        def on_finished(out_path, total_rows_written):
+            progress_dlg.close()
+            self._status.showMessage(
+                f"Exported {len(rows)} curve(s) × {total_rows_written} rows to "
+                f"{os.path.basename(out_path)}", 6000)
+
+        thread.sigError.connect(on_error)
+        thread.sigFinished.connect(on_finished)
+        progress_dlg.canceled.connect(thread.requestInterruption)
+
+        self._export_thread = thread
+        thread.finished.connect(lambda: setattr(self, "_export_thread", None))
+        thread.start()
 
     # ──────────────────────────────────────────────────────────────────
     # Recent files (Phase 2)
@@ -1932,47 +2131,44 @@ class AnalysisSuiteWindow(QMainWindow):
             self._popup_information("Nothing to Export",
                                     "No visible curves on this subplot.")
             return
-        # Build CSV (same wide-format logic as _export_visible_csv)
-        masters = []
-        for r in rows:
-            x = r["x"]
-            if x_range is not None:
-                mask = (x >= x_range[0]) & (x <= x_range[1])
-                masters.append(x[mask])
-            else:
-                masters.append(x)
-        merged = np.unique(np.concatenate(masters))
-        if merged.size == 0:
-            self._popup_information("Nothing to Export", "No samples in range.")
-            return
-        headers = ["time"]
-        data_cols = []
-        for r in rows:
-            x, y = r["x"], r["y"]
-            order = np.argsort(x)
-            interp = np.interp(merged, x[order], y[order], left=np.nan, right=np.nan)
-            headers.append(r["curve"])
-            data_cols.append(interp)
         path, _ = QFileDialog.getSaveFileName(
             self, "Export Subplot Data", get_analysis_dir(), "CSV Files (*.csv)")
         if not path:
             return
         if not path.lower().endswith(".csv"):
             path += ".csv"
-        try:
-            with open(path, "w", newline="", encoding="utf-8") as f:
-                w = csv.writer(f)
-                w.writerow(headers)
-                for i in range(merged.size):
-                    row = [f"{merged[i]:.6f}"]
-                    for col in data_cols:
-                        v = col[i]
-                        row.append("" if not np.isfinite(v) else f"{v:.6g}")
-                    w.writerow(row)
+
+        from PySide6.QtWidgets import QProgressDialog
+        progress_dlg = QProgressDialog(
+            "Preparing export...", "Cancel", 0, 100, self
+        )
+        progress_dlg.setWindowTitle("Exporting CSV")
+        progress_dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress_dlg.setMinimumDuration(0)
+        progress_dlg.setAutoClose(True)
+        progress_dlg.setAutoReset(True)
+        progress_dlg.setValue(0)
+        progress_dlg.show()
+
+        thread = CSVExportThread(path, rows, 1, self)
+        thread.sigProgress.connect(progress_dlg.setValue)
+
+        def on_error(err_msg):
+            progress_dlg.close()
+            self._popup_warning("Export Failed", err_msg)
+
+        def on_finished(out_path, total_rows_written):
+            progress_dlg.close()
             self._status.showMessage(
-                f"Exported subplot to {os.path.basename(path)}", 5000)
-        except Exception as exc:
-            self._popup_warning("Export Failed", str(exc))
+                f"Exported subplot to {os.path.basename(out_path)}", 5000)
+
+        thread.sigError.connect(on_error)
+        thread.sigFinished.connect(on_finished)
+        progress_dlg.canceled.connect(thread.requestInterruption)
+
+        self._export_thread = thread
+        thread.finished.connect(lambda: setattr(self, "_export_thread", None))
+        thread.start()
 
     def _copy_subplot_image(self, pw: pg.PlotWidget):
         """Render the subplot to a QImage and copy to clipboard."""
@@ -2757,12 +2953,16 @@ class AnalysisSuiteWindow(QMainWindow):
             x_range = self._plot_widgets[0].getPlotItem().vb.viewRange()[0]
             data['view_range'] = {'x': x_range}
 
-        try:
-            with open(path, 'w') as f:
-                json.dump(data, f, indent=2)
-            self._status.showMessage(f"Session saved to {os.path.basename(path)}", 5000)
-        except Exception as exc:
-            self._popup_warning("Save Error", str(exc))
+        self._status.showMessage("Saving session...", 3000)
+        self._save_thread = SessionSaveThread(path, data, self)
+        self._save_thread.sigFinished.connect(
+            lambda out_path: self._status.showMessage(f"Session saved to {os.path.basename(out_path)}", 5000)
+        )
+        self._save_thread.sigError.connect(
+            lambda err: self._popup_warning("Save Error", err)
+        )
+        self._save_thread.finished.connect(lambda: setattr(self, "_save_thread", None))
+        self._save_thread.start()
 
     def _load_session(self):
         folder = get_analysis_dir()
@@ -2772,13 +2972,16 @@ class AnalysisSuiteWindow(QMainWindow):
         if not path:
             return
 
-        try:
-            with open(path, 'r') as f:
-                data = json.load(f)
-        except Exception as exc:
-            self._popup_warning("Load Error", str(exc))
-            return
+        self._status.showMessage("Loading session...", 3000)
+        self._load_thread = SessionLoadThread(path, self)
+        self._load_thread.sigFinished.connect(self._on_session_data_loaded)
+        self._load_thread.sigError.connect(
+            lambda err: self._popup_warning("Load Error", err)
+        )
+        self._load_thread.finished.connect(lambda: setattr(self, "_load_thread", None))
+        self._load_thread.start()
 
+    def _on_session_data_loaded(self, data: dict):
         ver = data.get('version', 0)
         if ver not in (1, 2, 3, 4):
             self._popup_warning("Version Mismatch", "Session file version not supported.")
@@ -2987,8 +3190,6 @@ class AnalysisSuiteWindow(QMainWindow):
 
     def _do_export(self, path: str, filt: str):
         try:
-            from PySide6.QtGui import QImage, QPixmap
-            from PySide6.QtCore import QMarginsF
             from pyqtgraph.exporters import ImageExporter
 
             if filt and "SVG" in filt:
@@ -3004,11 +3205,10 @@ class AnalysisSuiteWindow(QMainWindow):
                 self._status.showMessage(f"Exported SVG to {os.path.dirname(path)}", 5000)
                 return
 
+            # Grab plot images on the UI thread since rendering must touch the GUI
+            plot_images = []
             if filt and "PDF" in filt or path.lower().endswith('.pdf'):
-                from PySide6.QtGui import QPageSize, QPageLayout
-                from PySide6.QtPrintSupport import QPrinter
-                # Render each plot to image with forced white background + black axes
-                plot_images = []
+                mode = "PDF"
                 export_width = 1600
                 for pw in self._plot_widgets:
                     self._set_plot_export_theme(pw, dark=False)
@@ -3018,61 +3218,28 @@ class AnalysisSuiteWindow(QMainWindow):
                     img = exporter.export(toBytes=True)
                     self._restore_plot_theme(pw)
                     plot_images.append(img)
+            else:
+                mode = "PNG"
+                for pw in self._plot_widgets:
+                    exporter = ImageExporter(pw.getPlotItem())
+                    img = exporter.export(toBytes=True)
+                    plot_images.append(img)
 
-                # Stitch vertically onto one canvas with white bg
-                total_h = sum(img.height() for img in plot_images) + 8 * max(len(plot_images) - 1, 0)
-                canvas = QImage(export_width, total_h, QImage.Format_ARGB32)
-                canvas.fill(QColor('#ffffff'))
-                painter_c = QPainter(canvas)
-                y = 0
-                for img in plot_images:
-                    painter_c.drawImage(0, y, img)
-                    y += img.height() + 8
-                painter_c.end()
-
-                printer = QPrinter(QPrinter.HighResolution)
-                printer.setOutputFormat(QPrinter.PdfFormat)
-                printer.setOutputFileName(path)
-                printer.setPageSize(QPageSize(QPageSize.A4))
-                printer.setPageOrientation(QPageLayout.Landscape)
-                printer.setPageMargins(QMarginsF(10, 10, 10, 10))
-
-                painter = QPainter()
-                painter.begin(printer)
-                page_rect = printer.pageRect(QPrinter.DevicePixel)
-                pixmap = QPixmap.fromImage(canvas)
-                # Scale to fit page preserving aspect ratio
-                scaled = pixmap.scaled(
-                    page_rect.width(), page_rect.height(),
-                    Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                x_off = int((page_rect.width() - scaled.width()) / 2)
-                y_off = int((page_rect.height() - scaled.height()) / 2)
-                painter.drawPixmap(x_off, y_off, scaled)
-                painter.end()
-                self._status.showMessage(f"Exported PDF to {os.path.basename(path)}", 5000)
-                return
-
-            # Default: PNG composite using ImageExporter (avoids blank OpenGL grabs)
-            images = []
-            total_height = 0
-            width = 0
-            for pw in self._plot_widgets:
-                exporter = ImageExporter(pw.getPlotItem())
-                img = exporter.export(toBytes=True)
-                images.append(img)
-                total_height += img.height() + 10
-                width = max(width, img.width())
-
-            composite = QImage(width, total_height, QImage.Format_ARGB32)
-            composite.fill(QColor(THEME.c('plot_bg')))
-            painter = QPainter(composite)
-            y_offset = 0
-            for img in images:
-                painter.drawImage(0, y_offset, img)
-                y_offset += img.height() + 10
-            painter.end()
-            composite.save(path)
-            self._status.showMessage(f"Exported PNG to {os.path.basename(path)}", 5000)
+            # Start background thread to stitch, format, and save the images
+            self._status.showMessage("Exporting...", 3000)
+            self._export_thread = PlotImageExportThread(
+                path, mode, plot_images, THEME.c('plot_bg'), self
+            )
+            self._export_thread.sigFinished.connect(
+                lambda out_path: self._status.showMessage(
+                    f"Exported {mode} to {os.path.basename(out_path)}", 5000
+                )
+            )
+            self._export_thread.sigError.connect(
+                lambda err: self._popup_warning("Export Error", err)
+            )
+            self._export_thread.finished.connect(lambda: setattr(self, "_export_thread", None))
+            self._export_thread.start()
 
         except Exception as exc:
             self._popup_warning("Export Error", str(exc))

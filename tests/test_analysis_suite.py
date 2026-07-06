@@ -576,6 +576,107 @@ def test_subplot_dual_y_axes_unit_classification():
     assert get_left_right(group3) == ("", None)
 
 
+def test_csv_export_thread_happy_path(tmp_path):
+    from app.ui.analysis_suite import CSVExportThread
+    import csv
+    import os
+
+    export_path = os.path.join(tmp_path, "export_test.csv")
+    rows = [
+        {
+            "curve": "LogA · Speed",
+            "log_name": "LogA",
+            "param": "Speed",
+            "x": np.array([0.0, 2.0, 4.0]),
+            "y": np.array([10.0, 20.0, 30.0]),
+            "x_range": (0.0, 4.0),
+        },
+        {
+            "curve": "LogB · Speed",
+            "log_name": "LogB",
+            "param": "Speed",
+            "x": np.array([1.0, 3.0, 5.0]),
+            "y": np.array([15.0, 25.0, 35.0]),
+            "x_range": (0.0, 4.0),
+        }
+    ]
+
+    thread = CSVExportThread(export_path, rows, rate=1)
+    
+    # Track signal emits using lists
+    finished_data = []
+    error_data = []
+    
+    thread.sigFinished.connect(lambda path, count: finished_data.append((path, count)))
+    thread.sigError.connect(lambda err: error_data.append(err))
+
+    # Run background thread synchronously for the test
+    thread.run()
+
+    assert not error_data
+    assert len(finished_data) == 1
+    assert finished_data[0][0] == export_path
+    
+    # Combined timeline should be unique union of LogA/B inside x_range (0.0, 4.0):
+    # LogA: x in [0.0, 2.0, 4.0]
+    # LogB: x in [1.0, 3.0] (5.0 is excluded by x_range)
+    # Merged timeline: [0.0, 1.0, 2.0, 3.0, 4.0] (5 points total)
+    assert finished_data[0][1] == 5
+
+    assert os.path.isfile(export_path)
+    with open(export_path, "r", newline="", encoding="utf-8") as f:
+        reader = list(csv.reader(f))
+        assert reader[0] == ["time", "LogA · Speed", "LogB · Speed"]
+        
+        # Test values:
+        # time=0.0: LogA=10.0, LogB=NaN (outside LogB range [1.0, 5.0])
+        # time=1.0: LogA=15.0 (interpolated), LogB=15.0
+        # time=2.0: LogA=20.0, LogB=20.0 (interpolated)
+        # time=3.0: LogA=25.0 (interpolated), LogB=25.0
+        # time=4.0: LogA=30.0, LogB=30.0 (interpolated)
+        
+        assert reader[1] == ["0.000000", "10", ""]
+        assert reader[2] == ["1.000000", "15", "15"]
+        assert reader[3] == ["2.000000", "20", "20"]
+        assert reader[4] == ["3.000000", "25", "25"]
+        assert reader[5] == ["4.000000", "30", "30"]
+
+
+def test_csv_export_thread_cancellation(tmp_path):
+    from app.ui.analysis_suite import CSVExportThread
+    import os
+
+    export_path = os.path.join(tmp_path, "export_cancel.csv")
+    rows = [
+        {
+            "curve": "LogA · Speed",
+            "log_name": "LogA",
+            "param": "Speed",
+            "x": np.array([0.0, 2.0, 4.0]),
+            "y": np.array([10.0, 20.0, 30.0]),
+            "x_range": (0.0, 4.0),
+        }
+    ]
+
+    thread = CSVExportThread(export_path, rows, rate=1)
+    
+    # We want to simulate interruption during the chunk writing phase so we can verify the partial file deletion.
+    # To do this, we can make isInterruptionRequested return True after the first call.
+    call_count = 0
+    def mock_interruption():
+        nonlocal call_count
+        call_count += 1
+        return call_count > 2
+
+    thread.isInterruptionRequested = mock_interruption
+    
+    thread.run()
+
+    # The file should have been deleted because it was interrupted during writing
+    assert not os.path.exists(export_path)
+
+
+
 
 
 
