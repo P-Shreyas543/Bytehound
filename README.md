@@ -80,19 +80,15 @@ When filing a bug at <https://github.com/P-Shreyas543/Bytehound/issues>, please 
 
 Help → View Documentation opens [`app/resources/index.html`](app/resources/index.html) — a complete handbook covering configuration, UART frame definition, TX commands, logging, plotting, analysis suite, and troubleshooting.
 
-## What's new in v0.4.1
+## What's new in v1.1.0
 
 | Feature | Details |
 |---|---|
-| Live Plot Mode Fix | Fixed a startup race condition where initial window resize and layout-settling events were incorrectly detected as manual user pan gestures. |
-| Deprecation Warnings Fix | Resolved Qt deprecation warnings (QMouseEvent constructor warnings in test suite) and looping warnings in analysis_suite.py. |
-| Repository Cleanup | Removed untracked diagnostic/temp files from source control and updated .gitignore to robust industry standards. |
-| Modular Analysis Suite | In-depth log review panel with multi-run comparison tools, offset alignment, custom math channels, cursors, and statistics. |
-| Custom Schema Mapper | Override sheet names, elapsed-time column names, and unit scale factors when importing external log files into the Analysis Suite. |
-| Frame Format Diagram | View → Config Info — graphical byte-aligned on-wire frame layout alongside the existing config summary. |
-| Auto-Reconnect | Connection dialog checkbox — retries on USB drop with exponential backoff (1 s → 16 s). |
-| Memory Cap | Plot Settings — optional cap on in-memory samples per signal; configurable default display window. |
-| Saturation Warning Badge | `⚠️ Queue Saturated` badge in the status bar; click to dismiss. |
+| Waveshare CAN Support | Adds full configuration and transmission compatibility with Waveshare USB-CAN Fixed 20-Byte mode. |
+| Port Auto-Discovery | The connection dialog scans and updates available ports list automatically every 1.0 second. |
+| Console Flush Optimization | Batches raw console appends at 60 Hz and bypasses signal history calculations when the plot is hidden. |
+| Asynchronous Decoded Logging | Offloads signal processing, enum resolution, and workbook compiling entirely to the background logger thread, eliminating UI lag. |
+| Stability Fixes | Fixed PySide disconnect warning and mocked dialog prompts in headless test suites to prevent freezes. |
 
 ## License
 
