@@ -3,7 +3,7 @@
 from typing import Tuple
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QSettings
+from PySide6.QtCore import Qt, QSettings, QTimer
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox, QFormLayout,
     QHBoxLayout, QLabel, QLineEdit, QMessageBox, QListWidget, QListWidgetItem,
@@ -169,6 +169,11 @@ class ConnectionDialog(QDialog):
         self._refresh_ports()
         self._restore_from_settings()
 
+        self._port_timer = QTimer(self)
+        self._port_timer.setInterval(1000)
+        self._port_timer.timeout.connect(self._auto_refresh_ports)
+        self._port_timer.start()
+
     # ------------------------------------------------------------------
     def _refresh_ports(self) -> None:
         current = self._port_combo.currentData(Qt.ItemDataRole.UserRole) or ""
@@ -184,6 +189,19 @@ class ConnectionDialog(QDialog):
                     break
         else:
             self._port_combo.addItem("No ports found", userData="")
+
+    def _auto_refresh_ports(self) -> None:
+        if self._stack.currentIndex() != 0:
+            return
+        ports = list(available_ports())
+        combo_ports = []
+        for i in range(self._port_combo.count()):
+            user_data = self._port_combo.itemData(i, Qt.ItemDataRole.UserRole)
+            if user_data:
+                combo_ports.append(user_data)
+        current_ports = [p[0] for p in ports]
+        if set(combo_ports) != set(current_ports):
+            self._refresh_ports()
 
     def _restore_from_settings(self) -> None:
         s = self._settings

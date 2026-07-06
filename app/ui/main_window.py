@@ -317,7 +317,7 @@ class MainWindow(
         self._plot_panels: List[PlotPanel] = []   # one entry per subplot cell
         self._gl_widget = None                     # pg.GraphicsLayoutWidget
         self._plot_widget = None                   # alias → panels[0].plot_item (compat)
-        self._plot_curves: Dict = {}               # compat shim (unused after refactor)
+        self._tx_logger_parser = None
         self._plot_keys: List[Tuple[int, str]] = []  # union of all panel keys
         self._curve_icon_cache: Dict[Tuple[int, str, str], QIcon] = {}
         self._session_started = datetime.now()
@@ -371,7 +371,10 @@ class MainWindow(
         self._y_autofit_timer.timeout.connect(self._throttled_y_autofit)
         self._y_autofit_timer.start()
 
+        self._pending_console_lines: List[str] = []
         self._build_ui()
+        if hasattr(self, "_console_dock") and self._console_dock is not None:
+            self._console_dock.visibilityChanged.connect(self._on_console_dock_visibility_changed)
         self._load_default_config()
         self._refresh_action_state()
         # Rebuild icon tints after all widgets exist so secondary menu/toolbar
@@ -962,7 +965,8 @@ class MainWindow(
             self._serial.error_occurred.connect(self._on_serial_error)
             self._serial.warning_occurred.connect(self._on_serial_warning)
             self._serial.tx_recorded.connect(self._on_tx_recorded)
-            self._serial.wire_recorded.connect(self._on_wire_recorded)
+            if hasattr(self, "_console_dock") and self._console_dock is not None and self._console_dock.isVisible():
+                self._serial.wire_recorded.connect(self._on_wire_recorded)
             self._serial.connection_lost.connect(self._on_connection_lost)
             self._serial.device_timeout.connect(self._on_device_timeout)
             self._serial.open()
@@ -1118,12 +1122,14 @@ class MainWindow(
             self._raw_logger.log(direction, packet, timestamp=timestamp)
         if direction == "TX" and self._decoded_logger and self._config:
             import time
-            from ..protocol.packet_parser import create_parser
             from ..decoder.frame_decoder import decode_frame
             try:
-                temp_parser = create_parser(self._config.protocol)
-                temp_parser.feed(packet)
-                parsed = temp_parser.extract_all()
+                parser = self._tx_logger_parser
+                if parser is None:
+                    from ..protocol.packet_parser import create_parser
+                    parser = create_parser(self._config.protocol)
+                parser.feed(packet)
+                parsed = parser.extract_all()
                 for p in parsed:
                     if p.ok and p.frame_id is not None:
                         decoded = decode_frame(self._config, p.frame_id, p.payload)
@@ -1136,10 +1142,25 @@ class MainWindow(
             except Exception as e:
                 import logging
                 logging.getLogger("bytehound.ui").exception("Failed to parse/decode TX packet: %s", e)
-        self._console.appendPlainText(
-            f"{timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, "
-            f"{direction}, {packet.hex(' ').upper()}"
-        )
+        if hasattr(self, "_console_dock") and self._console_dock is not None and self._console_dock.isVisible():
+            formatted_line = (
+                f"{timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, "
+                f"{direction}, {packet.hex(' ').upper()}"
+            )
+            self._pending_console_lines.append(formatted_line)
+
+
+    def _on_console_dock_visibility_changed(self, visible: bool) -> None:
+        if self._serial is not None:
+            try:
+                self._serial.wire_recorded.disconnect(self._on_wire_recorded)
+            except RuntimeError:
+                pass
+            if visible:
+                try:
+                    self._serial.wire_recorded.connect(self._on_wire_recorded)
+                except RuntimeError:
+                    pass
 
 
     def _log_flush_interval(self) -> float:

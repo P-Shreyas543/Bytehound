@@ -229,6 +229,8 @@ class TelemetryTableModel(QAbstractTableModel):
         if row is None:
             return False
         data = self._rows[row]
+        if data[5] == raw and data[6] == value and data[8] == status:
+            return True
         data[5] = raw
         data[6] = value
         data[8] = status

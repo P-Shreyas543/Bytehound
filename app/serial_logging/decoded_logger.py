@@ -264,9 +264,6 @@ class DecodedLogger:
         self._writer_thread.start()
 
     def close(self) -> None:
-        if self.polling_mode and self._cycle_buffer:
-            self._maybe_emit_row(force=True)
-            self._cycle_buffer.clear()
         # Signal the writer thread to drain remaining rows, save the
         # workbook, and exit. We join before clearing references so the file
         # is on disk by the time close() returns (callers — including the
@@ -294,7 +291,6 @@ class DecodedLogger:
         # builds a fresh one.
         self._workbook = None
         self._data_ws = None
-        self._cycle_buffer.clear()
 
         # Only drain the queue ourselves if the writer thread already exited
         # (it died before pulling the sentinel, or finished cleanly). If the
@@ -373,83 +369,11 @@ class DecodedLogger:
         if self._disabled:
             return
         try:
-            if self._workbook is None:
+            if self._writer_thread is None:
                 self.open()
-            if self._data_ws is None:
+            if self._writer_thread is None:
                 return
-
-            block = self._block_by_frame.get(decoded.frame_id)
-            if block is None:
-                # Frame not represented in the schema — nothing to do.
-                return
-
-            if self.polling_mode and decoded.frame_id in self._cycle_buffer:
-                self._maybe_emit_row(force=True)
-                self._cycle_buffer.clear()
-
-            slot = self._cycle_buffer.setdefault(decoded.frame_id, {})
-            # Each frame has its own elapsed_ms and frame_id columns.
-            if _SLOT_ELAPSED in block:
-                slot[block[_SLOT_ELAPSED]] = elapsed_ms
-            if _SLOT_FRAME_ID in block:
-                slot[block[_SLOT_FRAME_ID]] = f"0x{decoded.frame_id:04X}"
-            for signal in [*decoded.signals, *decoded.calculations]:
-                key = (signal.frame_id, signal.signal_name)
-
-                # Bitfield: one 0/1 cell per defined bit. No raw column.
-                bit_cols = self._bit_columns_by_key.get(key)
-                if bit_cols:
-                    for bit_name, active in signal.bit_values.items():
-                        pos = bit_cols.get(bit_name)
-                        if pos is not None:
-                            slot[pos] = 1 if active else 0
-                    continue
-
-                # Enum: raw value in the signal column, label in the sibling
-                # `.label` column. Both written when available so unknown raw
-                # values still appear in the raw column even if no label matches.
-                label_pos = self._enum_label_col_by_key.get(key)
-                if label_pos is not None:
-                    raw_pos = self._column_by_key.get(key)
-                    if raw_pos is not None and signal.raw_value is not None:
-                        slot[raw_pos] = int(signal.raw_value)
-                    if signal.enum_label is not None:
-                        slot[label_pos] = signal.enum_label
-                    continue
-
-                # Scalar signal: write the scaled value as before.
-                if signal.scaled_value is None:
-                    continue
-                pos = self._column_by_key.get(key)
-                if pos is None:
-                    continue
-                slot[pos] = _format_number(signal.scaled_value)
-
-            if self._trigger_id is not None and decoded.frame_id == self._trigger_id:
-                if self.polling_mode:
-                    pass
-                else:
-                    self._maybe_emit_row(force=False)
-                    # Always clear so the next cycle starts fresh — no stale carry-over.
-                    self._cycle_buffer.clear()
-        except Exception as exc:
-            self._handle_error("write", exc)
-
-    def _maybe_emit_row(self, force: bool = False) -> None:
-        """Assemble the cycle row and hand it off to the writer thread."""
-        if self._data_ws is None or not self._cycle_buffer:
-            return
-        if not force and not all(fid in self._cycle_buffer for fid in self._required_cycle_frame_ids):
-            return
-        # Position-keyed merge: each frame writes into its own column slots,
-        # so even when two frames share a header text they land in distinct
-        # cells of the wide row.
-        flat: Dict[int, Any] = {}
-        for slot in self._cycle_buffer.values():
-            flat.update(slot)
-        row = [flat.get(i, "") for i in range(len(self._columns))]
-        try:
-            self._queue.put_nowait(row)
+            self._queue.put_nowait((decoded, elapsed_ms))
         except queue.Full:
             # Writer is wedged or saturated. Drop rather than block the GUI
             # thread; the dropped count is logged on close().
@@ -461,19 +385,91 @@ class DecodedLogger:
                 _LOG.warning(msg)
                 if self._on_warning is not None:
                     self._on_warning(msg)
+        except Exception as exc:
+            self._handle_error("write", exc)
 
-    # ------------------------------------------------------------------
-    # Writer thread
-    # ------------------------------------------------------------------
+    def _process_frame_on_writer(self, decoded: DecodedFrame, elapsed_ms: int) -> None:
+        block = self._block_by_frame.get(decoded.frame_id)
+        if block is None:
+            # Frame not represented in the schema — nothing to do.
+            return
+
+        if self.polling_mode and decoded.frame_id in self._cycle_buffer:
+            self._maybe_emit_row_on_writer(force=True)
+            self._cycle_buffer.clear()
+
+        slot = self._cycle_buffer.setdefault(decoded.frame_id, {})
+        # Each frame has its own elapsed_ms and frame_id columns.
+        if _SLOT_ELAPSED in block:
+            slot[block[_SLOT_ELAPSED]] = elapsed_ms
+        if _SLOT_FRAME_ID in block:
+            slot[block[_SLOT_FRAME_ID]] = f"0x{decoded.frame_id:04X}"
+        for signal in [*decoded.signals, *decoded.calculations]:
+            key = (signal.frame_id, signal.signal_name)
+
+            # Bitfield: one 0/1 cell per defined bit. No raw column.
+            bit_cols = self._bit_columns_by_key.get(key)
+            if bit_cols:
+                for bit_name, active in signal.bit_values.items():
+                    pos = bit_cols.get(bit_name)
+                    if pos is not None:
+                        slot[pos] = 1 if active else 0
+                continue
+
+            # Enum: raw value in the signal column, label in the sibling
+            # `.label` column. Both written when available so unknown raw
+            # values still appear in the raw column even if no label matches.
+            label_pos = self._enum_label_col_by_key.get(key)
+            if label_pos is not None:
+                raw_pos = self._column_by_key.get(key)
+                if raw_pos is not None and signal.raw_value is not None:
+                    slot[raw_pos] = int(signal.raw_value)
+                if signal.enum_label is not None:
+                    slot[label_pos] = signal.enum_label
+                continue
+
+            # Scalar signal: write the scaled value as before.
+            if signal.scaled_value is None:
+                continue
+            pos = self._column_by_key.get(key)
+            if pos is None:
+                continue
+            slot[pos] = _format_number(signal.scaled_value)
+
+        if self._trigger_id is not None and decoded.frame_id == self._trigger_id:
+            if self.polling_mode:
+                pass
+            else:
+                self._maybe_emit_row_on_writer(force=False)
+                # Always clear so the next cycle starts fresh — no stale carry-over.
+                self._cycle_buffer.clear()
+
+    def _maybe_emit_row_on_writer(self, force: bool = False) -> None:
+        if not self._cycle_buffer:
+            return
+        if not force and not all(fid in self._cycle_buffer for fid in self._required_cycle_frame_ids):
+            return
+        # Position-keyed merge: each frame writes into its own column slots,
+        # so even when two frames share a header text they land in distinct
+        # cells of the wide row.
+        flat: Dict[int, Any] = {}
+        for slot in self._cycle_buffer.values():
+            flat.update(slot)
+        row = [flat.get(i, "") for i in range(len(self._columns))]
+        self._write_one(self._writer, row)
+
+    def _write_one(self, writer, row: list) -> bool:
+        if writer is None:
+            return False
+        try:
+            writer.writerow(row)
+            return True
+        except Exception as exc:
+            self._record_error("write", exc)
+            return False
 
     def _writer_loop(self) -> None:
-        """Drain queued rows and write them to the temporary CSV file.
-
-        After the stop sentinel arrives (or the stop event is set), drains
-        any remaining queued rows, compiles the Excel workbook on disk, and
-        closes it. The CSV file handles are owned by this thread only during
-        the logging session.
-        """
+        """Drain queued frames and write/format them to the temporary CSV file."""
         writer = self._writer
         fp = self._fp
         try:
@@ -484,8 +480,8 @@ class DecodedLogger:
                     continue
                 if item is _WRITER_STOP:
                     break
-                if not self._write_one(writer, item):
-                    return
+                decoded, elapsed_ms = item
+                self._process_frame_on_writer(decoded, elapsed_ms)
                 self._maybe_periodic_flush(fp)
             # Drain anything still buffered between the stop signal and the
             # join() — even if rows arrived after the sentinel they were
@@ -497,21 +493,14 @@ class DecodedLogger:
                     break
                 if item is _WRITER_STOP:
                     continue
-                if not self._write_one(writer, item):
-                    return
+                decoded, elapsed_ms = item
+                self._process_frame_on_writer(decoded, elapsed_ms)
                 self._maybe_periodic_flush(fp)
         finally:
+            if self.polling_mode and self._cycle_buffer:
+                self._maybe_emit_row_on_writer(force=True)
+                self._cycle_buffer.clear()
             self._save_and_close_workbook(writer, fp)
-
-    def _write_one(self, writer, row: list) -> bool:
-        if writer is None:
-            return False
-        try:
-            writer.writerow(row)
-            return True
-        except Exception as exc:
-            self._record_error("write", exc)
-            return False
 
     def _maybe_periodic_flush(self, fp) -> None:
         if fp is None:

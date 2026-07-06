@@ -447,6 +447,9 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
     if is_waveshare and not footer_hex_val:
         footer_hex_val = "55"
 
+    waveshare_fixed_val = row.get("waveshare_fixed_20_bytes") or row.get("waveshare_fixed") or ""
+    waveshare_fixed_20_bytes = _to_bool(waveshare_fixed_val, default=False, field_name="protocol.waveshare_fixed_20_bytes")
+
     protocol = ProtocolConfig(
         profile_name=row["profile_name"],
         header=_hex_to_bytes(header_hex_val, "header_hex"),
@@ -472,6 +475,7 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         length_byte_order=length_byte_order,
         modbus_node_address=_to_int(row.get("modbus_node_address", "1"), field_name="modbus_node_address"),
         raw_log_format=raw_log_format_raw,
+        waveshare_fixed_20_bytes=waveshare_fixed_20_bytes,
     )
     _validate_protocol(protocol)
     return protocol

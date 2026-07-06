@@ -158,6 +158,7 @@ class ConfigLoaderMixin:
             return
         self._config_path = path
         self._parser = create_parser(self._config.protocol)
+        self._tx_logger_parser = create_parser(self._config.protocol)
         self._session_started = datetime.now()
         self._apply_plot_time_mode(self._plot_time_mode, persist=False)
         self._plot_history.clear()

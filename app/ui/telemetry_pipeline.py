@@ -80,6 +80,10 @@ class TelemetryPipelineMixin:
         if self._console_buffer:
             self._console.appendPlainText("\n".join(self._console_buffer))
             self._console_buffer.clear()
+        if hasattr(self, "_pending_console_lines") and self._pending_console_lines:
+            lines = self._pending_console_lines
+            self._pending_console_lines = []
+            self._console.appendPlainText("\n".join(lines))
         # Counts label is rebuilt once per flush — the worker pushes the
         # authoritative wire-level counters via metrics_updated at ~10 Hz,
         # and _handle_packet only mutates the UI-side _packet_count. One
@@ -297,7 +301,9 @@ class TelemetryPipelineMixin:
                         self._console.appendPlainText(f"[FAULT ALARM] {sig.signal_name}: {sig.display_value}")
                         self._log_activity(f"[ALARM] Fault detected on {sig.signal_name}: {sig.display_value}")
 
-        elapsed = (datetime.now() - self._session_started).total_seconds()
+        plot_visible = getattr(self, "_plot_dock", None) is None or self._plot_dock.isVisible()
+        if plot_visible:
+            elapsed = (datetime.now() - self._session_started).total_seconds()
         for signal in [*decoded.signals, *decoded.calculations]:
             key = (signal.frame_id, signal.signal_name)
             # If the key isn't in the model yet, add it (calculated / late-arriving signals)
@@ -334,7 +340,7 @@ class TelemetryPipelineMixin:
             if hasattr(self, "_staged_signals_for_ui"):
                 self._staged_signals_for_ui[key] = signal
 
-            if signal.scaled_value is not None and signal.status == "ok":
+            if plot_visible and signal.scaled_value is not None and signal.status == "ok":
                 self._plot_history[key].append(elapsed, signal.scaled_value)
 
     def _status_text(self, signal: DecodedSignal) -> str:

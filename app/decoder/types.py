@@ -187,6 +187,8 @@ class ProtocolConfig:
     #: uppercase. Validated by the loader; the logger reads it via the
     #: ``hex_format`` constructor parameter.
     raw_log_format: str = "hex"
+    waveshare_fixed_20_bytes: bool = False
+
 
 
 @dataclass(frozen=True)

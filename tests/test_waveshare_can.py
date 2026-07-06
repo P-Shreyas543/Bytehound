@@ -165,3 +165,22 @@ def test_waveshare_can_parse_fixed_bad_checksum():
     packets = parser.extract_all()
     assert len(packets) == 1
     assert packets[0].frame_id == 0x10
+
+
+def test_waveshare_can_build_fixed_standard():
+    import dataclasses
+    protocol = make_waveshare_protocol()
+    fixed_protocol = dataclasses.replace(protocol, waveshare_fixed_20_bytes=True)
+    
+    built = build_packet(fixed_protocol, 0x2F0, b"\x7B\xBA\x90\x01")
+    assert built == b"\xAA\x55\x01\x01\x01\xF0\x02\x00\x00\x04\x7B\xBA\x90\x01\x00\x00\x00\x00\x00\xBF"
+
+
+def test_waveshare_can_build_fixed_extended():
+    import dataclasses
+    protocol = make_waveshare_protocol(frame_id_size=4)
+    fixed_protocol = dataclasses.replace(protocol, waveshare_fixed_20_bytes=True)
+    
+    built = build_packet(fixed_protocol, 0x12345678, b"\x99")
+    assert built == b"\xAA\x55\x01\x02\x01\x78\x56\x34\x12\x01\x99\x00\x00\x00\x00\x00\x00\x00\x00\xB2"
+
