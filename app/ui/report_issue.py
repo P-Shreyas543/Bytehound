@@ -155,7 +155,7 @@ class ReportIssueMixin:
                             with config_path.open("rb") as f:
                                 config_data = f.read()
                             b64_config = base64.b64encode(config_data).decode('utf-8')
-                            
+
                             # Append it to the attachments list
                             attachments.append({
                                 'name': f"auto_config_{config_path.name}",
@@ -260,7 +260,7 @@ class ReportIssueMixin:
             f"RX bytes:    {self._rx_bytes}",
             f"TX bytes:    {self._tx_bytes}",
         ]
-        
+
         diag.append("")
         diag.append("--- QSettings ---")
         try:

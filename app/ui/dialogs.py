@@ -1058,16 +1058,16 @@ class ReportIssueDialog(QDialog):
         attach_control_row = QWidget(self)
         attach_hl = QHBoxLayout(attach_control_row)
         attach_hl.setContentsMargins(0, 0, 0, 0)
-        
+
         self._btn_attach = QPushButton("📎 Attach files / images...", attach_control_row)
         self._btn_attach.clicked.connect(self._browse_attachments)
         attach_hl.addWidget(self._btn_attach)
-        
+
         hint = QLabel("Pasting images or dragging & dropping files also works.", attach_control_row)
         hint.setStyleSheet("color: gray; font-size: 9pt;")
         attach_hl.addWidget(hint)
         attach_hl.addStretch(1)
-        
+
         form.addRow("", attach_control_row)
 
         # List of attached files
@@ -1075,17 +1075,17 @@ class ReportIssueDialog(QDialog):
         list_vl = QVBoxLayout(list_container)
         list_vl.setContentsMargins(0, 0, 0, 0)
         list_vl.setSpacing(4)
-        
+
         self._list_widget = QListWidget(list_container)
         self._list_widget.setMaximumHeight(80)
         self._list_widget.setVisible(False)
         list_vl.addWidget(self._list_widget)
-        
+
         self._btn_remove = QPushButton("Remove Selected Attachment", list_container)
         self._btn_remove.clicked.connect(self._remove_selected_attachment)
         self._btn_remove.setVisible(False)
         list_vl.addWidget(self._btn_remove)
-        
+
         form.addRow("Attachments", list_container)
 
         layout.addLayout(form)
@@ -1116,22 +1116,22 @@ class ReportIssueDialog(QDialog):
         path = Path(file_path)
         if not path.is_file():
             return
-        
+
         size = path.stat().st_size
         if size > 2 * 1024 * 1024:
             QMessageBox.warning(
-                self, 
-                "File Too Large", 
+                self,
+                "File Too Large",
                 f"The file '{path.name}' is {size / 1024 / 1024:.1f}MB.\n"
                 "Please attach files smaller than 2MB to keep report submission reliable."
             )
             return
-        
+
         total_size = sum(att['size'] for att in self._attachments) + size
         if total_size > 5 * 1024 * 1024:
             QMessageBox.warning(
-                self, 
-                "Attachment Limit Exceeded", 
+                self,
+                "Attachment Limit Exceeded",
                 "Total size of all attachments exceeds 5MB."
             )
             return
@@ -1189,7 +1189,7 @@ class ReportIssueDialog(QDialog):
         for att in self._attachments:
             size_kb = att['size'] / 1024
             self._list_widget.addItem(f"{att['name']} ({size_kb:.1f} KB)")
-        
+
         has_items = len(self._attachments) > 0
         self._list_widget.setVisible(has_items)
         self._btn_remove.setVisible(has_items)

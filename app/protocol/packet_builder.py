@@ -16,7 +16,7 @@ def build_waveshare_can_packet(protocol: ProtocolConfig, frame_id: int, payload:
     dlc = len(payload)
     if dlc > 8:
         raise ValueError(f"Waveshare CAN payload must be <= 8 bytes (got {dlc})")
-    
+
     if protocol.waveshare_fixed_20_bytes:
         is_extended = (protocol.frame_id_size == 4) or (frame_id > 0x7FF)
         packet = bytearray(20)
@@ -33,7 +33,7 @@ def build_waveshare_can_packet(protocol: ProtocolConfig, frame_id: int, payload:
 
     is_extended = (protocol.frame_id_size == 4) or (frame_id > 0x7FF)
     type_byte = 0xE0 | dlc if is_extended else 0xC0 | dlc
-    
+
     packet = bytearray()
     packet.append(0xAA)
     packet.append(type_byte)

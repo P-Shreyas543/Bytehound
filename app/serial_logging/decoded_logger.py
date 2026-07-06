@@ -179,7 +179,7 @@ class DecodedLogger:
     @property
     def _required_cycle_frame_ids(self) -> List[int]:
         tx_command_fids = {cmd.frame_id for cmd in self._config.tx_commands.values()}
-        
+
         # If there are strictly RX frames, prioritize those
         rx_only = [
             fid for fid in self._cycle_frame_ids
@@ -187,7 +187,7 @@ class DecodedLogger:
         ]
         if rx_only:
             return rx_only
-            
+
         # Otherwise, require RX-capable frames that don't have TX commands
         candidates = [
             fid for fid in self._cycle_frame_ids
@@ -196,7 +196,7 @@ class DecodedLogger:
         ]
         if candidates:
             return candidates
-            
+
         # Absolute fallback to avoid empty list
         return [
             fid for fid in self._cycle_frame_ids

@@ -607,7 +607,7 @@ class WaveshareCanParser(ParserProtocol):
             dlc = buf_mv[9]
             if dlc > 8:
                 dlc = 8
-            
+
             # Frame ID is 4 bytes at index 5, little-endian
             frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
             payload = bytes(buf_mv[10 : 10 + dlc])
@@ -633,32 +633,6 @@ class WaveshareCanParser(ParserProtocol):
             return None, 0
 
         type_byte = buf_mv[1]
-        
-        # If type_byte is 0x55, it's a Fixed 20-byte frame (AA 55)
-        if type_byte == 0x55:
-            if len(self._buf) < 20:
-                return None, 0
-            
-            expected_chk = (sum(buf_mv[:19]) + 1) & 0xFF
-            received_chk = buf_mv[19]
-            if expected_chk != received_chk:
-                return None, 1
-
-            raw = bytes(buf_mv[:20])
-            dlc = buf_mv[9]
-            if dlc > 8:
-                dlc = 8
-            frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
-            payload = bytes(buf_mv[10 : 10 + dlc])
-
-            pkt = ParsedPacket(
-                raw=raw,
-                frame_id=frame_id,
-                payload=payload,
-                ok=True,
-                error=None
-            )
-            return pkt, 20
 
         # Otherwise, check if type_byte is valid for Variable-Length Protocol
         if (type_byte & 0xC0) != 0xC0:

@@ -20,7 +20,6 @@ from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QInputDialog, QProgressDialog,
 )
 
-from ..decoder.template_io import snapshot_config
 from ..serial_logging.raw_logger import RawLogger
 from ..serial_logging.decoded_logger import DecodedLogger
 from .dialogs import LoggingSettingsDialog

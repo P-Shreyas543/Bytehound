@@ -78,3 +78,75 @@ def test_streaming_frame_does_not_satisfy_polled_target():
 def test_response_match_table(target_id, frame_id, ok, expected):
     assert PollingWorker._is_response_match(
         _pkt(frame_id=frame_id, ok=ok), target_id=target_id) is expected
+
+def test_udp_socket_wrapper():
+    from app.serial_io.serial_worker import UdpSocketWrapper
+    import socket
+    from unittest.mock import patch, MagicMock
+    
+    with patch("socket.socket") as mock_socket_class, patch("select.select") as mock_select:
+        mock_sock = MagicMock()
+        mock_sock.fileno.return_value = 1
+        mock_socket_class.return_value = mock_sock
+        # Mock select to return the socket as readable once, then empty to break the loop
+        mock_select.side_effect = [([mock_sock], [], []), ([], [], [])]
+        mock_sock.recv.return_value = b"test"
+        
+        wrapper = UdpSocketWrapper("127.0.0.1", 5000)
+        wrapper.open()
+        assert wrapper.read(10) == b"test"
+        
+        wrapper.write(b"out")
+        mock_sock.send.assert_called_with(b"out")
+        
+        wrapper.close()
+        mock_sock.close.assert_called_once()
+
+def test_tcp_socket_wrapper():
+    from app.serial_io.serial_worker import TcpSocketWrapper
+    import socket
+    from unittest.mock import patch, MagicMock
+    
+    with patch("socket.socket") as mock_socket_class, patch("select.select") as mock_select:
+        mock_sock = MagicMock()
+        mock_sock.fileno.return_value = 1
+        mock_socket_class.return_value = mock_sock
+        mock_select.side_effect = [([mock_sock], [], []), ([], [], [])]
+        mock_sock.recv.return_value = b"test_tcp"
+        
+        wrapper = TcpSocketWrapper("127.0.0.1", 5000)
+        wrapper.open()
+        assert wrapper.read(10) == b"test_tcp"
+        
+        wrapper.write(b"out_tcp")
+        mock_sock.send.assert_called_with(b"out_tcp")
+        
+        wrapper.close()
+        mock_sock.close.assert_called_once()
+
+def test_socket_wrapper_exceptions():
+    from app.serial_io.serial_worker import TcpSocketWrapper
+    import socket
+    from unittest.mock import patch, MagicMock
+    import serial
+    
+    with patch("socket.socket") as mock_socket_class, patch("select.select") as mock_select:
+        mock_sock = MagicMock()
+        mock_sock.fileno.return_value = 1
+        mock_socket_class.return_value = mock_sock
+        
+        # Test socket timeout during recv
+        mock_select.side_effect = [([mock_sock], [], [])]
+        mock_sock.recv.side_effect = socket.timeout
+        
+        wrapper = TcpSocketWrapper("127.0.0.1", 5000)
+        wrapper.open()
+        
+        # timeout returns empty bytes instead of raising
+        assert wrapper.read(10) == b""
+        
+        mock_select.side_effect = [([mock_sock], [], [])]
+        mock_sock.recv.side_effect = ConnectionResetError
+        with pytest.raises(serial.SerialException):
+            wrapper.read(10)
+

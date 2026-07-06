@@ -78,12 +78,20 @@ class TelemetryPipelineMixin:
                     getattr(packet, 'frame_id', 0),
                 )
         if self._console_buffer:
+            sb = self._console.verticalScrollBar()
+            at_bottom = sb.value() >= sb.maximum() - 4
             self._console.appendPlainText("\n".join(self._console_buffer))
             self._console_buffer.clear()
+            if not at_bottom:
+                sb.setValue(sb.value())
         if hasattr(self, "_pending_console_lines") and self._pending_console_lines:
             lines = self._pending_console_lines
             self._pending_console_lines = []
+            sb = self._console.verticalScrollBar()
+            at_bottom = sb.value() >= sb.maximum() - 4
             self._console.appendPlainText("\n".join(lines))
+            if not at_bottom:
+                sb.setValue(sb.value())
         # Counts label is rebuilt once per flush — the worker pushes the
         # authoritative wire-level counters via metrics_updated at ~10 Hz,
         # and _handle_packet only mutates the UI-side _packet_count. One

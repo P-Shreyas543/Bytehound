@@ -62,14 +62,49 @@ def _write_two_field_cmd_config(d: Path, *, field_order: list[str]) -> None:
         "SetTwoBytes,0x9000,,TRUE\n",
         encoding="utf-8",
     )
-    rows = [
-        f"SetTwoBytes,{name},uint8,1,0,,,,\n" for name in field_order
-    ]
+    csv_lines = ["command_name,signal_name,data_type,byte_order,factor,offset,unit,default,min_value,max_value"]
+    for field in field_order:
+        csv_lines.append(f"SetTwoBytes,{field},uint8,big,1,0,,12,,")
+    
     (d / "tx_command_fields.csv").write_text(
-        "command_name,signal_name,data_type,scale,offset,unit,byte_order,min_value,max_value,default\n"
-        + "".join(rows),
+        "\n".join(csv_lines) + "\n",
         encoding="utf-8",
     )
+
+
+def test_tx_field_factor_zero():
+    from app.decoder.types import TxCommandFieldSpec
+    field = TxCommandFieldSpec(
+        command_name="test", field_name="test", fmt="uint8", byte_order="little",
+        factor=0, offset=0, default=None, min_value=None, max_value=None
+    )
+    from app.commands.tx_command_builder import _encode_field, CommandBuildError
+    with pytest.raises(CommandBuildError, match="factor must not be zero"):
+        _encode_field(field, 10.0)
+
+
+def test_tx_field_float_encoding():
+    from app.decoder.types import TxCommandFieldSpec
+    field32 = TxCommandFieldSpec(
+        command_name="test", field_name="test", fmt="float32", byte_order="big",
+        factor=1.0, offset=0.0, default=None, min_value=None, max_value=None
+    )
+    from app.commands.tx_command_builder import _encode_field
+    import struct
+    # 1.5 in float32 big-endian is \x3f\xc0\x00\x00
+    assert _encode_field(field32, 1.5) == b"\x3f\xc0\x00\x00"
+
+
+def test_tx_field_overflow():
+    from app.decoder.types import TxCommandFieldSpec
+    field = TxCommandFieldSpec(
+        command_name="test", field_name="test", fmt="uint8", byte_order="little",
+        factor=1.0, offset=0.0, default=None, min_value=None, max_value=None
+    )
+    from app.commands.tx_command_builder import _encode_field, CommandBuildError
+    # We bypass min/max_value checks since they are None. Value 300 > 255.
+    with pytest.raises(CommandBuildError, match="does not fit in"):
+        _encode_field(field, 300)
 
 
 def test_field_order_follows_sheet_rows(tmp_path):

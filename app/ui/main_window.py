@@ -896,6 +896,27 @@ class MainWindow(
 
 
 
+    def _on_edit_config(self) -> None:
+        self._log_activity("[ACTION] Open Configuration Editor")
+        from .config_editor import ConfigEditorWindow
+        self._config_editor = ConfigEditorWindow(self)
+        if hasattr(self, "_config_path") and self._config_path:
+            import json
+            from pathlib import Path
+            from ..decoder.config_loader import _read_excel_tables
+            try:
+                path_obj = Path(self._config_path)
+                if path_obj.suffix.lower() == ".json":
+                    with path_obj.open("r", encoding="utf-8") as fp:
+                        data = json.load(fp)
+                    self._config_editor.load_data(data)
+                elif path_obj.suffix.lower() in {".xlsx", ".xlsm"}:
+                    data = _read_excel_tables(path_obj)
+                    self._config_editor.load_data(data)
+            except Exception as e:
+                self._log_activity(f"[ERROR] Failed to load config into editor: {e}")
+        self._config_editor.show()
+
     def _on_export_template(self) -> None:
         self._log_activity("[ACTION] Export Excel template (dialog opened)")
         # Always build the template from the bundled blank CSV files so the

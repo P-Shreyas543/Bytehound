@@ -106,6 +106,27 @@ def test_signed_int_decodes_negative():
     assert decoded.signals[0].scaled_value == pytest.approx(-0.1)
 
 
+def test_decode_odd_byte_length_fallback():
+    spec_3 = SignalSpec(
+        frame_id=1, frame_name="F1", signal_name="S3", start_byte=0, byte_length=3,
+        endianness="big", data_type="uint", scale=1.0, offset=0.0, unit=""
+    )
+    spec_5 = SignalSpec(
+        frame_id=1, frame_name="F1", signal_name="S5", start_byte=3, byte_length=5,
+        endianness="little", data_type="uint", scale=1.0, offset=0.0, unit=""
+    )
+    
+    cfg = _make_config([spec_3, spec_5])
+    
+    # 3 bytes big-endian: \x01\x02\x03 -> 0x010203 (66051)
+    # 5 bytes little-endian: \x04\x05\x06\x07\x08 -> 0x0807060504 (34477831428)
+    data = b"\x01\x02\x03" + b"\x04\x05\x06\x07\x08"
+    decoded = decode_frame(cfg, 1, data)
+    
+    assert decoded.signals[0].raw_value == 0x010203
+    assert decoded.signals[1].raw_value == 0x0807060504
+
+
 def test_float32_big_endian_decodes_ieee754():
     spec = SignalSpec(
         frame_id=0x2, frame_name="t", signal_name="V",

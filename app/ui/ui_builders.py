@@ -149,6 +149,10 @@ class UIBuildersMixin:
         self._load_config_action.setShortcut(QKeySequence("Ctrl+O"))
         self._load_config_action.triggered.connect(self._on_load_config)
 
+        self._edit_config_action = QAction(_icon("mdi6.file-document-edit-outline", _ic), "Edit Configuration", self)
+        self._edit_config_action.setShortcut(QKeySequence("Ctrl+Shift+E"))
+        self._edit_config_action.triggered.connect(self._on_edit_config)
+
         self._export_template_action = QAction(_icon("mdi6.file-export-outline", _ic), "Export Template", self)
         self._export_template_action.setShortcut(QKeySequence("Ctrl+E"))
         self._export_template_action.triggered.connect(self._on_export_template)
@@ -212,6 +216,7 @@ class UIBuildersMixin:
 
         file_menu = menubar.addMenu("&File")
         file_menu.addAction(self._load_config_action)
+        file_menu.addAction(self._edit_config_action)
         file_menu.addAction(self._export_template_action)
         file_menu.addSeparator()
         file_menu.addAction(self._exit_action)
@@ -428,7 +433,7 @@ class UIBuildersMixin:
         self._console = QPlainTextEdit(self)
         self._console.setReadOnly(True)
         self._console.setPlaceholderText("Raw RX/TX frames will appear here...")
-        self._console.setMaximumBlockCount(3000)
+        self._console.setMaximumBlockCount(10000)
         self._console.setFont(QFont("Consolas", 10))
 
         self._console_dock = QDockWidget("Raw Console", self)
@@ -545,6 +550,16 @@ class UIBuildersMixin:
         template_btn.setMinimumWidth(180)
         template_btn.clicked.connect(self._export_template_action.trigger)
         buttons.addWidget(template_btn)
+
+        edit_btn = QPushButton(
+            _icon("mdi6.file-document-edit-outline", _ic),
+            "  Edit Config…",
+            outer,
+        )
+        edit_btn.setMinimumHeight(36)
+        edit_btn.setMinimumWidth(180)
+        edit_btn.clicked.connect(self._edit_config_action.trigger)
+        buttons.addWidget(edit_btn)
 
         buttons.addStretch(1)
         v.addLayout(buttons)

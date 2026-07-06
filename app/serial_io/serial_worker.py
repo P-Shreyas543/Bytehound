@@ -51,7 +51,7 @@ class TcpSocketWrapper:
         self._socket = None
         self._is_open = False
         self._buffer = bytearray()
-        
+
     def open(self):
         try:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -64,7 +64,7 @@ class TcpSocketWrapper:
             self._is_open = False
             if self._socket:
                 self._socket.close()
-            raise serial.SerialException(f"Failed to connect to TCP server {self.host}:{self.port}: {e}")
+            raise serial.SerialException(f"Failed to connect to TCP server {self.host}:{self.port}: {e}") from e
 
     @property
     def is_open(self) -> bool:
@@ -76,7 +76,7 @@ class TcpSocketWrapper:
         try:
             return self._socket.send(data)
         except Exception as e:
-            raise serial.SerialException(f"TCP socket write error: {e}")
+            raise serial.SerialException(f"TCP socket write error: {e}") from e
 
     def read(self, size: int = 1) -> bytes:
         if not self._is_open or not self._socket:
@@ -86,7 +86,7 @@ class TcpSocketWrapper:
         except serial.SerialException:
             raise
         except Exception as e:
-            raise serial.SerialException(str(e))
+            raise serial.SerialException(str(e)) from e
         res = bytes(self._buffer[:size])
         del self._buffer[:size]
         return res
@@ -100,7 +100,7 @@ class TcpSocketWrapper:
         except serial.SerialException:
             raise
         except Exception as e:
-            raise serial.SerialException(str(e))
+            raise serial.SerialException(str(e)) from e
         return len(self._buffer)
 
     def reset_input_buffer(self):
@@ -141,7 +141,7 @@ class TcpSocketWrapper:
             except serial.SerialException:
                 raise
             except OSError as e:
-                raise serial.SerialException(f"TCP socket read error: {e}")
+                raise serial.SerialException(f"TCP socket read error: {e}") from e
 
 
 class UdpSocketWrapper:
@@ -153,7 +153,7 @@ class UdpSocketWrapper:
         self._socket = None
         self._is_open = False
         self._buffer = bytearray()
-        
+
     def open(self):
         try:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -167,7 +167,7 @@ class UdpSocketWrapper:
             self._is_open = False
             if self._socket:
                 self._socket.close()
-            raise serial.SerialException(f"Failed to initialize UDP socket: {e}")
+            raise serial.SerialException(f"Failed to initialize UDP socket: {e}") from e
 
     @property
     def is_open(self) -> bool:
@@ -179,7 +179,7 @@ class UdpSocketWrapper:
         try:
             return self._socket.send(data)
         except Exception as e:
-            raise serial.SerialException(f"UDP socket write error: {e}")
+            raise serial.SerialException(f"UDP socket write error: {e}") from e
 
     def read(self, size: int = 1) -> bytes:
         if not self._is_open or not self._socket:
@@ -189,7 +189,7 @@ class UdpSocketWrapper:
         except serial.SerialException:
             raise
         except Exception as e:
-            raise serial.SerialException(str(e))
+            raise serial.SerialException(str(e)) from e
         res = bytes(self._buffer[:size])
         del self._buffer[:size]
         return res
@@ -203,7 +203,7 @@ class UdpSocketWrapper:
         except serial.SerialException:
             raise
         except Exception as e:
-            raise serial.SerialException(str(e))
+            raise serial.SerialException(str(e)) from e
         return len(self._buffer)
 
     def reset_input_buffer(self):
@@ -240,7 +240,7 @@ class UdpSocketWrapper:
             except socket.timeout:
                 break
             except OSError as e:
-                raise serial.SerialException(f"UDP socket read error: {e}")
+                raise serial.SerialException(f"UDP socket read error: {e}") from e
 
 
 # Tuning constants

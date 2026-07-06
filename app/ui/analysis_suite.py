@@ -11,6 +11,7 @@ Module split (helpers extracted to keep this file focused on the main window):
                               / :class:`StatisticsPanel`
     * ``xy_plot``          – :class:`XYPlotWindow`
 """
+import copy
 import csv
 import json
 import logging
@@ -32,7 +33,7 @@ import pyqtgraph as pg
 pg.setConfigOptions(antialias=True, useOpenGL=True)
 from PySide6.QtCore import Qt, QSettings, QTimer, QThread, Signal
 from PySide6.QtGui import (
-    QAction, QColor, QFont, QKeySequence, QPainter,
+    QAction, QColor, QFont, QKeySequence,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox,
@@ -150,7 +151,7 @@ class CSVExportThread(QThread):
                     masters.append(x[mask])
                 else:
                     masters.append(x)
-            
+
             if not masters:
                 self.sigError.emit("No samples found to export.")
                 return
@@ -184,7 +185,7 @@ class CSVExportThread(QThread):
             with open(self.path, "w", newline="", encoding="utf-8") as f:
                 w = csv.writer(f)
                 w.writerow(headers)
-                
+
                 # Write in chunks of 500 rows to support cancellation & progress dialogs
                 chunk_size = 500
                 for start_idx in range(0, total_rows, chunk_size):
@@ -195,7 +196,7 @@ class CSVExportThread(QThread):
                         except Exception:
                             pass
                         return
-                    
+
                     end_idx = min(start_idx + chunk_size, total_rows)
                     for i in range(start_idx, end_idx):
                         row = [f"{merged[i]:.6f}"]
@@ -203,10 +204,10 @@ class CSVExportThread(QThread):
                             v = col[i]
                             row.append("" if not np.isfinite(v) else f"{v:.6g}")
                         w.writerow(row)
-                    
+
                     progress_pct = int((end_idx / total_rows) * 100)
                     self.sigProgress.emit(progress_pct)
-                    
+
             self.sigFinished.emit(self.path, total_rows)
         except Exception as e:
             self.sigError.emit(str(e))
@@ -220,7 +221,7 @@ class SessionSaveThread(QThread):
     def __init__(self, path: str, data: dict, parent=None):
         super().__init__(parent)
         self.path = path
-        self.data = data
+        self.data = copy.deepcopy(data)
 
     def run(self):
         try:
@@ -265,17 +266,17 @@ class PlotImageExportThread(QThread):
         try:
             from PySide6.QtGui import QImage, QColor, QPainter, QPixmap
             from PySide6.QtCore import QMarginsF, Qt
-            
+
             if self.mode == "PDF":
                 from PySide6.QtPrintSupport import QPrinter
                 from PySide6.QtGui import QPageSize, QPageLayout
-                
+
                 # Stitch vertically onto one canvas with white bg
                 export_width = 1600
                 total_h = sum(img.height() for img in self.images) + 8 * max(len(self.images) - 1, 0)
                 canvas = QImage(export_width, total_h, QImage.Format_ARGB32)
                 canvas.fill(QColor('#ffffff'))
-                
+
                 painter_c = QPainter(canvas)
                 y = 0
                 for img in self.images:
@@ -319,7 +320,7 @@ class PlotImageExportThread(QThread):
                     y_offset += img.height() + 10
                 painter.end()
                 composite.save(self.path)
-                
+
             self.sigFinished.emit(self.path)
         except Exception as e:
             self.sigError.emit(str(e))
@@ -824,7 +825,7 @@ class AnalysisSuiteWindow(QMainWindow):
                     style = dict(ax.labelStyle)
                     style['color'] = fg
                     pw.setLabel(axis_name, **style)
-            
+
             if hasattr(pw, 'right_axis') and pw.right_axis is not None:
                 pen = pg.mkPen(fg)
                 pw.right_axis.setPen(pen)

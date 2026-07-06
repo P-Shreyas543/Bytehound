@@ -472,7 +472,7 @@ class StatisticsPanel(QWidget):
 # ─────────────────────────────────────────────────────────────────────
 class OverlayViewBox(pg.ViewBox):
     """A ViewBox that ignores mouse events so they pass through to the main ViewBox underneath.
-    
+
     This ensures that panning and zooming on the plot area affects the main ViewBox
     (which is linked to the overlay ViewBox in X), rather than only scaling the overlay.
     """

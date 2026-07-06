@@ -46,6 +46,9 @@ def export_excel_template(source_dir: str | Path, target_path: str | Path) -> Pa
 
     try:
         import pandas as pd
+        from openpyxl.worksheet.datavalidation import DataValidation
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.utils import get_column_letter
     except ImportError as exc:
         raise RuntimeError("Excel export requires pandas and openpyxl") from exc
 
@@ -59,15 +62,54 @@ def export_excel_template(source_dir: str | Path, target_path: str | Path) -> Pa
     if source.is_file():
         raise ValueError(f"Excel export source must be a directory or .xlsx file: {source}")
 
+    from .types import SUPPORTED_CRC_TYPES, SUPPORTED_FMT_TYPES, ByteOrder, ParserType, ReadWrite
+
     with pd.ExcelWriter(target, engine="openpyxl") as writer:
+        workbook = writer.book
+        readme = workbook.create_sheet("ReadMe", 0)
+        readme.append(["Bytehound Configuration Template"])
+        readme.append([])
+        readme.append(["This workbook contains the configuration for Bytehound."])
+        readme.append(["Please fill in the sheets according to your protocol."])
+        readme.append(["Dropdowns are provided for constrained fields."])
+        readme["A1"].font = Font(bold=True, size=14)
+
         for name in CONFIG_CSV_FILES:
             src = source / name
             if not src.exists():
                 continue
-            sheet = _sheet_name_from_csv(name)
-            pd.read_csv(src, dtype=str).fillna("").to_excel(
-                writer, sheet_name=sheet, index=False
-            )
+            sheet_name = _sheet_name_from_csv(name)
+            df = pd.read_csv(src, dtype=str).fillna("")
+            df.to_excel(writer, sheet_name=sheet_name, index=False)
+
+            ws = writer.sheets[sheet_name]
+            header_fill = PatternFill(start_color="DDDDDD", end_color="DDDDDD", fill_type="solid")
+            for col_num, col_name in enumerate(df.columns, 1):
+                cell = ws.cell(row=1, column=col_num)
+                cell.font = Font(bold=True)
+                cell.fill = header_fill
+
+                max_len = max((len(str(v)) for v in df[col_name]), default=0)
+                max_len = max(max_len, len(str(col_name)))
+                ws.column_dimensions[get_column_letter(col_num)].width = min(max_len + 2, 50)
+
+                col_letter = get_column_letter(col_num)
+                val_range = f"{col_letter}2:{col_letter}1048576"
+                dv = None
+                if col_name == "data_type":
+                    dv = DataValidation(type="list", formula1=f'"{",".join(sorted(SUPPORTED_FMT_TYPES))}"', allow_blank=True)
+                elif col_name == "crc_type":
+                    dv = DataValidation(type="list", formula1=f'"{",".join(sorted(SUPPORTED_CRC_TYPES))}"', allow_blank=True)
+                elif col_name in ("endianness", "frame_id_byte_order", "crc_byte_order", "length_byte_order"):
+                    dv = DataValidation(type="list", formula1=f'"{",".join([m.value for m in ByteOrder])}"', allow_blank=True)
+                elif col_name == "parser_type":
+                    dv = DataValidation(type="list", formula1=f'"{",".join([m.value for m in ParserType])}"', allow_blank=True)
+                elif col_name == "read_write":
+                    dv = DataValidation(type="list", formula1=f'"{",".join([m.value for m in ReadWrite])}"', allow_blank=True)
+
+                if dv:
+                    dv.add(val_range)
+                    ws.add_data_validation(dv)
     return target
 
 
