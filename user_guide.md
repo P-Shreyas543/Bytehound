@@ -71,7 +71,7 @@ Recently used configs are stored and accessible via the dropdown in the Decoder 
 ## Connecting to a Serial Device
 
 1. Plug in the device.
-2. On the toolbar, click **Refresh**, choose your **COM port** and **Baud**.
+2. Choose your **COM port** (the list auto-refreshes when ports are plugged/unplugged) and **Baud**.
 3. (Optional) Adjust Data bits / Stop bits / Parity / Timeout in the left panel.
 4. Click **Connect**.
 

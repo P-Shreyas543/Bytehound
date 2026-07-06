@@ -1,17 +1,17 @@
 {
-    "version": "1.0.0",
-    "document_version": "1.0.0",
+    "version": "1.1.0",
+    "document_version": "1.1.0",
     "Developer": "Shreyas P",
     "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "DECIBELS LAB PRIVATE LIMITED",
     "publisher_webpage": "https://lms.decibelslab.com/",
-    "build_date": "2026-06-05",
+    "build_date": "2026-07-06",
     "license": "MIT",
     "license_url": "https://bytehound.shreyasp182002.workers.dev/LICENSE",
     "homepage": "https://bytehound.shreyasp182002.workers.dev/",
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
-    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.0.0.exe",
-    "release_notes": "Official v1.0.0 Release - Decoded Logger unblocking for RX/TX mixed configs, raw TX packet logging, and automated unit tests validation.\n\nNew Features:\n  - Decoded Logger Unblocking: Dynamically filters out transmit-only frames from the required cycle list, preventing log blockage when both RX and TX frames are configured.\n  - Transmitted Packet Logging: Hooked into raw wire recording to decode and log TX packets on the fly, ensuring all signals are correctly represented in the decoded Excel log.\n  - Automated Test Suite: Added new unit tests for TX-only logging verifying cycle integrity and correctness.",
+    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.1.0.exe",
+    "release_notes": "v1.1.0 Release - Waveshare CAN Fixed 20-Byte mode support and GUI/Logging Performance Optimizations.\n\nNew Features:\n  - Waveshare CAN Fixed 20-Byte Protocol: Supported building and writing CAN standard and extended frames with 20-byte fixed length.\n  - GUI Event Loop Optimization: Batched raw console logging at 60 Hz and bypassed hidden plots calculations, cutting CPU overhead dramatically.\n  - Asynchronous Decoded Logging: Moved all signal formatting, enum resolution, and sheet cycle building completely to the background worker thread, eliminating log-induced UI stuttering.\n  - Port Auto-Discovery Refresh: The connection dialog dynamically scans and updates available ports list every 1.0 second.",
     "sha256": "747fbf647cb90c86fb869dda7c09f8811721c4619895e92f21c078693caaecf0"
 }

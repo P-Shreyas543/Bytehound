@@ -763,7 +763,7 @@
                     <li>Choose your <strong>Connection Type</strong> (<strong>Serial</strong>, <strong>TCP Client</strong>, or <strong>UDP Client</strong>) from the dropdown.</li>
                     <li>Configure the connection parameters depending on the selected type:
                         <ul>
-                            <li><strong>Serial</strong>: Select the COM port (e.g. <strong>COM7</strong>). Click <em>Refresh</em> if it isn't listed. Set the Baud rate, Data bits, Stop bits, and Parity.</li>
+                            <li><strong>Serial</strong>: Select the COM port (e.g. <strong>COM7</strong>). The ports dropdown list refreshes automatically when USB devices are plugged or unplugged. Set the Baud rate, Data bits, Stop bits, and Parity.</li>
                             <li><strong>TCP Client</strong>: Enter the target <strong>Host / IP</strong> and <strong>Port</strong> of the remote TCP server.</li>
                             <li><strong>UDP Client</strong>: Enter the target <strong>Host / IP</strong>, <strong>Remote Port</strong>, and an optional <strong>Local Port</strong> (binds locally, set to 0 for automatic port allocation).</li>
                         </ul>
@@ -2222,6 +2222,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             <strong>Variable-Length Protocol</strong> frames and <strong>Fixed 20-Byte Protocol</strong> frames (checksum validated).
             When active, the <code>id_or_address</code> column represents the CAN ID (e.g. <code>0x0123</code>). Columns like
             <code>header_hex</code>, <code>footer_hex</code>, and <code>length_size</code> can be omitted or left blank in your configuration, as they automatically fallback to Waveshare defaults.
+            To build and send commands to a Waveshare adapter running in Fixed 20-Byte Protocol mode, set <code>waveshare_fixed_20_bytes</code> (or <code>waveshare_fixed</code>) to <code>True</code> in the Protocol configuration.
         </div>
 
         <h4 id="tx-pad-length">Fixed-length TX (<code>tx_pad_length</code>) — for buffer-full RX interrupts</h4>

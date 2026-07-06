@@ -184,14 +184,14 @@ def test_decoded_logger_writes_wide_rows(tmp_path):
     wb.close()
 
     expected_header = (
-        "FrameA.elapsed_ms",
-        "FrameA.frame_id",
-        "FrameA.Cell_V1 (V)",
-        "FrameA.Pack_I",
-        "FrameA.Cells avg (V)",
-        "FrameB.elapsed_ms",
-        "FrameB.frame_id",
-        "FrameB.Pack_V (V)",
+        "0x100.elapsed_ms",
+        "0x100.frame_id",
+        "0x100.Cell_V1 (V)",
+        "0x100.Pack_I",
+        "0x100.Cells avg (V)",
+        "0x200.elapsed_ms",
+        "0x200.frame_id",
+        "0x200.Pack_V (V)",
     )
     assert data_rows[0] == expected_header
     # Only two complete cycles → two data rows.
@@ -199,20 +199,20 @@ def test_decoded_logger_writes_wide_rows(tmp_path):
 
     header = list(expected_header)
     row1 = dict(zip(header, data_rows[1]))
-    assert row1["FrameA.elapsed_ms"] == 1000
-    assert row1["FrameA.frame_id"] == "0x0100"
-    assert row1["FrameA.Cell_V1 (V)"] == 3.85
-    assert row1["FrameA.Pack_I"] == 12.1
-    assert row1["FrameA.Cells avg (V)"] == 3.9
-    assert row1["FrameB.elapsed_ms"] == 1100
-    assert row1["FrameB.frame_id"] == "0x0200"
-    assert row1["FrameB.Pack_V (V)"] == 48.2
+    assert row1["0x100.elapsed_ms"] == 1000
+    assert row1["0x100.frame_id"] == "0x0100"
+    assert row1["0x100.Cell_V1 (V)"] == 3.85
+    assert row1["0x100.Pack_I"] == 12.1
+    assert row1["0x100.Cells avg (V)"] == 3.9
+    assert row1["0x200.elapsed_ms"] == 1100
+    assert row1["0x200.frame_id"] == "0x0200"
+    assert row1["0x200.Pack_V (V)"] == 48.2
 
     # Second cycle uses the LATEST FrameA seen before the trigger (elapsed=3000),
     # not the orphaned A at elapsed=2000 — buffer always keeps the freshest values.
     row2 = dict(zip(header, data_rows[2]))
-    assert row2["FrameA.elapsed_ms"] == 3000
-    assert row2["FrameB.elapsed_ms"] == 3100
+    assert row2["0x100.elapsed_ms"] == 3000
+    assert row2["0x200.elapsed_ms"] == 3100
 
 
 def test_decoded_logger_writes_metadata_sheet(tmp_path):
@@ -799,18 +799,18 @@ def test_decoded_logger_handles_tx_only_frames(tmp_path):
 
     # Headers check
     headers = data_rows[0]
-    assert "FrameRX.SigRX" in headers
-    assert "FrameTX.SigTX" in headers
+    assert "0x100.SigRX" in headers
+    assert "0x200.SigTX" in headers
 
     # Row 1 (Cycle 1): RX present, TX empty/None
     row1 = dict(zip(headers, data_rows[1]))
-    assert row1["FrameRX.SigRX"] == 42.0
-    assert row1["FrameTX.SigTX"] in (None, "", " ")
+    assert row1["0x100.SigRX"] == 42.0
+    assert row1["0x200.SigTX"] in (None, "", " ")
 
     # Row 2 (Cycle 2): Both present
     row2 = dict(zip(headers, data_rows[2]))
-    assert row2["FrameRX.SigRX"] == 42.0
-    assert row2["FrameTX.SigTX"] == 100.0
+    assert row2["0x100.SigRX"] == 42.0
+    assert row2["0x200.SigTX"] == 100.0
 
 
 def test_decoded_logger_rxtx_with_command_does_not_block_cycle(tmp_path):

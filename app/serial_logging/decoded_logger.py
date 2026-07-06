@@ -697,12 +697,7 @@ class DecodedLogger:
         block_by_frame: Dict[int, Dict[str, int]] = {}
 
         for frame_id in cycle_frame_ids:
-            frame_name = (
-                self._config.frame_names.get(frame_id)
-                or (self._config.frames[frame_id].frame_name if frame_id in self._config.frames else "")
-                or f"0x{frame_id:04X}"
-            )
-            prefix = f"{frame_name}."
+            prefix = f"0x{frame_id:X}."
 
             elapsed_pos = len(columns)
             columns.append(f"{prefix}elapsed_ms")

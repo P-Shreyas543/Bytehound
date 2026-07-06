@@ -318,6 +318,7 @@ class MainWindow(
         self._gl_widget = None                     # pg.GraphicsLayoutWidget
         self._plot_widget = None                   # alias → panels[0].plot_item (compat)
         self._tx_logger_parser = None
+        self._wire_recorded_connected = False
         self._plot_keys: List[Tuple[int, str]] = []  # union of all panel keys
         self._curve_icon_cache: Dict[Tuple[int, str, str], QIcon] = {}
         self._session_started = datetime.now()
@@ -931,6 +932,7 @@ class MainWindow(
         Idempotent — safe to call even when already disconnected.
         """
         self._ui_timer.stop()
+        self._wire_recorded_connected = False
         if hasattr(self, "_y_autofit_timer"):
             self._y_autofit_timer.stop()
         if self._logging:
@@ -967,6 +969,9 @@ class MainWindow(
             self._serial.tx_recorded.connect(self._on_tx_recorded)
             if hasattr(self, "_console_dock") and self._console_dock is not None and self._console_dock.isVisible():
                 self._serial.wire_recorded.connect(self._on_wire_recorded)
+                self._wire_recorded_connected = True
+            else:
+                self._wire_recorded_connected = False
             self._serial.connection_lost.connect(self._on_connection_lost)
             self._serial.device_timeout.connect(self._on_device_timeout)
             self._serial.open()
@@ -1152,14 +1157,17 @@ class MainWindow(
 
     def _on_console_dock_visibility_changed(self, visible: bool) -> None:
         if self._serial is not None:
-            try:
-                self._serial.wire_recorded.disconnect(self._on_wire_recorded)
-            except RuntimeError:
-                pass
+            if self._wire_recorded_connected:
+                try:
+                    self._serial.wire_recorded.disconnect(self._on_wire_recorded)
+                except (RuntimeError, TypeError):
+                    pass
+                self._wire_recorded_connected = False
             if visible:
                 try:
                     self._serial.wire_recorded.connect(self._on_wire_recorded)
-                except RuntimeError:
+                    self._wire_recorded_connected = True
+                except (RuntimeError, TypeError):
                     pass
 
 
