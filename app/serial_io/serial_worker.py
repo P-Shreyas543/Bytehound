@@ -332,6 +332,7 @@ class PollingWorker(QThread):
         # schedules to become due again before the cursor reached the tail).
         self._sched_cursor: int = 0
         self._parser = create_parser(protocol)
+        self._signal_state: Dict[str, Dict[str, float]] = {}
 
         self._serial: serial.Serial | None = None
         self._stop_event = threading.Event()          # thread-safe shutdown flag
@@ -634,7 +635,7 @@ class PollingWorker(QThread):
                 decoded = None
             else:
                 try:
-                    decoded = decode_frame(cfg, p.frame_id, p.payload)
+                    decoded = decode_frame(cfg, p.frame_id, p.payload, self._signal_state)
                 except Exception:  # pragma: no cover - defensive: decode bugs
                     # Don't kill the worker on a decode error. Fall back to
                     # letting the GUI re-decode (which will surface the error

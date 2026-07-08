@@ -679,8 +679,8 @@ Cycle Buffer pattern:
 - Each incoming `log_frame()` updates an in-memory slot keyed by `frame_id`.
 - The **trigger frame** is the LAST frame in `FrameConfig.frames`. When it
   arrives, the buffer is examined:
-  - All cycle frames present → emit one wide row, then clear the buffer.
-  - Any cycle frame missing → drop the cycle silently, then clear the buffer.
+  - The cycle is emitted as one wide row containing all data received so far, then the buffer is cleared.
+  - If any cycle frames were missing, their cells are left blank in the spreadsheet. No data is dropped.
 - Buffer is always cleared on trigger arrival — no stale data carries across
   cycles.
 - The block label `<frame>` is `frame_name` from config, or `0xNNNN` if no

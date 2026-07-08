@@ -1156,9 +1156,11 @@ class MainWindow(
                     parser = create_parser(self._config.protocol)
                 parser.feed(packet)
                 parsed = parser.extract_all()
+                if not hasattr(self, "_tx_signal_state"):
+                    self._tx_signal_state = {}
                 for p in parsed:
                     if p.ok and p.frame_id is not None:
-                        decoded = decode_frame(self._config, p.frame_id, p.payload)
+                        decoded = decode_frame(self._config, p.frame_id, p.payload, self._tx_signal_state)
                         if self._log_started_perf is not None:
                             elapsed_ms = int((time.perf_counter() - self._log_started_perf) * 1000)
                         else:

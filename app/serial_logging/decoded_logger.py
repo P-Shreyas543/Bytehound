@@ -394,7 +394,9 @@ class DecodedLogger:
             # Frame not represented in the schema — nothing to do.
             return
 
-        if self.polling_mode and decoded.frame_id in self._cycle_buffer:
+        # Always emit and start a new row if we receive a frame we already have
+        # in the current cycle buffer (this naturally handles continuous streams)
+        if decoded.frame_id in self._cycle_buffer:
             self._maybe_emit_row_on_writer(force=True)
             self._cycle_buffer.clear()
 
@@ -436,13 +438,11 @@ class DecodedLogger:
                 continue
             slot[pos] = _format_number(signal.scaled_value)
 
+        # Always emit on the trigger frame, forcing incomplete rows to be written
+        # rather than silently dropping them.
         if self._trigger_id is not None and decoded.frame_id == self._trigger_id:
-            if self.polling_mode:
-                pass
-            else:
-                self._maybe_emit_row_on_writer(force=False)
-                # Always clear so the next cycle starts fresh — no stale carry-over.
-                self._cycle_buffer.clear()
+            self._maybe_emit_row_on_writer(force=True)
+            self._cycle_buffer.clear()
 
     def _maybe_emit_row_on_writer(self, force: bool = False) -> None:
         if not self._cycle_buffer:

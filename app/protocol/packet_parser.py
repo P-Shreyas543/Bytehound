@@ -600,8 +600,19 @@ class WaveshareCanParser(ParserProtocol):
             expected_chk = (sum(buf_mv[:19]) + 1) & 0xFF
             received_chk = buf_mv[19]
             if expected_chk != received_chk:
-                # Checksum mismatch; discard the first byte to resync
-                return None, 1
+                # Checksum mismatch; emit an error packet with the 20 bytes we examined,
+                # but ONLY consume 1 byte to resync. If the stream dropped a byte,
+                # the 20th byte might actually be the 0xAA header of the next packet!
+                raw = bytes(buf_mv[:20])
+                frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
+                pkt = ParsedPacket(
+                    raw=raw,
+                    frame_id=frame_id,
+                    payload=b"",
+                    ok=False,
+                    error=f"Waveshare CAN checksum mismatch: got 0x{received_chk:02X}, expected 0x{expected_chk:02X}"
+                )
+                return pkt, 1
 
             raw = bytes(buf_mv[:20])
             dlc = buf_mv[9]

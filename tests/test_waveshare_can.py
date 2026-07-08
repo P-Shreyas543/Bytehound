@@ -158,7 +158,10 @@ def test_waveshare_can_parse_fixed_bad_checksum():
     # Bad checksum at the end (B5 instead of B4)
     raw_packet = b"\xAA\x55\x01\x01\x01\xF0\x02\x00\x00\x04\x7B\xBA\x90\x01\xFF\xFF\xFF\xF8\x00\xB5"
     parser.feed(raw_packet)
-    assert len(parser.extract_all()) == 0
+    packets = parser.extract_all()
+    assert len(packets) == 1
+    assert packets[0].ok is False
+    assert "checksum mismatch" in packets[0].error
     
     # Recover with standard variable-length frame
     parser.feed(b"\xAA\xC0\x10\x00\x55")

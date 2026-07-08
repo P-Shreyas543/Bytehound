@@ -178,8 +178,10 @@ class TelemetryPipelineMixin:
         # The worker thread already decoded for us so the GUI thread doesn't
         # block on decode work. The rare worker-decode-error fallback path
         # goes through decode_frame here.
+        if not hasattr(self, "_signal_state"):
+            self._signal_state = {}
         decoded = pre_decoded if pre_decoded is not None else decode_frame(
-            self._config, packet.frame_id, packet.payload
+            self._config, packet.frame_id, packet.payload, self._signal_state
         )
         self._apply_decoded(decoded)
         if self._decoded_logger:
@@ -198,7 +200,7 @@ class TelemetryPipelineMixin:
     def _add_signal_row(
         self,
         row: int,  # kept for API compatibility but ignored (model appends)
-        frame_id: int,
+        frame_id: Optional[int],
         signal_name: str,
         group: str,
         start_byte: int,
@@ -207,11 +209,11 @@ class TelemetryPipelineMixin:
         is_calculated: bool = False,
     ) -> None:
         """Add a new row to the telemetry model (called for runtime-discovered signals)."""
-        key = (frame_id, signal_name)
+        key = ("calc", signal_name) if is_calculated else (frame_id, signal_name)
         self._signal_unit_map[key] = unit
         self._table_model.add_row(
             key=key,
-            frame_hex=f"0x{frame_id:04X}",
+            frame_hex=f"0x{frame_id:04X}" if frame_id is not None else "-",
             group=group or "-",
             signal_name=signal_name,
             start_byte=str(start_byte),
@@ -313,7 +315,7 @@ class TelemetryPipelineMixin:
         if plot_visible:
             elapsed = (datetime.now() - self._session_started).total_seconds()
         for signal in [*decoded.signals, *decoded.calculations]:
-            key = (signal.frame_id, signal.signal_name)
+            key = ("calc", signal.signal_name) if signal.is_calculated else (signal.frame_id, signal.signal_name)
             # If the key isn't in the model yet, add it (calculated / late-arriving signals)
             if self._table_model.row_for_key(key) is None:
                 spec = next(
@@ -323,7 +325,7 @@ class TelemetryPipelineMixin:
                 )
                 self._add_signal_row(
                     0,  # ignored by model-backed version
-                    signal.frame_id,
+                    None if signal.is_calculated else signal.frame_id,
                     signal.signal_name,
                     signal.group,
                     spec.start_byte if spec else 0,

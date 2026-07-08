@@ -169,8 +169,9 @@ def test_decoded_logger_writes_wide_rows(tmp_path):
     )
 
     # Cycle 1: both frames arrive (FrameB is the trigger as the last in config).
-    # Cycle 2: only FrameA arrives → trigger never fires → no row emitted.
-    # Cycle 3: both frames again → second row emitted.
+    # Cycle 2: FrameA arrives at 2000.
+    # Cycle 3: FrameA arrives at 3000. This is a duplicate of FrameA, so the buffer (containing FrameA at 2000) is emitted as an incomplete cycle.
+    # Cycle 4: FrameB arrives at 3100. This is the trigger frame, so the buffer (containing FrameA at 3000 and FrameB at 3100) is emitted.
     with DecodedLogger(path, config) as logger:
         logger.log_frame(frame_a, 1000)
         logger.log_frame(frame_b, 1100)
@@ -194,8 +195,8 @@ def test_decoded_logger_writes_wide_rows(tmp_path):
         "0x200.Pack_V (V)",
     )
     assert data_rows[0] == expected_header
-    # Only two complete cycles → two data rows.
-    assert len(data_rows) == 3
+    # 3 complete/incomplete cycles → 3 data rows.
+    assert len(data_rows) == 4
 
     header = list(expected_header)
     row1 = dict(zip(header, data_rows[1]))
@@ -208,11 +209,16 @@ def test_decoded_logger_writes_wide_rows(tmp_path):
     assert row1["0x200.frame_id"] == "0x0200"
     assert row1["0x200.Pack_V (V)"] == 48.2
 
-    # Second cycle uses the LATEST FrameA seen before the trigger (elapsed=3000),
-    # not the orphaned A at elapsed=2000 — buffer always keeps the freshest values.
+    # Second row is the incomplete cycle emitted when duplicate FrameA arrives
     row2 = dict(zip(header, data_rows[2]))
-    assert row2["0x100.elapsed_ms"] == 3000
-    assert row2["0x200.elapsed_ms"] == 3100
+    assert row2["0x100.elapsed_ms"] == 2000
+    assert row2["0x100.frame_id"] == "0x0100"
+    assert row2["0x200.elapsed_ms"] is None
+
+    # Third row is the cycle emitted when FrameB arrives
+    row3 = dict(zip(header, data_rows[3]))
+    assert row3["0x100.elapsed_ms"] == 3000
+    assert row3["0x200.elapsed_ms"] == 3100
 
 
 def test_decoded_logger_writes_metadata_sheet(tmp_path):
@@ -257,8 +263,8 @@ def test_decoded_logger_writes_metadata_sheet(tmp_path):
         assert meta_pairs[key] == value
 
 
-def test_decoded_logger_drops_incomplete_cycles(tmp_path):
-    """Only FrameA arrives, never FrameB (the trigger). No data rows."""
+def test_decoded_logger_writes_incomplete_cycles(tmp_path):
+    """Only FrameA arrives, never FrameB (the trigger). It emits incomplete cycles when FrameA repeats."""
     config = _make_test_config()
     path = tmp_path / "decoded.xlsx"
 
@@ -288,8 +294,8 @@ def test_decoded_logger_drops_incomplete_cycles(tmp_path):
     data_rows = list(wb[DecodedLogger.DATA_SHEET].iter_rows(values_only=True))
     wb.close()
 
-    # Only the header row — no completed cycles.
-    assert len(data_rows) == 1
+    # The header row + 2 incomplete cycle rows (emitted when the duplicate 2000 and 3000 frames arrive)
+    assert len(data_rows) == 3
 
 
 def test_snapshot_config_copies_csv_templates(resources_dir, tmp_path):

@@ -119,7 +119,7 @@ class LogLoaderThread(QThread):
             return
 
         if df.empty:
-            self.error.emit(self._path, "No data rows found in CSV.")
+            self.error.emit(self._path, "Log file contains no recorded data (empty sheet). Please verify data was received during logging.")
             return
 
         first_ts_posix: float | None = None
@@ -197,7 +197,7 @@ class LogLoaderThread(QThread):
             return
 
         if df.empty:
-            self.error.emit(self._path, "No data rows found.")
+            self.error.emit(self._path, "Log file contains no recorded data (empty sheet). Please verify data was received during logging.")
             return
 
         headers = [str(c) if c else "" for c in df.columns]

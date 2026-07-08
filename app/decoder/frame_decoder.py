@@ -37,7 +37,15 @@ class DecodedFrame:
     error: Optional[str] = None
 
 
-def decode_frame(config: FrameConfig, frame_id: int, payload: bytes) -> DecodedFrame:
+def decode_frame(
+    config: FrameConfig,
+    frame_id: int,
+    payload: bytes,
+    state_dict: Optional[Dict[str, Dict[str, float]]] = None,
+) -> DecodedFrame:
+    if state_dict is None:
+        state_dict = {}
+
     specs = config.signals_by_frame.get(frame_id)
     if specs is None:
         return DecodedFrame(
@@ -49,7 +57,7 @@ def decode_frame(config: FrameConfig, frame_id: int, payload: bytes) -> DecodedF
 
     frame_name = config.frame_names.get(frame_id, "")
     decoded = [_decode_signal(config, spec, payload) for spec in specs]
-    calculations = _calculate_groups(config, frame_id, frame_name, decoded)
+    calculations = _calculate_groups(config, frame_id, frame_name, decoded, state_dict)
     warnings = _payload_warnings(config, frame_id, payload, specs)
     return DecodedFrame(
         frame_id=frame_id,
@@ -277,18 +285,28 @@ def _calculate_groups(
     frame_id: int,
     frame_name: str,
     decoded: List[DecodedSignal],
+    state_dict: Dict[str, Dict[str, float]],
 ) -> List[DecodedSignal]:
     out: List[DecodedSignal] = []
+
+    # Update state_dict with the current frame's valid signals
+    for sig in decoded:
+        if sig.status == "ok" and sig.group and sig.scaled_value is not None:
+            group_state = state_dict.setdefault(sig.group, {})
+            group_state[sig.signal_name] = sig.scaled_value
+
     for calc in config.calc_groups:
         if calc.frame_id is not None and calc.frame_id != frame_id:
             continue
-        values = [
-            sig.scaled_value
-            for sig in decoded
-            if sig.status == "ok" and sig.group == calc.group and sig.scaled_value is not None
-        ]
+            
+        group_state = state_dict.get(calc.group)
+        if not group_state:
+            continue
+            
+        values = list(group_state.values())
         if not values:
             continue
+            
         value = calculate_group_value(calc, values)
         out.append(
             DecodedSignal(
