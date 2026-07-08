@@ -20,11 +20,13 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
-import qdarktheme
 
+import openpyxl  # MUST be imported before PySide6/qdarktheme to prevent Shiboken import hook from freezing
+import qdarktheme
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
+
 
 from PySide6.QtCore import QSettings
 from PySide6.QtGui import QFont, QIcon
