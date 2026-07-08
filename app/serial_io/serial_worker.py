@@ -30,7 +30,7 @@ import threading
 import time
 from dataclasses import dataclass, replace as dataclass_replace
 from datetime import datetime
-from typing import Iterable, List, Optional
+from typing import Dict, Iterable, List, Optional
 
 import serial
 from serial.tools import list_ports
