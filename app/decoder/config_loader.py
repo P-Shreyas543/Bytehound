@@ -579,6 +579,9 @@ def _parse_variables(
         count = _to_int(row.get("count", "1") or "1", field_name="count")
         if count < 1:
             raise ConfigError(f"variables row {row_no}: count must be >= 1")
+        
+        start_index = _to_int(row.get("start_index", "1") or "1", field_name="start_index")
+        
         byte_length = FMT_SIZES[fmt]
         data_type = _fmt_to_data_type(fmt)
         start = offsets.get(frame_id, 0)
@@ -590,7 +593,8 @@ def _parse_variables(
             raise ConfigError(f"variables row {row_no}: Modbus RTU data values (byte_order) must be big-endian")
 
         for idx in range(count):
-            signal_name = name if count == 1 else f"{name} {idx + 1}"
+            curr_idx = start_index + idx
+            signal_name = name if count == 1 else f"{name}_{curr_idx}"
             _check_signal_uniqueness(seen, frame_id, signal_name, source="variables")
             signals.append(
                 SignalSpec(
@@ -605,7 +609,7 @@ def _parse_variables(
                     offset=_to_float(row.get("offset", ""), 0.0, "offset"),
                     unit=unit,
                     group=group,
-                    index=idx + 1 if count > 1 else None,
+                    index=curr_idx if count > 1 else None,
                     source_name=name,
                     enabled=True,
                     description=row.get("description", ""),

@@ -419,9 +419,9 @@ class FramedParser(ParserProtocol):
             return None, 1
 
         total_size = fixed_size + payload_len
-        # If total_size is larger than we could ever buffer, this frame is
-        # impossible. Consume the header byte to resync and prevent deadlock.
-        if total_size > _MAX_BUFFER_BYTES:
+        # Ensure we don't wait for a frame so large that it would be truncated by
+        # _trim_if_overflow before it can be parsed.
+        if total_size > _MAX_BUFFER_BYTES - 65536:
             return None, 1
 
         if len(self._buf) < total_size:
@@ -591,46 +591,68 @@ class WaveshareCanParser(ParserProtocol):
 
         buf_mv = memoryview(self._buf)
 
-        # Check for Fixed 20-byte Protocol header directly
+        # Check for Fixed 20-byte (or 19-byte clone) Protocol header directly
         if len(self._buf) >= 2 and buf_mv[0] == 0xAA and buf_mv[1] == 0x55:
+            if len(self._buf) < 19:
+                return None, 0
+
+            # 1. Try 20-byte checksum first (Standard Waveshare fixed protocol)
+            if len(self._buf) >= 20:
+                expected_chk_20 = (sum(buf_mv[:19]) + 1) & 0xFF
+                if expected_chk_20 == buf_mv[19]:
+                    raw = bytes(buf_mv[:20])
+                    dlc = buf_mv[9]
+                    if dlc > 8:
+                        dlc = 8
+                    frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
+                    payload = bytes(buf_mv[10 : 10 + dlc])
+                    pkt = ParsedPacket(
+                        raw=raw, frame_id=frame_id, payload=payload, ok=True, error=None
+                    )
+                    return pkt, 20
+
+            # 2. Try 19-byte checksum (Clone/alternative firmware omits 0x00 padding)
+            expected_chk_19 = (sum(buf_mv[:18]) + 1) & 0xFF
+            if expected_chk_19 == buf_mv[18]:
+                raw = bytes(buf_mv[:19])
+                dlc = buf_mv[9]
+                if dlc > 8:
+                    dlc = 8
+                frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
+                payload = bytes(buf_mv[10 : 10 + dlc])
+                pkt = ParsedPacket(
+                    raw=raw, frame_id=frame_id, payload=payload, ok=True, error=None
+                )
+                return pkt, 19
+
+            # If we don't have 20 bytes yet and 19-byte check failed, wait for more data
             if len(self._buf) < 20:
                 return None, 0
 
-            # Verify checksum: (sum of first 19 bytes + 1) & 0xFF
-            expected_chk = (sum(buf_mv[:19]) + 1) & 0xFF
-            received_chk = buf_mv[19]
-            if expected_chk != received_chk:
-                # Checksum mismatch; emit an error packet with the 20 bytes we examined,
-                # but ONLY consume 1 byte to resync. If the stream dropped a byte,
-                # the 20th byte might actually be the 0xAA header of the next packet!
+            # 3. Both failed. Check if the 20th byte is the start of the next frame (0xAA).
+            # If so, this was likely a corrupted 19-byte frame.
+            is_19_byte_corrupted = (len(self._buf) >= 20 and self._buf[19] == 0xAA)
+            
+            if is_19_byte_corrupted:
+                expected_chk = (sum(buf_mv[:18]) + 1) & 0xFF
+                received_chk = buf_mv[18]
+                err_msg = f"Waveshare CAN checksum mismatch (19-byte): got 0x{received_chk:02X}, expected 0x{expected_chk:02X}"
+                raw = bytes(buf_mv[:19])
+            else:
+                expected_chk = (sum(buf_mv[:19]) + 1) & 0xFF
+                received_chk = buf_mv[19]
+                err_msg = f"Waveshare CAN checksum mismatch: got 0x{received_chk:02X}, expected 0x{expected_chk:02X}"
                 raw = bytes(buf_mv[:20])
-                frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
-                pkt = ParsedPacket(
-                    raw=raw,
-                    frame_id=frame_id,
-                    payload=b"",
-                    ok=False,
-                    error=f"Waveshare CAN checksum mismatch: got 0x{received_chk:02X}, expected 0x{expected_chk:02X}"
-                )
-                return pkt, 1
 
-            raw = bytes(buf_mv[:20])
-            dlc = buf_mv[9]
-            if dlc > 8:
-                dlc = 8
-
-            # Frame ID is 4 bytes at index 5, little-endian
             frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
-            payload = bytes(buf_mv[10 : 10 + dlc])
-
             pkt = ParsedPacket(
                 raw=raw,
                 frame_id=frame_id,
-                payload=payload,
-                ok=True,
-                error=None
+                payload=b"",
+                ok=False,
+                error=err_msg
             )
-            return pkt, 20
+            return pkt, 1
 
         # Find 0xAA header index
         idx = self._buf.find(0xAA)
