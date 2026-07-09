@@ -13,5 +13,5 @@
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
     "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.1.0.exe",
     "release_notes": "v1.1.0 Release - Waveshare CAN Fixed 20-Byte mode support and GUI/Logging Performance Optimizations.\n\nNew Features:\n  - Waveshare CAN Fixed 20-Byte Protocol: Supported building and writing CAN standard and extended frames with 20-byte fixed length.\n  - GUI Event Loop Optimization: Batched raw console logging at 60 Hz and bypassed hidden plots calculations, cutting CPU overhead dramatically.\n  - Asynchronous Decoded Logging: Moved all signal formatting, enum resolution, and sheet cycle building completely to the background worker thread, eliminating log-induced UI stuttering.\n  - Port Auto-Discovery Refresh: The connection dialog dynamically scans and updates available ports list every 1.0 second.",
-    "sha256": "747fbf647cb90c86fb869dda7c09f8811721c4619895e92f21c078693caaecf0"
+    "sha256": "f7a365c7793d85b2b5bf6fd4ee89b7eb01326f42a2e7af2fb33a1a32c34e9043"
 }
