@@ -103,7 +103,7 @@ class IssueReporter(QThread):
                     largest_note_idx = max(range(len(formatted_attachments)), key=lambda i: len(formatted_attachments[i][1]))
                     formatted_attachments.pop(largest_note_idx)
             else:
-                if log_section:
+                if log_section and "truncated" not in log_section:
                     log_section = "\n\n*[Application Log tail truncated due to size limit]*"
                 else:
                     desc = desc[:MAX_BODY_LEN - len(diag_section) - 100] + "\n\n*[Description truncated due to size limit]*"

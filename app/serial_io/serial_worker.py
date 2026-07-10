@@ -674,10 +674,12 @@ class PollingWorker(QThread):
     def _emit_frame_error_throttled(self, msg: str) -> None:
         """Emit a frame error warning, throttling identical messages to 1Hz."""
         now = time.monotonic()
-        if msg != self._last_frame_error_msg or (now - self._last_frame_error_emit) >= 1.0:
+        # Extract base message (e.g., "Waveshare CAN checksum mismatch") to group varying got/expected bytes
+        base_msg = msg.split(':')[0]
+        if base_msg != self._last_frame_error_msg or (now - self._last_frame_error_emit) >= 1.0:
             self.warning_occurred.emit(f"Frame Error: {msg}")
             self._last_frame_error_emit = now
-            self._last_frame_error_msg = msg
+            self._last_frame_error_msg = base_msg
 
     def _effective_tx_gap_ms(self, min_gap_ms: int = 0) -> int:
         return max(

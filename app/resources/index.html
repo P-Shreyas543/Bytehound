@@ -6,212 +6,475 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bytehound - Serial Telemetry &amp; Decoder Guide</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=PT+Sans:ital,wght@0,400;0,700;1,400;1,700&display=swap');
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
+
+        :root {
+            --bg-color: #f8fafc;
+            --card-bg: #ffffff;
+            --text-color: #334155;
+            --text-muted: #64748b;
+            --border-color: #e2e8f0;
+            --primary-color: #2563eb;
+            --primary-hover: #1d4ed8;
+            --primary-light: #eff6ff;
+            --success-bg: #f0fdf4;
+            --success-border: #10b981;
+            --success-text: #14532d;
+            --warning-bg: #fffbeb;
+            --warning-border: #f59e0b;
+            --warning-text: #78350f;
+            --info-bg: #f0f9ff;
+            --info-border: #0ea5e9;
+            --info-text: #0369a1;
+            --code-bg: #f1f5f9;
+            --code-text: #0f172a;
+            --pre-bg: #0f172a;
+            --pre-text: #e2e8f0;
+            --sidebar-width: 300px;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -2px rgba(0, 0, 0, 0.05);
+            --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.05), 0 4px 6px -4px rgba(0, 0, 0, 0.05);
+            --transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        [data-theme="dark"] {
+            --bg-color: #0f172a;
+            --card-bg: #1e293b;
+            --text-color: #cbd5e1;
+            --text-muted: #94a3b8;
+            --border-color: #334155;
+            --primary-color: #3b82f6;
+            --primary-hover: #60a5fa;
+            --primary-light: #1e3a8a;
+            --success-bg: #064e3b;
+            --success-border: #10b981;
+            --success-text: #d1fae5;
+            --warning-bg: #78350f;
+            --warning-border: #f59e0b;
+            --warning-text: #fef3c7;
+            --info-bg: #0c4a6e;
+            --info-border: #0ea5e9;
+            --info-text: #e0f2fe;
+            --code-bg: #334155;
+            --code-text: #f1f5f9;
+            --pre-bg: #020617;
+            --pre-text: #f1f5f9;
+            --shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3), 0 2px 4px -2px rgba(0, 0, 0, 0.3);
+            --shadow-md: 0 10px 15px -3px rgba(0, 0, 0, 0.3), 0 4px 6px -4px rgba(0, 0, 0, 0.3);
+        }
 
         body {
-            font-family: 'PT Sans', sans-serif;
+            font-family: 'Inter', system-ui, -apple-system, sans-serif;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            margin: 0;
+            padding: 0;
             line-height: 1.6;
-            color: #2c3e50;
-            max-width: 900px;
+            display: flex;
+            min-height: 100vh;
+            transition: var(--transition);
+        }
+
+        .app-layout {
+            display: flex;
+            width: 100%;
+        }
+
+        /* Sidebar Styles */
+        .sidebar {
+            width: var(--sidebar-width);
+            height: 100vh;
+            position: fixed;
+            top: 0;
+            left: 0;
+            background-color: var(--card-bg);
+            border-right: 1px solid var(--border-color);
+            display: flex;
+            flex-direction: column;
+            z-index: 100;
+            transition: var(--transition);
+        }
+
+        .sidebar-header {
+            padding: 20px 24px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .sidebar-header .logo {
+            font-size: 24px;
+        }
+
+        .sidebar-header .app-title {
+            font-size: 18px;
+            font-weight: 700;
+            color: var(--primary-color);
+            letter-spacing: -0.025em;
+        }
+
+        .search-box {
+            padding: 16px 24px;
+            border-bottom: 1px solid var(--border-color);
+        }
+
+        .search-box input {
+            width: 100%;
+            padding: 10px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border-color);
+            background-color: var(--bg-color);
+            color: var(--text-color);
+            font-family: inherit;
+            font-size: 14px;
+            outline: none;
+            box-sizing: border-box;
+            transition: var(--transition);
+        }
+
+        .search-box input:focus {
+            border-color: var(--primary-color);
+            box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.15);
+        }
+
+        .sidebar-nav {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 24px;
+        }
+
+        .sidebar-nav ul {
+            list-style: none;
+            padding: 0;
+            margin: 0;
+        }
+
+        .sidebar-nav li {
+            margin-bottom: 4px;
+        }
+
+        .sidebar-nav a {
+            color: var(--text-muted);
+            text-decoration: none;
+            font-size: 14px;
+            font-weight: 500;
+            display: block;
+            padding: 8px 12px;
+            border-radius: 6px;
+            transition: var(--transition);
+        }
+
+        .sidebar-nav a:hover {
+            color: var(--primary-color);
+            background-color: var(--primary-light);
+        }
+
+        .sidebar-nav li.active > a {
+            color: var(--primary-color);
+            background-color: var(--primary-light);
+            font-weight: 600;
+        }
+
+        .sidebar-nav .sub-menu {
+            margin-top: 4px;
+            padding-left: 12px;
+            border-left: 1px solid var(--border-color);
+            display: none;
+        }
+
+        .sidebar-nav li.active .sub-menu,
+        .sidebar-nav li.open .sub-menu {
+            display: block;
+        }
+
+        .sidebar-nav .sub-menu a {
+            font-size: 13px;
+            padding: 6px 10px;
+        }
+
+        /* Main Content Layout */
+        .main-content {
+            margin-left: var(--sidebar-width);
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+            min-width: 0;
+        }
+
+        .content-header {
+            height: 64px;
+            border-bottom: 1px solid var(--border-color);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 40px;
+            background-color: var(--card-bg);
+            position: sticky;
+            top: 0;
+            z-index: 90;
+            transition: var(--transition);
+        }
+
+        .menu-toggle {
+            display: none;
+            background: none;
+            border: none;
+            font-size: 24px;
+            color: var(--text-color);
+            cursor: pointer;
+        }
+
+        .header-right {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-left: auto;
+        }
+
+        .version-badge {
+            background-color: var(--primary-light);
+            color: var(--primary-color);
+            font-size: 12px;
+            font-weight: 600;
+            padding: 6px 12px;
+            border-radius: 9999px;
+            transition: var(--transition);
+        }
+
+        .theme-toggle {
+            background: none;
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            width: 38px;
+            height: 38px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            font-size: 18px;
+            color: var(--text-color);
+            transition: var(--transition);
+        }
+
+        .theme-toggle:hover {
+            background-color: var(--code-bg);
+            border-color: var(--primary-color);
+        }
+
+        .content-body {
+            max-width: 860px;
             margin: 0 auto;
-            padding: 30px;
-            background-color: #f9fbfd;
+            padding: 40px 60px;
+            box-sizing: border-box;
+            width: 100%;
         }
 
-        .container {
-            background-color: white;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.05);
-        }
-
-        h1,
-        h2,
-        h3 {
-            color: #1a5f7a;
-            margin-top: 30px;
+        /* Typography & Components styling */
+        h1, h2, h3, h4 {
+            color: var(--text-color);
+            font-weight: 700;
+            letter-spacing: -0.025em;
+            margin-top: 1.8em;
+            margin-bottom: 0.6em;
         }
 
         h1 {
-            border-bottom: 3px solid #3498db;
-            padding-bottom: 10px;
-            text-align: center;
+            font-size: 36px;
+            margin-top: 0;
+            background: linear-gradient(135deg, var(--primary-color), #4f46e5);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            border-bottom: 2px solid var(--border-color);
+            padding-bottom: 16px;
         }
 
         h2 {
-            border-bottom: 2px solid #ecf0f1;
+            font-size: 24px;
+            border-bottom: 1px solid var(--border-color);
             padding-bottom: 8px;
-            padding-top: 20px;
+        }
+
+        h3 {
+            font-size: 18px;
+        }
+
+        p, li {
+            font-size: 15px;
+            color: var(--text-color);
+            opacity: 0.9;
+        }
+
+        a {
+            color: var(--primary-color);
+            text-decoration: none;
+            transition: var(--transition);
+        }
+
+        a:hover {
+            text-decoration: underline;
         }
 
         pre {
-            background-color: #282c34;
-            color: #abb2bf;
+            background-color: var(--pre-bg);
+            color: var(--pre-text);
             padding: 20px;
-            border-radius: 8px;
+            border-radius: 10px;
             overflow-x: auto;
-            font-family: 'Courier New', Courier, monospace;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
             font-size: 14px;
+            box-shadow: var(--shadow);
+            border: 1px solid var(--border-color);
         }
 
         code {
-            background-color: #e8f0fe;
-            color: #1a5f7a;
-            padding: 2px 6px;
-            border-radius: 4px;
-            font-family: 'Courier New', Courier, monospace;
+            background-color: var(--code-bg);
+            color: var(--code-text);
+            padding: 3px 6px;
+            border-radius: 6px;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 13.5px;
+            transition: var(--transition);
+        }
+
+        pre code {
+            background-color: transparent;
+            color: inherit;
+            padding: 0;
+            font-size: inherit;
         }
 
         table {
             width: 100%;
             border-collapse: collapse;
-            margin: 20px 0;
-            background-color: white;
-            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+            margin: 24px 0;
+            background-color: var(--card-bg);
+            box-shadow: var(--shadow);
+            border-radius: 8px;
+            overflow: hidden;
+            border: 1px solid var(--border-color);
+            transition: var(--transition);
         }
 
-        th,
-        td {
-            border: 1px solid #e0e0e0;
-            padding: 12px;
+        th, td {
+            padding: 14px 16px;
             text-align: left;
+            border-bottom: 1px solid var(--border-color);
         }
 
         th {
-            background-color: #f4f6f8;
-            color: #1a5f7a;
+            background-color: var(--code-bg);
+            color: var(--text-color);
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        td {
+            font-size: 14px;
+        }
+
+        tr:hover {
+            background-color: var(--primary-light);
+        }
+
+        /* Callout Blocks styling */
+        .note, .success, .warning {
+            padding: 16px 20px;
+            margin: 24px 0;
+            border-radius: 8px;
+            border-left: 4px solid;
+            box-shadow: var(--shadow);
+            transition: var(--transition);
         }
 
         .note {
-            background-color: #e3f2fd;
-            border-left: 6px solid #2196F3;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 0 8px 8px 0;
+            background-color: var(--info-bg);
+            border-left-color: var(--info-border);
+            color: var(--info-text);
         }
 
         .success {
-            background-color: #e8f5e9;
-            border-left: 6px solid #4CAF50;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 0 8px 8px 0;
+            background-color: var(--success-bg);
+            border-left-color: var(--success-border);
+            color: var(--success-text);
         }
 
         .warning {
-            background-color: #fff8e1;
-            border-left: 6px solid #ffc107;
-            padding: 15px;
-            margin: 20px 0;
-            border-radius: 0 8px 8px 0;
+            background-color: var(--warning-bg);
+            border-left-color: var(--warning-border);
+            color: var(--warning-text);
         }
 
-        .toc {
-            background-color: #f4f6f8;
-            padding: 20px;
-            border-radius: 8px;
-            margin-bottom: 30px;
-        }
-
-        .toc ul {
-            list-style-type: none;
-            padding-left: 0;
-        }
-
-        .toc li {
-            margin-bottom: 8px;
-        }
-
-        .toc a {
-            text-decoration: none;
-            color: #3498db;
-            font-weight: 500;
-        }
-
-        .toc a:hover {
-            text-decoration: underline;
-        }
-
-        .toc .sub-menu {
-            padding-left: 20px;
-            font-size: 0.95em;
-        }
-
-        /* UI Mockup Styles for Manual */
+        /* Mockup Styles */
         .mockup-img {
             max-width: 100%;
             height: auto;
-            border-radius: 8px;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
-            margin: 20px auto;
+            border-radius: 10px;
+            box-shadow: var(--shadow-md);
+            margin: 24px auto;
             display: block;
-            border: 1px solid #ddd;
+            border: 1px solid var(--border-color);
+            transition: var(--transition);
         }
 
-        .img-small {
-            max-width: 350px !important;
-        }
-
-        .img-medium {
-            max-width: 550px !important;
-        }
+        .img-small { max-width: 350px !important; }
+        .img-medium { max-width: 550px !important; }
 
         .mock-ui-dialog {
             background-color: #0f172a;
             color: #e2e8f0;
-            border-radius: 8px;
+            border-radius: 10px;
             border: 1px solid #334155;
-            padding: 16px;
-            margin: 20px 0;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
-            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.25);
+            padding: 20px;
+            margin: 24px 0;
+            box-shadow: var(--shadow-md);
         }
 
         .mock-ui-titlebar {
             font-size: 13px;
-            font-weight: bold;
+            font-weight: 600;
             color: #94a3b8;
-            margin-bottom: 12px;
+            margin-bottom: 16px;
             display: flex;
             justify-content: space-between;
             align-items: center;
             border-bottom: 1px solid #1e293b;
-            padding-bottom: 6px;
+            padding-bottom: 8px;
         }
 
         .mock-ui-form {
             display: grid;
             grid-template-columns: 120px 1fr;
-            gap: 8px;
-            margin-bottom: 12px;
-            font-size: 12px;
+            gap: 12px;
+            margin-bottom: 16px;
+            font-size: 13px;
         }
 
         .mock-ui-form-label {
             color: #94a3b8;
             text-align: right;
-            padding-right: 8px;
-            line-height: 24px;
+            padding-right: 12px;
+            align-self: center;
         }
 
         .mock-ui-form-value {
             color: #f1f5f9;
-            line-height: 24px;
         }
 
         .mock-ui-tabs {
             display: flex;
             border-bottom: 2px solid #1e293b;
-            margin-bottom: 12px;
+            margin-bottom: 16px;
         }
 
         .mock-ui-tab {
-            padding: 6px 12px;
-            font-size: 12px;
-            font-weight: bold;
+            padding: 8px 16px;
+            font-size: 13px;
+            font-weight: 600;
             cursor: pointer;
-            border-radius: 4px 4px 0 0;
-            margin-right: 4px;
+            border-radius: 6px 6px 0 0;
+            margin-right: 6px;
+            transition: var(--transition);
         }
 
         .mock-ui-tab.active {
@@ -228,21 +491,21 @@
         .mock-ui-dropdown-row {
             display: flex;
             align-items: center;
-            gap: 8px;
-            margin-bottom: 12px;
-            font-size: 12px;
+            gap: 12px;
+            margin-bottom: 16px;
+            font-size: 13px;
         }
 
         .mock-ui-dropdown-label {
-            font-weight: bold;
+            font-weight: 600;
             color: #f1f5f9;
         }
 
         .mock-ui-dropdown {
             background-color: #1e293b;
             border: 1px solid #334155;
-            padding: 4px 8px;
-            border-radius: 4px;
+            padding: 6px 12px;
+            border-radius: 6px;
             color: #e2e8f0;
             min-width: 180px;
         }
@@ -250,14 +513,14 @@
         .mock-byte-grid-container {
             overflow-x: auto;
             background-color: #020617;
-            padding: 10px;
-            border-radius: 6px;
+            padding: 12px;
+            border-radius: 8px;
             border: 1px solid #1e293b;
         }
 
         .mock-byte-grid {
             display: flex;
-            gap: 4px;
+            gap: 6px;
             min-width: 400px;
         }
 
@@ -269,289 +532,192 @@
         }
 
         .mock-byte-header {
-            font-size: 9px;
-            font-weight: bold;
+            font-size: 10px;
+            font-weight: 600;
             color: #64748b;
-            margin-bottom: 4px;
+            margin-bottom: 6px;
         }
 
         .mock-byte-cell {
             width: 100%;
-            height: 36px;
+            height: 40px;
             display: flex;
             align-items: center;
             justify-content: center;
             color: #ffffff;
-            font-size: 10px;
-            font-weight: bold;
-            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 700;
+            border-radius: 6px;
             text-align: center;
             border: 1px solid rgba(255, 255, 255, 0.1);
         }
 
-        /* Gradient colors matching PyQt classes */
-        .cell-amber {
-            background: linear-gradient(180deg, #F59E0B 0%, #D97706 100%);
-            border-color: #B45309;
+        .cell-amber { background: linear-gradient(180deg, #F59E0B 0%, #D97706 100%); border-color: #B45309; }
+        .cell-emerald { background: linear-gradient(180deg, #10B981 0%, #059669 100%); border-color: #047857; }
+        .cell-indigo { background: linear-gradient(180deg, #6366F1 0%, #4F46E5 100%); border-color: #4338CA; }
+        .cell-teal { background: linear-gradient(180deg, #06B6D4 0%, #0891B2 100%); border-color: #0E7490; }
+        .cell-pink { background: linear-gradient(180deg, #EC4899 0%, #DB2777 100%); border-color: #9D174D; }
+        .cell-grey { background: linear-gradient(180deg, #6B7280 0%, #4B5563 100%); border-color: #374151; }
+        .cell-muted { background: linear-gradient(180deg, #64748B 0%, #475569 100%); border-color: #334155; }
+
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
         }
 
-        .cell-emerald {
-            background: linear-gradient(180deg, #10B981 0%, #059669 100%);
-            border-color: #047857;
+        ::-webkit-scrollbar-track {
+            background: transparent;
         }
 
-        .cell-indigo {
-            background: linear-gradient(180deg, #6366F1 0%, #4F46E5 100%);
-            border-color: #4338CA;
+        ::-webkit-scrollbar-thumb {
+            background: var(--border-color);
+            border-radius: 9999px;
         }
 
-        .cell-teal {
-            background: linear-gradient(180deg, #06B6D4 0%, #0891B2 100%);
-            border-color: #0E7490;
+        ::-webkit-scrollbar-thumb:hover {
+            background: var(--text-muted);
         }
 
-        .cell-pink {
-            background: linear-gradient(180deg, #EC4899 0%, #DB2777 100%);
-            border-color: #9D174D;
-        }
-
-        .cell-grey {
-            background: linear-gradient(180deg, #6B7280 0%, #4B5563 100%);
-            border-color: #374151;
-        }
-
-        .cell-muted {
-            background: linear-gradient(180deg, #64748B 0%, #475569 100%);
-            border-color: #334155;
+        /* Responsiveness */
+        @media (max-width: 1024px) {
+            .sidebar {
+                left: calc(-1 * var(--sidebar-width));
+            }
+            .sidebar.open {
+                left: 0;
+                box-shadow: 0 0 40px rgba(0, 0, 0, 0.2);
+            }
+            .main-content {
+                margin-left: 0;
+            }
+            .menu-toggle {
+                display: block;
+            }
+            .content-header {
+                padding: 0 24px;
+            }
+            .content-body {
+                padding: 30px 24px;
+            }
         }
 
         /* A4 Printing Layout Styles */
         @media print {
-            @page {
-                size: A4;
-                margin: 20mm;
+            .sidebar, .content-header, .theme-toggle {
+                display: none !important;
             }
-
+            .main-content {
+                margin-left: 0 !important;
+            }
+            .content-body {
+                padding: 0 !important;
+                max-width: 100% !important;
+            }
             body {
                 background-color: white;
                 color: #000;
                 font-size: 11pt;
-                line-height: 1.5;
-                max-width: 100%;
-                margin: 0;
-                padding: 0;
-            }
-
-            .container {
-                box-shadow: none;
-                border-radius: 0;
-                padding: 0;
-                margin: 0;
-                background-color: white;
-            }
-
-            h1,
-            h2,
-            h3 {
-                color: #000;
-                page-break-after: avoid;
-                break-after: avoid;
-            }
-
-            h1 {
-                font-size: 20pt;
-                border-bottom: 2px solid #000;
-                margin-bottom: 30px;
-            }
-
-            h2 {
-                font-size: 16pt;
-                page-break-before: always;
-                break-before: page;
-                border-bottom: 1.5px solid #666;
-                padding-top: 15px;
-                margin-top: 40px;
-            }
-
-            h3 {
-                font-size: 13pt;
-                margin-top: 25px;
-                border-bottom: 1px dashed #ccc;
-                padding-bottom: 4px;
-            }
-
-            h4 {
-                font-size: 11pt;
-                margin-top: 15px;
-                margin-bottom: 5px;
-            }
-
-            p,
-            li {
-                color: #111;
-            }
-
-            pre {
-                background-color: #fff;
-                color: #000;
-                border: 1px solid #999;
-                padding: 12px;
-                border-radius: 4px;
-                page-break-inside: avoid;
-                break-inside: avoid;
-                white-space: pre-wrap;
-                word-wrap: break-word;
-                font-size: 9.5pt;
-            }
-
-            code {
-                background-color: #f0f0f0;
-                color: #000;
-                border: 0.5px solid #ccc;
-                padding: 1px 3px;
-                font-size: 9.5pt;
-            }
-
-            table {
-                width: 100%;
-                border-collapse: collapse;
-                margin: 15px 0;
-                page-break-inside: auto;
-                break-inside: auto;
-            }
-
-            tr {
-                page-break-inside: avoid;
-                break-inside: avoid;
-            }
-
-            th,
-            td {
-                border: 1px solid #666;
-                padding: 8px;
-                font-size: 9.5pt;
-            }
-
-            th {
-                background-color: #eaeaea;
-                color: #000;
-            }
-
-            .toc {
-                background-color: #fff;
-                border: 1px solid #ccc;
-                padding: 15px;
-                page-break-after: always;
-                break-after: page;
-            }
-
-            .toc a {
-                color: #000;
-            }
-
-            .note,
-            .success,
-            .warning {
-                background-color: #fff;
-                color: #000;
-                border: 1px solid #999;
-                border-left: 5px solid #000;
-                padding: 12px;
-                border-radius: 4px;
-                margin: 15px 0;
-                page-break-inside: avoid;
-                break-inside: avoid;
-            }
-
-            .note strong,
-            .success strong,
-            .warning strong {
-                color: #000;
             }
         }
     </style>
 </head>
 
 <body>
+    <div class="app-layout">
+        <!-- Sidebar Navigation -->
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <span class="logo">🐕</span>
+                <span class="app-title">Bytehound Docs</span>
+            </div>
+            <div class="search-box">
+                <input type="text" id="search-input" placeholder="Search documentation...">
+            </div>
+            <nav class="sidebar-nav">
+                <ul>
+                    <li><a href="#section-1">1. Introduction &amp; Getting Started</a>
+                        <ul class="sub-menu">
+                            <li><a href="#what-is-it">What is the Bytehound?</a></li>
+                            <li><a href="#connecting">Connecting Your Hardware</a></li>
+                            <li><a href="#active-polling">Active Polling (Auto-Fetch)</a></li>
+                            <li><a href="#unsolicited-data-detection">Unsolicited Data Detection</a></li>
+                            <li><a href="#auto-reconnect">Auto-Reconnect</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="#section-2">2. Core UI Panels &amp; Features</a>
+                        <ul class="sub-menu">
+                            <li><a href="#main-table">The Main Data Table</a></li>
+                            <li><a href="#live-plot">Live Plot (Multi-Grid)</a></li>
+                            <li><a href="#bitfields">Bitfields Panel</a></li>
+                            <li><a href="#enums">Enums Panel</a></li>
+                            <li><a href="#raw-console">Raw Console</a></li>
+                            <li><a href="#activity-log">Activity Log</a></li>
+                            <li><a href="#fault-alarms">Fault Alarms</a></li>
+                            <li><a href="#status-bar">Status Bar (bottom-right counters)</a></li>
+                            <li><a href="#menu-bar-reference">The Menu Bar Reference</a></li>
+                            <li><a href="#keyboard-shortcuts">Keyboard Shortcuts</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="#section-3">3. Controlling Your Hardware</a>
+                        <ul class="sub-menu">
+                            <li><a href="#tx-commands">TX Commands</a></li>
+                            <li><a href="#parameter-editing">Parameter Editor</a></li>
+                            <li><a href="#tx-packet-anatomy">Reading a TX packet</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="#section-4">4. Logging and Data Analysis</a>
+                        <ul class="sub-menu">
+                            <li><a href="#recording-logs">Recording Logs</a></li>
+                            <li><a href="#logging-settings">Logging Settings</a></li>
+                            <li><a href="#analysis-suite">The Analysis Suite</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="#section-5">5. Customizing Your Data (The Excel Config)</a>
+                        <ul class="sub-menu">
+                            <li><a href="#config-protocol">Sheet 1 — Protocol</a></li>
+                            <li><a href="#sheet-frames">Sheet 2 — Frames</a></li>
+                            <li><a href="#variables">Sheet 3 — Variables</a></li>
+                            <li><a href="#sheet-frameconfig">Legacy — FrameConfig</a></li>
+                            <li><a href="#config-bitfields">Sheet 4 — Bitfields</a></li>
+                            <li><a href="#config-enums">Sheet 5 — Enums</a></li>
+                            <li><a href="#sheet-calcgroups">Sheet 6 — CalcGroups</a></li>
+                            <li><a href="#config-tx">Sheet 7 — TxCommands</a></li>
+                            <li><a href="#config-fields">Sheet 8 — TxCommandFields</a></li>
+                            <li><a href="#config-polling">Sheet 9 — PollingSchedule</a></li>
+                            <li><a href="#sheet-serialdefaults">Sheet 10 — SerialDefaults</a></li>
+                            <li><a href="#validator-cli">Config Validator CLI</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="#section-6">6. Appearance &amp; Updates</a>
+                        <ul class="sub-menu">
+                            <li><a href="#theme-switching">Switching Light / Dark Theme</a></li>
+                            <li><a href="#check-for-updates">Check for Updates</a></li>
+                            <li><a href="#diagnostics">Diagnostics &amp; Troubleshooting</a></li>
+                        </ul>
+                    </li>
+                    <li><a href="#section-7">7. Application Limitations &amp; Safety Caveats</a></li>
+                </ul>
+            </nav>
+        </aside>
 
-    <div class="container">
-        <h1>Bytehound: Serial Telemetry &amp; Decoder Guide</h1>
-        <p style="text-align: center; font-weight: bold; color: #7f8c8d; margin-top: -15px; font-size: 15px;">User
-            Manual — Version 1.1.0</p>
+        <!-- Main Content -->
+        <main class="main-content">
+            <header class="content-header">
+                <button class="menu-toggle" id="menu-toggle">☰</button>
+                <div class="header-right">
+                    <span class="version-badge">Manual — Version 1.1.0</span>
+                    <button class="theme-toggle" id="theme-toggle" title="Toggle Theme">🌓</button>
+                </div>
+            </header>
 
-        <p style="font-size: 18px; text-align: center; color: #7f8c8d;">
-            This manual is your complete guide to Bytehound's panels, workflows, and configuration sheets. Whether you
-            are connecting a simple microcontroller or validating complex Model-Based Design firmware, it shows you how
-            to decode, visualize, log, control, and analyze serial hardware telemetry.
-        </p>
-
-        <!-- Table of Contents -->
-        <div class="toc">
-            <h2>Table of Contents</h2>
-            <ul>
-                <li><a href="#section-1">1. Introduction &amp; Getting Started</a>
-                    <ul class="sub-menu">
-                        <li><a href="#what-is-it">What is the Bytehound?</a></li>
-                        <li><a href="#connecting">Connecting Your Hardware</a></li>
-                        <li><a href="#active-polling">Active Polling (Auto-Fetch)</a></li>
-                        <li><a href="#unsolicited-data-detection">Unsolicited Data Detection</a></li>
-                        <li><a href="#auto-reconnect">Auto-Reconnect</a></li>
-                    </ul>
-                </li>
-                <li><a href="#section-2">2. Core UI Panels &amp; Features</a>
-                    <ul class="sub-menu">
-                        <li><a href="#main-table">The Main Data Table</a></li>
-                        <li><a href="#live-plot">Live Plot (Multi-Grid)</a></li>
-                        <li><a href="#bitfields">Bitfields Panel</a></li>
-                        <li><a href="#enums">Enums Panel</a></li>
-                        <li><a href="#raw-console">Raw Console</a></li>
-                        <li><a href="#activity-log">Activity Log</a></li>
-                        <li><a href="#fault-alarms">Fault Alarms</a></li>
-                        <li><a href="#status-bar">Status Bar (bottom-right counters)</a></li>
-                        <li><a href="#menu-bar-reference">The Menu Bar Reference</a></li>
-                        <li><a href="#keyboard-shortcuts">Keyboard Shortcuts</a></li>
-                    </ul>
-                </li>
-                <li><a href="#section-3">3. Controlling Your Hardware</a>
-                    <ul class="sub-menu">
-                        <li><a href="#tx-commands">TX Commands</a></li>
-                        <li><a href="#parameter-editing">Parameter Editor</a></li>
-                        <li><a href="#tx-packet-anatomy">Reading a TX packet</a></li>
-                    </ul>
-                </li>
-                <li><a href="#section-4">4. Logging and Data Analysis</a>
-                    <ul class="sub-menu">
-                        <li><a href="#recording-logs">Recording Logs</a></li>
-                        <li><a href="#logging-settings">Logging Settings</a></li>
-                        <li><a href="#analysis-suite">The Analysis Suite</a></li>
-                    </ul>
-                </li>
-                <li><a href="#section-5">5. Customizing Your Data (The Excel Config)</a>
-                    <ul class="sub-menu">
-                        <li><a href="#config-protocol">Sheet 1 — Protocol</a></li>
-                        <li><a href="#sheet-frames">Sheet 2 — Frames</a></li>
-                        <li><a href="#variables">Sheet 3 — Variables</a></li>
-                        <li><a href="#sheet-frameconfig">Legacy — FrameConfig</a></li>
-                        <li><a href="#config-bitfields">Sheet 4 — Bitfields</a></li>
-                        <li><a href="#config-enums">Sheet 5 — Enums</a></li>
-                        <li><a href="#sheet-calcgroups">Sheet 6 — CalcGroups</a></li>
-                        <li><a href="#config-tx">Sheet 7 — TxCommands</a></li>
-                        <li><a href="#config-fields">Sheet 8 — TxCommandFields</a></li>
-                        <li><a href="#config-polling">Sheet 9 — PollingSchedule</a></li>
-                        <li><a href="#sheet-serialdefaults">Sheet 10 — SerialDefaults</a></li>
-                        <li><a href="#validator-cli">Config Validator CLI</a></li>
-                    </ul>
-                </li>
-                <li><a href="#section-6">6. Appearance &amp; Updates</a>
-                    <ul class="sub-menu">
-                        <li><a href="#theme-switching">Switching Light / Dark Theme</a></li>
-                        <li><a href="#check-for-updates">Check for Updates</a></li>
-                        <li><a href="#diagnostics">Diagnostics &amp; Troubleshooting</a></li>
-                    </ul>
-                </li>
-                <li><a href="#section-7">7. Application Limitations &amp; Safety Caveats</a></li>
-            </ul>
-        </div>
+            <div class="content-body">
+                <h1>Bytehound: Serial Telemetry &amp; Decoder Guide</h1>
+                <p style="font-size: 18px; text-align: center; color: var(--text-muted);">
+                    This manual is your complete guide to Bytehound's panels, workflows, and configuration sheets. Whether you
+                    are connecting a simple microcontroller or validating complex Model-Based Design firmware, it shows you how
+                    to decode, visualize, log, control, and analyze serial hardware telemetry.
+                </p>
 
         <!-- Section 1 -->
         <h2 id="section-1">1. Introduction &amp; Getting Started</h2>
@@ -3219,7 +3385,222 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
                 cause transmission collisions and corrupt the incoming data packets.</li>
         </ul>
 
-    </div>
-</body>
+                </div> <!-- content-body end -->
+        </main> <!-- main-content end -->
+    </div> <!-- app-layout end -->
 
+    <script>
+        document.addEventListener("DOMContentLoaded", () => {
+            // 1. Dark/Light Theme Switching
+            const themeToggle = document.getElementById("theme-toggle");
+            let currentTheme = localStorage.getItem("theme") || "system";
+            
+            function applyTheme(theme) {
+                if (theme === "system") {
+                    const prefersDark = window.matchMedia("(prefers-color-scheme: dark)").matches;
+                    document.documentElement.setAttribute("data-theme", prefersDark ? "dark" : "light");
+                } else {
+                    document.documentElement.setAttribute("data-theme", theme);
+                }
+                localStorage.setItem("theme", theme);
+            }
+            
+            applyTheme(currentTheme);
+            
+            themeToggle.addEventListener("click", () => {
+                const activeTheme = document.documentElement.getAttribute("data-theme");
+                const nextTheme = activeTheme === "dark" ? "light" : "dark";
+                applyTheme(nextTheme);
+            });
+
+            // Sync with system settings if set to system
+            window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => {
+                if (localStorage.getItem("theme") === "system") {
+                    applyTheme("system");
+                }
+            });
+
+            // 2. Sidebar Search
+            const searchInput = document.getElementById("search-input");
+            const contentBody = document.querySelector(".content-body");
+            const headings = Array.from(contentBody.querySelectorAll("h2, h3, h4"));
+            const navLinks = Array.from(document.querySelectorAll(".sidebar-nav a"));
+            const navItems = Array.from(document.querySelectorAll(".sidebar-nav > ul > li"));
+
+            searchInput.addEventListener("input", (e) => {
+                const query = e.target.value.toLowerCase().trim();
+                
+                if (!query) {
+                    // Reset everything to default layout
+                    headings.forEach(h => {
+                        h.style.display = "";
+                        let nextEl = h.nextElementSibling;
+                        while (nextEl && !["H2", "H3", "H4"].includes(nextEl.tagName)) {
+                            nextEl.style.display = "";
+                            nextEl = nextEl.nextElementSibling;
+                        }
+                    });
+                    navLinks.forEach(link => link.parentElement.style.display = "");
+                    navItems.forEach(item => item.classList.remove("open"));
+                    return;
+                }
+
+                const visibleTargets = new Set();
+                
+                headings.forEach(h => {
+                    const text = h.textContent.toLowerCase();
+                    let hasMatch = text.includes(query);
+                    
+                    // Also search content directly under this heading
+                    let nextEl = h.nextElementSibling;
+                    const groupElements = [];
+                    let bodyText = "";
+                    while (nextEl && !["H2", "H3", "H4"].includes(nextEl.tagName)) {
+                        bodyText += " " + nextEl.textContent.toLowerCase();
+                        groupElements.push(nextEl);
+                        nextEl = nextEl.nextElementSibling;
+                    }
+
+                    if (hasMatch || bodyText.includes(query)) {
+                        h.style.display = "";
+                        groupElements.forEach(el => el.style.display = "");
+                        visibleTargets.add(h.id);
+                        
+                        // If this is a sub-heading, also ensure its parent header is visible
+                        if (h.tagName !== "H2") {
+                            let prev = h.previousElementSibling;
+                            while (prev) {
+                                if (prev.tagName === "H2") {
+                                    visibleTargets.add(prev.id);
+                                    break;
+                                }
+                                prev = prev.previousElementSibling;
+                            }
+                        }
+                    } else {
+                        h.style.display = "none";
+                        groupElements.forEach(el => el.style.display = "none");
+                    }
+                });
+
+                // Update navigation list visibility & state based on search matches
+                navLinks.forEach(link => {
+                    const targetId = link.getAttribute("href").substring(1);
+                    if (visibleTargets.has(targetId)) {
+                        link.parentElement.style.display = "";
+                    } else {
+                        link.parentElement.style.display = "none";
+                    }
+                });
+
+                navItems.forEach(item => {
+                    // If any sub-menu link is matching, expand this group
+                    const subLinks = Array.from(item.querySelectorAll(".sub-menu a"));
+                    const anyVisibleSub = subLinks.some(link => link.parentElement.style.display !== "none");
+                    if (anyVisibleSub) {
+                        item.classList.add("open");
+                    } else {
+                        item.classList.remove("open");
+                    }
+                });
+            });
+
+            // 3. Scroll spy to highlight active sidebar section
+            const observerOptions = {
+                root: null,
+                rootMargin: "-10% 0px -80% 0px",
+                threshold: 0
+            };
+
+            const observer = new IntersectionObserver((entries) => {
+                entries.forEach(entry => {
+                    if (entry.isIntersecting) {
+                        const id = entry.target.getAttribute("id");
+                        if (!id) return;
+                        
+                        navLinks.forEach(link => {
+                            const li = link.parentElement;
+                            if (link.getAttribute("href") === `#${id}`) {
+                                li.classList.add("active");
+                                // Auto-expand current active parent section
+                                let parentLi = li.parentElement.closest("li");
+                                if (parentLi) {
+                                    parentLi.classList.add("open");
+                                }
+                            } else {
+                                li.classList.remove("active");
+                            }
+                        });
+                    }
+                });
+            }, observerOptions);
+
+            headings.forEach(h => {
+                if (h.id) observer.observe(h);
+            });
+
+            // 4. Code Block Copy Buttons
+            const preBlocks = document.querySelectorAll("pre");
+            preBlocks.forEach(pre => {
+                pre.style.position = "relative";
+                const copyBtn = document.createElement("button");
+                copyBtn.innerHTML = "Copy";
+                // Style the copy button nicely
+                copyBtn.style.position = "absolute";
+                copyBtn.style.top = "12px";
+                copyBtn.style.right = "12px";
+                copyBtn.style.padding = "4px 10px";
+                copyBtn.style.fontSize = "12px";
+                copyBtn.style.fontWeight = "600";
+                copyBtn.style.borderRadius = "6px";
+                copyBtn.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+                copyBtn.style.border = "1px solid rgba(255, 255, 255, 0.15)";
+                copyBtn.style.color = "#ffffff";
+                copyBtn.style.cursor = "pointer";
+                copyBtn.style.transition = "all 0.2s ease";
+                
+                copyBtn.addEventListener("mouseenter", () => {
+                    copyBtn.style.backgroundColor = "rgba(255, 255, 255, 0.2)";
+                });
+                
+                copyBtn.addEventListener("mouseleave", () => {
+                    copyBtn.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+                });
+
+                copyBtn.addEventListener("click", () => {
+                    const code = pre.querySelector("code");
+                    const text = code ? code.textContent : pre.textContent;
+                    navigator.clipboard.writeText(text.trim()).then(() => {
+                        copyBtn.innerHTML = "Copied!";
+                        copyBtn.style.backgroundColor = "#10b981";
+                        copyBtn.style.borderColor = "#10b981";
+                        setTimeout(() => {
+                            copyBtn.innerHTML = "Copy";
+                            copyBtn.style.backgroundColor = "rgba(255, 255, 255, 0.1)";
+                            copyBtn.style.borderColor = "rgba(255, 255, 255, 0.15)";
+                        }, 2000);
+                    });
+                });
+                pre.appendChild(copyBtn);
+            });
+
+            // 5. Responsive Sidebar Toggle for mobile screens
+            const menuToggle = document.getElementById("menu-toggle");
+            const sidebar = document.querySelector(".sidebar");
+            
+            if (menuToggle && sidebar) {
+                menuToggle.addEventListener("click", (e) => {
+                    e.stopPropagation();
+                    sidebar.classList.toggle("open");
+                });
+
+                document.addEventListener("click", (e) => {
+                    if (!sidebar.contains(e.target) && sidebar.classList.contains("open")) {
+                        sidebar.classList.remove("open");
+                    }
+                });
+            }
+        });
+    </script>
+</body>
 </html>
