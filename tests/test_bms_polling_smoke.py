@@ -16,7 +16,6 @@ from unittest.mock import MagicMock
 import pytest
 
 from app.decoder.config_loader import load_config
-from app.protocol.packet_builder import build_packet
 from app.serial_io.serial_worker import POLLING_BOOT_GRACE, PollingWorker, SerialSettings
 
 
@@ -362,7 +361,7 @@ def test_reproduces_user_observed_polling_cadence(monkeypatch, capsys):
     print("\n[depth=2, slow MCU — reproducing user log]")
     print(f"  Total TX: {sum(counts.values())} ({tx_per_sec:.2f}/s)")
     print(f"  Auto-disabled (should be 0): {len(auto_disabled)}")
-    print(f"  Per-target intervals (configured 500 ms):")
+    print("  Per-target intervals (configured 500 ms):")
     for fid in sorted(stats):
         s = stats[fid]
         print(f"    0x{fid:04X}: n={s['count']}  median={s['median_ms']:.0f} ms  "
@@ -370,7 +369,7 @@ def test_reproduces_user_observed_polling_cadence(monkeypatch, capsys):
 
     # No schedule should auto-disable — every target is responding.
     assert auto_disabled == [], (
-        f"slow-but-responding MCU caused false auto-disable:\n"
+        "slow-but-responding MCU caused false auto-disable:\n"
         + "\n".join(auto_disabled)
     )
 
@@ -566,7 +565,7 @@ def test_increasing_pipeline_depth_to_8_fixes_cadence(monkeypatch, capsys):
 
     print("\n[depth=8, same MCU]")
     print(f"  Total TX: {sum(counts.values())} ({tx_per_sec:.2f}/s)")
-    print(f"  Per-target intervals (configured 500 ms):")
+    print("  Per-target intervals (configured 500 ms):")
     for fid in sorted(stats):
         s = stats[fid]
         print(f"    0x{fid:04X}: n={s['count']}  median={s['median_ms']:.0f} ms")
@@ -671,7 +670,7 @@ def test_slow_device_does_not_falsely_auto_disable(monkeypatch, capsys):
     # Critical: NOTHING should be auto-disabled because every poll
     # eventually gets a valid response.
     assert len(auto_disabled) == 0, (
-        f"slow but responding device triggered false auto-disable:\n"
+        "slow but responding device triggered false auto-disable:\n"
         + "\n".join(auto_disabled)
     )
     # Every schedule should have been polled multiple times.

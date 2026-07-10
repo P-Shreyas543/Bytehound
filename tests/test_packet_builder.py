@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from app.protocol.packet_builder import build_packet
-from app.protocol.packet_parser import create_parser, FramedParser
+from app.protocol.packet_parser import create_parser
 from tests.conftest import (
     CANONICAL_FRAME_HEX,
     CANONICAL_FRAME_ID,

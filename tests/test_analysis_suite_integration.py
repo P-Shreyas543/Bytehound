@@ -37,9 +37,9 @@ def test_analysis_window_load_log_mocked(analysis_window):
         with patch("app.ui.analysis_suite.LogLoaderThread") as mock_loader:
             mock_instance = MagicMock()
             mock_loader.return_value = mock_instance
-            
+
             analysis_window._on_load_logs()
-            
+
             # The loader should have been started
             mock_loader.assert_called_once()
             mock_instance.start.assert_called_once()

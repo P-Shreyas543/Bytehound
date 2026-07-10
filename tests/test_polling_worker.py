@@ -4,7 +4,6 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
-import pytest
 
 from tests.conftest import dummy_protocol_config
 from app.serial_io.serial_worker import POLLING_BOOT_GRACE, PollingWorker, SerialSettings
@@ -258,7 +257,7 @@ def test_enqueue_priority_tx_emits_error_on_full_queue():
 
     # The queue size is 256 (declared in PollingWorker.__init__). Push 257 to
     # force one overflow.
-    for i in range(256):
+    for _i in range(256):
         worker.enqueue_priority_tx(b"x")
     worker.enqueue_priority_tx(b"x")  # the one that overflows
 

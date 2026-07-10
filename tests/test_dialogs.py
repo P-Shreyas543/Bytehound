@@ -18,15 +18,15 @@ def qapp():
 
 def test_plot_trigger_dialog(qapp):
     dlg = PlotTriggerDialog(["Voltage", "Current"])
-    
+
     # Test setting values
     dlg._param_combo.setCurrentText("Voltage")
     dlg._op_combo.setCurrentText(">")
     dlg._val_spin.setValue(12.5)
-    
+
     dlg._action_pause.setChecked(True)
     dlg._action_log.setChecked(False)
-    
+
     res = dlg.get_trigger()
     assert res["param"] == "Voltage"
     assert res["op"] == ">"
@@ -220,7 +220,7 @@ def test_frame_format_widget(qapp):
 
     assert w_tx._tx_combo.count() == 2  # default + TestCmd
     w_tx._tx_combo.setCurrentIndex(1)
-    
+
     assert w_tx._tx_grid_widget is not None
     layout_tx = w_tx._tx_grid_widget.layout()
     assert layout_tx is not None
@@ -269,13 +269,13 @@ def test_frame_format_widget(qapp):
 
     assert hasattr(w_modbus_tx, "_tab_widget")
     assert w_modbus_tx._tx_combo.count() == 3  # default + WriteReg + WriteMultiple
-    
+
     # Select WriteReg (total payload size = 2, so FC 06)
     w_modbus_tx._tx_combo.setCurrentIndex(1)
     layout_mr = w_modbus_tx._tx_grid_widget.layout()
     labels_mr = [layout_mr.itemAt(i).widget() for i in range(layout_mr.count()) if isinstance(layout_mr.itemAt(i).widget(), QLabel)]
     assert any("Func Code" in l.text() for l in labels_mr)
-    
+
     # Select WriteMultiple (total payload size = 4, so FC 16)
     w_modbus_tx._tx_combo.setCurrentIndex(2)
     layout_wm = w_modbus_tx._tx_grid_widget.layout()
@@ -359,32 +359,32 @@ def test_report_issue_dialog_and_reporter(qapp, monkeypatch):
 
 def test_report_issue_dialog_attachments(qapp, tmp_path):
     from app.ui.dialogs import ReportIssueDialog
-    
+
     dlg = ReportIssueDialog()
     assert dlg.windowTitle() == "Report Issue"
     assert len(dlg._attachments) == 0
-    
+
     # Create a dummy attachment file
     file_path = tmp_path / "test_log.txt"
     file_path.write_text("Hello developer log contents", encoding="utf-8")
-    
+
     # Simulate dropping the file
     dlg._add_attachment(str(file_path))
-    
+
     assert len(dlg._attachments) == 1
     assert dlg._attachments[0]["name"] == "test_log.txt"
     assert dlg._attachments[0]["is_image"] is False
     assert dlg._attachments[0]["size"] > 0
     assert dlg._attachments[0]["b64_data"] != ""
-    
+
     # Simulate pasting an image
     dummy_image_data = b"dummy_png_bytes"
     dlg._add_pasted_image(dummy_image_data, "PNG")
-    
+
     assert len(dlg._attachments) == 2
     assert dlg._attachments[1]["name"].startswith("pasted_image_")
     assert dlg._attachments[1]["is_image"] is True
-    
+
     # Test remove
     dlg._list_widget.setCurrentRow(0)
     dlg._remove_selected_attachment()
@@ -396,7 +396,7 @@ def test_report_issue_body_truncation_on_overflow(qapp):
     from app.ui.report_issue import IssueReporter
     import urllib.request
     import json
-    
+
     large_data = b"\xff" * 50000
     large_b64 = "x" * 67000
     attachments = [
@@ -408,7 +408,7 @@ def test_report_issue_body_truncation_on_overflow(qapp):
             'size': len(large_data)
         }
     ]
-    
+
     reporter = IssueReporter(
         title="Test Overflow",
         description="User Description",
@@ -417,9 +417,9 @@ def test_report_issue_body_truncation_on_overflow(qapp):
         attachments=attachments,
         worker_url="http://dummy"
     )
-    
+
     captured_payload = None
-    
+
     def mock_urlopen(req, data=None, timeout=None):
         nonlocal captured_payload
         captured_payload = json.loads(data.decode('utf-8'))
@@ -428,14 +428,14 @@ def test_report_issue_body_truncation_on_overflow(qapp):
             def __enter__(self): return self
             def __exit__(self, exc_type, exc_val, exc_tb): pass
         return FakeResponse()
-        
+
     urllib.request.urlopen = mock_urlopen
-    
+
     reporter.run()
-    
+
     assert captured_payload is not None
     body = captured_payload["body"]
-    
+
     assert len(body) <= 64000
     assert "removed because the total issue size exceeded" in body
     assert "very_large_file.bin" in body

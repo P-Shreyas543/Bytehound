@@ -2,7 +2,7 @@
 import pytest
 from PySide6.QtWidgets import QApplication
 from app.ui.main_window import MainWindow
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 @pytest.fixture(scope="session")
 def qapp():
@@ -40,10 +40,10 @@ def test_main_window_telemetry_flow(main_window):
     packet = ParsedPacket(
         ok=True, frame_id=1, payload=b"", raw=b""
     )
-    
+
     main_window._on_packets_received([(packet, frame)])
     main_window._flush_ui()
-    
+
     # Just verify it doesn't crash and the state is valid
     assert main_window._packet_count == 1
 

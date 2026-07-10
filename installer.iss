@@ -191,21 +191,28 @@ begin
   if not RegQueryStringValue(HKLM64, RegPath, 'DisplayVersion', Installed) then
     if not RegQueryStringValue(HKLM32, RegPath, 'DisplayVersion', Installed) then
       RegQueryStringValue(HKCU, RegPath, 'DisplayVersion', Installed);
-  if Installed = '' then Exit;
-  if not IsDowngrade(Installed, '{#MyAppVersion}') then Exit;
-  if WizardSilent() then
+
+  if Installed <> '' then
   begin
-    Log('Downgrade attempted during silent install. Aborting to prevent data corruption.');
-    Result := False;
-    Exit;
+    if IsDowngrade(Installed, '{#MyAppVersion}') then
+    begin
+      if WizardSilent() then
+      begin
+        Log('Downgrade attempted during silent install. Aborting to prevent data corruption.');
+        Result := False;
+        Exit;
+      end;
+      if MsgBox(
+        'A newer version of {#MyAppName} (' + Installed + ') is already installed.' + #13#10 +
+        'You are about to install an older version ({#MyAppVersion}).' + #13#10 + #13#10 +
+        'Continue anyway?',
+        mbConfirmation, MB_YESNO) <> IDYES then
+      begin
+        Result := False;
+        Exit;
+      end;
+    end;
   end;
-  Result := MsgBox(
-    'A newer version of {#MyAppName} (' + Installed + ') is already installed.' + #13#10 +
-    'You are about to install an older version ({#MyAppVersion}).' + #13#10 + #13#10 +
-    'Continue anyway?',
-    mbConfirmation, MB_YESNO) = IDYES;
-    
-  if Result = False then Exit;
 
   // Prevent splitting installations when a machine-wide install exists but we lack admin rights
   if not IsAdminInstallMode() then

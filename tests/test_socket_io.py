@@ -8,9 +8,8 @@ from unittest.mock import MagicMock, patch
 from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication
 
-from app.serial_io.serial_worker import TcpSocketWrapper, UdpSocketWrapper, SerialSettings
+from app.serial_io.serial_worker import TcpSocketWrapper, UdpSocketWrapper
 from app.ui.dialogs import ConnectionDialog
-from app.decoder.types import SerialDefaults
 
 
 # ------------------------------------------------------------------
@@ -42,7 +41,7 @@ def test_tcp_socket_wrapper_lifecycle(mock_socket_class):
         ready_states = [([mock_sock], [], [])]
         mock_select.side_effect = lambda *args, **kwargs: ready_states.pop(0) if ready_states else ([], [], [])
         mock_sock.recv.return_value = b"world"
-        
+
         # in_waiting triggers _fill_buffer
         assert wrapper.in_waiting == 5
         assert wrapper.read(5) == b"world"
@@ -111,14 +110,14 @@ def test_connection_dialog_defaults_serial(qapp, fresh_settings):
 
 def test_connection_dialog_switch_to_tcp(qapp, fresh_settings):
     dlg = ConnectionDialog(fresh_settings)
-    
+
     # Change connection type to TCP Client
     dlg._type_combo.setCurrentIndex(1)  # Index 1 is TCP Client
     assert dlg._stack.currentIndex() == 1
-    
+
     dlg._tcp_host.setText("192.168.1.50")
     dlg._tcp_port.setValue(9001)
-    
+
     settings = dlg.get_settings()
     assert settings.connection_type == "tcp"
     assert settings.host == "192.168.1.50"
@@ -128,15 +127,15 @@ def test_connection_dialog_switch_to_tcp(qapp, fresh_settings):
 
 def test_connection_dialog_switch_to_udp(qapp, fresh_settings):
     dlg = ConnectionDialog(fresh_settings)
-    
+
     # Change connection type to UDP Client
     dlg._type_combo.setCurrentIndex(2)  # Index 2 is UDP Client
     assert dlg._stack.currentIndex() == 2
-    
+
     dlg._udp_host.setText("10.0.0.5")
     dlg._udp_port.setValue(5002)
     dlg._udp_local_port.setValue(6002)
-    
+
     settings = dlg.get_settings()
     assert settings.connection_type == "udp"
     assert settings.host == "10.0.0.5"

@@ -134,7 +134,7 @@ def main() -> int:
         for _ in range(cap):  # fill
             xs.append(0.0)
             ys.append(0.0)
-        for cycle in range(60):  # 1 second of 60 Hz redraws
+        for _cycle in range(60):  # 1 second of 60 Hz redraws
             for j in range(args.samples_per_cycle):
                 xs.append(float(j))
                 ys.append(float(j))
@@ -145,7 +145,7 @@ def main() -> int:
         rb = _RingBuffer(cap)
         for _ in range(cap):
             rb.append(0.0, 0.0)
-        for cycle in range(60):
+        for _cycle in range(60):
             for j in range(args.samples_per_cycle):
                 rb.append(float(j), float(j))
             rb.arrays()

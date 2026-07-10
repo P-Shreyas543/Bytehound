@@ -87,36 +87,6 @@ def test_json_loading(tmp_path):
 
 def test_yaml_loading(tmp_path):
     source = tmp_path / "config.yaml"
-    import json
-    data = {
-        "protocol": [
-            {
-                "profile_name": "Default YAML",
-                "header_hex": "AA55",
-                "frame_id_size": 2,
-                "frame_id_byte_order": "big",
-                "length_size": 1,
-                "length_meaning": "payload_only",
-                "crc_type": "crc16_modbus",
-                "crc_size": 2,
-                "crc_byte_order": "little",
-                "enabled": "TRUE"
-            }
-        ],
-        "variables": [
-            {
-                "id_or_address": "0x0010",
-                "signal_name": "YAML_Voltage",
-                "data_type": "uint16",
-                "count": 1,
-                "byte_order": "big",
-                "scale": 0.001,
-                "offset": 0,
-                "unit": "V",
-                "enabled": "TRUE"
-            }
-        ]
-    }
     # Hack: write yaml manually to avoid importing pyyaml which might not be installed in the test env
     # But wait, config_loader will try to import yaml if it is .yaml.
     yaml_text = """
@@ -144,7 +114,7 @@ variables:
 """
     source.write_text(yaml_text, encoding="utf-8")
     try:
-        import yaml
+        import yaml  # noqa: F401
     except ImportError:
         pytest.skip("pyyaml not installed")
     cfg = load_config(source)

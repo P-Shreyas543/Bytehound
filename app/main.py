@@ -21,7 +21,6 @@ from datetime import datetime
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
-import openpyxl  # MUST be imported before PySide6/qdarktheme to prevent Shiboken import hook from freezing
 import qdarktheme
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:

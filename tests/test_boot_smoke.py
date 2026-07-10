@@ -248,13 +248,13 @@ def test_apply_decoded_with_synthetic_frame(window: MainWindow) -> None:
 
 def test_auto_pause_trigger_logic(window: MainWindow, monkeypatch) -> None:
     from app.decoder.frame_decoder import DecodedFrame, DecodedSignal
-    
+
     config = _load_canonical_or_skip(window)
     spec = config.all_signals[0]
-    
+
     # Mock to prevent QFileDialog hanging
     monkeypatch.setattr(window, "_on_toggle_logging", lambda: None)
-    
+
     window._plot_live = True
     window._plot_trigger = {
         "param": spec.signal_name,
@@ -263,7 +263,7 @@ def test_auto_pause_trigger_logic(window: MainWindow, monkeypatch) -> None:
         "pause": True,
         "log": True,
     }
-    
+
     signal = DecodedSignal(
         frame_id=spec.frame_id,
         frame_name=spec.frame_name,
@@ -280,19 +280,19 @@ def test_auto_pause_trigger_logic(window: MainWindow, monkeypatch) -> None:
         frame_name=spec.frame_name,
         signals=[signal],
     )
-    
+
     window._apply_decoded(decoded)
-    
+
     assert window._plot_trigger is None, "Trigger should be disarmed after hitting"
     assert window._plot_live is False, "Plot should have auto-paused"
 
 
 def test_fault_alarm_logic(window: MainWindow) -> None:
     from app.decoder.frame_decoder import DecodedFrame, DecodedSignal
-    
+
     config = _load_canonical_or_skip(window)
     spec = config.all_signals[0]
-    
+
     signal = DecodedSignal(
         frame_id=spec.frame_id,
         frame_name=spec.frame_name,
@@ -310,9 +310,9 @@ def test_fault_alarm_logic(window: MainWindow) -> None:
         frame_name=spec.frame_name,
         signals=[signal],
     )
-    
+
     window._apply_decoded(decoded)
-    
+
     key = (spec.frame_id, spec.signal_name)
     assert hasattr(window, "_seen_faults")
     assert key in window._seen_faults, "Fault should have been logged in _seen_faults"
@@ -589,33 +589,33 @@ def test_plot_dual_axis_resize_callback(window: MainWindow, monkeypatch) -> None
     """
     if not window._plot_panels:
         window._rebuild_plot_grid(1, 1)
-    
+
     panel = window._plot_panels[0]
     pi = panel.plot_item
-    
+
     # Mock visibility so _redraw_plot is not skipped in headless environment
     monkeypatch.setattr(pi, "isVisible", lambda: True)
     if hasattr(window, "_plot_dock") and window._plot_dock is not None:
         monkeypatch.setattr(window._plot_dock, "isVisible", lambda: True)
-    
+
     # Assign two keys with different units
     key1 = (1, "SignalA")
     key2 = (1, "SignalB")
     panel.assigned_keys = [key1, key2]
     window._signal_unit_map[key1] = "V"
     window._signal_unit_map[key2] = "A"
-    
+
     # Seed the history buffers so redraw doesn't skip
     buf1 = window._plot_history.setdefault(key1, window._make_history_buffer())
     buf2 = window._plot_history.setdefault(key2, window._make_history_buffer())
     buf1.append(0.0, 1.0)
     buf2.append(0.0, 2.0)
-    
+
     # Redraw plot to set up right_vb and connect the resize signal
     window._redraw_plot()
-    
+
     assert panel.right_vb is not None
-    
+
     # Trigger the sigResized signal on pi.vb to fire updateViews callback.
     pi.vb.sigResized.emit(pi.vb)
 
@@ -623,36 +623,36 @@ def test_plot_dual_axis_resize_callback(window: MainWindow, monkeypatch) -> None
 def test_plot_range_synchronization(window: MainWindow, monkeypatch) -> None:
     """Verify X-axis range synchronization across multiple panels and Y-axes in Explore mode."""
     window._rebuild_plot_grid(2, 1)
-    
+
     panel1 = window._plot_panels[0]
     panel2 = window._plot_panels[1]
-    
+
     # Mock visibility so redraw doesn't skip
     monkeypatch.setattr(panel1.plot_item, "isVisible", lambda: True)
     monkeypatch.setattr(panel2.plot_item, "isVisible", lambda: True)
     if hasattr(window, "_plot_dock") and window._plot_dock is not None:
         monkeypatch.setattr(window._plot_dock, "isVisible", lambda: True)
-        
+
     key1 = (1, "SignalA")
     key2 = (2, "SignalB")
-    
+
     panel1.assigned_keys = [key1]
     panel2.assigned_keys = [key2]
-    
+
     window._signal_unit_map[key1] = "V"
     window._signal_unit_map[key2] = "A"
-    
+
     buf1 = window._plot_history.setdefault(key1, window._make_history_buffer())
     buf2 = window._plot_history.setdefault(key2, window._make_history_buffer())
     buf1.append(0.0, 1.0)
     buf2.append(0.0, 2.0)
-    
+
     window._redraw_plot()
-    
+
     # Simulate a user panning panel 2 to [10.0, 20.0]
     panel2_vb = panel2.plot_item.getViewBox()
     window._on_plot_range_changed(panel2_vb, (10.0, 20.0))
-    
+
     # Check that panel 1's main ViewBox has updated its range to [10.0, 20.0]
     panel1_vb = panel1.plot_item.getViewBox()
     assert panel1_vb.viewRange()[0] == [10.0, 20.0]
@@ -696,10 +696,10 @@ def test_dynamic_group_visibility(window: MainWindow) -> None:
     )
     cfg_with = FrameConfig(protocol=p_with, signals_by_frame={0x10: [sig_with]})
     window._config = cfg_with
-    
+
     # Run selector populator
     window._populate_group_selector()
-    
+
     # Verify everything is visible
     assert window._group_label.isHidden() is False
     assert window._group_combo.isHidden() is False
@@ -739,10 +739,10 @@ def test_dynamic_group_visibility(window: MainWindow) -> None:
     )
     cfg_without = FrameConfig(protocol=p_without, signals_by_frame={0x20: [sig_without]})
     window._config = cfg_without
-    
+
     # Run selector populator
     window._populate_group_selector()
-    
+
     # Verify everything is hidden
     assert window._group_label.isHidden() is True
     assert window._group_combo.isHidden() is True

@@ -579,9 +579,9 @@ def _parse_variables(
         count = _to_int(row.get("count", "1") or "1", field_name="count")
         if count < 1:
             raise ConfigError(f"variables row {row_no}: count must be >= 1")
-        
+
         start_index = _to_int(row.get("start_index", "1") or "1", field_name="start_index")
-        
+
         byte_length = FMT_SIZES[fmt]
         data_type = _fmt_to_data_type(fmt)
         start = offsets.get(frame_id, 0)

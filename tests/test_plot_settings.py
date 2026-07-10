@@ -81,7 +81,7 @@ def test_mainwindow_plot_settings_application(qapp, monkeypatch):
     # Verify memory cap is applied to existing buffer
     assert win._plot_history_max_samples == 25000
     assert buf._max_samples == 25000
-    
+
     # Verify oldest chunks were dropped to conform to new max_samples limit
     # Note: drop is chunk-based (CHUNK_SIZE = 16384).
     # Total samples 30000 = 1 frozen chunk (16384) + 1 cur chunk (13616).
@@ -89,7 +89,7 @@ def test_mainwindow_plot_settings_application(qapp, monkeypatch):
     # Let's add more chunks so it drops.
     for i in range(30000, 60000):
         buf.append(float(i), 1.0)
-    
+
     # Total samples = 60000. Chunk size = 16384.
     # Frozen chunks = 3 (49152 samples) + current fill (10848).
     # Since 3 * 16384 = 49152 > 25000, calling set_max_samples(25000) should drop oldest chunks.

@@ -199,7 +199,7 @@ def test_decoded_logger_writes_wide_rows(tmp_path):
     assert len(data_rows) == 4
 
     header = list(expected_header)
-    row1 = dict(zip(header, data_rows[1]))
+    row1 = dict(zip(header, data_rows[1], strict=False))
     assert row1["0x100.elapsed_ms"] == 1000
     assert row1["0x100.frame_id"] == "0x0100"
     assert row1["0x100.Cell_V1 (V)"] == 3.85
@@ -210,13 +210,13 @@ def test_decoded_logger_writes_wide_rows(tmp_path):
     assert row1["0x200.Pack_V (V)"] == 48.2
 
     # Second row is the incomplete cycle emitted when duplicate FrameA arrives
-    row2 = dict(zip(header, data_rows[2]))
+    row2 = dict(zip(header, data_rows[2], strict=False))
     assert row2["0x100.elapsed_ms"] == 2000
     assert row2["0x100.frame_id"] == "0x0100"
     assert row2["0x200.elapsed_ms"] is None
 
     # Third row is the cycle emitted when FrameB arrives
-    row3 = dict(zip(header, data_rows[3]))
+    row3 = dict(zip(header, data_rows[3], strict=False))
     assert row3["0x100.elapsed_ms"] == 3000
     assert row3["0x200.elapsed_ms"] == 3100
 
@@ -370,7 +370,7 @@ def test_raw_logger_persists_all_rows_when_close_join_times_out(tmp_path):
     wb = load_workbook(path, read_only=True)
     data_rows = list(wb["Data"].iter_rows(values_only=True))
     wb.close()
-    
+
     # 1 header row + N data rows.
     assert len(data_rows) == N + 1, (
         f"Expected {N + 1} lines after slow-drain shutdown, got {len(data_rows)}"
@@ -616,25 +616,25 @@ def test_raw_logger_queue_saturation_warning(tmp_path):
     import queue
     log_path = tmp_path / "raw_sat.csv"
     warnings = []
-    
+
     def on_warn(msg):
         warnings.append(msg)
-        
+
     logger = RawLogger(log_path, on_warning=on_warn)
     logger.open()
-    
+
     # Restrict queue size to 1 to force overflow easily
     logger._queue = queue.Queue(maxsize=1)
-    
+
     # Call log multiple times to trigger overflow and rate-limited warning
     logger.log("TX", b"\x11\x22")
     logger.log("TX", b"\x33\x44")
     logger.log("TX", b"\x55\x66")
-    
+
     assert logger._dropped_count > 0
     assert len(warnings) >= 1
     assert "RawLogger queue is full" in warnings[0]
-    
+
     logger.close()
     assert any("dropped" in w for w in warnings)
 
@@ -642,32 +642,32 @@ def test_raw_logger_queue_saturation_warning(tmp_path):
 def test_decoded_logger_queue_saturation_warning(tmp_path):
     import queue
     from app.decoder.frame_decoder import DecodedFrame
-    
+
     log_path = tmp_path / "decoded_sat.xlsx"
     config = _make_test_config()
     warnings = []
-    
+
     def on_warn(msg):
         warnings.append(msg)
-        
+
     logger = DecodedLogger(log_path, config, on_warning=on_warn)
     logger.open()
-    
+
     # Restrict queue size to 1 to force overflow
     logger._queue = queue.Queue(maxsize=1)
     logger._cycle_frame_ids = [0x0100]
     logger._trigger_id = 0x0100
     logger._cycle_buffer[0x0100] = {0: "data"}
-    
+
     frame = DecodedFrame(frame_id=0x0100, frame_name="FrameA", signals=[])
     logger.log_frame(frame, 1.0)
     logger.log_frame(frame, 1.0)
     logger.log_frame(frame, 1.0)
-    
+
     assert logger._dropped_count > 0
     assert len(warnings) >= 1
     assert "DecodedLogger queue is full" in warnings[0]
-    
+
     logger.close()
     assert any("dropped" in w for w in warnings)
 
@@ -809,12 +809,12 @@ def test_decoded_logger_handles_tx_only_frames(tmp_path):
     assert "0x200.SigTX" in headers
 
     # Row 1 (Cycle 1): RX present, TX empty/None
-    row1 = dict(zip(headers, data_rows[1]))
+    row1 = dict(zip(headers, data_rows[1], strict=False))
     assert row1["0x100.SigRX"] == 42.0
     assert row1["0x200.SigTX"] in (None, "", " ")
 
     # Row 2 (Cycle 2): Both present
-    row2 = dict(zip(headers, data_rows[2]))
+    row2 = dict(zip(headers, data_rows[2], strict=False))
     assert row2["0x100.SigRX"] == 42.0
     assert row2["0x200.SigTX"] == 100.0
 

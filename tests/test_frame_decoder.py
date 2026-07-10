@@ -115,14 +115,14 @@ def test_decode_odd_byte_length_fallback():
         frame_id=1, frame_name="F1", signal_name="S5", start_byte=3, byte_length=5,
         endianness="little", data_type="uint", scale=1.0, offset=0.0, unit=""
     )
-    
+
     cfg = _make_config([spec_3, spec_5])
-    
+
     # 3 bytes big-endian: \x01\x02\x03 -> 0x010203 (66051)
     # 5 bytes little-endian: \x04\x05\x06\x07\x08 -> 0x0807060504 (34477831428)
     data = b"\x01\x02\x03" + b"\x04\x05\x06\x07\x08"
     decoded = decode_frame(cfg, 1, data)
-    
+
     assert decoded.signals[0].raw_value == 0x010203
     assert decoded.signals[1].raw_value == 0x0807060504
 

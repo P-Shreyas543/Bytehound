@@ -6,7 +6,7 @@ import pytest
 
 from app.commands.tx_command_builder import CommandBuildError, build_payload, build_tx_command
 from app.decoder.config_loader import load_config
-from app.protocol.packet_parser import create_parser, FramedParser
+from app.protocol.packet_parser import create_parser
 
 
 def test_builds_static_tx_command(config):
@@ -65,7 +65,7 @@ def _write_two_field_cmd_config(d: Path, *, field_order: list[str]) -> None:
     csv_lines = ["command_name,signal_name,data_type,byte_order,factor,offset,unit,default,min_value,max_value"]
     for field in field_order:
         csv_lines.append(f"SetTwoBytes,{field},uint8,big,1,0,,12,,")
-    
+
     (d / "tx_command_fields.csv").write_text(
         "\n".join(csv_lines) + "\n",
         encoding="utf-8",
@@ -90,7 +90,6 @@ def test_tx_field_float_encoding():
         factor=1.0, offset=0.0, default=None, min_value=None, max_value=None
     )
     from app.commands.tx_command_builder import _encode_field
-    import struct
     # 1.5 in float32 big-endian is \x3f\xc0\x00\x00
     assert _encode_field(field32, 1.5) == b"\x3f\xc0\x00\x00"
 

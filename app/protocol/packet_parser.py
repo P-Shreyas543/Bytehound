@@ -632,7 +632,7 @@ class WaveshareCanParser(ParserProtocol):
             # 3. Both failed. Check if the 20th byte is the start of the next frame (0xAA).
             # If so, this was likely a corrupted 19-byte frame.
             is_19_byte_corrupted = (len(self._buf) >= 20 and self._buf[19] == 0xAA)
-            
+
             if is_19_byte_corrupted:
                 expected_chk = (sum(buf_mv[:18]) + 1) & 0xFF
                 received_chk = buf_mv[18]

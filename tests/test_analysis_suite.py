@@ -265,7 +265,7 @@ def test_math_channels_settings_persistence(monkeypatch):
     win._qsettings = MockSettings()
     win._math_channels = {}
     win._logs = {}
-    
+
     monkeypatch.setattr("PySide6.QtWidgets.QInputDialog.getItem", lambda *args, **kwargs: ("Power", True))
     monkeypatch.setattr(win, "_rebuild_param_list", lambda: None)
     monkeypatch.setattr(win, "_rebuild_plots", lambda: None)
@@ -277,7 +277,7 @@ def test_math_channels_settings_persistence(monkeypatch):
     win._math_channels["Power"] = "[Voltage] * [Current]"
     win._qsettings.setValue("analysis/math_channels", win._math_channels)
     win._remove_custom_math_channel()
-    
+
     assert "Power" not in win._math_channels
     assert win._qsettings.value("analysis/math_channels") == {}
 
@@ -290,7 +290,7 @@ def test_get_subplot_groups_flat_layout():
         ["Torque"],
         ["Voltage"]
     ]
-    
+
     class MockTree:
         def __init__(self):
             self.items = []
@@ -298,7 +298,7 @@ def test_get_subplot_groups_flat_layout():
             return len(self.items)
         def topLevelItem(self, idx):
             return self.items[idx]
-            
+
     class MockItem:
         def __init__(self, text, checked):
             self._text = text
@@ -307,7 +307,7 @@ def test_get_subplot_groups_flat_layout():
             return self._text
         def checkState(self, col):
             return Qt.Checked if self._checked else Qt.Unchecked
-            
+
     tree = MockTree()
     tree.items = [
         MockItem("Speed", True),
@@ -315,9 +315,9 @@ def test_get_subplot_groups_flat_layout():
         MockItem("Torque", True),
         MockItem("Voltage", False)
     ]
-    
+
     win._param_tree = tree
-    
+
     groups = win._get_subplot_groups()
     assert groups == [["Speed"], ["Torque"]]
 
@@ -325,7 +325,7 @@ def test_get_subplot_groups_flat_layout():
 def test_get_checked_params():
     """Test that _get_checked_params returns a flat list of checked parameter names."""
     win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
-    
+
     class MockTree:
         def __init__(self):
             self.items = []
@@ -333,7 +333,7 @@ def test_get_checked_params():
             return len(self.items)
         def topLevelItem(self, idx):
             return self.items[idx]
-            
+
     class MockItem:
         def __init__(self, text, checked):
             self._text = text
@@ -342,7 +342,7 @@ def test_get_checked_params():
             return self._text
         def checkState(self, col):
             return Qt.Checked if self._checked else Qt.Unchecked
-            
+
     tree = MockTree()
     tree.items = [
         MockItem("Speed", True),
@@ -350,9 +350,9 @@ def test_get_checked_params():
         MockItem("Torque", True),
         MockItem("Voltage", False)
     ]
-    
+
     win._param_tree = tree
-    
+
     checked = win._get_checked_params()
     assert checked == ["Speed", "Torque"]
 
@@ -361,17 +361,17 @@ def test_plot_scoped_v_cursor_readout_params():
     """Verify that _update_cursor_readout propagates all active parameters on the subplot for plot-scoped cursors."""
     from unittest.mock import MagicMock
     win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
-    
+
     mock_pw1 = object()
     mock_pw2 = object()
-    
+
     win._plot_widgets = [mock_pw1, mock_pw2]
     win._plot_groups = [["Speed", "Power"], ["Torque"]]
     win._logs = {}
     win._h_cursors = []
-    
+
     win._get_checked_params = lambda: ["Speed", "Power", "Torque"]
-    
+
     # Plot-scoped cursor on first subplot (which has Speed & Power)
     cursor_data = {
         'id': 'cursor_1',
@@ -382,16 +382,16 @@ def test_plot_scoped_v_cursor_readout_params():
         'color': '#ff0000',
     }
     win._v_cursors = [cursor_data]
-    
+
     # Mock readout panel
     win._cursor_readout = MagicMock()
-    
+
     win._update_cursor_readout()
-    
+
     # Verify update_readout call arguments
     args, kwargs = win._cursor_readout.update_readout.call_args
     v_cursors_passed = args[0]
-    
+
     assert len(v_cursors_passed) == 1
     # For the plot-scoped cursor, it should have the parameters on its subplot (Speed & Power)
     assert v_cursors_passed[0]['params'] == ["Speed", "Power"]
@@ -401,16 +401,16 @@ def test_h_cursor_handling_and_rebuild_resilience():
     """Verify that horizontal cursors are handled using string IDs and defend against deleted widgets/mocks."""
     from unittest.mock import MagicMock
     win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
-    
+
     mock_pw = object()
     win._plot_widgets = [mock_pw]
     win._plot_groups = [["Speed"]]
     win._logs = {}
     win._v_cursors = []
     win._selected_h_cursor = ""
-    
+
     win._get_checked_params = lambda: ["Speed"]
-    
+
     # 1. Add horizontal cursor simulation
     hc_data = {
         'id': 'h_cursor_1',
@@ -423,24 +423,24 @@ def test_h_cursor_handling_and_rebuild_resilience():
     }
     win._h_cursors = [hc_data]
     win._cursor_readout = MagicMock()
-    
+
     # 2. Verify _update_cursor_readout runs fine with mock object
     win._update_cursor_readout()
-    
+
     args, kwargs = win._cursor_readout.update_readout.call_args
     h_cursors_passed = kwargs.get('h_cursors', [])
     assert len(h_cursors_passed) == 1
     assert h_cursors_passed[0]['id'] == 'h_cursor_1'
     assert h_cursors_passed[0]['plot_group'] == ["Speed"]
-    
+
     # 3. Verify finding by ID
     found = win._find_h_cursor_by_id('h_cursor_1')
     assert found is hc_data
-    
+
     # 4. Verify selection highlighting
     win._select_h_cursor('h_cursor_1')
     assert win._selected_h_cursor == 'h_cursor_1'
-    
+
     # 5. Verify deleting
     win._delete_h_cursor('h_cursor_1')
     assert len(win._h_cursors) == 0
@@ -462,15 +462,15 @@ def test_rebuild_plots_clears_readout_when_empty():
     win._logs = {}
     win._h_cursors = []
     win._v_cursors = []
-    
+
     # Mock methods and panels
     win._get_subplot_groups = lambda: []
     win._get_checked_params = lambda: []
     win._update_cursor_readout = MagicMock()
     win._refresh_stats_panel = MagicMock()
-    
+
     win._do_rebuild_plots()
-    
+
     win._update_cursor_readout.assert_called_once()
     win._refresh_stats_panel.assert_called_once()
 
@@ -479,13 +479,13 @@ def test_rebuild_param_list_saves_scroll():
     """Verify that _rebuild_param_list saves and restores parameter tree scroll position."""
     from unittest.mock import MagicMock
     win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
-    
+
     mock_tree = MagicMock()
     mock_scrollbar = MagicMock()
     mock_scrollbar.value.return_value = 42
     mock_tree.verticalScrollBar.return_value = mock_scrollbar
     mock_tree.topLevelItemCount.return_value = 0
-    
+
     win._param_tree = mock_tree
     win._subplot_layout = []
     win._param_search = MagicMock()
@@ -493,9 +493,9 @@ def test_rebuild_param_list_saves_scroll():
     win._collect_available_params = lambda: []
     win._apply_param_filter = lambda text: None
     win._rebuild_subplot_settings_combo = lambda: None
-    
+
     win._rebuild_param_list()
-    
+
     mock_scrollbar.value.assert_called_once()
     mock_scrollbar.setValue.assert_called_with(42)
 
@@ -504,14 +504,14 @@ def test_rebuild_plots_saves_x_range():
     """Verify that _do_rebuild_plots saves and restores visible X range."""
     from unittest.mock import MagicMock
     win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
-    
+
     mock_pw = MagicMock()
     mock_view_box = MagicMock()
     mock_view_box.viewRange.return_value = ((10.0, 20.0), (0.0, 100.0))
     mock_plot_item = MagicMock()
     mock_plot_item.vb = mock_view_box
     mock_pw.getPlotItem.return_value = mock_plot_item
-    
+
     win._plot_widgets = [mock_pw]
     win._plot_layout = MagicMock()
     win._plot_layout.count.return_value = 0
@@ -523,14 +523,14 @@ def test_rebuild_plots_saves_x_range():
     win._logs = {}
     win._h_cursors = []
     win._v_cursors = []
-    
+
     # Mock return paths
     win._get_subplot_groups = lambda: []
     win._update_cursor_readout = MagicMock()
     win._refresh_stats_panel = MagicMock()
-    
+
     win._do_rebuild_plots()
-    
+
     mock_view_box.viewRange.assert_called_once()
 
 
@@ -550,16 +550,15 @@ def test_extract_unit(name, expected):
 
 
 def test_subplot_dual_y_axes_unit_classification():
-    from unittest.mock import MagicMock
     win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
-    
+
     # Subplot group with same unit
     group1 = ["Speed (Kmph)", "Target Speed (Kmph)"]
     # Subplot group with different units
     group2 = ["Speed (Kmph)", "Torque (Nm)", "Power (W)"]
     # Subplot group with no units
     group3 = ["Voltage", "Current"]
-    
+
     def get_left_right(group):
         left_unit = None
         right_unit = None
@@ -570,7 +569,7 @@ def test_subplot_dual_y_axes_unit_classification():
             elif unit != left_unit and right_unit is None:
                 right_unit = unit
         return left_unit, right_unit
-        
+
     assert get_left_right(group1) == ("Kmph", None)
     assert get_left_right(group2) == ("Kmph", "Nm")
     assert get_left_right(group3) == ("", None)
@@ -602,11 +601,11 @@ def test_csv_export_thread_happy_path(tmp_path):
     ]
 
     thread = CSVExportThread(export_path, rows, rate=1)
-    
+
     # Track signal emits using lists
     finished_data = []
     error_data = []
-    
+
     thread.sigFinished.connect(lambda path, count: finished_data.append((path, count)))
     thread.sigError.connect(lambda err: error_data.append(err))
 
@@ -616,7 +615,7 @@ def test_csv_export_thread_happy_path(tmp_path):
     assert not error_data
     assert len(finished_data) == 1
     assert finished_data[0][0] == export_path
-    
+
     # Combined timeline should be unique union of LogA/B inside x_range (0.0, 4.0):
     # LogA: x in [0.0, 2.0, 4.0]
     # LogB: x in [1.0, 3.0] (5.0 is excluded by x_range)
@@ -627,14 +626,14 @@ def test_csv_export_thread_happy_path(tmp_path):
     with open(export_path, "r", newline="", encoding="utf-8") as f:
         reader = list(csv.reader(f))
         assert reader[0] == ["time", "LogA · Speed", "LogB · Speed"]
-        
+
         # Test values:
         # time=0.0: LogA=10.0, LogB=NaN (outside LogB range [1.0, 5.0])
         # time=1.0: LogA=15.0 (interpolated), LogB=15.0
         # time=2.0: LogA=20.0, LogB=20.0 (interpolated)
         # time=3.0: LogA=25.0 (interpolated), LogB=25.0
         # time=4.0: LogA=30.0, LogB=30.0 (interpolated)
-        
+
         assert reader[1] == ["0.000000", "10", ""]
         assert reader[2] == ["1.000000", "15", "15"]
         assert reader[3] == ["2.000000", "20", "20"]
@@ -659,7 +658,7 @@ def test_csv_export_thread_cancellation(tmp_path):
     ]
 
     thread = CSVExportThread(export_path, rows, rate=1)
-    
+
     # We want to simulate interruption during the chunk writing phase so we can verify the partial file deletion.
     # To do this, we can make isInterruptionRequested return True after the first call.
     call_count = 0
@@ -669,7 +668,7 @@ def test_csv_export_thread_cancellation(tmp_path):
         return call_count > 2
 
     thread.isInterruptionRequested = mock_interruption
-    
+
     thread.run()
 
     # The file should have been deleted because it was interrupted during writing

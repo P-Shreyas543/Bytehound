@@ -179,10 +179,10 @@ def test_parser_buffer_overflow_trim(config):
     # Feed slightly more than max buffer to trigger overflow protection
     garbage = b"\x00" * (_MAX_BUFFER_BYTES + 10)
     parser.feed(garbage)
-    
+
     # Buffer should be trimmed
     assert parser.buffered_bytes <= _MAX_BUFFER_BYTES
-    
+
     # It should still be able to parse a valid frame after a trim
     good = hex_to_bytes(CANONICAL_FRAME_HEX)
     parser.feed(good)

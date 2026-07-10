@@ -47,10 +47,10 @@ def test_warning_badge_visibility_on_activity_log(qapp, monkeypatch):
 
     # Mock connection dialog to prevent GUI block
     monkeypatch.setattr("app.ui.main_window.ConnectionDialog", lambda *args, **kwargs: None)
-    
+
     # Construct a real MainWindow
     win = MainWindow()
-    
+
     assert win._warning_badge is not None
     assert win._warning_badge.isHidden()
 
@@ -69,5 +69,5 @@ def test_warning_badge_visibility_on_activity_log(qapp, monkeypatch):
     # Clear badge manually
     win._warning_badge.setVisible(False)
     assert win._warning_badge.isHidden()
-    
+
     win.close()

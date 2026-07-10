@@ -58,7 +58,6 @@ if str(ROOT) not in sys.path:
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
-from app.decoder.config_loader import load_config
 from app.protocol.packet_parser import ParsedPacket
 from app.protocol.packet_builder import build_packet
 from app.ui.main_window import MainWindow

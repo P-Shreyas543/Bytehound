@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import pytest
 import numpy as np
 import pandas as pd
@@ -64,14 +63,14 @@ def test_loader_respects_custom_schema(qapp, tmp_path, monkeypatch):
 
     # Load the CSV in a LogLoaderThread
     loader = LogLoaderThread(str(csv_file), "log1", "#FF0000")
-    
+
     # Run the CSV loading method directly
     loader._load_csv()
-    
+
     # Get cached entry
     from app.ui.log_io import _CSV_CACHE
     entry = _CSV_CACHE.get(str(csv_file))
-    
+
     assert entry is not None
     # time_us scaled by 0.000001 should equal [1.0, 2.0, 3.0]
     np.testing.assert_array_almost_equal(entry.elapsed, [1.0, 2.0, 3.0])
@@ -85,7 +84,7 @@ def test_loader_respects_custom_schema(qapp, tmp_path, monkeypatch):
 
     loader_xlsx = LogLoaderThread(str(xlsx_file), "log2", "#00FF00")
     loader_xlsx._load_xlsx()
-    
+
     entry_xlsx = _CSV_CACHE.get(str(xlsx_file))
     assert entry_xlsx is not None
     np.testing.assert_array_almost_equal(entry_xlsx.elapsed, [1.0, 2.0, 3.0])

@@ -2,9 +2,7 @@
 
 from __future__ import annotations
 
-import pytest
 from app.main import main
-import sys
 
 def test_config_validator_cli_valid(tmp_path, monkeypatch, capsys):
     source = tmp_path / "config.json"
@@ -39,7 +37,7 @@ def test_config_validator_cli_valid(tmp_path, monkeypatch, capsys):
         ]
     }
     source.write_text(json.dumps(data), encoding="utf-8")
-    
+
     # Run main with --validate flag
     rc = main(["--validate", str(source)])
     assert rc == 0

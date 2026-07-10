@@ -298,15 +298,15 @@ def _calculate_groups(
     for calc in config.calc_groups:
         if calc.frame_id is not None and calc.frame_id != frame_id:
             continue
-            
+
         group_state = state_dict.get(calc.group)
         if not group_state:
             continue
-            
+
         values = list(group_state.values())
         if not values:
             continue
-            
+
         value = calculate_group_value(calc, values)
         out.append(
             DecodedSignal(
