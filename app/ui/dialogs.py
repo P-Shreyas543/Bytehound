@@ -505,7 +505,7 @@ class LoggingSettingsDialog(QDialog):
         self._restore_from_settings()
 
     def _restore_from_settings(self) -> None:
-        level = str(self._settings.value("logging/level", "DEBUG")).upper()
+        level = str(self._settings.value("logging/level", "INFO")).upper()
         if level not in self._LEVELS:
             level = "INFO"
         self._level_combo.setCurrentText(level)

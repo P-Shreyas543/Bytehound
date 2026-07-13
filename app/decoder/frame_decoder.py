@@ -285,8 +285,10 @@ def _calculate_groups(
     frame_id: int,
     frame_name: str,
     decoded: List[DecodedSignal],
-    state_dict: Dict[str, Dict[str, float]],
+    state_dict: Dict[str, Dict[str, Any]],
 ) -> List[DecodedSignal]:
+    import logging
+    logger = logging.getLogger("bytehound.decoder.calculations")
     out: List[DecodedSignal] = []
 
     # Update state_dict with the current frame's valid signals
@@ -294,31 +296,51 @@ def _calculate_groups(
         if sig.status == "ok" and sig.group and sig.scaled_value is not None:
             group_state = state_dict.setdefault(sig.group, {})
             group_state[sig.signal_name] = sig.scaled_value
+            if sig.raw_value is not None:
+                raw_group_state = state_dict.setdefault(f"__raw__{sig.group}", {})
+                raw_group_state[sig.signal_name] = sig.raw_value
 
     for calc in config.calc_groups:
         if calc.frame_id is not None and calc.frame_id != frame_id:
             continue
 
+        raw_group_state = state_dict.get(f"__raw__{calc.group}")
         group_state = state_dict.get(calc.group)
-        if not group_state:
+
+        if not raw_group_state and not group_state:
             continue
 
-        values = list(group_state.values())
+        # Calculate raw value from raw values
+        raw_values = [v for v in raw_group_state.values() if v is not None] if raw_group_state else []
+        if raw_values:
+            raw_val_calc = calculate_group_value(calc, raw_values)
+            raw_value = int(round(raw_val_calc))
+        else:
+            raw_value = None
+
+        # Calculate scaled value from scaled values
+        values = list(group_state.values()) if group_state else []
         if not values:
             continue
-
         value = calculate_group_value(calc, values)
+
+        display_val = f"{value:.6g} {calc.unit}".strip() if calc.unit else f"{value:.6g}"
+        signal_name = f"{calc.group} {calc.stat}"
+
+        raw_val_str = f"{raw_value:.6g}" if isinstance(raw_value, float) else str(raw_value)
+        logger.info("Calculated %s: scaled = %s (raw = %s)", signal_name, display_val, raw_val_str)
+
         out.append(
             DecodedSignal(
                 frame_id=frame_id,
                 frame_name=frame_name,
-                signal_name=f"{calc.group} {calc.stat}",
-                raw_value=None,
+                signal_name=signal_name,
+                raw_value=raw_value,
                 scaled_value=value,
                 unit=calc.unit,
                 status="ok",
                 group=calc.group,
-                display_value=f"{value:.6g}",
+                display_value=display_val,
                 is_calculated=True,
             )
         )

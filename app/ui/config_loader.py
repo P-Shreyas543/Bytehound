@@ -13,11 +13,13 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
     QLabel,
+    QProgressDialog,
     QPushButton,
     QVBoxLayout,
 )
@@ -124,11 +126,24 @@ class ConfigLoaderMixin:
             self._popup_warning("Config error", f"Unsupported config selection: {chosen.name}")
             return
 
+        progress = QProgressDialog(
+            "Importing configuration — please wait…",
+            None,
+            0,
+            0,
+            self,
+        )
+        progress.setWindowTitle("Importing")
+        progress.setWindowModality(Qt.WindowModality.ApplicationModal)
+        progress.setMinimumDuration(0)
+        progress.setValue(0)
+        progress.show()
+        QApplication.processEvents()
+
         try:
             self._load_config_from_path(path)
-        except ConfigError as exc:
-            self._popup_critical("Config error", str(exc))
-            return
+        finally:
+            progress.close()
 
         # The running PollingWorker captured its protocol/parser/schedules at
         # construction time. Loading a new config replaces self._config and

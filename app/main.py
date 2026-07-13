@@ -60,7 +60,7 @@ def _create_file_handler(log_path: Path) -> RotatingFileHandler | None:
         return None
 
 
-def configure_logging(level: int = logging.DEBUG) -> None:
+def configure_logging(level: int = logging.INFO, console: bool = False) -> None:
     global _LOGGING_CONFIGURED
     root = logging.getLogger()
     if _LOGGING_CONFIGURED:
@@ -72,10 +72,11 @@ def configure_logging(level: int = logging.DEBUG) -> None:
         datefmt="%Y-%m-%d %H:%M:%S",
     )
 
-    console = logging.StreamHandler()
-    console.setLevel(level)
-    console.setFormatter(formatter)
-    root.addHandler(console)
+    if console:
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(level)
+        console_handler.setFormatter(formatter)
+        root.addHandler(console_handler)
 
     primary_path = _PROJECT_ROOT / "logs" / "bytehound.log"
     file_handler = _create_file_handler(primary_path)
@@ -86,7 +87,11 @@ def configure_logging(level: int = logging.DEBUG) -> None:
         file_handler.setFormatter(formatter)
         root.addHandler(file_handler)
     else:
-        root.warning("File logging disabled: could not create log file.")
+        if not console:
+            fallback = logging.StreamHandler()
+            fallback.setLevel(logging.WARNING)
+            fallback.setFormatter(formatter)
+            root.addHandler(fallback)
 
     def _handle_uncaught(exc_type, exc, tb):
         if issubclass(exc_type, KeyboardInterrupt):
@@ -211,7 +216,10 @@ def main(argv: list[str] | None = None) -> int:
     # Strip our own flags so Qt sees a clean argv.
     sys.argv = [sys.argv[0], *remaining]
 
-    configure_logging()
+    configure_logging(
+        level=logging.INFO,
+        console=bool(args.validate or args.profile)
+    )
 
     if args.validate:
         try:

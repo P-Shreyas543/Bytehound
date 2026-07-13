@@ -211,13 +211,17 @@ class TelemetryPipelineMixin:
         """Add a new row to the telemetry model (called for runtime-discovered signals)."""
         key = ("calc", signal_name) if is_calculated else (frame_id, signal_name)
         self._signal_unit_map[key] = unit
+        
+        start_byte_str = "-" if is_calculated else str(start_byte)
+        data_type_str = "float" if is_calculated else (data_type or "-")
+        
         self._table_model.add_row(
             key=key,
             frame_hex=f"0x{frame_id:04X}" if frame_id is not None else "-",
             group=group or "-",
             signal_name=signal_name,
-            start_byte=str(start_byte),
-            data_type=data_type or "-",
+            start_byte=start_byte_str,
+            data_type=data_type_str,
             unit=unit,
             is_calculated=is_calculated,
         )
@@ -325,7 +329,7 @@ class TelemetryPipelineMixin:
                 )
                 self._add_signal_row(
                     0,  # ignored by model-backed version
-                    None if signal.is_calculated else signal.frame_id,
+                    signal.frame_id,
                     signal.signal_name,
                     signal.group,
                     spec.start_byte if spec else 0,
