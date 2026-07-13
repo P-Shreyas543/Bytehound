@@ -63,3 +63,40 @@ def test_connection_dialog_without_config_defaults_uses_serialdefaults_class_def
     assert settings.stop_bits == 1.0
     assert settings.parity == "N"
     assert settings.timeout_ms == 100
+
+def test_serial_port_auto_discovery_formatting_and_sorting(monkeypatch):
+    from app.serial_io.serial_worker import available_ports
+    from serial.tools import list_ports
+    
+    class MockPortInfo:
+        def __init__(self, device, description, manufacturer, vid, pid):
+            self.device = device
+            self.description = description
+            self.manufacturer = manufacturer
+            self.vid = vid
+            self.pid = pid
+            
+    mock_ports = [
+        MockPortInfo("COM1", "Generic Serial Port", "Microsoft", None, None),
+        MockPortInfo("COM3", "USB Serial Port", "FTDI", 0x0403, 0x6001),
+        MockPortInfo("COM7", "STMicroelectronics Virtual COM Port", "STMicroelectronics", 0x0483, 0x5740),
+    ]
+    
+    monkeypatch.setattr(list_ports, "comports", lambda: mock_ports)
+    
+    ports = list(available_ports())
+    
+    assert len(ports) == 3
+    
+    assert ports[0][0] == "COM3"
+    assert "Mfg: FTDI" in ports[0][1]
+    assert "VID:PID=0403:6001" in ports[0][1]
+    
+    assert ports[1][0] == "COM7"
+    assert "Mfg: STMicroelectronics" in ports[1][1]
+    assert "VID:PID=0483:5740" in ports[1][1]
+    
+    assert ports[2][0] == "COM1"
+    assert "Generic Serial Port" in ports[2][1]
+    assert "Mfg: Microsoft" in ports[2][1]
+    assert "VID:PID" not in ports[2][1]

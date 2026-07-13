@@ -18,7 +18,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QBrush, QColor, QIcon, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QComboBox, QHBoxLayout, QLabel, QMenu, QMessageBox,
-    QPushButton, QToolButton, QWidget, QWidgetAction,
+    QPushButton, QToolButton, QWidget, QWidgetAction, QColorDialog,
 )
 
 
@@ -648,7 +648,11 @@ class PlotOrchestrationMixin:
         )
         palette = self._current_plot_palette()
         for local_idx, key in enumerate(panel.assigned_keys):
-            color = palette[(color_offset + local_idx) % len(palette)]
+            custom_color = self._settings.value(f"plot/colors/{key[1]}")
+            if custom_color:
+                color = str(custom_color)
+            else:
+                color = palette[(color_offset + local_idx) % len(palette)]
             row = self._build_panel_signal_menu_row(panel_idx, key, color, menu)
             action = QWidgetAction(menu)
             action.setDefaultWidget(row)
@@ -662,13 +666,37 @@ class PlotOrchestrationMixin:
         rl = QHBoxLayout(row)
         rl.setContentsMargins(6, 2, 6, 2)
         rl.setSpacing(8)
-        dot = QLabel("●", row)
-        dot.setStyleSheet(f"color:{color}; font-size:10pt;")
+
+        def select_color():
+            initial_color = QColor(color)
+            chosen_color = QColorDialog.getColor(initial_color, self, f"Select Color for {key[1]}")
+            if chosen_color.isValid():
+                chosen_hex = chosen_color.name()
+                self._settings.setValue(f"plot/colors/{key[1]}", chosen_hex)
+                menu.close()
+                self._rebuild_panel_strips()
+                self._redraw_plot()
+
+        dot = QToolButton(row)
+        dot.setText("●")
+        dot.setAutoRaise(True)
+        dot.setStyleSheet(f"QToolButton {{ color:{color}; font-size:10pt; border:none; padding:0; background:transparent; }}")
+        dot.setCursor(Qt.CursorShape.PointingHandCursor)
+        dot.setToolTip("Click to change color")
+        dot.clicked.connect(select_color)
         rl.addWidget(dot)
+
         name = QLabel(f"0x{key[0]:04X} · {key[1]}", row)
         name.setStyleSheet("font-size:9pt; color: palette(text);")
         name.setMinimumWidth(180)
+        name.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        name.customContextMenuRequested.connect(lambda pos: select_color())
+        name.setToolTip("Right-click to change color")
         rl.addWidget(name, 1)
+
+        row.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        row.customContextMenuRequested.connect(lambda pos: select_color())
+
         remove = QToolButton(row)
         remove.setText("✕")
         remove.setAutoRaise(True)
@@ -1182,7 +1210,11 @@ class PlotOrchestrationMixin:
                     if first_x is not None and (oldest_x is None or first_x < oldest_x):
                         oldest_x = first_x
 
-                color = palette[(color_offset + local_idx) % len(palette)]
+                custom_color = self._settings.value(f"plot/colors/{key[1]}")
+                if custom_color:
+                    color = str(custom_color)
+                else:
+                    color = palette[(color_offset + local_idx) % len(palette)]
                 label = f"0x{key[0]:04X} {key[1]}"
 
                 unit = self._signal_unit_map.get(key, "").strip() if hasattr(self, "_signal_unit_map") else ""
@@ -1227,7 +1259,7 @@ class PlotOrchestrationMixin:
                     curve = pg.PlotDataItem(name=label, pen=pg.mkPen(color, width=1.8))
                     _configure_live_curve(curve)
                     panel.curves[key] = curve
-                    curve.__bh_color = color  # type: ignore[attr-defined]
+                    curve._bh_color = color  # type: ignore[attr-defined]
                     try:
                         target_vb.addItem(curve)
                     except Exception:
@@ -1238,12 +1270,12 @@ class PlotOrchestrationMixin:
                         except Exception:
                             pass
                 else:
-                    if getattr(curve, "__bh_color", None) != color:
+                    if getattr(curve, "_bh_color", None) != color:
                         try:
                             curve.setPen(pg.mkPen(color, width=1.8))
                         except Exception:
                             pass
-                        curve.__bh_color = color  # type: ignore[attr-defined]
+                        curve._bh_color = color  # type: ignore[attr-defined]
 
                 # Skip setData when this curve hasn't changed since the last
                 # redraw. Signature mixes length, right-most timestamp, and
@@ -1251,7 +1283,7 @@ class PlotOrchestrationMixin:
                 # long quiet period still re-renders the older samples.
                 last_x = buf.last_x() if (buf is not None and xs_len) else None
                 signature = (xs_len, last_x, window_t_min)
-                if getattr(curve, "__bh_last_sig", None) == signature:
+                if getattr(curve, "_bh_last_sig", None) == signature:
                     continue
 
                 if buf is None or xs_len == 0:
@@ -1259,7 +1291,7 @@ class PlotOrchestrationMixin:
                         curve.clear()
                     except Exception:
                         pass
-                    curve.__bh_last_sig = signature  # type: ignore[attr-defined]
+                    curve._bh_last_sig = signature  # type: ignore[attr-defined]
                     continue
                 elif window_t_min is not None:
                     # Feed only samples inside the visible window; whole
@@ -1274,7 +1306,7 @@ class PlotOrchestrationMixin:
                         autoDownsample=True,
                         clipToView=True,
                     )
-                    curve.__bh_last_sig = signature  # type: ignore[attr-defined]
+                    curve._bh_last_sig = signature  # type: ignore[attr-defined]
                 except Exception:
                     # If Pyqtgraph throws an exception (e.g. mid-layout caching bug),
                     # catch it so we don't break the loop, and don't cache the signature

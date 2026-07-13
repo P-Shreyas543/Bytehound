@@ -137,7 +137,7 @@ class RawLogger:
         )
         self._writer_thread.start()
 
-    def close(self) -> None:
+    def close(self, timeout: float = 5.0) -> None:
         # Signal the writer thread to finish, then wait for it to drain the
         # queue and exit before we close the file. If the join times out
         # (slow disk), KEEP the writer_thread reference so callers can
@@ -150,7 +150,8 @@ class RawLogger:
                 self._queue.put_nowait(None)
             except queue.Full:
                 pass
-            self._writer_thread.join(timeout=5.0)
+            if timeout > 0.0:
+                self._writer_thread.join(timeout=timeout)
             if not self._writer_thread.is_alive():
                 self._writer_thread = None
         self._fp = None

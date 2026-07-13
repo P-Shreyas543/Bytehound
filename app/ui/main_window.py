@@ -903,15 +903,19 @@ class MainWindow(
         if hasattr(self, "_config_path") and self._config_path:
             import json
             from pathlib import Path
-            from ..decoder.config_loader import _read_excel_tables
+            from ..decoder.config_loader import _read_excel_tables, _read_csv_tables
             try:
                 path_obj = Path(self._config_path)
+                self._config_editor.set_active_config_path(path_obj)
                 if path_obj.suffix.lower() == ".json":
                     with path_obj.open("r", encoding="utf-8") as fp:
                         data = json.load(fp)
                     self._config_editor.load_data(data)
                 elif path_obj.suffix.lower() in {".xlsx", ".xlsm"}:
                     data = _read_excel_tables(path_obj)
+                    self._config_editor.load_data(data)
+                elif path_obj.is_dir():
+                    data = _read_csv_tables(path_obj)
                     self._config_editor.load_data(data)
             except Exception as e:
                 self._log_activity(f"[ERROR] Failed to load config into editor: {e}")
@@ -957,7 +961,8 @@ class MainWindow(
         if hasattr(self, "_y_autofit_timer"):
             self._y_autofit_timer.stop()
         if self._logging:
-            self._stop_logging()
+            title = "Closing" if reason == "Application closed" else "Saving Log"
+            self._stop_logging(title=title)
             self._log_activity("[INFO] Logging auto-stopped on disconnect")
         if self._serial is not None:
             try:

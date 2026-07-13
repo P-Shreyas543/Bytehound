@@ -1298,13 +1298,45 @@ class PollingWorker(QThread):
 def available_ports() -> Iterable[tuple[str, str]]:
     """Return a list of ``(device, description)`` tuples for every serial port.
 
-    ``device``      – the raw port identifier passed to ``serial.Serial()``
-                      e.g. ``"COM3"`` on Windows, ``"/dev/ttyUSB0"`` on Linux.
-    ``description`` – a human-readable label from the OS driver database
-                      e.g. ``"USB Serial Device (COM3)"``.
-                      Falls back to the device string when unavailable.
+    Retrieves manufacturer name, USB VID, PID, and formats the description.
+    Highlight/sorts ports matching common chipsets (FTDI, STMicroelectronics,
+    NXP, WCH, Silicon Labs, Prolific) to the top of the list.
     """
-    return [
-        (port.device, port.description or port.device)
-        for port in list_ports.comports()
-    ]
+    ports_with_meta = []
+    for port in list_ports.comports():
+        dev = port.device
+        desc = port.description or dev
+        mfg = port.manufacturer or ""
+        vid = port.vid
+        pid = port.pid
+        
+        details = []
+        if mfg:
+            details.append(f"Mfg: {mfg}")
+        if vid is not None and pid is not None:
+            details.append(f"VID:PID={vid:04X}:{pid:04X}")
+            
+        detail_str = f" ({', '.join(details)})" if details else ""
+        formatted_desc = f"{desc}{detail_str}"
+        
+        is_common = False
+        if mfg:
+            mfg_l = mfg.lower()
+            if any(k in mfg_l for k in ("ftdi", "stmicro", "nxp", "wch", "silicon", "prolific")):
+                is_common = True
+        if vid is not None:
+            # Common USB VIDs:
+            # 0x0403: FTDI
+            # 0x0483: STMicroelectronics
+            # 0x1FC9: NXP
+            # 0x1A86: WCH (CH340/CH341)
+            # 0x10C4: Silicon Labs (CP210x)
+            # 0x067B: Prolific
+            if vid in (0x0403, 0x0483, 0x1FC9, 0x1A86, 0x10C4, 0x067B):
+                is_common = True
+                
+        priority = 0 if is_common else 1
+        ports_with_meta.append((priority, dev, formatted_desc))
+        
+    ports_with_meta.sort(key=lambda x: (x[0], x[1]))
+    return [(p[1], p[2]) for p in ports_with_meta]

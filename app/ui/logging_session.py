@@ -198,12 +198,23 @@ class LoggingSessionMixin:
         self._log_activity(f"[ERROR] {message}")
         self._popup_warning("Logging Error", f"Logging stopped due to an error:\n\n{message}")
 
-    def _stop_logging(self) -> None:
+    def _stop_logging(self, title: str = "Saving Log") -> None:
         was_logging = self._logging
+        loggers = []
         if self._raw_logger:
-            self._raw_logger.close()
+            loggers.append(("raw log", self._raw_logger))
         if self._decoded_logger:
-            self._decoded_logger.close()
+            loggers.append(("decoded log", self._decoded_logger))
+
+        if self._raw_logger:
+            self._raw_logger.close(timeout=0.0)
+        if self._decoded_logger:
+            self._decoded_logger.close(timeout=0.0)
+
+        drainers = [(name, lg) for name, lg in loggers if lg.is_draining()]
+        if drainers:
+            self._wait_for_logger_drain(drainers, title=title)
+
         self._raw_logger = None
         self._decoded_logger = None
         self._logging = False
@@ -216,7 +227,7 @@ class LoggingSessionMixin:
         if was_logging:
             self._log_activity("Logging stopped")
 
-    def _wait_for_logger_drain(self, drainers: list) -> None:
+    def _wait_for_logger_drain(self, drainers: list, title: str = "Closing") -> None:
         """Show a progress dialog and poll each logger until its writer
         thread exits (data on disk), the cap elapses, or the user
         cancels. ``drainers`` is a list of (name, logger) tuples for
@@ -230,7 +241,7 @@ class LoggingSessionMixin:
             max(total_rows, 1),
             self,
         )
-        dlg.setWindowTitle("Closing")
+        dlg.setWindowTitle(title)
         dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
         dlg.setMinimumDuration(0)
         dlg.setAutoClose(False)

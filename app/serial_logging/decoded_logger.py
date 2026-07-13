@@ -263,7 +263,7 @@ class DecodedLogger:
         )
         self._writer_thread.start()
 
-    def close(self) -> None:
+    def close(self, timeout: float = 10.0) -> None:
         # Signal the writer thread to drain remaining rows, save the
         # workbook, and exit. We join before clearing references so the file
         # is on disk by the time close() returns (callers — including the
@@ -277,7 +277,8 @@ class DecodedLogger:
                 # Queue is at capacity; the writer will see the stop event
                 # once it has drained enough to make room.
                 pass
-            self._writer_thread.join(timeout=10.0)
+            if timeout > 0.0:
+                self._writer_thread.join(timeout=timeout)
             writer_still_running = self._writer_thread.is_alive()
             # KEEP the thread reference if it's still alive so callers can
             # observe is_draining() / await_drain() and wait for true
