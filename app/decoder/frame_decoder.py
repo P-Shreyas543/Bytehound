@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import struct
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from .calculations import calculate_group_value
 from .types import BitfieldSpec, DecodeWarning, FrameConfig, SignalSpec
