@@ -274,6 +274,10 @@ def _optional_columns_ok(rows: List[Dict[str, str]], required: set[str], name: s
         )
 
 
+def _is_blank_row(row: Dict[str, str]) -> bool:
+    return all((v or "").strip() == "" for v in row.values())
+
+
 def _check_signal_uniqueness(
     seen: Dict[int, set[str]], frame_id: int, signal_name: str, *, source: str
 ) -> None:
@@ -378,8 +382,9 @@ def _parse_frame_id(value: str, *, field_name: str = "frame_id") -> int:
 
 
 def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
+    non_blank_rows = [r for r in rows if not _is_blank_row(r)]
     enabled_rows = [
-        r for r in rows if _to_bool(r.get("enabled", "true"), default=True, field_name="protocol.enabled")
+        r for r in non_blank_rows if _to_bool(r.get("enabled", "true"), default=True, field_name="protocol.enabled")
     ]
     if not enabled_rows:
         raise ConfigError("protocol: no enabled protocol profile found")
@@ -523,6 +528,8 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
 def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
     frames: Dict[int, FrameDefinition] = {}
     for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row) or (not row.get("frame_id", "").strip() and not row.get("frame_name", "").strip()):
+            continue
         frame_id = _parse_frame_id(row["frame_id"], field_name=f"frames row {row_no}.frame_id")
         if frame_id in frames:
             raise ConfigError(f"frames: duplicate frame_id 0x{frame_id:X}")
@@ -561,6 +568,8 @@ def _parse_variables(
     default_endian = "big" if is_modbus else "little"
 
     for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row) or (not row.get("id_or_address", "").strip() and not row.get("signal_name", "").strip()):
+            continue
         if not _to_bool(row.get("enabled", "true"), default=True, field_name="variables.enabled"):
             continue
         frame_id = _parse_frame_id(row["id_or_address"], field_name=f"variables row {row_no}.id_or_address")
@@ -641,6 +650,8 @@ def _parse_legacy_frame_config(
     default_endian = "big" if is_modbus else "little"
 
     for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row) or (not row.get("frame_id_hex", "").strip() and not row.get("signal_name", "").strip()):
+            continue
         frame_id = _parse_frame_id(row["frame_id_hex"], field_name="frame_id_hex")
         signal_name = row["signal_name"]
         if not signal_name:
@@ -716,6 +727,8 @@ def _parse_bitfields(
     seen_labels = {}
 
     for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row) or (not row.get("id_or_address", "").strip() and not row.get("signal_name", "").strip()):
+            continue
         frame_id = _parse_frame_id(row["id_or_address"], field_name="bitfields.id_or_address")
         variable_name = row["signal_name"]
         if (frame_id, variable_name) not in known:
@@ -762,6 +775,8 @@ def _parse_enums(
     known = {(s.frame_id, s.source_name or s.signal_name) for s in cfg.all_signals}
     known.update((s.frame_id, s.signal_name) for s in cfg.all_signals)
     for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row) or (not row.get("id_or_address", "").strip() and not row.get("signal_name", "").strip()):
+            continue
         frame_id = _parse_frame_id(row["id_or_address"], field_name="enums.id_or_address")
         variable_name = row["signal_name"]
         if (frame_id, variable_name) not in known:
@@ -781,6 +796,8 @@ def _parse_calc_groups(rows: List[Dict[str, str]], cfg: FrameConfig) -> List[Cal
     out: List[CalcGroupSpec] = []
     seen = set()
     for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row) or (not row.get("group_name", "").strip() and not row.get("operations", "").strip()):
+            continue
         group = row["group_name"]
         if group not in groups:
             raise ConfigError(f"calc_groups row {row_no}: unknown group {group!r}")
@@ -825,6 +842,8 @@ def _parse_tx_commands(
     # locks this behaviour so a future shuffle of the loader doesn't break it.
     fields_by_command: Dict[str, List[TxCommandFieldSpec]] = {}
     for row in field_rows:
+        if _is_blank_row(row) or (not row.get("command_name", "").strip() and not row.get("signal_name", "").strip()):
+            continue
         try:
             fmt = FmtType.parse(row["data_type"]).value
         except ValueError as exc:
@@ -848,6 +867,8 @@ def _parse_tx_commands(
     commands: Dict[str, TxCommandSpec] = {}
     seen_names = set()
     for row in command_rows:
+        if _is_blank_row(row) or (not row.get("command_name", "").strip() and not row.get("id_or_address", "").strip()):
+            continue
         name = row["command_name"]
         if name in seen_names:
             raise ConfigError(f"Duplicate tx_command defined with name '{name}'")
@@ -867,10 +888,11 @@ def _parse_tx_commands(
 
 
 def _parse_serial_defaults(rows: List[Dict[str, str]]) -> SerialDefaults:
-    if not rows:
+    non_blank = [r for r in rows if not _is_blank_row(r)]
+    if not non_blank:
         return SerialDefaults()
-    _optional_columns_ok(rows, _SERIAL_DEFAULTS_REQUIRED, "serial_defaults")
-    row = rows[0]
+    _optional_columns_ok(non_blank, _SERIAL_DEFAULTS_REQUIRED, "serial_defaults")
+    row = non_blank[0]
     return SerialDefaults(
         baud_rate=_to_int(row["baud_rate"], field_name="serial_defaults.baud_rate"),
         data_bits=_to_int(row["data_bits"], field_name="serial_defaults.data_bits"),
@@ -887,6 +909,8 @@ def _parse_polling_schedules(rows: List[Dict[str, str]]) -> List[PollingSchedule
     schedules: List[PollingScheduleSpec] = []
     seen_ids = set()
     for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row) or not row.get("id_or_address", "").strip():
+            continue
         enabled = _to_bool(row.get("enabled", "true"), default=True, field_name="polling_schedule.enabled")
         if not enabled:
             continue

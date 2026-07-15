@@ -583,3 +583,44 @@ def test_waveshare_can_config_loading_fixed(tmp_path):
     assert cfg.protocol.waveshare_fixed_20_bytes is True
 
 
+def test_blank_rows_ignored_in_config_loader(tmp_path):
+    _write_basic_protocol(tmp_path)
+    # Add trailing/middle blank rows to frame_config.csv
+    (tmp_path / "frame_config.csv").write_text(
+        "frame_id_hex,frame_name,signal_name,start_byte,byte_length,"
+        "endianness,data_type,scale,offset,unit\n"
+        "0010,X,Sig1,0,4,little,uint,1,0,V\n"
+        ",,,,,,,,,\n"  # blank line
+        "0010,X,Sig2,4,4,little,uint,1,0,V\n"
+        ",,,,,,,,,\n", # trailing blank line
+        encoding="utf-8",
+    )
+    cfg = load_config(tmp_path)
+    assert len(cfg.all_signals) == 2
+    assert cfg.all_signals[0].signal_name == "Sig1"
+    assert cfg.all_signals[1].signal_name == "Sig2"
+
+
+def test_dirty_blank_rows_ignored_in_config_loader(tmp_path):
+    _write_basic_protocol(tmp_path)
+    # Write a variables file containing a row where frame_id and signal_name are blank
+    # but some other field (like description or min_value/max_value) has a stray character/formatting.
+    (tmp_path / "variables.csv").write_text(
+        "id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,group,read_write,min_value,max_value,description,enabled,start_index\n"
+        "0x1000,Sig1,uint32,1,little,1,0,V,Group1,R,0,100,Desc,True,1\n"
+        ",,,,,,,,,,,``````,,,\n",  # Dirty blank row like in the reported Excel sheet
+        encoding="utf-8",
+    )
+    # Write empty frames.csv
+    (tmp_path / "frames.csv").write_text(
+        "frame_id,frame_name,payload_length,enabled,description,direction\n"
+        "0x1000,Frame1,4,True,Desc,rxtx\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(tmp_path)
+    assert len(cfg.all_signals) == 1
+    assert cfg.all_signals[0].signal_name == "Sig1"
+
+
+
+
