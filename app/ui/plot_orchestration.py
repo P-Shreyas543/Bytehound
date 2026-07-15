@@ -507,7 +507,8 @@ class PlotOrchestrationMixin:
 
             # Redraw existing curves for this panel
             for key in panel.assigned_keys:
-                label = f"0x{key[0]:04X} {key[1]}"
+                fid_str = f"0x{key[0]:04X}" if isinstance(key[0], int) else str(key[0])
+                label = f"{fid_str} {key[1]}"
                 color_idx = sum(len(p.assigned_keys) for p in self._plot_panels[:-1]) + len(panel.curves)
                 palette = self._current_plot_palette()
                 color = palette[color_idx % len(palette)]
@@ -686,7 +687,8 @@ class PlotOrchestrationMixin:
         dot.clicked.connect(select_color)
         rl.addWidget(dot)
 
-        name = QLabel(f"0x{key[0]:04X} · {key[1]}", row)
+        fid_str = f"0x{key[0]:04X}" if isinstance(key[0], int) else str(key[0])
+        name = QLabel(f"{fid_str} · {key[1]}", row)
         name.setStyleSheet("font-size:9pt; color: palette(text);")
         name.setMinimumWidth(180)
         name.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -837,8 +839,9 @@ class PlotOrchestrationMixin:
             self._persist_panel_assignments()
             self._rebuild_panel_strips()
             self._redraw_plot()
+            fid_str = f"0x{key[0]:04X}" if isinstance(key[0], int) else str(key[0])
             self._log_activity(
-                f"[ACTION] Added signal 0x{key[0]:04X} {key[1]} to panel {panel_idx + 1}"
+                f"[ACTION] Added signal {fid_str} {key[1]} to panel {panel_idx + 1}"
             )
 
     def _remove_signal_from_panel(self, panel_idx: int, key: Tuple[int, str]) -> None:
@@ -875,8 +878,9 @@ class PlotOrchestrationMixin:
             self._persist_panel_assignments()
             self._rebuild_panel_strips()
             self._redraw_plot()
+            fid_str = f"0x{key[0]:04X}" if isinstance(key[0], int) else str(key[0])
             self._log_activity(
-                f"[ACTION] Removed signal 0x{key[0]:04X} {key[1]} from panel {panel_idx + 1}"
+                f"[ACTION] Removed signal {fid_str} {key[1]} from panel {panel_idx + 1}"
             )
 
     def _sync_plot_keys(self) -> None:
@@ -1215,7 +1219,8 @@ class PlotOrchestrationMixin:
                     color = str(custom_color)
                 else:
                     color = palette[(color_offset + local_idx) % len(palette)]
-                label = f"0x{key[0]:04X} {key[1]}"
+                fid_str = f"0x{key[0]:04X}" if isinstance(key[0], int) else str(key[0])
+                label = f"{fid_str} {key[1]}"
 
                 unit = self._signal_unit_map.get(key, "").strip() if hasattr(self, "_signal_unit_map") else ""
                 is_right = (right_unit is not None and unit != left_unit)

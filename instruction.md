@@ -303,7 +303,7 @@ If `frames` is omitted, frame definitions are auto-derived from `variables`.
 |-----------------|-------|----------------------------------------------------------------------------------------|
 | `id_or_address` | hex   | Frame ID (framed) or register address (Modbus)                                         |
 | `signal_name`   | str   | Required, unique within frame                                                          |
-| `data_type`     | enum  | `uint8 \| int8 \| uint16 \| int16 \| uint32 \| int32 \| float32 \| float64`            |
+| `data_type`     | enum  | `uint8 \| int8 \| uint16 \| int16 \| uint32 \| int32 \| float32 \| float64 \| single \| double`            |
 | `count`         | int   | Default 1; >1 expands into `name 1`, `name 2`, … with consecutive byte offsets         |
 | `byte_order`    | enum  | `little` (default) \| `big`                                                            |
 | `scale`         | float | Default 1.0                                                                            |
@@ -322,7 +322,7 @@ If `frames` is omitted, frame definitions are auto-derived from `variables`.
 ### 5.4 Legacy `frame_config` (kept for backward compat)
 
 Flat table with explicit `start_byte`, `byte_length`, `endianness`,
-`data_type` ∈ `{int, uint, float}`. Loader uses this only if `variables` is
+`data_type` ∈ `{int, uint, float, single, double}`. Loader uses this only if `variables` is
 absent.
 
 ### 5.5 `bitfields`

@@ -241,6 +241,39 @@ def test_unsupported_fmt_in_full_schema(tmp_path):
         load_config(tmp_path)
 
 
+def test_single_double_data_type_aliases(tmp_path):
+    # Test legacy frame_config schema with 'single' and 'double'
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "frame_config.csv").write_text(
+        "frame_id_hex,frame_name,signal_name,start_byte,byte_length,"
+        "endianness,data_type,scale,offset,unit\n"
+        "0010,X,Sig1,0,4,little,single,1,0,V\n"
+        "0010,X,Sig2,4,8,little,double,1,0,V\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(tmp_path)
+    assert len(cfg.all_signals) == 2
+    assert cfg.all_signals[0].data_type == "float"
+    assert cfg.all_signals[0].byte_length == 4
+    assert cfg.all_signals[1].data_type == "float"
+    assert cfg.all_signals[1].byte_length == 8
+
+    # Test modern variables schema with 'single' and 'double'
+    (tmp_path / "frame_config.csv").unlink()
+    (tmp_path / "variables.csv").write_text(
+        "id_or_address,signal_name,data_type,unit,scale,offset,count,group_name,byte_order,enabled,description\n"
+        "0x0010,Sig1,single,V,1,0,1,,little,TRUE,\n"
+        "0x0010,Sig2,double,V,1,0,1,,little,TRUE,\n",
+        encoding="utf-8",
+    )
+    cfg2 = load_config(tmp_path)
+    assert len(cfg2.all_signals) == 2
+    assert cfg2.all_signals[0].data_type == "float"
+    assert cfg2.all_signals[0].byte_length == 4  # single maps to float32 (4 bytes)
+    assert cfg2.all_signals[1].data_type == "float"
+    assert cfg2.all_signals[1].byte_length == 8  # double maps to float64 (8 bytes)
+
+
 # --- Frames sheet: direction column ----------------------------------------
 
 

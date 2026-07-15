@@ -80,6 +80,8 @@ class DataType(str, enum.Enum):
     @classmethod
     def parse(cls, value: str) -> "DataType":
         normalised = (value or "").strip().lower()
+        if normalised in ("single", "double"):
+            normalised = "float"
         for member in cls:
             if member.value == normalised:
                 return member
@@ -104,6 +106,10 @@ class FmtType(str, enum.Enum):
     @classmethod
     def parse(cls, value: str) -> "FmtType":
         normalised = (value or "").strip().lower()
+        if normalised == "single":
+            normalised = "float32"
+        elif normalised == "double":
+            normalised = "float64"
         for member in cls:
             if member.value == normalised:
                 return member

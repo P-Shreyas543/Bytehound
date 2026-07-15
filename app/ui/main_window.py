@@ -849,7 +849,8 @@ class MainWindow(
             listw.clear()
             q = query.strip().lower()
             for fid, nm in all_keys:
-                label = f"0x{fid:04X}  {nm}"
+                fid_label = f"0x{fid:04X}" if isinstance(fid, int) else str(fid)
+                label = f"{fid_label}  {nm}"
                 if q and q not in label.lower():
                     continue
                 item = QListWidgetItem(

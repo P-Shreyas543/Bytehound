@@ -2568,7 +2568,8 @@ enabled                = TRUE</pre>
                 <td><code>uint16</code></td>
                 <td>Raw data type in the payload: <code>uint8</code>, <code>int8</code>, <code>uint16</code>,
                     <code>int16</code>, <code>uint32</code>, <code>int32</code>, <code>float32</code>,
-                    <code>float64</code>. Byte width is derived from the type and used to compute the next signal's
+                    <code>float64</code> (with <code>single</code> and <code>double</code> supported as aliases for
+                    <code>float32</code> and <code>float64</code>). Byte width is derived from the type and used to compute the next signal's
                     start offset automatically.</td>
             </tr>
             <tr>
@@ -3080,7 +3081,8 @@ Set Voltage Limit | 0x2000        |             | Set the overvoltage threshold 
                 <td><code>uint16</code></td>
                 <td>How the value is encoded in the outgoing packet: <code>uint8</code>, <code>int8</code>,
                     <code>uint16</code>, <code>int16</code>, <code>uint32</code>, <code>int32</code>,
-                    <code>float32</code>, or <code>float64</code>. Value is lowercased on load; unsupported types reject
+                    <code>float32</code>, or <code>float64</code> (with <code>single</code> and <code>double</code> supported as aliases for
+                    <code>float32</code> and <code>float64</code>). Value is lowercased on load; unsupported types reject
                     the config.</td>
             </tr>
             <tr>
