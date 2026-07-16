@@ -13,5 +13,5 @@
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
     "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.1.2.exe",
     "release_notes": "v1.1.2 Release - Group Calculations Unit & Log Formatting Updates.\n\nChanges:\n  - Calculations Unit Inheritance: Dynamically resolves and inherits unit configurations for statistics from matching variable group signals when not explicitly specified.\n  - Prefixless Calculations Logging: Logged calculation Excel headers are now prefixless (e.g., 'Cell Voltages min (V)' instead of '0x0100.Cells avg (V)') for clean data reporting.\n  - Layout Restoration Fix: Resolved a bug where restoring layouts containing calculations (using 'calc' keys) crashed the GUI settings loader.",
-    "sha256": "aecb38a233b03db59c83d4b15174a4902f65cbbe19d6cf951223b2667ff729c2"
+    "sha256": "f74493b95cdaa009759fa4404bd26e5516f436fe1177bdac0c978c936e4144b4"
 }
