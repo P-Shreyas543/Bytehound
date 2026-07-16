@@ -1,17 +1,17 @@
 {
-    "version": "1.1.1",
-    "document_version": "1.1.1",
+    "version": "1.1.2",
+    "document_version": "1.1.2",
     "Developer": "Shreyas P",
     "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "DECIBELS LAB PRIVATE LIMITED",
     "publisher_webpage": "https://lms.decibelslab.com/",
-    "build_date": "2026-07-10",
+    "build_date": "2026-07-16",
     "license": "MIT",
     "license_url": "https://bytehound.shreyasp182002.workers.dev/LICENSE",
     "homepage": "https://bytehound.shreyasp182002.workers.dev/",
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
-    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.1.1.exe",
-    "release_notes": "v1.1.1 Release - Minor bug fixes and user experience improvements.\n\nChanges:\n  - Warning Throttling: Grouped similar Waveshare CAN mismatch warnings to avoid UI/log console spamming.\n  - Bug Reporter: Fixed an infinite loop in description truncation logic during crash reports.\n  - User Manual: Redesigned the offline manual with sidebar navigation, active scroll-spy, code snippet copying, and instant live search.\n  - Installer: Fixed a split-installation guard bug in the Inno Setup script.",
+    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.1.2.exe",
+    "release_notes": "v1.1.2 Release - Group Calculations Unit & Log Formatting Updates.\n\nChanges:\n  - Calculations Unit Inheritance: Dynamically resolves and inherits unit configurations for statistics from matching variable group signals when not explicitly specified.\n  - Prefixless Calculations Logging: Logged calculation Excel headers are now prefixless (e.g., 'Cell Voltages min (V)' instead of '0x0100.Cells avg (V)') for clean data reporting.\n  - Layout Restoration Fix: Resolved a bug where restoring layouts containing calculations (using 'calc' keys) crashed the GUI settings loader.",
     "sha256": "aecb38a233b03db59c83d4b15174a4902f65cbbe19d6cf951223b2667ff729c2"
 }
