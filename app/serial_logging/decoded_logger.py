@@ -739,8 +739,17 @@ class DecodedLogger:
                         continue
                 elif frame_id not in frames_by_group.get(calc.group, []):
                     continue
+
+                # Resolve unit: use calc.unit or inherit from the group's signals
+                calc_unit = calc.unit
+                if not calc_unit:
+                    for sig_spec in self._config.all_signals:
+                        if sig_spec.group == calc.group and sig_spec.unit:
+                            calc_unit = sig_spec.unit
+                            break
+
                 signal_name = f"{calc.group} {calc.stat}"
-                calc_label = f"{prefix}{_signal_label(signal_name, calc.unit)}"
+                calc_label = _signal_label(signal_name, calc_unit)
                 pos = len(columns)
                 columns.append(calc_label)
                 column_by_key[(frame_id, signal_name)] = pos

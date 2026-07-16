@@ -377,7 +377,7 @@ class PlotOrchestrationMixin:
                 if isinstance(raw, list):
                     # QSettings serialises all values as strings; cast frame_id back to int.
                     decoded = [
-                        (int(k[0]), str(k[1]))
+                        ("calc" if k[0] == "calc" else int(k[0]), str(k[1]))
                         for k in raw
                         if isinstance(k, (list, tuple)) and len(k) == 2
                     ]

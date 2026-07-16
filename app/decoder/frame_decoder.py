@@ -324,7 +324,20 @@ def _calculate_groups(
             continue
         value = calculate_group_value(calc, values)
 
-        display_val = f"{value:.6g} {calc.unit}".strip() if calc.unit else f"{value:.6g}"
+        # Resolve unit: use calc.unit if specified, otherwise try to inherit from signals in the group
+        unit = calc.unit
+        if not unit:
+            for sig in decoded:
+                if sig.group == calc.group and sig.unit:
+                    unit = sig.unit
+                    break
+            if not unit:
+                for sig_spec in config.all_signals:
+                    if sig_spec.group == calc.group and sig_spec.unit:
+                        unit = sig_spec.unit
+                        break
+
+        display_val = f"{value:.6g} {unit}".strip() if unit else f"{value:.6g}"
         signal_name = f"{calc.group} {calc.stat}"
 
         raw_val_str = f"{raw_value:.6g}" if isinstance(raw_value, float) else str(raw_value)
@@ -337,7 +350,7 @@ def _calculate_groups(
                 signal_name=signal_name,
                 raw_value=raw_value,
                 scaled_value=value,
-                unit=calc.unit,
+                unit=unit,
                 status="ok",
                 group=calc.group,
                 display_value=display_val,

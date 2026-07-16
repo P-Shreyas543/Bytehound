@@ -189,7 +189,7 @@ def test_decoded_logger_writes_wide_rows(tmp_path):
         "0x100.frame_id",
         "0x100.Cell_V1 (V)",
         "0x100.Pack_I",
-        "0x100.Cells avg (V)",
+        "Cells avg (V)",
         "0x200.elapsed_ms",
         "0x200.frame_id",
         "0x200.Pack_V (V)",
@@ -204,7 +204,7 @@ def test_decoded_logger_writes_wide_rows(tmp_path):
     assert row1["0x100.frame_id"] == "0x0100"
     assert row1["0x100.Cell_V1 (V)"] == 3.85
     assert row1["0x100.Pack_I"] == 12.1
-    assert row1["0x100.Cells avg (V)"] == 3.9
+    assert row1["Cells avg (V)"] == 3.9
     assert row1["0x200.elapsed_ms"] == 1100
     assert row1["0x200.frame_id"] == "0x0200"
     assert row1["0x200.Pack_V (V)"] == 48.2
