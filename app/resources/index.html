@@ -1866,7 +1866,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
                     <li><code>*_decoded.xlsx</code> — Excel workbook with two sheets: <code>Metadata</code> (app,
                         version, port, baud, config path, session start, logging mode, etc.) and <code>Data</code> (one
                         wide row per complete poll cycle, with a per-frame block of <code>elapsed_ms</code> +
-                        <code>frame_id</code> + signals).</li>
+                        <code>frame_id</code> + signals). Group calculations configured in the <code>CalcGroups</code> sheet are written without a frame ID prefix (e.g., <code>Cell Voltages min (V)</code> instead of <code>0x0100.Cells avg (V)</code>) so that they are clean and easy to identify.</li>
                 </ul>
             </li>
             <li>When finished, click <strong>Device → Stop Logging</strong>. This finalises the decoded workbook.</li>
@@ -2931,7 +2931,7 @@ enabled                = TRUE</pre>
                 <td><code>unit</code></td>
                 <td>text</td>
                 <td><code>V</code> <em>(blank ok)</em></td>
-                <td>Unit shown for the calculated rows.</td>
+                <td>Unit shown for the calculated rows. If left blank, the unit is automatically inherited from the signals in the group.</td>
             </tr>
             <tr>
                 <td><code>frame_id</code></td>
