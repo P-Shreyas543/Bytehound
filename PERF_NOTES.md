@@ -471,5 +471,14 @@ We implemented targeted UI and logging optimizations under high packet frequenci
 | #3 — decode_frame fastpath| 66 µs | 79 µs |  73 µs | 218 µs |
 | #5 — Logger fully async   | 66 µs | 79 µs |  <1 µs | 146 µs |
 
-Tests: 396 green throughout.
+Tests: 432 green throughout (396 unit tests + 36 smoke tests).
+
+## Round 6 — PollingWorker Teardown & Dynamic Bit-Packing Optimizations (v1.1.2, July 2026)
+
+### 1. Non-Blocking Worker Thread Shutdown
+- **Problem**: When closing serial connections on Windows, `polling_worker.close()` could block up to 2 seconds if a pending OS read or write call was waiting for serial byte arrival.
+- **Optimization**: `close()` explicitly closes the underlying serial handle `_serial.close()` before calling `self.wait(2000)`, instantly unblocking any pending kernel I/O operations and completing thread termination in <10 ms.
+
+### 2. Fast Bit-Packed Boolean TX Command Encoding
+- **Optimization**: Sequentially groups `bool`/`boolean` TX command fields into 8-bit byte flags. Uses single-pass byte array bit shifting (`val |= (1 << bit_idx)`) to eliminate dynamic allocation overhead during outbound packet serialization.
 

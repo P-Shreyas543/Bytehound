@@ -40,7 +40,7 @@ It is *not* a user manual. For end-user instructions, see [app/resources/index.h
 |-----------------------|----------------------------------------------------|
 | **App Name**          | Bytehound                                     |
 | **Developer**         | Shreyas P                                          |
-| **Version**           | 0.4.2 (sourced from [version.json](version.json))  |
+| **Version**           | 1.1.2 (sourced from [version.json](version.json))  |
 | **Platform**          | Windows 10 / 11 (x64). Code is cross-platform but the shipped binary targets Windows. |
 | **Window Size**       | 1400 × 900 px                                      |
 | **Window Title**      | `Bytehound v<Version>` (e.g. `Bytehound v0.1.0`) |
@@ -371,7 +371,7 @@ absent.
 |---------------|--------|---------------------------------------------------------|
 | `command_name`| str    | FK to `tx_commands.command_name`                        |
 | `signal_name` | str    | Field label                                             |
-| `data_type`   | enum   | Same set as `variables.data_type`                       |
+| `data_type`   | enum   | `uint*`, `int*`, `float*`, `bool`, `boolean`            |
 | `byte_order`  | enum   | `little` (default) \| `big`                             |
 | `scale`       | float  | Default 1.0                                             |
 | `offset`      | float  | Default 0.0                                             |
@@ -381,7 +381,8 @@ absent.
 | `default`     | float? | Pre-fill value                                          |
 
 Encoded as: `raw = round((user_value - offset) / scale)` then packed as the
-declared int/float type. Float fields use `struct.pack`.
+declared int/float type. Float fields use `struct.pack`. `bool` / `boolean`
+fields are bit-packed sequentially into byte flags (up to 8 bits per byte).
 
 ### 5.10 `serial_defaults`
 

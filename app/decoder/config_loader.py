@@ -531,8 +531,6 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
         if _is_blank_row(row) or (not row.get("frame_id", "").strip() and not row.get("frame_name", "").strip()):
             continue
         frame_id = _parse_frame_id(row["frame_id"], field_name=f"frames row {row_no}.frame_id")
-        if frame_id in frames:
-            raise ConfigError(f"frames: duplicate frame_id 0x{frame_id:X}")
         enabled = _to_bool(row.get("enabled", "true"), default=True, field_name="frames.enabled")
         if not enabled:
             continue
@@ -546,10 +544,26 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
                 f"frames row {row_no}: direction must be 'rx', 'tx', 'rxtx', "
                 f"or blank (got {direction_raw!r})"
             )
+
+        payload_length = _to_optional_int(row.get("payload_length", ""), field_name="payload_length")
+        if frame_id in frames:
+            existing = frames[frame_id]
+            merged_dir = "rxtx" if existing.direction != direction else direction
+            use_existing_rx = (existing.direction == "rx" or direction == "tx")
+            frames[frame_id] = FrameDefinition(
+                frame_id=frame_id,
+                frame_name=existing.frame_name if use_existing_rx else row.get("frame_name", existing.frame_name),
+                payload_length=existing.payload_length if (use_existing_rx and existing.payload_length is not None) else payload_length,
+                enabled=enabled or existing.enabled,
+                description=existing.description or row.get("description", ""),
+                direction=merged_dir,
+            )
+            continue
+
         frames[frame_id] = FrameDefinition(
             frame_id=frame_id,
-            frame_name=row["frame_name"],
-            payload_length=_to_optional_int(row.get("payload_length", ""), field_name="payload_length"),
+            frame_name=row.get("frame_name", ""),
+            payload_length=payload_length,
             enabled=enabled,
             description=row.get("description", ""),
             direction=direction,

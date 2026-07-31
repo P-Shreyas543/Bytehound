@@ -449,8 +449,17 @@ class PollingWorker(QThread):
     def close(self) -> None:
         """Stop the thread and release the COM port.  Blocks up to 2 s."""
         self.stop()
-        self.wait(2000)
-        # Do not close from main thread - let the run loop clean it up.
+        # Unblock any pending OS read/write calls by closing the serial handle.
+        if self._serial is not None:
+            try:
+                self._serial.close()
+            except Exception:
+                pass
+        if not self.wait(2000):
+            _LOG.warning("Worker thread did not exit within 2s; terminating thread.")
+            self.terminate()
+            self.wait(500)
+        self._serial = None
 
     def enqueue_priority_tx(self, data: bytes) -> None:
         try:
@@ -1309,16 +1318,16 @@ def available_ports() -> Iterable[tuple[str, str]]:
         mfg = port.manufacturer or ""
         vid = port.vid
         pid = port.pid
-        
+
         details = []
         if mfg:
             details.append(f"Mfg: {mfg}")
         if vid is not None and pid is not None:
             details.append(f"VID:PID={vid:04X}:{pid:04X}")
-            
+
         detail_str = f" ({', '.join(details)})" if details else ""
         formatted_desc = f"{desc}{detail_str}"
-        
+
         is_common = False
         if mfg:
             mfg_l = mfg.lower()
@@ -1334,9 +1343,9 @@ def available_ports() -> Iterable[tuple[str, str]]:
             # 0x067B: Prolific
             if vid in (0x0403, 0x0483, 0x1FC9, 0x1A86, 0x10C4, 0x067B):
                 is_common = True
-                
+
         priority = 0 if is_common else 1
         ports_with_meta.append((priority, dev, formatted_desc))
-        
+
     ports_with_meta.sort(key=lambda x: (x[0], x[1]))
     return [(p[1], p[2]) for p in ports_with_meta]

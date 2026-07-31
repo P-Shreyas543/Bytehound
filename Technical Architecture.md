@@ -144,9 +144,9 @@ sequenceDiagram
 ```
 
 1. **Trigger**: The user clicks a command button, hits enter on a parameter write field, or a polling interval expires.
-2. **Encoding**: `build_tx_command()` processes user-input values, applies scale/offset reverse calculations, clamps within boundaries, packs the variables using `struct.pack`, and appends them to any static payload.
+2. **Encoding**: `build_tx_command()` processes user-input values, applies scale/offset reverse calculations, checks value bounds (`min_value`, `max_value`), bit-packs `bool`/`boolean` fields sequentially into byte flags (8 bits per byte), packs numeric variables using `struct.pack`, and appends them to any static payload.
 3. **Wrapping**: `build_packet()` wraps the payload in the protocol envelope (adding header, frame ID, length, CRC, footer, and padding if specified).
-4. **Queue & Dispatch**: The main thread pushes the wrapped bytes into the `PollingWorker` priority queue. The worker thread intercepts it, preempts the normal polling schedule, writes to the COM port, and reports the event back to the UI.
+4. **Queue & Dispatch**: The main thread pushes the wrapped bytes into the `PollingWorker` priority queue. The worker thread intercepts it, preempts the normal polling schedule, writes to the COM port, and reports the event back to the UI. Live telemetry readbacks (`Current: X`) update dynamically in the form fields.
 
 ---
 

@@ -691,11 +691,19 @@ class FrameFormatWidget(QWidget):
 
                 if expected_payload_len is not None and expected_payload_len > current_byte:
                     gap_size = expected_payload_len - current_byte
+                    tx_cmd = next((c for c in self._config.tx_commands.values() if c.frame_id == frame_id), None)
+                    if tx_cmd and tx_cmd.fields:
+                        tf_names = ", ".join(f.field_name for f in tx_cmd.fields)
+                        desc = f"Unused for RX telemetry decoding ({gap_size} bytes).\nOutbound TX fields ({tf_names}) are configured in the 'TX Commands' tab."
+                        label = "TX Frame" if current_byte == 0 else "Unused"
+                    else:
+                        desc = f"Unused trailing payload byte(s) ({gap_size} bytes)"
+                        label = "Unused"
                     fields.append((
-                        "Unused",
+                        label,
                         gap_size,
                         "Muted",
-                        f"Unused trailing payload byte(s) ({gap_size} bytes)"
+                        desc
                     ))
                 elif not sorted_signals:
                     fields.append((
@@ -738,6 +746,43 @@ class FrameFormatWidget(QWidget):
         self._grid_widget = self._build_byte_grid(fields)
         self._scroll_area.setWidget(self._grid_widget)
 
+    def _compute_tx_field_blocks(self, cmd_fields: list) -> list[tuple[str, int, str, str]]:
+        from ..decoder.types import FMT_SIZES
+        blocks: list[tuple[str, int, str, str]] = []
+        bool_group: list = []
+
+        def flush_bools():
+            nonlocal bool_group
+            if not bool_group:
+                return
+            num_bools = len(bool_group)
+            num_bytes = (num_bools + 7) // 8
+            names = [f.field_name for f in bool_group]
+            label = names[0] if num_bools == 1 else f"Flags ({num_bools} bits)"
+            if len(", ".join(names)) <= 25:
+                label = ", ".join(names)
+
+            details = "\n".join([f"• Bit {i}: {f.field_name}" for i, f in enumerate(bool_group)])
+            tooltip = f"Bit-packed Boolean Flags ({num_bools} bits in {num_bytes} byte(s)):\n{details}"
+            blocks.append((label, num_bytes, "Teal", tooltip))
+            bool_group = []
+
+        for f in cmd_fields:
+            if getattr(f, "is_boolean", False):
+                bool_group.append(f)
+                if len(bool_group) == 8:
+                    flush_bools()
+            else:
+                flush_bools()
+                size = FMT_SIZES.get(f.fmt, 1)
+                tooltip = f"Field: {f.field_name}\nType: {f.fmt}\nUnit: {f.unit or '-'}\nByte Order: {f.byte_order}\nScale: {f.factor}\nOffset: {f.offset}"
+                blocks.append((f.field_name, size, "Teal", tooltip))
+        flush_bools()
+        return blocks
+
+    def _compute_tx_fields_size(self, cmd_fields: list) -> int:
+        return sum(b[1] for b in self._compute_tx_field_blocks(cmd_fields))
+
     def _rebuild_tx_grid(self, command_name: Optional[str]) -> None:
         if not hasattr(self, "_tx_scroll_area"):
             return
@@ -751,8 +796,7 @@ class FrameFormatWidget(QWidget):
                 command = self._config.tx_commands.get(command_name)
                 if command is not None:
                     static_bytes = self._hex_to_bytes(command.payload_hex)
-                    from ..decoder.types import FMT_SIZES
-                    fields_size = sum(FMT_SIZES.get(f.fmt, 1) for f in command.fields)
+                    fields_size = self._compute_tx_fields_size(command.fields)
                     total_payload_size = len(static_bytes) + fields_size
 
                     if total_payload_size == 0:
@@ -797,14 +841,7 @@ class FrameFormatWidget(QWidget):
                                 "Teal",
                                 f"Static payload bytes: 0x{static_bytes.hex().upper()}"
                             ))
-                        for f in command.fields:
-                            size = FMT_SIZES.get(f.fmt, 1)
-                            fields.append((
-                                f.field_name,
-                                size,
-                                "Teal",
-                                f"Field: {f.field_name}\nType: {f.fmt}\nUnit: {f.unit or '-'}\nByte Order: {f.byte_order}"
-                            ))
+                        fields.extend(self._compute_tx_field_blocks(command.fields))
                         fields.append(
                             ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)")
                         )
@@ -861,19 +898,11 @@ class FrameFormatWidget(QWidget):
                             f"Static payload bytes: 0x{static_bytes.hex().upper()}"
                         ))
 
-                    from ..decoder.types import FMT_SIZES
-                    for f in command.fields:
-                        size = FMT_SIZES.get(f.fmt, 1)
-                        fields.append((
-                            f.field_name,
-                            size,
-                            "Teal",
-                            f"Field: {f.field_name}\nType: {f.fmt}\nUnit: {f.unit or '-'}\nByte Order: {f.byte_order}\nScale: {f.factor}\nOffset: {f.offset}"
-                        ))
+                    fields.extend(self._compute_tx_field_blocks(command.fields))
 
                     if self._protocol.tx_pad_length is not None:
                         fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
-                        payload_size = len(static_bytes) + sum(FMT_SIZES.get(f.fmt, 1) for f in command.fields)
+                        payload_size = len(static_bytes) + self._compute_tx_fields_size(command.fields)
                         padding_size = self._protocol.tx_pad_length - fixed_size - payload_size
                         if padding_size > 0:
                             fields.append((

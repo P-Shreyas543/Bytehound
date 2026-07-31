@@ -126,3 +126,69 @@ def test_field_order_follows_sheet_rows(tmp_path):
     assert [f.field_name for f in cmd_b.fields] == ["B", "A"]
     # Swapping the rows swaps the bytes — proving row order drives the wire order.
     assert build_payload(cmd_b, {"A": 0x11, "B": 0x22}) == b"\x22\x11"
+
+
+def test_boolean_bit_packing_lsb_first():
+    from app.decoder.types import TxCommandSpec, TxCommandFieldSpec
+    from app.commands.tx_command_builder import build_payload
+
+    # 4 boolean fields in 1 command -> packed into 1 byte LSB first
+    fields = [
+        TxCommandFieldSpec(command_name="Test", field_name="B0", fmt="boolean"),  # Bit 0 = 1
+        TxCommandFieldSpec(command_name="Test", field_name="B1", fmt="boolean"),  # Bit 1 = 1
+        TxCommandFieldSpec(command_name="Test", field_name="B2", fmt="boolean"),  # Bit 2 = 0
+        TxCommandFieldSpec(command_name="Test", field_name="B3", fmt="boolean"),  # Bit 3 = 1
+    ]
+    cmd = TxCommandSpec(command_name="Test", frame_id=0x1000, fields=fields)
+    # Bit 0=1, Bit 1=1, Bit 2=0, Bit 3=1 -> 1 + 2 + 0 + 8 = 11 (0x0B)
+    payload = build_payload(cmd, {"B0": 1, "B1": 1, "B2": 0, "B3": 1})
+    assert payload == b"\x0b"
+
+
+def test_experiment1_config_boolean_tx_commands():
+    from app.decoder.config_loader import load_config
+    from app.commands.tx_command_builder import build_payload
+    from pathlib import Path
+
+    exp1_file = Path("Experiment1_frame_config.xlsx")
+    if not exp1_file.exists():
+        pytest.skip("Experiment1_frame_config.xlsx not found in working directory")
+
+    cfg = load_config(exp1_file)
+    assert "Cell Discharge Select" in cfg.tx_commands
+
+    cmd = cfg.tx_commands["Cell Discharge Select"]
+    assert len(cmd.fields) == 4
+    # Discharge Load 1=1 (bit 0), Load 2=1 (bit 1), Load 3=0 (bit 2), Load 4=1 (bit 3) -> 0x0B
+    payload = build_payload(cmd, {
+        "Discharge Load 1": 1,
+        "Discharge Load 2": 1,
+        "Discharge Load 3": 0,
+        "Discharge Load 4": 1,
+    })
+    assert payload == b"\x0b"
+
+
+def test_frame_format_widget_boolean_blocks():
+    from PySide6.QtWidgets import QApplication
+    _app = QApplication.instance() or QApplication([])
+    from app.decoder.types import TxCommandFieldSpec, FrameConfig, ProtocolConfig
+    from app.ui.widgets import FrameFormatWidget
+
+    fields = [
+        TxCommandFieldSpec(command_name="Test", field_name="Discharge Load 1", fmt="boolean"),
+        TxCommandFieldSpec(command_name="Test", field_name="Discharge Load 2", fmt="boolean"),
+        TxCommandFieldSpec(command_name="Test", field_name="Discharge Load 3", fmt="boolean"),
+        TxCommandFieldSpec(command_name="Test", field_name="Discharge Load 4", fmt="boolean"),
+    ]
+    proto = ProtocolConfig("Test", b"", 2, "little", 0, "payload_only", "none", 0, "little", "header_to_payload", b"", "none", True)
+    cfg = FrameConfig(protocol=proto)
+    widget = FrameFormatWidget(cfg)
+    blocks = widget._compute_tx_field_blocks(fields)
+    assert len(blocks) == 1
+    label, num_bytes, color, tooltip = blocks[0]
+    assert num_bytes == 1
+    assert "Discharge Load 1" in tooltip
+    assert "Discharge Load 4" in tooltip
+
+

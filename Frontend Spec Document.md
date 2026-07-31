@@ -70,10 +70,10 @@ A multi-grid plot panel powered by a custom `pyqtgraph.GraphicsLayoutWidget`.
 ### 2.4 Auxiliary Panels
 * **Bitfields Panel**: Displays binary LED state arrays grouped by parent variable. Each bit position contains a text description and changes state dynamically.
 * **Enums Panel**: Monitors state variables, mapping active telemetry integers to their label descriptions (e.g., `0` -> `Init`).
-* **TX Commands Panel**: Generates buttons for every command found in the loaded configuration. Pressing a button transmits static payloads immediately, while parameterized commands open an inline dialog form to enter fields.
+* **TX Commands Panel**: Displays configurable dropdown forms for every command found in the loaded configuration. Pressing a button transmits static payloads immediately, while parameterized commands render an inline form with numeric inputs, boolean flag toggles, and live telemetry readbacks (`Current: X`). A frame format byte visualizer renders interactive payload tooltips (highlighting header, frame ID, static payload, field parameters, bit-packed boolean flags, and CRC).
 * **Parameter Editor Panel**: Displays a table of writable (`W`/`RW`) signals. 
   * Columns: `Frame ID | Signal | Live Value | Write Input (QLineEdit) | Send (QPushButton)`
-  * Inputs use validators (`QIntValidator`, `QDoubleValidator`) matching the data type schema. Pressing Enter inside the write box sends the data.
+  * Inputs display live telemetry readback labels (`Current: X`), support range checking (`min_value`, `max_value`), and format bit-packed boolean flags or scaled numeric types. Pressing Enter inside the write box sends the data.
 * **Raw Console Panel**: Prints a continuous log of RX and TX hex frames.
   * Tints lines: Green text for `TX` commands and Amber/White text for incoming `RX` frames.
 * **Activity Log Panel**: Logs operational messages and diagnostic warnings.

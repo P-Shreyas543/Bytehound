@@ -115,9 +115,9 @@ To inspect a recorded run after the fact, open the matching `*_decoded.xlsx` in 
 
 If your config defines `TxCommands`:
 1. Open the **TX Commands** tab.
-2. Pick a command. Editable fields appear with units & defaults.
-3. Enter physical values — the app scales them into raw bytes per the config.
-4. **Build** previews the framed packet (header + frame_id + length + payload + CRC).
+2. Pick a command. Editable numeric fields, boolean flag toggles, and live telemetry readbacks (`Current: X`) appear next to field inputs.
+3. Enter physical values or boolean states — the app validates bounds (`min_value`, `max_value`) and packs them into raw bytes (with sequential boolean flags bit-packed into byte flags).
+4. **Build** previews the framed packet (header + frame_id + length + payload + CRC) with interactive field tooltips in the byte visualizer.
 5. **Send** transmits over the active serial port.
 
 ---

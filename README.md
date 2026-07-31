@@ -80,6 +80,16 @@ When filing a bug at <https://github.com/P-Shreyas543/Bytehound/issues>, please 
 
 Help → View Documentation opens [`app/resources/index.html`](app/resources/index.html) — a complete handbook covering configuration, UART frame definition, TX commands, logging, plotting, analysis suite, and troubleshooting.
 
+## What's new in v1.1.2
+
+| Feature | Details |
+|---|---|
+| TX Boolean Fields & Bit Packing | Outbound TX commands support `bool` / `boolean` data types automatically bit-packed into byte flags (up to 8 bits per byte). |
+| Live Telemetry Readback Labels | Parameter Editor and TX Command fields render dynamic "Current: X" telemetry readback labels in real-time. |
+| Merged RX/TX Frame Definitions | Config loader supports merged RX/TX frame definitions (`rxtx` or duplicate frame IDs across RX/TX rows). |
+| CalcGroup Unit Inheritance | Group statistics inherit matching variable group units automatically when not explicitly defined. |
+| Prefixless Calculations Logging | Logged calculation Excel headers are now prefixless (e.g. `Cell Voltages min (V)`) for clean reporting. |
+
 ## What's new in v1.1.0
 
 | Feature | Details |

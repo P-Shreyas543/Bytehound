@@ -82,6 +82,8 @@ class DataType(str, enum.Enum):
         normalised = (value or "").strip().lower()
         if normalised in ("single", "double"):
             normalised = "float"
+        elif normalised in ("bool", "boolean"):
+            normalised = "uint"
         for member in cls:
             if member.value == normalised:
                 return member
@@ -102,6 +104,8 @@ class FmtType(str, enum.Enum):
     INT32 = "int32"
     FLOAT32 = "float32"
     FLOAT64 = "float64"
+    BOOL = "bool"
+    BOOLEAN = "boolean"
 
     @classmethod
     def parse(cls, value: str) -> "FmtType":
@@ -147,6 +151,8 @@ FMT_SIZES = {
     FmtType.INT32.value: 4,
     FmtType.FLOAT32.value: 4,
     FmtType.FLOAT64.value: 8,
+    FmtType.BOOL.value: 1,
+    FmtType.BOOLEAN.value: 1,
 }
 SUPPORTED_FMT_TYPES = {m.value for m in FmtType}
 
@@ -302,6 +308,10 @@ class TxCommandFieldSpec:
     min_value: Optional[float] = None
     max_value: Optional[float] = None
     default: Optional[float] = None
+
+    @property
+    def is_boolean(self) -> bool:
+        return self.fmt in ("bool", "boolean")
 
 
 @dataclass(frozen=True)

@@ -1,17 +1,17 @@
 {
-    "version": "1.1.2",
-    "document_version": "1.1.2",
+    "version": "1.1.3",
+    "document_version": "1.1.3",
     "Developer": "Shreyas P",
     "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "DECIBELS LAB PRIVATE LIMITED",
     "publisher_webpage": "https://lms.decibelslab.com/",
-    "build_date": "2026-07-16",
+    "build_date": "2026-07-31",
     "license": "MIT",
     "license_url": "https://bytehound.shreyasp182002.workers.dev/LICENSE",
     "homepage": "https://bytehound.shreyasp182002.workers.dev/",
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
     "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.1.2.exe",
-    "release_notes": "v1.1.2 Release - Group Calculations Unit & Log Formatting Updates.\n\nChanges:\n  - Calculations Unit Inheritance: Dynamically resolves and inherits unit configurations for statistics from matching variable group signals when not explicitly specified.\n  - Prefixless Calculations Logging: Logged calculation Excel headers are now prefixless (e.g., 'Cell Voltages min (V)' instead of '0x0100.Cells avg (V)') for clean data reporting.\n  - Layout Restoration Fix: Resolved a bug where restoring layouts containing calculations (using 'calc' keys) crashed the GUI settings loader.",
-    "sha256": "f74493b95cdaa009759fa4404bd26e5516f436fe1177bdac0c978c936e4144b4"
+    "release_notes": "v1.1.2 Release - Outbound TX Boolean Fields & Dynamic Telemetry Readback Updates.\n\nChanges:\n  - Outbound TX Boolean Fields: Full support for bool/boolean data types in TX command field specifications, automatically bit-packed into 8-bit byte flags.\n  - Live Telemetry Readback Labels: Parameter Editor and TX Command form fields dynamically display real-time 'Current: X' telemetry readback values.\n  - Merged RX/TX Frame Definitions: Config loader support for merged RX/TX frame definitions (direction='rxtx' or duplicate frame IDs across RX/TX rows).\n  - Calculations Unit Inheritance: Dynamically inherits unit configurations for statistics from matching variable group signals when not explicitly specified.\n  - Prefixless Calculations Logging: Logged calculation Excel headers are now prefixless (e.g. 'Cell Voltages min (V)' instead of '0x0100.Cells avg (V)') for clean data reporting.\n  - Non-Blocking Thread Shutdown: Serial worker unblocks kernel I/O calls on close to ensure instantaneous thread teardown.",
+    "sha256": "0fe17c51b0a305cb266ddd8f6701b193fbf3a4694d590dd24d88ff67bdb220a0"
 }

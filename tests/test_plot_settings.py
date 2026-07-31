@@ -106,46 +106,47 @@ def test_mainwindow_plot_settings_application(qapp, monkeypatch):
 def test_mainwindow_plot_color_customization(qapp, monkeypatch):
     from PySide6.QtGui import QColor
     from PySide6.QtWidgets import QColorDialog
-    
+
     class MockSettings(QSettings):
         def __init__(self, *args, **kwargs):
             super().__init__("BytehoundTestOrg", "BytehoundTestApp")
             self.clear()
-            
+
     monkeypatch.setattr("app.ui.main_window.QSettings", MockSettings)
     monkeypatch.setattr("app.ui.main_window.ConnectionDialog", lambda *args, **kwargs: None)
-    
+
     # Mock QColorDialog.getColor to return QColor("#ff00ff") (magenta)
     monkeypatch.setattr(QColorDialog, "getColor", lambda *args, **kwargs: QColor("#ff00ff"))
-    
+
     win = MainWindow()
-    
+
     # Assign a mock config with a signal
     class MockSignal:
         frame_id = 0x1000
         signal_name = "Battery_Voltage"
-        
+
     class MockConfig:
         all_signals = [MockSignal()]
-        
+
     win._config = MockConfig()
     from app.ui.plot_panel import TimeSeriesBuffer
     win._plot_history[(0x1000, "Battery_Voltage")] = TimeSeriesBuffer(max_samples=None)
     monkeypatch.setattr(win._plot_dock, "isVisible", lambda: True)
     for panel in win._plot_panels:
         monkeypatch.setattr(panel.plot_item, "isVisible", lambda: True)
-    
+
     win._add_signal_to_panel(0, (0x1000, "Battery_Voltage"))
-    
+
     # Check that it initially gets the default palette color
     palette = win._current_plot_palette()
+    assert len(palette) > 0
     assert win._settings.value("plot/colors/Battery_Voltage") is None
-    
+
     # Build menu and trigger select_color on the menu row
     from PySide6.QtWidgets import QMenu
     dummy_menu = QMenu()
     row = win._build_panel_signal_menu_row(0, (0x1000, "Battery_Voltage"), "#ffffff", dummy_menu)
-    
+
     # Trigger click on the dot QToolButton
     dot_btn = None
     for child in row.children():
@@ -153,20 +154,20 @@ def test_mainwindow_plot_color_customization(qapp, monkeypatch):
         if isinstance(child, QToolButton) and child.text() == "●":
             dot_btn = child
             break
-            
+
     assert dot_btn is not None
     dot_btn.click() # triggers select_color()
-    
+
     # Check that custom color was saved in settings
     assert win._settings.value("plot/colors/Battery_Voltage") == "#ff00ff"
-    
+
     # Verify redraw uses the custom color for curves
     panel = win._plot_panels[0]
     win._redraw_plot()
-    
+
     curve = panel.curves[(0x1000, "Battery_Voltage")]
     assert curve._bh_color == "#ff00ff"
-    
+
     win.close()
 
 
@@ -175,16 +176,16 @@ def test_mainwindow_add_calculated_signal_to_plot(qapp, monkeypatch):
         def __init__(self, *args, **kwargs):
             super().__init__("BytehoundTestOrg", "BytehoundTestApp")
             self.clear()
-            
+
     monkeypatch.setattr("app.ui.main_window.QSettings", MockSettings)
     monkeypatch.setattr("app.ui.main_window.ConnectionDialog", lambda *args, **kwargs: None)
-    
+
     win = MainWindow()
-    
+
     # Assign a mock config
     class MockConfig:
         all_signals = []
-        
+
     win._config = MockConfig()
     from app.ui.plot_panel import TimeSeriesBuffer
     calc_key = ("calc", "Cell Voltages max")
@@ -192,26 +193,26 @@ def test_mainwindow_add_calculated_signal_to_plot(qapp, monkeypatch):
     monkeypatch.setattr(win._plot_dock, "isVisible", lambda: True)
     for panel in win._plot_panels:
         monkeypatch.setattr(panel.plot_item, "isVisible", lambda: True)
-        
+
     # Adding calculated signal should not throw ValueError
     win._add_signal_to_panel(0, calc_key)
-    
+
     # Redrawing plot with calculated signal should not throw ValueError
     win._redraw_plot()
-    
+
     # Building menu row with calculated signal should not throw ValueError
     from PySide6.QtWidgets import QMenu
     dummy_menu = QMenu()
     row = win._build_panel_signal_menu_row(0, calc_key, "#ffffff", dummy_menu)
     assert row is not None
-    
+
     # Verify label / names are formatted with str(calc_key[0]) instead of hex
     panel = win._plot_panels[0]
     curve = panel.curves[calc_key]
     assert curve.name() == "calc Cell Voltages max"
-    
+
     # Removing calculated signal should not throw ValueError
     win._remove_signal_from_panel(0, calc_key)
-    
+
     win.close()
 

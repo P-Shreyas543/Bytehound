@@ -120,8 +120,11 @@ class TelemetryPipelineMixin:
                 self._update_detail_tabs(signal, bf_visible=bf_visible, en_visible=en_visible)
 
             value_text = "-" if signal.scaled_value is None else _format_number(signal.scaled_value)
+            disp_val = signal.display_value or value_text
             for val_item in getattr(self, "_editor_value_items", {}).get(signal.signal_name, ()):
-                val_item.setText(signal.display_value or value_text)
+                val_item.setText(disp_val)
+            for tx_val_lbl in getattr(self, "_tx_current_value_labels", {}).get(signal.signal_name, ()):
+                tx_val_lbl.setText(f"Current: {disp_val}")
 
         self._staged_signals_for_ui.clear()
 
@@ -211,10 +214,10 @@ class TelemetryPipelineMixin:
         """Add a new row to the telemetry model (called for runtime-discovered signals)."""
         key = ("calc", signal_name) if is_calculated else (frame_id, signal_name)
         self._signal_unit_map[key] = unit
-        
+
         start_byte_str = "-" if is_calculated else str(start_byte)
         data_type_str = "float" if is_calculated else (data_type or "-")
-        
+
         self._table_model.add_row(
             key=key,
             frame_hex=f"0x{frame_id:04X}" if frame_id is not None else "-",

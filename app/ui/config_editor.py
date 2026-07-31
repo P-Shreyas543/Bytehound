@@ -36,7 +36,7 @@ class ConfigEditorWindow(QMainWindow):
 
         # Toolbar
         btn_layout = QHBoxLayout()
-        
+
         load_btn = QPushButton("📂 Load Config...")
         load_btn.clicked.connect(self._load_config)
 
@@ -79,7 +79,7 @@ class ConfigEditorWindow(QMainWindow):
         # Register keyboard shortcuts
         self.add_shortcut = QShortcut(QKeySequence("Ctrl+="), self)
         self.add_shortcut.activated.connect(self._add_row)
-        
+
         self.del_shortcut = QShortcut(QKeySequence("Ctrl+-"), self)
         self.del_shortcut.activated.connect(self._delete_row)
 
@@ -109,12 +109,12 @@ class ConfigEditorWindow(QMainWindow):
             table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
             table.installEventFilter(self)
             table.itemChanged.connect(self._on_item_changed)
-            
+
             headers = default_headers.get(name, [])
             if headers:
                 table.setColumnCount(len(headers))
                 table.setHorizontalHeaderLabels(headers)
-            
+
             self._tables[name] = table
             self._tabs.addTab(table, _sheet_name_from_csv(csv_file))
 
@@ -153,7 +153,7 @@ class ConfigEditorWindow(QMainWindow):
 
     def _on_item_changed(self, item: QTableWidgetItem):
         self._mark_dirty()
-        
+
         # Clear validation row highlights dynamically when edited
         table = item.tableWidget()
         if table:
@@ -205,7 +205,7 @@ class ConfigEditorWindow(QMainWindow):
         current_row = current_table.currentRow()
         if current_row < 0:
             current_row = current_table.rowCount()
-            
+
         current_table.insertRow(current_row)
         self._apply_dropdowns(current_table, current_row)
         self._mark_dirty()
@@ -224,14 +224,14 @@ class ConfigEditorWindow(QMainWindow):
             col_name = table.horizontalHeaderItem(col).text()
             items = []
             is_editable = False
-            
+
             if col_name in ("data_type", "data_type"):
                 table_name = ""
                 for name, tbl in self._tables.items():
                     if tbl is table:
                         table_name = name
                         break
-                
+
                 if table_name == "frame_config":
                     items = sorted(list(SUPPORTED_DATA_TYPES))
                 else:
@@ -348,7 +348,7 @@ class ConfigEditorWindow(QMainWindow):
                             if val.strip():
                                 ids.add(val.strip())
             options = sorted(list(ids))
-            
+
         elif col_name in ("signal_name", "variable_name"):
             names = set()
             for name in ("variables", "frame_config"):
@@ -366,7 +366,7 @@ class ConfigEditorWindow(QMainWindow):
                             if val.strip():
                                 names.add(val.strip())
             options = sorted(list(names))
-            
+
         elif col_name in ("group", "group_name"):
             groups = set()
             table = self._tables.get("variables")
@@ -383,7 +383,7 @@ class ConfigEditorWindow(QMainWindow):
                         if val.strip():
                             groups.add(val.strip())
             options = sorted(list(groups))
-            
+
         elif col_name == "command_name":
             cmds = set()
             table = self._tables.get("tx_commands")
@@ -400,7 +400,7 @@ class ConfigEditorWindow(QMainWindow):
                         if val.strip():
                             cmds.add(val.strip())
             options = sorted(list(cmds))
-            
+
         return options
 
     def _on_tab_changed(self, index: int):
@@ -439,7 +439,7 @@ class ConfigEditorWindow(QMainWindow):
             QMessageBox.critical(self, "Error loading config", str(e))
 
     def load_data(self, data: Dict[str, List[Dict[str, str]]]):
-        for name, table in self._tables.items():
+        for _name, table in self._tables.items():
             table.setRowCount(0)
 
         for name, rows in data.items():
@@ -487,26 +487,26 @@ class ConfigEditorWindow(QMainWindow):
 
     def validate_data(self) -> bool:
         """Validate the current configuration tables using load_config on a temporary JSON file.
-        
+
         Highlights any errors in the tables and displays details in a messagebox.
         """
         self.clear_validation_highlights()
         data = self.get_data()
-        
+
         import tempfile
         import os
         from ..decoder.config_loader import load_config, ConfigError
-        
+
         temp_fd, temp_path = tempfile.mkstemp(suffix=".json", text=True)
         os.close(temp_fd)
-        
+
         try:
             with open(temp_path, "w", encoding="utf-8") as fp:
                 json.dump(data, fp, indent=2)
-            
+
             load_config(temp_path)
             return True
-            
+
         except (ConfigError, ValueError) as exc:
             error_msg = str(exc)
             if not error_msg.startswith(tuple(self._tables.keys())):
@@ -539,10 +539,10 @@ class ConfigEditorWindow(QMainWindow):
     def _handle_validation_error(self, error_msg: str):
         match_row = re.search(r"(\w+)\s+row\s+(\d+)", error_msg)
         match_sheet = re.search(r"^(\w+):", error_msg)
-        
+
         target_sheet = None
         target_row_idx = None
-        
+
         if match_row:
             sheet_name_raw = match_row.group(1)
             row_no = int(match_row.group(2))
@@ -553,11 +553,11 @@ class ConfigEditorWindow(QMainWindow):
             sheet_name_raw = match_sheet.group(1)
             from ..decoder.config_loader import _normalize_table_name
             target_sheet = _normalize_table_name(sheet_name_raw)
-            
+
         if target_sheet and target_sheet in self._tables:
             table = self._tables[target_sheet]
             self._tabs.setCurrentWidget(table)
-            
+
             if target_row_idx is None and target_sheet == "protocol" and table.rowCount() > 0:
                 target_row_idx = 0
 
@@ -571,9 +571,9 @@ class ConfigEditorWindow(QMainWindow):
                         table.setItem(target_row_idx, c, it)
                     it.setBackground(highlight_brush)
                 table.blockSignals(False)
-                
+
                 table.scrollToItem(table.item(target_row_idx, 0))
-                
+
         QMessageBox.critical(self, "Validation Error", f"Configuration is invalid:\n\n{error_msg}")
 
     def _on_validate(self):
@@ -583,16 +583,16 @@ class ConfigEditorWindow(QMainWindow):
     def _on_validate_and_save(self):
         if not self.validate_data():
             return
-            
+
         if not self._active_config_path:
             self._save_as_dialog()
             return
-            
+
         try:
             self._save_to_path(self._active_config_path)
             QMessageBox.information(self, "Success", f"Configuration successfully saved to {self._active_config_path}!")
             self._mark_clean()
-            
+
             if self.parent() and hasattr(self.parent(), "_load_config_from_path"):
                 self.parent()._load_config_from_path(self._active_config_path)
         except Exception as e:
@@ -614,7 +614,7 @@ class ConfigEditorWindow(QMainWindow):
     def _save_to_path(self, path: Path):
         suffix = path.suffix.lower()
         data = self.get_data()
-        
+
         if suffix == ".json":
             with path.open("w", encoding="utf-8") as fp:
                 json.dump(data, fp, indent=2)
@@ -644,7 +644,7 @@ class ConfigEditorWindow(QMainWindow):
                     writer.writeheader()
                     writer.writerows(rows)
         except Exception as e:
-            raise RuntimeError(f"Failed to save CSV directory: {e}")
+            raise RuntimeError(f"Failed to save CSV directory: {e}") from e
 
     def _save_json(self):
         path, _ = QFileDialog.getSaveFileName(self, "Save JSON Config", "", "JSON Config (*.json)")

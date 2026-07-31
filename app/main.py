@@ -195,6 +195,7 @@ def _run_app() -> int:
     app._titlebar_filter = titlebar_filter  # keep reference alive
 
     window = MainWindow()
+    app.aboutToQuit.connect(window.close)
     window.show()
     return app.exec()
 

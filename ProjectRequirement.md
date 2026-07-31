@@ -54,7 +54,7 @@ The application must dynamically load its runtime telemetry structure from eithe
 * **`enums`** *(Optional)*: Maps raw integer values of a signal to human-readable state labels (e.g., `0` -> `Idle`, `1` -> `Charging`).
 * **`calc_groups`** *(Optional)*: Configures runtime mathematical aggregates (`min`, `max`, `sum`, `diff`, `avg`) over signals sharing a common group label.
 * **`tx_commands`** *(Optional)*: Configures named outbound commands, their target frame IDs, and any static hex payloads.
-* **`tx_command_fields`** *(Optional)*: Configures parameterized variables embedded within a TX command (data type, scale, offset, constraints, defaults).
+* **`tx_command_fields`** *(Optional)*: Configures parameterized variables embedded within a TX command (data type including `bool`/`boolean` bit-packed flags, scale, offset, constraints, defaults, and live telemetry readbacks).
 * **`serial_defaults`** *(Optional)*: Defines initial baud rate, parity, stop bits, data bits, and timeout limits.
 * **`polling_schedule`** *(Optional)*: Specifies query intervals and timeouts for individual frames on request-response systems.
 

@@ -274,6 +274,39 @@ def test_single_double_data_type_aliases(tmp_path):
     assert cfg2.all_signals[1].byte_length == 8  # double maps to float64 (8 bytes)
 
 
+def test_bool_boolean_data_type_aliases(tmp_path):
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "variables.csv").write_text(
+        "id_or_address,signal_name,data_type,unit,scale,offset,count,group_name,byte_order,enabled,description\n"
+        "0x0010,Flag1,bool,V,1,0,1,,little,TRUE,\n"
+        "0x0010,Flag2,boolean,V,1,0,1,,little,TRUE,\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tx_commands.csv").write_text(
+        "command_name,id_or_address,payload_hex,enabled\n"
+        "SetFlags,0x0010,,TRUE\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "tx_command_fields.csv").write_text(
+        "command_name,signal_name,data_type,byte_order,scale,offset,unit,default,min_value,max_value\n"
+        "SetFlags,Field1,bool,big,1,0,,0,0,1\n"
+        "SetFlags,Field2,boolean,big,1,0,,1,0,1\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(tmp_path)
+    assert len(cfg.all_signals) == 2
+    assert cfg.all_signals[0].data_type == "uint"
+    assert cfg.all_signals[0].byte_length == 1
+    assert cfg.all_signals[1].data_type == "uint"
+    assert cfg.all_signals[1].byte_length == 1
+    cmd = cfg.tx_commands["SetFlags"]
+    assert len(cmd.fields) == 2
+    assert cmd.fields[0].fmt == "bool"
+    assert cmd.fields[1].fmt == "boolean"
+    assert cmd.fields[0].is_boolean is True
+    assert cmd.fields[1].is_boolean is True
+
+
 # --- Frames sheet: direction column ----------------------------------------
 
 

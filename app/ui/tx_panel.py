@@ -116,18 +116,40 @@ class TxPanelMixin:
         while self._tx_fields_form.rowCount():
             self._tx_fields_form.removeRow(0)
         self._tx_field_inputs.clear()
+        if not hasattr(self, "_tx_current_value_labels"):
+            self._tx_current_value_labels: Dict[str, list[QLabel]] = {}
+        else:
+            self._tx_current_value_labels.clear()
+
         if self._config is None:
             return
         command = self._config.tx_commands.get(self._tx_command_combo.currentText())
         if command is None:
             return
         for tx_field in command.fields:
-            editor = QLineEdit(self._tx_fields_widget)
+            row_widget = QWidget(self._tx_fields_widget)
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(8)
+
+            curr_lbl = QLabel("Current: -", row_widget)
+            curr_lbl.setStyleSheet("color: #00BC8C; font-weight: bold;")
+            curr_lbl.setToolTip("Latest telemetry value read back from hardware")
+
+            editor = QLineEdit(row_widget)
             if tx_field.default is not None:
-                editor.setText(f"{tx_field.default:g}")
+                val_str = f"{int(tx_field.default)}" if tx_field.is_boolean else f"{tx_field.default:g}"
+                editor.setText(val_str)
+            editor.setPlaceholderText("Set value...")
+
+            row_layout.addWidget(curr_lbl)
+            row_layout.addWidget(editor)
+
             suffix = f" ({tx_field.unit})" if tx_field.unit else ""
-            self._tx_fields_form.addRow(f"{tx_field.field_name}{suffix}", editor)
+            self._tx_fields_form.addRow(f"{tx_field.field_name}{suffix}", row_widget)
             self._tx_field_inputs[tx_field.field_name] = editor
+            self._tx_current_value_labels.setdefault(tx_field.field_name, []).append(curr_lbl)
+
         self._preview_tx_command()
 
     def _tx_values(self) -> Dict[str, float]:
