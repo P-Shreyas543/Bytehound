@@ -973,6 +973,11 @@ def _parse_variables(
                     byte_off = bit_idx // 8
                     bit_in_byte = bit_idx % 8
                     sig_start = start + byte_off
+                    bool_bit_counts[frame_id] = bit_idx + 1
+
+                if bit_order_raw == "msb" or (endian == "big" and bit_order_raw != "lsb"):
+                    sig_bit_off = 7 - (bit_in_byte % 8)
+                else:
                     sig_bit_off = bit_in_byte
             else:
                 sig_start = start + idx * byte_length

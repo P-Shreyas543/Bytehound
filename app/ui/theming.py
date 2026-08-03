@@ -326,6 +326,25 @@ QFrame#checkableGroupPopup {
     border: 1px solid #334155;
     border-radius: 4px;
 }
+
+/* 16. Telemetry Card status pills */
+QLabel[status_type="ok"] {
+    background-color: #064E3B; color: #34D399; border: 1px solid #059669; border-radius: 8px; padding: 2px 8px;
+}
+QLabel[status_type="error"] {
+    background-color: #7F1D1D; color: #FCA5A5; border: 1px solid #DC2626; border-radius: 8px; padding: 2px 8px;
+}
+QLabel[status_type="warn"] {
+    background-color: #78350F; color: #FDE047; border: 1px solid #D97706; border-radius: 8px; padding: 2px 8px;
+}
+QLabel[status_type="inactive"] {
+    background-color: #1E293B; color: #64748B; border: 1px solid #334155; border-radius: 8px; padding: 2px 8px;
+}
+QLabel[value_state="active"] { color: #34D399; }
+QLabel[value_state="error"] { color: #F87171; }
+QLabel[value_state="warn"] { color: #FBBF24; }
+QLabel[value_state="inactive"] { color: #94A3B8; }
+QLabel[value_state="ok"] { color: #38BDF8; }
 """
 
 
@@ -552,6 +571,25 @@ QFrame#checkableGroupPopup {
     border: 1px solid #D1D5DB;
     border-radius: 4px;
 }
+
+/* 15. Telemetry Card status pills */
+QLabel[status_type="ok"] {
+    background-color: #D1FAE5; color: #065F46; border: 1px solid #10B981; border-radius: 8px; padding: 2px 8px;
+}
+QLabel[status_type="error"] {
+    background-color: #FEE2E2; color: #991B1B; border: 1px solid #EF4444; border-radius: 8px; padding: 2px 8px;
+}
+QLabel[status_type="warn"] {
+    background-color: #FEF3C7; color: #92400E; border: 1px solid #F59E0B; border-radius: 8px; padding: 2px 8px;
+}
+QLabel[status_type="inactive"] {
+    background-color: #F1F5F9; color: #64748B; border: 1px solid #CBD5E1; border-radius: 8px; padding: 2px 8px;
+}
+QLabel[value_state="active"] { color: #059669; }
+QLabel[value_state="error"] { color: #DC2626; }
+QLabel[value_state="warn"] { color: #D97706; }
+QLabel[value_state="inactive"] { color: #64748B; }
+QLabel[value_state="ok"] { color: #0284C7; }
 """
 
 

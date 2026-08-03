@@ -26,22 +26,13 @@ class SignalCardWidget(QFrame):
         self.max_val = spec.max_value
         self.data_type = (spec.data_type or "").lower()
         self.is_boolean = spec.is_boolean or self.data_type in ("bool", "boolean")
+        self.group_name = spec.group.strip() if spec.group else "General Subsystem"
+        self.frame_name = spec.frame_name or ""
         self._init_ui()
 
     def _init_ui(self) -> None:
         self.setObjectName("SignalCard")
-        self.setStyleSheet("""
-            QFrame#SignalCard {
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #1e293b, stop:1 #0f172a);
-                border: 1px solid #334155;
-                border-radius: 10px;
-                padding: 6px;
-            }
-            QFrame#SignalCard:hover {
-                border: 1px solid #38bdf8;
-                background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #334155, stop:1 #1e293b);
-            }
-        """)
+        self.setFrameShape(QFrame.Shape.StyledPanel)
 
         layout = QVBoxLayout(self)
         layout.setSpacing(6)
@@ -51,27 +42,12 @@ class SignalCardWidget(QFrame):
         h_layout = QHBoxLayout()
         h_layout.setSpacing(4)
         name_label = QLabel(self.signal_name)
-        name_label.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        name_label.setStyleSheet("color: #f8fafc;")
 
         plot_btn = QPushButton("📈")
         plot_btn.setToolTip("Click to add signal to Live Plot")
+        plot_btn.setAccessibleName(f"Quick plot {self.signal_name}")
         plot_btn.setFixedSize(26, 26)
-        plot_btn.setCursor(Qt.PointingHandCursor)
-        plot_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #334155;
-                border: 1px solid #475569;
-                border-radius: 5px;
-                color: #38bdf8;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #2563eb;
-                color: #ffffff;
-                border: 1px solid #60a5fa;
-            }
-        """)
+        plot_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         plot_btn.clicked.connect(lambda: self.quick_plot_requested.emit(self.signal_name))
 
         h_layout.addWidget(name_label, 1)
@@ -81,12 +57,10 @@ class SignalCardWidget(QFrame):
         val_h = QHBoxLayout()
         val_h.setSpacing(6)
         self.val_label = QLabel("--")
-        self.val_label.setFont(QFont("Segoe UI", 16, QFont.Weight.Bold))
-        self.val_label.setStyleSheet("color: #38bdf8;")
+        self.val_label.setAccessibleName(f"{self.signal_name} value")
 
         self.unit_label = QLabel(self.unit)
-        self.unit_label.setFont(QFont("Segoe UI", 9, QFont.Weight.Bold))
-        self.unit_label.setStyleSheet("color: #94a3b8; margin-top: 6px;")
+        self.unit_label.setStyleSheet("margin-top: 6px;")
 
         val_h.addWidget(self.val_label)
         val_h.addWidget(self.unit_label)
@@ -96,17 +70,6 @@ class SignalCardWidget(QFrame):
         self.range_bar = QProgressBar()
         self.range_bar.setFixedHeight(5)
         self.range_bar.setTextVisible(False)
-        self.range_bar.setStyleSheet("""
-            QProgressBar {
-                background-color: #0f172a;
-                border: none;
-                border-radius: 2px;
-            }
-            QProgressBar::chunk {
-                background-color: #38bdf8;
-                border-radius: 2px;
-            }
-        """)
         has_range = (self.min_val is not None and self.max_val is not None and self.max_val > self.min_val)
         self.range_bar.setVisible(has_range and not self.is_boolean)
 
@@ -115,17 +78,13 @@ class SignalCardWidget(QFrame):
         stat_h.setSpacing(6)
         self.status_pill = QLabel("OK")
         self.status_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.status_pill.setFont(QFont("Segoe UI", 8, QFont.Weight.Bold))
-        self.status_pill.setStyleSheet("""
-            background-color: #064e3b; color: #34d399; border: 1px solid #059669; border-radius: 8px; padding: 2px 8px;
-        """)
+        self.status_pill.setProperty("status_type", "ok")
 
         range_text = ""
         if has_range:
             range_text = f"[{self.min_val:g} .. {self.max_val:g}]"
         self.range_label = QLabel(range_text)
-        self.range_label.setFont(QFont("Segoe UI", 8))
-        self.range_label.setStyleSheet("color: #64748b;")
+        self.range_label.setObjectName("hintLabel")
 
         stat_h.addWidget(self.status_pill)
         stat_h.addStretch()
@@ -147,14 +106,19 @@ class SignalCardWidget(QFrame):
                 is_on = str(value).strip().lower() in ("1", "true", "on", "active")
             if is_on:
                 self.val_label.setText("ACTIVE (1)")
-                self.val_label.setStyleSheet("color: #34d399;")
+                self.val_label.setProperty("value_state", "active")
                 self.status_pill.setText("ON")
-                self.status_pill.setStyleSheet("background-color: #064e3b; color: #34d399; border: 1px solid #059669; border-radius: 8px; padding: 2px 8px;")
+                self.status_pill.setProperty("status_type", "ok")
             else:
                 self.val_label.setText("OFF (0)")
-                self.val_label.setStyleSheet("color: #94a3b8;")
+                self.val_label.setProperty("value_state", "inactive")
                 self.status_pill.setText("OFF")
-                self.status_pill.setStyleSheet("background-color: #1e293b; color: #64748b; border: 1px solid #334155; border-radius: 8px; padding: 2px 8px;")
+                self.status_pill.setProperty("status_type", "inactive")
+            
+            self.val_label.style().unpolish(self.val_label)
+            self.val_label.style().polish(self.val_label)
+            self.status_pill.style().unpolish(self.status_pill)
+            self.status_pill.style().polish(self.status_pill)
             return
 
         if isinstance(value, float):
@@ -168,16 +132,21 @@ class SignalCardWidget(QFrame):
         status_lower = str(status).lower()
         if "error" in status_lower or "fault" in status_lower:
             self.status_pill.setText("ERROR")
-            self.status_pill.setStyleSheet("background-color: #7f1d1d; color: #fca5a5; border: 1px solid #dc2626; border-radius: 8px; padding: 2px 8px;")
-            self.val_label.setStyleSheet("color: #f87171;")
+            self.status_pill.setProperty("status_type", "error")
+            self.val_label.setProperty("value_state", "error")
         elif "warn" in status_lower:
             self.status_pill.setText("WARN")
-            self.status_pill.setStyleSheet("background-color: #78350f; color: #fde047; border: 1px solid #d97706; border-radius: 8px; padding: 2px 8px;")
-            self.val_label.setStyleSheet("color: #fbbf24;")
+            self.status_pill.setProperty("status_type", "warn")
+            self.val_label.setProperty("value_state", "warn")
         else:
             self.status_pill.setText("OK")
-            self.status_pill.setStyleSheet("background-color: #064e3b; color: #34d399; border: 1px solid #059669; border-radius: 8px; padding: 2px 8px;")
-            self.val_label.setStyleSheet("color: #38bdf8;")
+            self.status_pill.setProperty("status_type", "ok")
+            self.val_label.setProperty("value_state", "ok")
+            
+        self.val_label.style().unpolish(self.val_label)
+        self.val_label.style().polish(self.val_label)
+        self.status_pill.style().unpolish(self.status_pill)
+        self.status_pill.style().polish(self.status_pill)
 
 
 class TelemetryCardsView(QWidget):
@@ -205,37 +174,13 @@ class TelemetryCardsView(QWidget):
         self.search_input = QLineEdit()
         self.search_input.setPlaceholderText("🔍 Search telemetry signals or subsystems...")
         self.search_input.setClearButtonEnabled(True)
-        self.search_input.setStyleSheet("""
-            QLineEdit {
-                background-color: #0f172a;
-                color: #f8fafc;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-size: 13px;
-            }
-            QLineEdit:focus {
-                border: 1px solid #38bdf8;
-            }
-        """)
+        self.search_input.setAccessibleName("Search telemetry signals")
         self.search_input.textChanged.connect(self._apply_filter)
 
         self.group_combo = QComboBox()
         self.group_combo.addItem("📁 Group by Subsystem", "subsystem")
         self.group_combo.addItem("📦 Group by Message Frame", "frame")
-        self.group_combo.setStyleSheet("""
-            QComboBox {
-                background-color: #0f172a;
-                color: #38bdf8;
-                border: 1px solid #334155;
-                border-radius: 6px;
-                padding: 6px 12px;
-                font-weight: bold;
-            }
-            QComboBox:hover {
-                border: 1px solid #38bdf8;
-            }
-        """)
+        self.group_combo.setAccessibleName("Group signals by")
         self.group_combo.currentIndexChanged.connect(self._on_group_mode_changed)
 
         ctrl_bar.addWidget(self.search_input, 1)
@@ -254,6 +199,12 @@ class TelemetryCardsView(QWidget):
 
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
+
+        self.empty_label = QLabel("No signals match the search filter.")
+        self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_label.setObjectName("hintLabel")
+        self.empty_label.hide()
+        main_layout.addWidget(self.empty_label)
 
     def _on_group_mode_changed(self) -> None:
         self._group_by = self.group_combo.currentData() or "subsystem"
@@ -286,22 +237,6 @@ class TelemetryCardsView(QWidget):
 
         for grp_name, specs in groups.items():
             grp_box = QGroupBox(f" {grp_name} ({len(specs)} signals)")
-            grp_box.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-            grp_box.setStyleSheet("""
-                QGroupBox {
-                    border: 1px solid #334155;
-                    border-radius: 8px;
-                    margin-top: 10px;
-                    padding: 12px;
-                    background-color: #0b1329;
-                }
-                QGroupBox::title {
-                    color: #38bdf8;
-                    subcontrol-origin: margin;
-                    left: 12px;
-                    padding: 0 6px;
-                }
-            """)
             grid = QGridLayout(grp_box)
             grid.setSpacing(12)
 
@@ -323,16 +258,22 @@ class TelemetryCardsView(QWidget):
     def _apply_filter(self, query: str) -> None:
         q = (query or "").strip().lower()
         for card_name, card in self._cards.items():
-            match = (not q) or (q in card_name.lower()) or (q in card.unit.lower())
+            match = (not q) or (q in card_name.lower()) or (q in card.unit.lower()) or (q in card.group_name.lower()) or (q in card.frame_name.lower())
             card.setVisible(match)
 
         # Hide empty group boxes
+        any_visible = False
         for grp_box in self._group_boxes:
             visible_count = 0
             for child in grp_box.findChildren(SignalCardWidget):
-                if child.isVisible():
+                if not child.isHidden():
                     visible_count += 1
             grp_box.setVisible(visible_count > 0)
+            if visible_count > 0:
+                any_visible = True
+                
+        self.empty_label.setVisible(not any_visible and bool(self._cards))
+        self.scroll_area.setVisible(any_visible or not bool(self._cards))
 
     def update_signal_value(self, signal_name: str, value: float | int | str, status: str = "ok") -> None:
         if signal_name in self._cards:

@@ -49,8 +49,8 @@ class ConnectionDialog(QDialog):
         # 1. Connection Type Row
         type_row = QWidget(self)
         type_hl = QHBoxLayout(type_row)
-        type_hl.setContentsMargins(0, 0, 0, 0)
         self._type_combo = QComboBox(type_row)
+        self._type_combo.setAccessibleName("Connection Type")
         self._type_combo.addItem("Serial", "serial")
         self._type_combo.addItem("TCP Client", "tcp")
         self._type_combo.addItem("UDP Client", "udp")
@@ -66,33 +66,34 @@ class ConnectionDialog(QDialog):
         self._serial_page = QWidget(self)
         serial_form = QFormLayout(self._serial_page)
         serial_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        serial_form.setContentsMargins(0, 0, 0, 0)
 
         # Port row with inline Refresh button
         port_row = QWidget(self)
         port_hl = QHBoxLayout(port_row)
-        port_hl.setContentsMargins(0, 0, 0, 0)
         self._port_combo = QComboBox(port_row)
+        self._port_combo.setAccessibleName("Port")
         self._port_combo.setMinimumWidth(180)
         refresh_btn = QPushButton("⟳", port_row)
-        refresh_btn.setStyleSheet("padding: 0px;")
-        refresh_btn.setFixedWidth(28)
         refresh_btn.setToolTip("Refresh port list")
         refresh_btn.clicked.connect(self._refresh_ports)
         port_hl.addWidget(self._port_combo, 1)
         port_hl.addWidget(refresh_btn)
 
         self._baud_combo = QComboBox(self)
+        self._baud_combo.setAccessibleName("Baud Rate")
         self._baud_combo.addItems(["9600", "19200", "38400", "57600", "115200",
                                     "230400", "460800", "921600", "1000000", "2000000"])
 
         self._data_bits_combo = QComboBox(self)
+        self._data_bits_combo.setAccessibleName("Data Bits")
         self._data_bits_combo.addItems(["8", "7"])
 
         self._stop_bits_combo = QComboBox(self)
+        self._stop_bits_combo.setAccessibleName("Stop Bits")
         self._stop_bits_combo.addItems(["1", "1.5", "2"])
 
         self._parity_combo = QComboBox(self)
+        self._parity_combo.setAccessibleName("Parity")
         self._parity_combo.addItems(["N", "E", "O"])
 
         serial_form.addRow("Port", port_row)
@@ -106,11 +107,12 @@ class ConnectionDialog(QDialog):
         self._tcp_page = QWidget(self)
         tcp_form = QFormLayout(self._tcp_page)
         tcp_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        tcp_form.setContentsMargins(0, 0, 0, 0)
 
         self._tcp_host = QLineEdit(self)
+        self._tcp_host.setAccessibleName("TCP Host")
         self._tcp_host.setPlaceholderText("127.0.0.1")
         self._tcp_port = QSpinBox(self)
+        self._tcp_port.setAccessibleName("TCP Port")
         self._tcp_port.setRange(1, 65535)
         self._tcp_port.setValue(8000)
 
@@ -122,14 +124,16 @@ class ConnectionDialog(QDialog):
         self._udp_page = QWidget(self)
         udp_form = QFormLayout(self._udp_page)
         udp_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        udp_form.setContentsMargins(0, 0, 0, 0)
 
         self._udp_host = QLineEdit(self)
+        self._udp_host.setAccessibleName("UDP Host")
         self._udp_host.setPlaceholderText("127.0.0.1")
         self._udp_port = QSpinBox(self)
+        self._udp_port.setAccessibleName("UDP Port")
         self._udp_port.setRange(1, 65535)
         self._udp_port.setValue(8000)
         self._udp_local_port = QSpinBox(self)
+        self._udp_local_port.setAccessibleName("UDP Local Port")
         self._udp_local_port.setRange(0, 65535)
         self._udp_local_port.setValue(0)
         self._udp_local_port.setToolTip("Optional local bind port (0 for auto)")
@@ -145,12 +149,13 @@ class ConnectionDialog(QDialog):
         # 3. Common Settings Form (Timeout & Auto-reconnect)
         common_form = QFormLayout()
         common_form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
-        common_form.setContentsMargins(0, 0, 0, 0)
 
         self._timeout_combo = QComboBox(self)
+        self._timeout_combo.setAccessibleName("Timeout")
         self._timeout_combo.addItems(["20", "50", "100", "250", "500", "1000"])
 
         self._auto_reconnect_chk = QCheckBox("Auto-reconnect on disconnect", self)
+        self._auto_reconnect_chk.setAccessibleName("Auto-reconnect on disconnect")
 
         common_form.addRow("Timeout (ms)", self._timeout_combo)
         common_form.addRow("", self._auto_reconnect_chk)
@@ -565,12 +570,14 @@ class YRangeDialog(QDialog):
         # voltage / temperatures) without being so wide that typo'd values
         # blow the axis off-screen.
         self._min_spin = QDoubleSpinBox(self)
+        self._min_spin.setAccessibleName("Y minimum value")
         self._min_spin.setRange(-1e9, 1e9)
         self._min_spin.setDecimals(3)
         self._min_spin.setSingleStep(1.0)
         self._min_spin.setValue(float(current_min))
 
         self._max_spin = QDoubleSpinBox(self)
+        self._max_spin.setAccessibleName("Y maximum value")
         self._max_spin.setRange(-1e9, 1e9)
         self._max_spin.setDecimals(3)
         self._max_spin.setSingleStep(1.0)
@@ -579,6 +586,10 @@ class YRangeDialog(QDialog):
         form.addRow("Y min", self._min_spin)
         form.addRow("Y max", self._max_spin)
         layout.addLayout(form)
+
+        self.error_label = QLabel("")
+        self.error_label.hide()
+        layout.addWidget(self.error_label)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -590,8 +601,9 @@ class YRangeDialog(QDialog):
 
     def _on_accept(self) -> None:
         if self._max_spin.value() <= self._min_spin.value():
-            # Reject silently rather than pop a second dialog — the spin
-            # boxes are right there for the user to fix.
+            self.error_label.setText("Invalid range: Max must be strictly greater than Min.")
+            self.error_label.setStyleSheet("color: #EF4444; font-weight: bold;")
+            self.error_label.show()
             self._max_spin.setFocus()
             self._max_spin.selectAll()
             return
@@ -825,7 +837,7 @@ class AboutDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("About Bytehound")
         self.setModal(True)
-        self.setFixedSize(540, 270)
+        self.setMinimumSize(540, 270)
 
         # Remove help button from title bar
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)

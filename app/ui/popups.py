@@ -34,14 +34,19 @@ class PopupsMixin:
 
     def _popup_information(self, title: str, message: str) -> None:
         self._log_popup("INFO", title, message)
-        QMessageBox.information(self, title, message)
+        from app.ui.toast import Toast
+        Toast.show_toast(self, message, level="info")
 
     def _popup_warning(self, title: str, message: str) -> None:
         self._log_popup("WARN", title, message)
-        QMessageBox.warning(self, title, message)
+        from app.ui.toast import Toast
+        Toast.show_toast(self, message, level="warning", duration_ms=4000)
 
     def _popup_critical(self, title: str, message: str) -> None:
         self._log_popup("ERROR", title, message)
+        from app.ui.toast import Toast
+        Toast.show_toast(self, message, level="error", duration_ms=5000)
+        # Keep the blocking box for critical errors as well, as they often require immediate attention
         QMessageBox.critical(self, title, message)
 
     def _popup_about(self, title: str, message: str) -> None:

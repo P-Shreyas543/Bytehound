@@ -195,11 +195,6 @@ class TelemetryPipelineMixin:
         )
         self._apply_decoded(decoded)
         if self._decoded_logger:
-            # Use the monotonic clock for elapsed_ms — wall-clock arithmetic
-            # would skip or go backward if the system clock is corrected by
-            # NTP during the session. Fall back to a freshly-sampled baseline
-            # only if logging started before _log_started_perf was captured
-            # (defensive — should not happen with the current Start path).
             if self._log_started_perf is not None:
                 elapsed_ms = int((time.perf_counter() - self._log_started_perf) * 1000)
             else:
@@ -243,10 +238,6 @@ class TelemetryPipelineMixin:
 
     def _apply_decoded(self, decoded: DecodedFrame) -> None:
         if decoded.error is not None:
-            # Decode-time issues (e.g. "no signals configured for frame_id …")
-            # are surfaced in the console for the user to investigate. They are
-            # NOT counted in the status-bar "Errors" tally — that field tracks
-            # wire-level CRC failures only.
             self._console.appendPlainText(f"[decode] {decoded.error}")
             return
         for w in decoded.warnings:
@@ -286,8 +277,11 @@ class TelemetryPipelineMixin:
                 self._set_plot_live(False, source="trigger")
                 self._log_activity("[ACTION] Plot auto-paused by trigger")
 
-            if trigger_cfg.get("log") and not self._raw_logger:
-                self._on_toggle_logging()  # Start logging
+            if trigger_cfg.get("log") and not getattr(self, "_logging", False):
+                started = self._start_logging_auto()
+                if not started:
+                    self._plot_trigger = trigger_cfg
+                    return
                 self._log_activity("[ACTION] Logging auto-started by trigger")
 
             # Update trigger button UI if it exists
@@ -322,7 +316,6 @@ class TelemetryPipelineMixin:
                                 break
                 if fault_detected:
                     key = (sig.frame_id, sig.signal_name)
-                    # Use a separate set to debounce fault notifications so we don't spam the UI
                     if not hasattr(self, "_seen_faults"):
                         self._seen_faults = set()
                     if key not in self._seen_faults:
@@ -375,8 +368,6 @@ class TelemetryPipelineMixin:
                 self._plot_history[key].append(elapsed, signal.scaled_value)
 
     def _status_text(self, signal: DecodedSignal) -> str:
-        if signal.enum_label:
-            return f"{signal.status}: {signal.enum_label}"
         if signal.bit_values:
             active = [name for name, active_state in signal.bit_values.items() if active_state]
             return f"{signal.status}: {', '.join(active) if active else 'None'}"

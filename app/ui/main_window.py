@@ -386,7 +386,7 @@ class MainWindow(
         self._default_state = self.saveState()
         self._default_geometry = self.saveGeometry()
         self._restore_window_state()
-        self._check_and_recover_temp_logs()
+        QTimer.singleShot(100, self._check_and_recover_temp_logs)
 
         if hasattr(self, "_welcome_dashboard") and self._welcome_dashboard is not None:
             from app.serial_io.serial_worker import list_available_ports

@@ -3,7 +3,7 @@
 from __future__ import annotations
 import struct
 from typing import Dict, List
-from PySide6.QtWidgets import QWidget, QHBoxLayout, QLineEdit, QTableWidgetItem, QPushButton, QSizePolicy
+from PySide6.QtWidgets import QWidget, QHBoxLayout, QSpinBox, QDoubleSpinBox, QTableWidgetItem, QPushButton, QSizePolicy
 from PySide6.QtGui import QDoubleValidator, QIntValidator
 from PySide6.QtCore import QLocale, Qt
 
@@ -53,42 +53,42 @@ class ParameterEditorMixin:
             widget = QWidget()
             layout = QHBoxLayout(widget)
             layout.setContentsMargins(2, 1, 2, 1)
-            inp = QLineEdit()
-            inp.setPlaceholderText("enter value…")
 
             lo = s.min_value
             hi = s.max_value
             if s.is_boolean:
-                inp.setPlaceholderText("0 or 1")
-                inp.setValidator(QIntValidator(0, 1))
+                inp = QSpinBox()
+                inp.setRange(0, 1)
                 inp.setToolTip("Boolean flag [0 or 1]")
             elif s.data_type in _INT_TYPES or s.data_type.startswith("int") or s.data_type.startswith("uint"):
                 ilo = int(lo) if lo is not None else -2_147_483_648
                 ihi = int(hi) if hi is not None else  2_147_483_647
-                inp.setValidator(QIntValidator(ilo, ihi))
-                inp.setPlaceholderText("enter value…")
+                inp = QSpinBox()
+                inp.setRange(ilo, ihi)
                 inp.setToolTip(f"Integer  [{ilo} … {ihi}]")
             else:
                 flo = lo if lo is not None else -1e18
                 fhi = hi if hi is not None else  1e18
-                _dv = QDoubleValidator(flo, fhi, 6)
-                _dv.setLocale(QLocale(QLocale.Language.C))
-                inp.setValidator(_dv)
-                inp.setPlaceholderText("enter value…")
+                inp = QDoubleSpinBox()
+                inp.setRange(flo, fhi)
+                inp.setDecimals(4)
                 inp.setToolTip(f"Float  [{flo:g} … {fhi:g}]")
+
+            inp.setAccessibleName(f"Write {s.signal_name}")
 
             btn = QPushButton("Write")
             btn.setSizePolicy(QSizePolicy.Policy.Minimum, QSizePolicy.Policy.Fixed)
-            btn.clicked.connect(lambda _, inp=inp, s=s: self._on_editor_write(s, inp.text()))
+            btn.clicked.connect(lambda _, inp=inp, s=s: self._on_editor_write(s, str(inp.value())))
             # Allow pressing Enter in the input to trigger write
-            inp.returnPressed.connect(lambda inp=inp, s=s: self._on_editor_write(s, inp.text()))
+            inp.lineEdit().returnPressed.connect(lambda inp=inp, s=s: self._on_editor_write(s, str(inp.value())))
             layout.addWidget(inp)
             layout.addWidget(btn)
             self._editor_table.setCellWidget(row, 3, widget)
 
     def _on_editor_write(self, signal, text: str) -> None:
         if not self._serial or not self._serial.is_open:
-            self._popup_warning("Write", "Not connected")
+            if hasattr(self, "_toast"):
+                self._toast("Cannot write: Not connected")
             return
         try:
             val = float(text)
@@ -97,7 +97,8 @@ class ParameterEditorMixin:
             if signal.max_value is not None and val > signal.max_value:
                 raise ValueError(f"Max value is {signal.max_value}")
         except ValueError as e:
-            self._popup_warning("Invalid Input", str(e))
+            if hasattr(self, "_toast"):
+                self._toast(f"Invalid input: {e}")
             return
 
         from ..protocol.packet_builder import build_packet
@@ -164,7 +165,8 @@ class ParameterEditorMixin:
             pkt = build_packet(self._config.protocol, signal.frame_id, bytes(payload))
 
         except (OverflowError, struct.error, ValueError) as exc:
-            self._popup_warning("Write Error", str(exc))
+            if hasattr(self, "_toast"):
+                self._toast(f"Write Error: {exc}")
             return
 
         self._serial.enqueue_priority_tx(pkt)

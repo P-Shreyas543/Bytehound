@@ -758,9 +758,12 @@ class FrameFormatWidget(QWidget):
             num_bools = len(bool_group)
             num_bytes = (num_bools + 7) // 8
             names = [f.field_name for f in bool_group]
-            label = names[0] if num_bools == 1 else f"Flags ({num_bools} bits)"
-            if len(", ".join(names)) <= 25:
+            if num_bools == 1:
+                label = names[0]
+            elif len(", ".join(names)) <= 25:
                 label = ", ".join(names)
+            else:
+                label = "Boolean Flags"
 
             details = "\n".join([f"• Bit {i}: {f.field_name}" for i, f in enumerate(bool_group)])
             tooltip = f"Bit-packed Boolean Flags ({num_bools} bits in {num_bytes} byte(s)):\n{details}"

@@ -40,19 +40,13 @@ class SystemDiagnosticDialog(QDialog):
         desc.setStyleSheet("color: #94a3b8;")
 
         self.results_list = QListWidget()
-        self.results_list.setStyleSheet("""
-            QListWidget { background-color: #0f172a; border: 1px solid #334155; border-radius: 6px; padding: 6px; color: #f8fafc; }
-            QListWidget::item { padding: 8px; border-bottom: 1px solid #1e293b; }
-        """)
 
         self.advice_box = QTextEdit()
         self.advice_box.setReadOnly(True)
-        self.advice_box.setStyleSheet("QTextEdit { background-color: #1e293b; border: 1px solid #334155; border-radius: 6px; color: #e2e8f0; font-family: Consolas; }")
         self.advice_box.setFixedHeight(120)
 
         btn_layout = QHBoxLayout()
         recheck_btn = QPushButton("🔄 Re-Run Checkup")
-        recheck_btn.setStyleSheet("QPushButton { background-color: #2563eb; color: white; border-radius: 4px; padding: 6px 12px; } QPushButton:hover { background-color: #3b82f6; }")
         recheck_btn.clicked.connect(self._run_diagnostics)
 
         close_btn = QPushButton("Close")
@@ -130,22 +124,22 @@ class ToastNotification(QFrame):
         self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.SubWindow | Qt.WindowType.WindowStaysOnTopHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
-        bg_color = "#1e293b"
-        border_color = "#3b82f6"
+        is_dark = self.palette().window().color().lightness() < 128
+        border_color = "palette(highlight)"
         icon = "ℹ️"
         if level == "success":
-            border_color = "#10b981"
+            border_color = "#10B981" if is_dark else "#059669"
             icon = "✅"
         elif level == "warning":
-            border_color = "#f59e0b"
+            border_color = "#F59E0B" if is_dark else "#D97706"
             icon = "⚠️"
         elif level == "error":
-            border_color = "#ef4444"
+            border_color = "#EF4444" if is_dark else "#DC2626"
             icon = "❌"
 
         self.setStyleSheet(f"""
             QFrame {{
-                background-color: {bg_color};
+                background-color: palette(alternate-base);
                 border: 2px solid {border_color};
                 border-radius: 8px;
                 padding: 10px 16px;
@@ -161,7 +155,7 @@ class ToastNotification(QFrame):
         layout = QHBoxLayout(self)
         lbl = QLabel(f"{icon}  {message}")
         lbl.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        lbl.setStyleSheet("color: #f8fafc;")
+        lbl.setStyleSheet("color: palette(text);")
         layout.addWidget(lbl)
 
         QTimer.singleShot(duration_ms, self.close)

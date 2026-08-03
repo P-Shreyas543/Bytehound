@@ -729,8 +729,8 @@ def test_normalize_table_name_collapses_underscores():
     assert _normalize_table_name("frame___config") == "frame_config"
     # CamelCase without separator matches the alias key
     assert _normalize_table_name("FrameVariables") == "variables"
-    # With space, normalizes to 'frame_variables' (no alias match — correct)
-    assert _normalize_table_name("Frame Variables") == "frame_variables"
+    # With space, normalizes to 'frame_variables' which maps to 'variables'
+    assert _normalize_table_name("Frame Variables") == "variables"
     # 'CalcGroups' (no space) hits alias 'calcgroups' → 'calc_groups'
     assert _normalize_table_name("CalcGroups") == "calc_groups"
     # Leading/trailing spaces are stripped

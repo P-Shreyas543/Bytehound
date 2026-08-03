@@ -90,6 +90,14 @@ class LoggingSessionMixin:
         if not target:
             return
 
+        self._start_logging_file(target, choice=choice)
+
+    def _start_logging_file(self, target: Path | str, choice: str = "Raw + Decoded") -> bool:
+        if self._logging or self._serial is None:
+            return False
+        log_raw = choice in ("Raw + Decoded", "Raw only")
+        log_decoded = choice in ("Raw + Decoded", "Decoded only")
+
         base = Path(target)
         base_stem = base.stem
         for suffix in ("_raw", "_decoded"):
@@ -107,11 +115,6 @@ class LoggingSessionMixin:
         else:
             decoded_path = base.with_name(f"{base_stem}.xlsx")
 
-        # Set the logging t=0 BEFORE building metadata so the timestamp written
-        # to the Metadata sheet matches the elapsed_ms baseline used in Data.
-        # _log_started_perf is the monotonic baseline that elapsed_ms is
-        # actually computed against; _log_started is the wall-clock string
-        # for the Metadata sheet.
         self._log_started = datetime.now()
         self._log_started_perf = time.perf_counter()
         flush_interval = self._log_flush_interval()
@@ -131,7 +134,7 @@ class LoggingSessionMixin:
         if decoded_path:
             if self._config is None:
                 self._popup_critical("Start Logging", "No configuration loaded.")
-                return
+                return False
             polling_active = False
             if hasattr(self, "_polling_action") and self._polling_action.isChecked():
                 polling_active = True
@@ -148,9 +151,6 @@ class LoggingSessionMixin:
         else:
             self._decoded_logger = None
 
-        # Open eagerly so header-mismatch / permission errors surface here as
-        # a popup, instead of being raised inside the 60 Hz UI flush callback
-        # (which would crash the event loop) when the first packet arrives.
         try:
             if self._raw_logger:
                 self._raw_logger.open()
@@ -158,15 +158,19 @@ class LoggingSessionMixin:
                 self._decoded_logger.open()
         except (ValueError, OSError) as exc:
             if self._raw_logger:
-                self._raw_logger.close()
-                self._raw_logger = None
+                try:
+                    self._raw_logger.close()
+                except Exception:
+                    pass
             if self._decoded_logger:
-                self._decoded_logger.close()
-                self._decoded_logger = None
-            self._popup_critical("Start Logging", f"Could not open log file:\n\n{exc}")
-            return
-
-        # Config snapshot removed per user request
+                try:
+                    self._decoded_logger.close()
+                except Exception:
+                    pass
+            self._raw_logger = None
+            self._decoded_logger = None
+            self._popup_critical("Start Logging", str(exc))
+            return False
 
         self._logging = True
         self._logging_action.setText("Stop Logging")
@@ -181,6 +185,15 @@ class LoggingSessionMixin:
         self._logging_label.setText(f"Logging: {summary}")
         self._set_status(f"Logging started ({choice}): {summary}")
         self._log_activity(f"Logging started ({choice}): {summary}")
+        return True
+
+    def _start_logging_auto(self, choice: str = "Raw + Decoded") -> bool:
+        from .main_window import APP_NAME
+        default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
+        default_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        base = default_dir / f"auto_log_{timestamp}.xlsx"
+        return self._start_logging_file(base, choice=choice)
 
     def _apply_logging_level(self, level_name: str) -> None:
         raw_level = getattr(logging, str(level_name).upper(), logging.INFO)

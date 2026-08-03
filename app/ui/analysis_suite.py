@@ -541,20 +541,17 @@ class AnalysisSuiteWindow(QMainWindow):
         subplot_settings_layout.setSpacing(4)
 
         self._subplot_settings_combo = QComboBox()
-        self._subplot_settings_combo.setFont(QFont("PT Sans", 8))
         self._subplot_settings_combo.setToolTip("Select subplot to configure settings below")
         self._subplot_settings_combo.currentTextChanged.connect(self._on_subplot_settings_combo_changed)
         subplot_settings_layout.addWidget(QLabel("Subplot:"))
         subplot_settings_layout.addWidget(self._subplot_settings_combo, 1)
 
         self._subplot_normalize_cb = QCheckBox("Norm")
-        self._subplot_normalize_cb.setFont(QFont("PT Sans", 8))
         self._subplot_normalize_cb.setToolTip("Normalize curves on the selected subplot to 0-1")
         self._subplot_normalize_cb.stateChanged.connect(self._on_subplot_normalize_toggled)
         subplot_settings_layout.addWidget(self._subplot_normalize_cb)
 
         self._subplot_smooth_cb = QCheckBox("Smooth")
-        self._subplot_smooth_cb.setFont(QFont("PT Sans", 8))
         self._subplot_smooth_cb.setToolTip("Enable rolling average smoothing on the selected subplot")
         self._subplot_smooth_cb.stateChanged.connect(self._on_subplot_smooth_toggled)
         subplot_settings_layout.addWidget(self._subplot_smooth_cb)
@@ -597,7 +594,6 @@ class AnalysisSuiteWindow(QMainWindow):
 
         # Flat tree layout
         self._param_tree = QTreeWidget()
-        self._param_tree.setFont(QFont("PT Sans", 9))
         self._param_tree.setColumnCount(2)
         self._param_tree.setHeaderLabels(["Parameter", "Subplot"])
         self._param_tree.setHeaderHidden(False)
@@ -1020,7 +1016,6 @@ class AnalysisSuiteWindow(QMainWindow):
         row.addWidget(cb)
 
         swatch = QLabel("\u25cf")
-        swatch.setFont(QFont("PT Sans", 12))
         swatch.setStyleSheet(f"color: {entry.color};")
         swatch.setFixedWidth(16)
         swatch.setCursor(Qt.PointingHandCursor)
@@ -1028,7 +1023,6 @@ class AnalysisSuiteWindow(QMainWindow):
         row.addWidget(swatch)
 
         name_lbl = QLabel(entry.name)
-        name_lbl.setFont(QFont("PT Sans", 8))
         name_lbl.setToolTip(entry.path)
         name_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         row.addWidget(name_lbl, stretch=1)
@@ -1039,7 +1033,6 @@ class AnalysisSuiteWindow(QMainWindow):
         spin.setDecimals(2)
         spin.setSuffix(" s")
         spin.setValue(entry.time_offset)
-        spin.setFont(QFont("PT Sans", 8))
         spin.setFixedWidth(80)
         spin.setToolTip("Time offset")
         spin.valueChanged.connect(lambda v, lid=entry.id: self._on_offset_changed(lid, v))
@@ -1207,7 +1200,6 @@ class AnalysisSuiteWindow(QMainWindow):
 
             # Create combobox for Column 1
             combo = QComboBox()
-            combo.setFont(QFont("PT Sans", 8))
 
             # Populate dropdown
             N = len(self._subplot_layout)

@@ -843,6 +843,7 @@ class PlotOrchestrationMixin:
             self._log_activity(
                 f"[ACTION] Added signal {fid_str} {key[1]} to panel {panel_idx + 1}"
             )
+            self._toast(f"Added {key[1]} to panel {panel_idx + 1}")
 
     def _remove_signal_from_panel(self, panel_idx: int, key: Tuple[int, str]) -> None:
         if panel_idx >= len(self._plot_panels):

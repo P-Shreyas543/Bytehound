@@ -252,8 +252,8 @@ def test_auto_pause_trigger_logic(window: MainWindow, monkeypatch) -> None:
     config = _load_canonical_or_skip(window)
     spec = config.all_signals[0]
 
-    # Mock to prevent QFileDialog hanging
-    monkeypatch.setattr(window, "_on_toggle_logging", lambda: None)
+    # Mock _start_logging_auto so the log-trigger branch returns True without touching the filesystem
+    monkeypatch.setattr(window, "_start_logging_auto", lambda: True)
 
     window._plot_live = True
     window._plot_trigger = {

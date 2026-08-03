@@ -36,17 +36,13 @@ class WelcomeDashboardWidget(QWidget):
 
         # Header Banner
         header = QFrame()
-        header.setStyleSheet("QFrame { background-color: #1e293b; border-radius: 12px; padding: 16px; }")
+        header.setFrameShape(QFrame.Shape.StyledPanel)
         header_layout = QHBoxLayout(header)
 
         title_v = QVBoxLayout()
         app_title = QLabel("🐾 Bytehound Telemetry & Control Suite")
-        app_title.setFont(QFont("Segoe UI", 18, QFont.Weight.Bold))
-        app_title.setStyleSheet("color: #38bdf8;")
-
+        
         app_subtitle = QLabel("Framed Serial Telemetry Logger, Command Controller & Multi-Grid Oscilloscope")
-        app_subtitle.setFont(QFont("Segoe UI", 10))
-        app_subtitle.setStyleSheet("color: #94a3b8;")
 
         title_v.addWidget(app_title)
         title_v.addWidget(app_subtitle)
@@ -54,10 +50,8 @@ class WelcomeDashboardWidget(QWidget):
         header_layout.addStretch()
 
         help_btn = QPushButton("📚 Open User Guide")
-        help_btn.setStyleSheet("""
-            QPushButton { background-color: #0f766e; color: white; font-weight: bold; border-radius: 6px; padding: 8px 16px; }
-            QPushButton:hover { background-color: #14b8a6; }
-        """)
+        help_btn.setAccessibleName("Open User Guide")
+        help_btn.setAccessibleDescription("Opens the documentation for Bytehound in your default browser.")
         help_btn.clicked.connect(self.open_manual_requested.emit)
         header_layout.addWidget(help_btn)
 
@@ -69,17 +63,20 @@ class WelcomeDashboardWidget(QWidget):
 
         # Step 1: Hardware Connection Card
         step1_box = QGroupBox("1. Hardware Connection")
-        step1_box.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-        step1_box.setStyleSheet("QGroupBox { border: 1px solid #334155; border-radius: 8px; margin-top: 12px; padding: 16px; } QGroupBox::title { color: #f8fafc; subcontrol-origin: margin; left: 12px; padding: 0 4px; }")
         s1_layout = QVBoxLayout(step1_box)
 
         self.port_combo = QComboBox()
+        self.port_combo.setAccessibleName("Serial Port Selection")
+        self.port_combo.setAccessibleDescription("Select the COM port of the connected hardware.")
+        
         self.baud_combo = QComboBox()
+        self.baud_combo.setAccessibleName("Baud Rate Selection")
+        self.baud_combo.setAccessibleDescription("Select the baud rate for the serial connection.")
         self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"])
         self.baud_combo.setCurrentText("115200")
 
         self.refresh_ports_btn = QPushButton("🔄 Refresh Ports")
-        self.refresh_ports_btn.setStyleSheet("QPushButton { background-color: #334155; color: white; border-radius: 4px; padding: 6px; } QPushButton:hover { background-color: #475569; }")
+        self.refresh_ports_btn.setAccessibleName("Refresh Ports Button")
 
         port_h = QHBoxLayout()
         port_h.addWidget(QLabel("COM Port:"))
@@ -91,11 +88,8 @@ class WelcomeDashboardWidget(QWidget):
         baud_h.addWidget(self.baud_combo, 1)
 
         self.connect_btn = QPushButton("⚡ Connect Serial Device")
-        self.connect_btn.setFont(QFont("Segoe UI", 10, QFont.Weight.Bold))
-        self.connect_btn.setStyleSheet("""
-            QPushButton { background-color: #16a34a; color: white; border-radius: 6px; padding: 10px; }
-            QPushButton:hover { background-color: #22c55e; }
-        """)
+        self.connect_btn.setAccessibleName("Connect Serial Device Button")
+        self.connect_btn.setAccessibleDescription("Initiates the serial connection using the selected port and baud rate.")
         self.connect_btn.clicked.connect(self._on_connect_clicked)
 
         s1_layout.addLayout(port_h)
@@ -105,27 +99,24 @@ class WelcomeDashboardWidget(QWidget):
 
         # Step 2: Protocol Selection Card
         step2_box = QGroupBox("2. Protocol Configuration")
-        step2_box.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-        step2_box.setStyleSheet("QGroupBox { border: 1px solid #334155; border-radius: 8px; margin-top: 12px; padding: 16px; } QGroupBox::title { color: #f8fafc; subcontrol-origin: margin; left: 12px; padding: 0 4px; }")
         s2_layout = QVBoxLayout(step2_box)
 
         s2_desc = QLabel("Select a preset protocol template or load your custom configuration file:")
-        s2_desc.setStyleSheet("color: #cbd5e1;")
 
         self.preset_combo = QComboBox()
         for p_name in BUILTIN_PRESETS.keys():
             self.preset_combo.addItem(f"Preset: {p_name}", p_name)
 
         apply_preset_btn = QPushButton("✓ Use Selected Preset")
-        apply_preset_btn.setStyleSheet("QPushButton { background-color: #2563eb; color: white; font-weight: bold; border-radius: 4px; padding: 6px; } QPushButton:hover { background-color: #3b82f6; }")
+        apply_preset_btn.setAccessibleName("Apply Preset Button")
         apply_preset_btn.clicked.connect(self._on_preset_applied)
 
         load_file_btn = QPushButton("📂 Load Config (.xlsx / CSV)")
-        load_file_btn.setStyleSheet("QPushButton { background-color: #475569; color: white; border-radius: 4px; padding: 6px; } QPushButton:hover { background-color: #64748b; }")
+        load_file_btn.setAccessibleName("Load Configuration File Button")
         load_file_btn.clicked.connect(self.load_config_requested.emit)
 
         wizard_btn = QPushButton("🪄 Open Visual Protocol Wizard")
-        wizard_btn.setStyleSheet("QPushButton { background-color: #d97706; color: white; font-weight: bold; border-radius: 4px; padding: 8px; } QPushButton:hover { background-color: #f59e0b; }")
+        wizard_btn.setAccessibleName("Open Protocol Wizard Button")
         wizard_btn.clicked.connect(self.open_wizard_requested.emit)
 
         preset_h = QHBoxLayout()
@@ -140,12 +131,11 @@ class WelcomeDashboardWidget(QWidget):
 
         # Step 3: Recent Configurations & Quick Launch Card
         step3_box = QGroupBox("3. Recent Profiles")
-        step3_box.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-        step3_box.setStyleSheet("QGroupBox { border: 1px solid #334155; border-radius: 8px; margin-top: 12px; padding: 16px; } QGroupBox::title { color: #f8fafc; subcontrol-origin: margin; left: 12px; padding: 0 4px; }")
         s3_layout = QVBoxLayout(step3_box)
 
         self.recent_list = QListWidget()
-        self.recent_list.setStyleSheet("QListWidget { background-color: #0f172a; border: 1px solid #334155; border-radius: 4px; color: #e2e8f0; padding: 4px; } QListWidget::item:hover { background-color: #1e293b; }")
+        self.recent_list.setAccessibleName("Recent Profiles List")
+        self.recent_list.setAccessibleDescription("Double click a recent profile to instantly connect and load its configuration.")
         self.recent_list.itemDoubleClicked.connect(self._on_recent_double_clicked)
 
         s3_layout.addWidget(self.recent_list)

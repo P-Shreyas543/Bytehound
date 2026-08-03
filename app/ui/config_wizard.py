@@ -26,6 +26,7 @@ class ProtocolWizardDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("🪄 New Protocol & Frame Configuration Wizard")
         self.resize(900, 650)
+        self.setMinimumSize(400, 300)
 
         # Config state
         self._profile_name = "Custom Device Protocol"
@@ -54,13 +55,13 @@ class ProtocolWizardDialog(QDialog):
 
         # Title bar banner
         banner = QWidget()
-        banner.setStyleSheet("background-color: #1e293b; border-bottom: 1px solid #334155;")
+        banner.setStyleSheet("background-color: palette(alternate-base); border-bottom: 1px solid palette(mid);")
         b_layout = QHBoxLayout(banner)
         b_layout.setContentsMargins(16, 12, 16, 12)
 
         self.title_lbl = QLabel("Step 1 of 4: Communication & Framing Setup")
         self.title_lbl.setFont(QFont("Segoe UI", 12, QFont.Weight.Bold))
-        self.title_lbl.setStyleSheet("color: #38bdf8;")
+        self.title_lbl.setStyleSheet("color: palette(highlight);")
         b_layout.addWidget(self.title_lbl)
 
         main_layout.addWidget(banner)
@@ -79,14 +80,17 @@ class ProtocolWizardDialog(QDialog):
         nav_h.setContentsMargins(16, 8, 16, 16)
 
         self.back_btn = QPushButton("⬅ Previous")
+        self.back_btn.setAccessibleName("Previous Step")
         self.back_btn.setEnabled(False)
         self.back_btn.clicked.connect(self._on_prev)
 
         self.next_btn = QPushButton("Next Step ➡")
-        self.next_btn.setStyleSheet("QPushButton { background-color: #2563eb; color: white; font-weight: bold; padding: 6px 16px; border-radius: 4px; } QPushButton:hover { background-color: #3b82f6; }")
+        self.next_btn.setAccessibleName("Next Step")
+        self.next_btn.setStyleSheet("font-weight: bold; padding: 6px 16px;")
         self.next_btn.clicked.connect(self._on_next)
 
         cancel_btn = QPushButton("Cancel")
+        cancel_btn.setAccessibleName("Cancel")
         cancel_btn.clicked.connect(self.reject)
 
         nav_h.addWidget(cancel_btn)
@@ -142,6 +146,17 @@ class ProtocolWizardDialog(QDialog):
         b_layout.addLayout(h3)
         b_layout.addLayout(h4)
 
+        # Accessibility and Tab Order
+        self.profile_name_edit.setAccessibleName("Protocol Name")
+        self.header_hex_edit.setAccessibleName("Header Hex")
+        self.frame_id_size_spin.setAccessibleName("Frame ID Size")
+        self.length_size_spin.setAccessibleName("Payload Length Size")
+        self.crc_combo.setAccessibleName("CRC Type")
+        QWidget.setTabOrder(self.profile_name_edit, self.header_hex_edit)
+        QWidget.setTabOrder(self.header_hex_edit, self.frame_id_size_spin)
+        QWidget.setTabOrder(self.frame_id_size_spin, self.length_size_spin)
+        QWidget.setTabOrder(self.length_size_spin, self.crc_combo)
+
         layout.addWidget(box)
         layout.addStretch()
         return page
@@ -151,9 +166,10 @@ class ProtocolWizardDialog(QDialog):
         layout = QVBoxLayout(page)
 
         lbl = QLabel("Define serial frame IDs, frame names, and expected payload byte lengths:")
-        lbl.setStyleSheet("color: #cbd5e1;")
+        lbl.setStyleSheet("color: palette(mid);")
 
         self.frames_table = QTableWidget(len(self._frames), 4)
+        self.frames_table.setAccessibleName("Frames Configuration Table")
         self.frames_table.setHorizontalHeaderLabels(["Frame ID", "Frame Name", "Payload Length", "Direction"])
         self.frames_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
@@ -183,9 +199,10 @@ class ProtocolWizardDialog(QDialog):
         layout = QVBoxLayout(page)
 
         lbl = QLabel("Define decoded signals (data variables, scale factors, units, and ranges):")
-        lbl.setStyleSheet("color: #cbd5e1;")
+        lbl.setStyleSheet("color: palette(mid);")
 
         self.vars_table = QTableWidget(len(self._variables), 8)
+        self.vars_table.setAccessibleName("Signals Configuration Table")
         self.vars_table.setHorizontalHeaderLabels(["Frame ID", "Signal Name", "Data Type", "Scale", "Offset", "Unit", "Group", "Description"])
         self.vars_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
@@ -222,11 +239,11 @@ class ProtocolWizardDialog(QDialog):
         b_layout = QVBoxLayout(box)
 
         self.summary_label = QLabel("Click 'Generate & Save' to export your new configuration workbook.")
-        self.summary_label.setStyleSheet("color: #38bdf8; font-size: 14px;")
+        self.summary_label.setStyleSheet("font-size: 14px;")
 
         save_btn = QPushButton("💾 Generate & Save Workbook (.xlsx)")
-        save_btn.setFont(QFont("Segoe UI", 11, QFont.Weight.Bold))
-        save_btn.setStyleSheet("QPushButton { background-color: #16a34a; color: white; padding: 12px; border-radius: 6px; } QPushButton:hover { background-color: #22c55e; }")
+        save_btn.setAccessibleName("Generate and Save Configuration")
+        save_btn.setAccessibleDescription("Generates the Excel configuration file and prompts to save it to disk.")
         save_btn.clicked.connect(self._save_wizard_config)
 
         b_layout.addWidget(self.summary_label)
@@ -248,7 +265,9 @@ class ProtocolWizardDialog(QDialog):
     def _del_frame_row(self) -> None:
         r = self.frames_table.currentRow()
         if r >= 0:
-            self.frames_table.removeRow(r)
+            resp = QMessageBox.question(self, "Delete Frame", "Are you sure you want to delete this frame?")
+            if resp == QMessageBox.StandardButton.Yes:
+                self.frames_table.removeRow(r)
 
     def _add_var_row(self) -> None:
         r = self.vars_table.rowCount()
@@ -265,7 +284,9 @@ class ProtocolWizardDialog(QDialog):
     def _del_var_row(self) -> None:
         r = self.vars_table.currentRow()
         if r >= 0:
-            self.vars_table.removeRow(r)
+            resp = QMessageBox.question(self, "Delete Signal", "Are you sure you want to delete this signal?")
+            if resp == QMessageBox.StandardButton.Yes:
+                self.vars_table.removeRow(r)
 
     def _on_next(self) -> None:
         idx = self.stack.currentIndex()
@@ -303,8 +324,15 @@ class ProtocolWizardDialog(QDialog):
                 crc_size = 0
             elif crc_type == "crc32":
                 crc_size = 4
-            else:
+            elif crc_type.startswith("crc16"):
                 crc_size = 2
+            else:
+                crc_size = 0
+
+            length_size = self.length_size_spin.value()
+            if length_size < 1:
+                QMessageBox.warning(self, "Invalid Input", "Payload Length Size must be >= 1 for framed protocols.")
+                return
 
             # Build DataFrames
             protocol_df = pd.DataFrame([{
