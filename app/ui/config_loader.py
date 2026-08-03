@@ -28,6 +28,15 @@ from ..decoder.config_loader import ConfigError, load_config
 from ..protocol.packet_parser import create_parser
 
 
+def format_display_data_type(data_type: str, byte_length: int) -> str:
+    dt = (data_type or "").strip().lower()
+    if dt in ("uint", "int", "float"):
+        if dt == "float":
+            return f"float{byte_length * 8}"
+        return f"{dt}{byte_length * 8}"
+    return data_type or "-"
+
+
 class ConfigLoaderMixin:
     """MainWindow mixin holding config load/save/recent methods."""
 
@@ -220,6 +229,8 @@ class ConfigLoaderMixin:
         self._update_poll_status_sidebar()
         self._populate_editor_table()
         self._refresh_config_status()
+        if hasattr(self, "_cards_view") and self._cards_view is not None:
+            self._cards_view.rebuild_from_config(self._config)
         self._remember_config(path)
         self._refresh_action_state()
         self._set_status(f"Loaded config from {path}")
@@ -241,12 +252,16 @@ class ConfigLoaderMixin:
             return [value]
         return [str(item) for item in value if str(item)]
 
-    def _remember_config(self, path: Path) -> None:
+    def _remember_config(self, path: Path | str | dict) -> None:
+        if isinstance(path, dict):
+            return
         path_text = str(path)
         recent = [item for item in self._recent_paths() if item != path_text]
         recent.insert(0, path_text)
         self._settings.setValue("recent_configs", recent[:8])
         self._populate_recent_selector()
+        if hasattr(self, "_welcome_dashboard") and self._welcome_dashboard is not None:
+            self._welcome_dashboard.set_recent_configs(self._recent_paths())
 
     def _populate_recent_selector(self) -> None:
         if not hasattr(self, "_recent_config_combo"):
@@ -274,7 +289,7 @@ class ConfigLoaderMixin:
                     "Group": signal.group or "-",
                     "Variable": signal.signal_name,
                     "Start B.": str(signal.start_byte),
-                    "Data Type": signal.data_type or "-",
+                    "Data Type": format_display_data_type(signal.data_type, signal.byte_length),
                     "Raw": "-",
                     "Value": "-",
                     "Unit": signal.unit,

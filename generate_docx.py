@@ -852,10 +852,10 @@ def main():
     with open(HTML_PATH, encoding="utf-8") as f:
         soup = BeautifulSoup(f.read(), "lxml")
 
-    container = soup.select_one("div.container")
+    container = soup.select_one(".content-body") or soup.select_one("div.container")
     if container is None:
         container = soup.find("body")
-        print("  Warning: div.container not found — falling back to <body>.")
+        print("  Warning: Content container not found — falling back to <body>.")
 
     children = [el for el in container.children
                 if hasattr(el, "name") and el.name]

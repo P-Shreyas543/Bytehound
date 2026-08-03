@@ -254,6 +254,11 @@ class SignalSpec:
     read_write: str = "R"
     min_value: Optional[float] = None
     max_value: Optional[float] = None
+    bit_offset: Optional[int] = None
+
+    @property
+    def is_boolean(self) -> bool:
+        return self.data_type in ("bool", "boolean") or self.bit_offset is not None
 
     @property
     def end_byte(self) -> int:

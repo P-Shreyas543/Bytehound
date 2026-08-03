@@ -57,6 +57,10 @@ except ImportError:  # pragma: no cover
 
 from .plot_panel import GRID_LAYOUTS
 from .telemetry_model import TelemetryTableModel, COLUMNS as _MODEL_COLUMNS
+from .welcome_dashboard import WelcomeDashboardWidget
+from .telemetry_cards import TelemetryCardsView
+from .config_wizard import ProtocolWizardDialog
+from .diagnostics_assistant import SystemDiagnosticDialog, ToastNotification
 from .widgets import (
     _BTN_GREEN,
     _BTN_YELLOW,
@@ -206,6 +210,13 @@ class UIBuildersMixin:
         self._plot_settings_action = QAction(_icon("mdi6.chart-line", _ic), "Plot Settings...", self)
         self._plot_settings_action.triggered.connect(self._on_plot_settings)
 
+        self._wizard_action = QAction(_icon("mdi6.wand", _ic), "New Protocol Wizard...", self)
+        self._wizard_action.setShortcut(QKeySequence("Ctrl+N"))
+        self._wizard_action.triggered.connect(self._on_open_protocol_wizard)
+
+        self._system_diagnostic_action = QAction(_icon("mdi6.stethoscope", _ic), "System Diagnostic Checkup...", self)
+        self._system_diagnostic_action.triggered.connect(self._on_system_diagnostic)
+
     def _build_menus(self) -> None:
         menubar = self.menuBar()
 
@@ -215,6 +226,7 @@ class UIBuildersMixin:
             menubar.addSeparator()
 
         file_menu = menubar.addMenu("&File")
+        file_menu.addAction(self._wizard_action)
         file_menu.addAction(self._load_config_action)
         file_menu.addAction(self._edit_config_action)
         file_menu.addAction(self._export_template_action)
@@ -238,6 +250,8 @@ class UIBuildersMixin:
         _add_sep()
 
         tools_menu = menubar.addMenu("&Tools")
+        tools_menu.addAction(self._system_diagnostic_action)
+        tools_menu.addAction(self._wizard_action)
         tools_menu.addAction(self._analysis_action)
         tools_menu.addAction(self._logging_settings_action)
         tools_menu.addAction(self._plot_settings_action)
@@ -374,15 +388,29 @@ class UIBuildersMixin:
         self._open_log_btn.setToolTip("Open Log Folder")
         self._open_log_btn.clicked.connect(self._on_open_log_folder)
 
-        center_layout.addLayout(top_row)
-        center_layout.addWidget(self._table)
+        self._cards_view = TelemetryCardsView(center_widget)
+        self._view_stack = QStackedWidget(center_widget)
+        self._view_stack.addWidget(self._table)       # index 0: Table
+        self._view_stack.addWidget(self._cards_view)  # index 1: Subsystem Cards
 
-        # Two-page stack: empty-state for first launch / no config loaded,
-        # full table view once a config is present. _refresh_action_state
-        # flips the page so the swap is automatic on load + on disconnect.
+        self._view_table_btn = QPushButton("📋 Table View", center_widget)
+        self._view_cards_btn = QPushButton("🎴 Subsystem Cards", center_widget)
+        self._view_table_btn.clicked.connect(lambda: self._view_stack.setCurrentIndex(0))
+        self._view_cards_btn.clicked.connect(lambda: self._view_stack.setCurrentIndex(1))
+        top_row.addWidget(self._view_table_btn)
+        top_row.addWidget(self._view_cards_btn)
+
+        center_layout.addLayout(top_row)
+        center_layout.addWidget(self._view_stack)
+
+        self._welcome_dashboard = WelcomeDashboardWidget(self)
+
+        # 2-page central stack:
+        # Index 0: Welcome & Quick Launch Dashboard (startup / no config)
+        # Index 1: Loaded Telemetry Data View (contains Table + Cards View stack)
         self._central_stack = QStackedWidget(self)
-        self._central_stack.addWidget(self._build_empty_state())  # index 0
-        self._central_stack.addWidget(center_widget)               # index 1
+        self._central_stack.addWidget(self._welcome_dashboard)  # index 0
+        self._central_stack.addWidget(center_widget)             # index 1
         self.setCentralWidget(self._central_stack)
 
         # Connection dock REMOVED — Connect button opens ConnectionDialog popup.

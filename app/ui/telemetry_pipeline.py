@@ -125,6 +125,8 @@ class TelemetryPipelineMixin:
                 val_item.setText(disp_val)
             for tx_val_lbl in getattr(self, "_tx_current_value_labels", {}).get(signal.signal_name, ()):
                 tx_val_lbl.setText(f"Current: {disp_val}")
+            if hasattr(self, "_cards_view") and self._cards_view is not None:
+                self._cards_view.update_signal_value(signal.signal_name, signal.scaled_value if signal.scaled_value is not None else "-", getattr(signal, "status", "ok"))
 
         self._staged_signals_for_ui.clear()
 

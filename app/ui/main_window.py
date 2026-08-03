@@ -388,11 +388,74 @@ class MainWindow(
         self._restore_window_state()
         self._check_and_recover_temp_logs()
 
+        if hasattr(self, "_welcome_dashboard") and self._welcome_dashboard is not None:
+            from app.serial_io.serial_worker import list_available_ports
+            self._welcome_dashboard.connect_requested.connect(self._on_dashboard_connect)
+            self._welcome_dashboard.load_config_requested.connect(self._on_load_config)
+            self._welcome_dashboard.preset_selected.connect(self._on_load_preset)
+            self._welcome_dashboard.open_wizard_requested.connect(self._on_open_protocol_wizard)
+            self._welcome_dashboard.open_manual_requested.connect(self._on_view_docs)
+            self._welcome_dashboard.recent_config_selected.connect(lambda p: self._load_config_from_path(Path(p)))
+            ports = list_available_ports()
+            self._welcome_dashboard.update_ports(ports)
+            self._welcome_dashboard.set_recent_configs(self._recent_paths())
+            self._welcome_dashboard.refresh_ports_btn.clicked.connect(
+                lambda: self._welcome_dashboard.update_ports(list_available_ports())
+            )
+
+        if hasattr(self, "_cards_view") and self._cards_view is not None:
+            self._cards_view.quick_plot_requested.connect(self._on_quick_plot_signal)
+
         self._log_activity(f"[SESSION] Started {APP_DISPLAY_NAME} v{self._version}")
 
     # ------------------------------------------------------------------
-    # UI construction
+    # UI construction & Handlers
     # ------------------------------------------------------------------
+
+    def _on_dashboard_connect(self, port: str, baud: int) -> None:
+        if self._config is None:
+            from app.decoder.protocol_presets import PRESET_SINGLE_CELL_BMS
+            self._load_config_from_path(PRESET_SINGLE_CELL_BMS)
+        from app.serial_io.connection import SerialSettings
+        settings = SerialSettings(port=port, baud_rate=baud)
+        self._attempt_connect(settings)
+
+    def _on_open_protocol_wizard(self) -> None:
+        self._log_activity("[ACTION] Open Protocol Wizard")
+        from .config_wizard import ProtocolWizardDialog
+        dlg = ProtocolWizardDialog(parent=self)
+        dlg.protocol_created.connect(lambda path: self._load_config_from_path(Path(path)))
+        dlg.exec()
+
+    def _on_system_diagnostic(self) -> None:
+        self._log_activity("[ACTION] Open System Diagnostic Checkup")
+        from .diagnostics_assistant import SystemDiagnosticDialog
+        port = self._saved_settings.port if self._saved_settings else ""
+        baud = self._saved_settings.baud_rate if self._saved_settings else 115200
+        dlg = SystemDiagnosticDialog(config=self._config, active_port=port, active_baud=baud, parent=self)
+        dlg.exec()
+
+    def _on_load_preset(self, preset_name: str) -> None:
+        from app.decoder.protocol_presets import BUILTIN_PRESETS
+        if preset_name in BUILTIN_PRESETS:
+            self._log_activity(f"[ACTION] Load Preset: {preset_name}")
+            try:
+                self._load_config_from_path(BUILTIN_PRESETS[preset_name])
+                self._toast(f"Loaded preset '{preset_name}'")
+            except Exception as exc:
+                self._popup_critical("Preset Error", str(exc))
+
+    def _on_quick_plot_signal(self, signal_name: str) -> None:
+        if self._config is None:
+            return
+        for frame_id, sigs in self._config.signals_by_frame.items():
+            for sig in sigs:
+                if sig.signal_name == signal_name:
+                    key = (frame_id, signal_name)
+                    if key not in self._plot_keys:
+                        self._add_signal_to_panel(0, key)
+                        self._toast(f"Added {signal_name} to Live Plot")
+                    return
 
 
 

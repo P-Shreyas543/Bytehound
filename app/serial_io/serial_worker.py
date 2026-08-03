@@ -43,6 +43,14 @@ from ..decoder.types import FrameConfig, PollingScheduleSpec, ProtocolConfig
 _LOG = logging.getLogger("bytehound.serial_io.worker")
 
 
+def list_available_ports() -> List[str]:
+    """Return a list of available serial COM port device names."""
+    try:
+        return [p.device for p in list_ports.comports()]
+    except Exception:
+        return []
+
+
 class TcpSocketWrapper:
     def __init__(self, host: str, port: int, timeout: float = 0.05):
         self.host = host

@@ -77,35 +77,39 @@ _TX_COMMAND_FIELDS_REQUIRED = {"command_name", "signal_name", "data_type"}
 _SERIAL_DEFAULTS_REQUIRED = {"baud_rate", "data_bits", "stop_bits", "parity", "timeout_ms"}
 
 
-def load_config(path: str | Path) -> FrameConfig:
-    """Load a config directory or an Excel workbook."""
+def load_config(path: str | Path | dict) -> FrameConfig:
+    """Load a config directory, an Excel workbook, or a preset dictionary."""
 
-    source = Path(path)
-    if source.is_file() and source.suffix.lower() in {".xlsx", ".xlsm"}:
-        tables = _read_excel_tables(source)
-        base_label = source.name
-    elif source.is_file() and source.suffix.lower() == ".json":
-        import json
-        with source.open("r", encoding="utf-8") as fp:
-            tables = json.load(fp)
-        for key in tables:
-            tables[key] = [{k: hex(v) if k in {"id_or_address", "frame_id", "frame_id_hex"} and isinstance(v, int) and not isinstance(v, bool) else str(v) for k, v in row.items()} for row in tables[key]]
-        base_label = source.name
-    elif source.is_file() and source.suffix.lower() in {".yaml", ".yml"}:
-        try:
-            import yaml
-        except ImportError as exc:
-            raise ConfigError("YAML config requires pyyaml") from exc
-        with source.open("r", encoding="utf-8") as fp:
-            tables = yaml.safe_load(fp)
-        for key in tables:
-            tables[key] = [{k: hex(v) if k in {"id_or_address", "frame_id", "frame_id_hex"} and isinstance(v, int) and not isinstance(v, bool) else str(v) for k, v in row.items()} for row in tables[key]]
-        base_label = source.name
-    elif source.is_dir():
-        tables = _read_csv_tables(source)
-        base_label = str(source)
+    if isinstance(path, dict):
+        tables = {str(k).lower(): v for k, v in path.items()}
+        base_label = "Preset"
     else:
-        raise ConfigError(f"Config path does not exist or format unsupported: {source}")
+        source = Path(path)
+        if source.is_file() and source.suffix.lower() in {".xlsx", ".xlsm"}:
+            tables = _read_excel_tables(source)
+            base_label = source.name
+        elif source.is_file() and source.suffix.lower() == ".json":
+            import json
+            with source.open("r", encoding="utf-8") as fp:
+                tables = json.load(fp)
+            for key in tables:
+                tables[key] = [{k: hex(v) if k in {"id_or_address", "frame_id", "frame_id_hex"} and isinstance(v, int) and not isinstance(v, bool) else str(v) for k, v in row.items()} for row in tables[key]]
+            base_label = source.name
+        elif source.is_file() and source.suffix.lower() in {".yaml", ".yml"}:
+            try:
+                import yaml
+            except ImportError as exc:
+                raise ConfigError("YAML config requires pyyaml") from exc
+            with source.open("r", encoding="utf-8") as fp:
+                tables = yaml.safe_load(fp)
+            for key in tables:
+                tables[key] = [{k: hex(v) if k in {"id_or_address", "frame_id", "frame_id_hex"} and isinstance(v, int) and not isinstance(v, bool) else str(v) for k, v in row.items()} for row in tables[key]]
+            base_label = source.name
+        elif source.is_dir():
+            tables = _read_csv_tables(source)
+            base_label = str(source)
+        else:
+            raise ConfigError(f"Config path does not exist or format unsupported: {source}")
     protocol_rows = tables.get("protocol", [])
     required_cols = set(_PROTOCOL_REQUIRED)
     if protocol_rows:
@@ -318,22 +322,27 @@ def _normalize_byte_order(
     raise ConfigError(f"{source}: {column} must be 'big' or 'little' (got {value!r})")
 
 
-def _to_int(value: str, *, field_name: str) -> int:
+def _to_int(value: Any, *, field_name: str) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    val_str = str(value).strip()
     try:
-        return int(value, 0)
+        return int(val_str, 0)
     except ValueError:
         try:
-            return int(value, 16)
+            return int(val_str, 16)
         except ValueError as exc:
             raise ConfigError(f"Invalid integer for {field_name!r}: {value!r}") from exc
 
 
-def _to_optional_int(value: str, *, field_name: str) -> Optional[int]:
-    return None if value.strip() == "" else _to_int(value, field_name=field_name)
+def _to_optional_int(value: Any, *, field_name: str) -> Optional[int]:
+    if value is None or str(value).strip() == "":
+        return None
+    return _to_int(value, field_name=field_name)
 
 
-def _to_float(value: str, default: float, field_name: str) -> float:
-    if value == "":
+def _to_float(value: Any, default: float, field_name: str) -> float:
+    if value is None or str(value).strip() == "":
         return default
     try:
         return float(value)
@@ -341,12 +350,16 @@ def _to_float(value: str, default: float, field_name: str) -> float:
         raise ConfigError(f"Invalid number for {field_name!r}: {value!r}") from exc
 
 
-def _to_optional_float(value: str, field_name: str) -> Optional[float]:
-    return None if value == "" else _to_float(value, 0.0, field_name)
+def _to_optional_float(value: Any, field_name: str) -> Optional[float]:
+    if value is None or str(value).strip() == "":
+        return None
+    return _to_float(value, 0.0, field_name)
 
 
-def _to_bool(value: str, *, default: bool = False, field_name: str = "") -> bool:
-    s = value.strip().lower()
+def _to_bool(value: Any, *, default: bool = False, field_name: str = "") -> bool:
+    if isinstance(value, bool):
+        return value
+    s = str(value).strip().lower()
     if s == "":
         return default
     if s in {"true", "1", "yes", "y", "t"}:
@@ -497,7 +510,7 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
             raise ConfigError("protocol: Waveshare CAN header must be 0xAA")
         if protocol.footer != b"\x55":
             raise ConfigError("protocol: Waveshare CAN footer must be 0x55")
-    else:
+    elif protocol.parser_type != "modbus_rtu":
         if not protocol.header:
             raise ConfigError("protocol: header_hex must not be empty")
     if protocol.frame_id_byte_order not in {"big", "little"}:
@@ -576,6 +589,7 @@ def _parse_variables(
 ) -> List[SignalSpec]:
     signals: List[SignalSpec] = []
     offsets: Dict[int, int] = {}
+    bool_bit_counts: Dict[int, int] = {}
     seen: Dict[int, set[str]] = {}
 
     is_modbus = (parser_type == "modbus_rtu")
@@ -605,6 +619,12 @@ def _parse_variables(
 
         start_index = _to_int(row.get("start_index", "1") or "1", field_name="start_index")
 
+        is_bool = fmt in ("bool", "boolean")
+        if not is_bool and frame_id in bool_bit_counts:
+            pending = bool_bit_counts.pop(frame_id)
+            used = (pending + 7) // 8
+            offsets[frame_id] = offsets.get(frame_id, 0) + used
+
         byte_length = FMT_SIZES[fmt]
         data_type = _fmt_to_data_type(fmt)
         start = offsets.get(frame_id, 0)
@@ -619,12 +639,24 @@ def _parse_variables(
             curr_idx = start_index + idx
             signal_name = name if count == 1 else f"{name}_{curr_idx}"
             _check_signal_uniqueness(seen, frame_id, signal_name, source="variables")
+
+            if is_bool:
+                bit_idx = bool_bit_counts.get(frame_id, 0)
+                byte_off = bit_idx // 8
+                bit_off = bit_idx % 8
+                sig_start = start + byte_off
+                sig_bit_off = bit_off
+                bool_bit_counts[frame_id] = bit_idx + 1
+            else:
+                sig_start = start + idx * byte_length
+                sig_bit_off = None
+
             signals.append(
                 SignalSpec(
                     frame_id=frame_id,
                     frame_name=frame.frame_name,
                     signal_name=signal_name,
-                    start_byte=start + idx * byte_length,
+                    start_byte=sig_start,
                     byte_length=byte_length,
                     endianness=endian,
                     data_type=data_type,
@@ -639,9 +671,16 @@ def _parse_variables(
                     read_write=ReadWrite.parse(row.get("read_write", "")).value,
                     min_value=_to_optional_float(row.get("min_value", ""), "variables.min_value"),
                     max_value=_to_optional_float(row.get("max_value", ""), "variables.max_value"),
+                    bit_offset=sig_bit_off,
                 )
             )
-        offsets[frame_id] = start + count * byte_length
+        if not is_bool:
+            offsets[frame_id] = start + count * byte_length
+
+    for fid, pending in bool_bit_counts.items():
+        used = (pending + 7) // 8
+        offsets[fid] = offsets.get(fid, 0) + used
+
     return signals
 
 
@@ -717,16 +756,19 @@ def _validate_signal_ranges(signals: Iterable[SignalSpec]) -> None:
             raise ConfigError(f"{sig.signal_name}: start_byte must be >= 0")
         by_frame.setdefault(sig.frame_id, []).append(sig)
     for frame_id, specs in by_frame.items():
-        ordered = sorted(specs, key=lambda s: (s.start_byte, s.end_byte))
+        ordered = sorted(specs, key=lambda s: (s.start_byte, s.end_byte, s.bit_offset if s.bit_offset is not None else -1))
         last_end = -1
-        last_name = ""
+        last_sig: Optional[SignalSpec] = None
         for sig in ordered:
-            if sig.start_byte < last_end:
+            if sig.is_boolean and last_sig is not None and last_sig.is_boolean and sig.start_byte == last_sig.start_byte:
+                pass
+            elif sig.start_byte < last_end:
+                last_name = last_sig.signal_name if last_sig else ""
                 raise ConfigError(
                     f"frame 0x{frame_id:X}: signal {sig.signal_name!r} overlaps {last_name!r}"
                 )
             last_end = sig.end_byte
-            last_name = sig.signal_name
+            last_sig = sig
 
 
 def _parse_bitfields(

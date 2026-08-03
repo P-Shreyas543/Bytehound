@@ -373,6 +373,18 @@ def test_auto_created_frames_default_rxtx(tmp_path):
     assert cfg.frames[0x0099].direction == "rxtx"
 
 
+def test_format_display_data_type():
+    from app.ui.config_loader import format_display_data_type
+    assert format_display_data_type("uint", 2) == "uint16"
+    assert format_display_data_type("int", 2) == "int16"
+    assert format_display_data_type("uint", 4) == "uint32"
+    assert format_display_data_type("int", 4) == "int32"
+    assert format_display_data_type("float", 4) == "float32"
+    assert format_display_data_type("float", 8) == "float64"
+    assert format_display_data_type("boolean", 1) == "boolean"
+    assert format_display_data_type("uint16", 2) == "uint16"
+
+
 def test_csv_filename_normalization(tmp_path):
     """CSV file stems should be normalized using _normalize_table_name, allowing aliases."""
     _write_basic_protocol(tmp_path)

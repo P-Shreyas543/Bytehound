@@ -154,6 +154,8 @@ _INT_FMT_CHAR = {
 
 
 def _decode_raw_at(payload: bytes, spec: SignalSpec) -> Union[int, float]:
+    if spec.bit_offset is not None:
+        return (payload[spec.start_byte] >> spec.bit_offset) & 1
     """Decode a single raw value at ``spec.start_byte`` without slicing.
 
     ``struct.unpack_from`` reads directly from the payload bytes object;
@@ -178,7 +180,7 @@ def _decode_raw_at(payload: bytes, spec: SignalSpec) -> Union[int, float]:
     # Cached "no native struct code" — odd byte length int.
     W = spec.byte_length
     start = spec.start_byte
-    signed = spec.data_type == "int"
+    signed = spec.data_type == "int" or (spec.data_type.startswith("int") and not spec.data_type.startswith("uint"))
 
     if W == 3 and start + 4 <= len(payload):
         if spec.endianness == "little":
@@ -215,9 +217,9 @@ _UNCACHED: object = object()
 
 def _build_struct_for(spec: SignalSpec) -> Optional[struct.Struct]:
     endian = "<" if spec.endianness == "little" else ">"
-    if spec.data_type == "float":
+    if spec.data_type == "float" or spec.data_type.startswith("float"):
         return struct.Struct(endian + ("f" if spec.byte_length == 4 else "d"))
-    signed = spec.data_type == "int"
+    signed = spec.data_type == "int" or (spec.data_type.startswith("int") and not spec.data_type.startswith("uint"))
     fmt_char = _INT_FMT_CHAR.get((spec.byte_length, signed))
     if fmt_char is None:
         return None

@@ -58,10 +58,15 @@ class ParameterEditorMixin:
 
             lo = s.min_value
             hi = s.max_value
-            if s.data_type in _INT_TYPES:
+            if s.is_boolean:
+                inp.setPlaceholderText("0 or 1")
+                inp.setValidator(QIntValidator(0, 1))
+                inp.setToolTip("Boolean flag [0 or 1]")
+            elif s.data_type in _INT_TYPES or s.data_type.startswith("int") or s.data_type.startswith("uint"):
                 ilo = int(lo) if lo is not None else -2_147_483_648
                 ihi = int(hi) if hi is not None else  2_147_483_647
                 inp.setValidator(QIntValidator(ilo, ihi))
+                inp.setPlaceholderText("enter value…")
                 inp.setToolTip(f"Integer  [{ilo} … {ihi}]")
             else:
                 flo = lo if lo is not None else -1e18
@@ -69,6 +74,7 @@ class ParameterEditorMixin:
                 _dv = QDoubleValidator(flo, fhi, 6)
                 _dv.setLocale(QLocale(QLocale.Language.C))
                 inp.setValidator(_dv)
+                inp.setPlaceholderText("enter value…")
                 inp.setToolTip(f"Float  [{flo:g} … {fhi:g}]")
 
             btn = QPushButton("Write")
@@ -102,18 +108,19 @@ class ParameterEditorMixin:
 
             # Step 2: encode raw into bytes per data_type and byte_order
             byteorder: str = signal.endianness   # "little" | "big"
-            dt: str = signal.data_type            # "uint8", "int16", "float32", etc.
+            dt: str = signal.data_type.lower()   # "uint8", "int16", "float32", "uint", etc.
 
             if "float" in dt:
                 fmt = ("<" if byteorder == "little" else ">") + (
                     "f" if signal.byte_length == 4 else "d"
                 )
                 encoded = struct.pack(fmt, float(raw))
-            elif "int" in dt:
-                signed = dt.startswith("int")
-                encoded = round(raw).to_bytes(signal.byte_length, byteorder, signed=signed)
             else:
-                raise ValueError(f"Unsupported data_type for write: {dt!r}")
+                signed = dt.startswith("int") and not dt.startswith("uint")
+                val_int = round(raw)
+                if signal.is_boolean:
+                    val_int = 1 if val_int != 0 else 0
+                encoded = val_int.to_bytes(signal.byte_length, byteorder, signed=signed)
 
             if len(encoded) != signal.byte_length:
                 raise ValueError(
