@@ -834,38 +834,6 @@ def _parse_variables(
 
         start_index = _to_int(row.get("start_index", "1") or "1", field_name="start_index")
 
-    if protocol.parser_type == "waveshare_can":
-        if protocol.header != b"\xAA":
-            raise ConfigError("protocol: Waveshare CAN header must be 0xAA")
-        if protocol.footer != b"\x55":
-            raise ConfigError("protocol: Waveshare CAN footer must be 0x55")
-    elif protocol.parser_type != "modbus_rtu":
-        if not protocol.header:
-            raise ConfigError("protocol: header_hex must not be empty")
-    if protocol.frame_id_byte_order not in {"big", "little"}:
-        raise ConfigError("protocol: frame_id_byte_order must be big or little")
-    if protocol.crc_byte_order not in {"big", "little"}:
-        raise ConfigError("protocol: crc_byte_order must be big or little")
-    if protocol.length_meaning not in {"payload_only", "frame_total", "header_to_crc", "payload_plus_crc"}:
-        raise ConfigError(
-            f"protocol: length_meaning must be one of "
-            f"'payload_only', 'frame_total', 'header_to_crc', 'payload_plus_crc' "
-            f"(got {protocol.length_meaning!r})"
-        )
-    if protocol.crc_coverage not in {"header_to_payload", "frame_id_to_payload", "payload_only", "full_frame"}:
-        raise ConfigError(
-            f"protocol: crc_coverage must be one of "
-            f"'header_to_payload', 'frame_id_to_payload', 'payload_only', 'full_frame' "
-            f"(got {protocol.crc_coverage!r})"
-        )
-    if protocol.escape_mode not in {"none", "slip", "hdlc", "cobs"}:
-        raise ConfigError(
-            f"protocol: escape_mode must be one of "
-            f"'none', 'slip', 'hdlc', 'cobs' (got {protocol.escape_mode!r})"
-        )
-    if protocol.parser_type not in {"framed", "modbus_rtu", "waveshare_can"}:
-        raise ConfigError("protocol: parser_type must be framed, modbus_rtu, or waveshare_can")
-
 
 def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
     frames: Dict[int, FrameDefinition] = {}
