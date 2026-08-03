@@ -185,10 +185,93 @@ def test_frame_format_widget_boolean_blocks():
     cfg = FrameConfig(protocol=proto)
     widget = FrameFormatWidget(cfg)
     blocks = widget._compute_tx_field_blocks(fields)
+
     assert len(blocks) == 1
     label, num_bytes, color, tooltip = blocks[0]
+    assert label == "Boolean Flags"
     assert num_bytes == 1
     assert "Discharge Load 1" in tooltip
     assert "Discharge Load 4" in tooltip
 
+
+def test_parameter_editor_boolean_bit_offset_write():
+    from app.ui.parameter_editor import ParameterEditorMixin
+    from app.decoder.types import SignalSpec, ProtocolConfig, FrameConfig, FrameDefinition
+    from unittest.mock import MagicMock
+
+    class MockMainWindow(ParameterEditorMixin):
+        def __init__(self):
+            proto = ProtocolConfig("Test", b"\xAA\x55", 2, "little", 1, "payload_only", "none", 0, "little", "header_to_payload", b"", "none", True)
+            self._config = FrameConfig(protocol=proto)
+            self._serial = MagicMock()
+            self._serial.is_open = True
+            self._logged = []
+
+        def _log_activity(self, msg):
+            self.activity_log = msg
+
+        def _popup_warning(self, title, msg):
+            pass
+
+    win = MockMainWindow()
+    sig_enable = SignalSpec(frame_id=0x6000, frame_name="Control", signal_name="Cell Enable", start_byte=0, byte_length=1, endianness="little", data_type="boolean", scale=1.0, offset=0.0, unit="", bit_offset=0)
+    sig_select = SignalSpec(frame_id=0x6000, frame_name="Control", signal_name="Cell Select", start_byte=0, byte_length=1, endianness="little", data_type="boolean", scale=1.0, offset=0.0, unit="", bit_offset=1)
+
+    win._on_editor_write(sig_enable, "1.0")
+    enable_pkt = win._serial.enqueue_priority_tx.call_args[0][0]
+    # Header (AA 55), ID (00 60), Len (01), Payload (01) -> AA5500600101
+    assert enable_pkt.hex().upper() == "AA5500600101"
+
+    win._on_editor_write(sig_select, "1.0")
+    select_pkt = win._serial.enqueue_priority_tx.call_args[0][0]
+    # Bit preservation: Bit 0 (Cell Enable=1) + Bit 1 (Cell Select=1) -> 0x01 | 0x02 = 0x03 -> AA5500600103
+    assert select_pkt.hex().upper() == "AA5500600103"
+
+    win._on_editor_write(sig_select, "0.0")
+    clear_pkt = win._serial.enqueue_priority_tx.call_args[0][0]
+    # Bit 1 cleared: 0x03 & ~0x02 = 0x01 -> AA5500600101
+    assert clear_pkt.hex().upper() == "AA5500600101"
+
+
+def test_parameter_editor_boolean_write_uses_latest_payload():
+    from app.ui.parameter_editor import ParameterEditorMixin
+    from app.decoder.types import SignalSpec, ProtocolConfig, FrameConfig, FrameDefinition
+    from unittest.mock import MagicMock
+
+    class MockMainWindow(ParameterEditorMixin):
+        def __init__(self):
+            proto = ProtocolConfig("Test", b"\xAA\x55", 2, "little", 1, "payload_only", "none", 0, "little", "header_to_payload", b"", "none", True)
+            self._config = FrameConfig(
+                protocol=proto,
+                frames={0x6000: FrameDefinition(0x6000, "Control", payload_length=2)},
+            )
+            self._latest_payload_by_frame = {0x6000: b"\x02\x99"}
+            self._serial = MagicMock()
+            self._serial.is_open = True
+
+        def _log_activity(self, msg):
+            self.activity_log = msg
+
+        def _popup_warning(self, title, msg):
+            raise AssertionError(msg)
+
+    win = MockMainWindow()
+    sig_enable = SignalSpec(
+        frame_id=0x6000,
+        frame_name="Control",
+        signal_name="Cell Enable",
+        start_byte=0,
+        byte_length=1,
+        endianness="little",
+        data_type="boolean",
+        scale=1.0,
+        offset=0.0,
+        unit="",
+        bit_offset=0,
+    )
+
+    win._on_editor_write(sig_enable, "1")
+    pkt = win._serial.enqueue_priority_tx.call_args[0][0]
+
+    assert pkt.hex().upper() == "AA550060020399"
 

@@ -168,6 +168,11 @@ class WelcomeDashboardWidget(QWidget):
             self.connect_btn.setEnabled(True)
             if current in ports:
                 self.port_combo.setCurrentText(current)
+            else:
+                from ..serial_io.serial_worker import auto_detect_primary_port
+                primary = auto_detect_primary_port()
+                if primary and primary in ports:
+                    self.port_combo.setCurrentText(primary)
 
     def set_recent_configs(self, paths: List[str]) -> None:
         self.recent_list.clear()

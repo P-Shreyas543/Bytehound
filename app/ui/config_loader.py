@@ -28,7 +28,9 @@ from ..decoder.config_loader import ConfigError, load_config
 from ..protocol.packet_parser import create_parser
 
 
-def format_display_data_type(data_type: str, byte_length: int) -> str:
+def format_display_data_type(data_type: str, byte_length: int, is_boolean: bool = False) -> str:
+    if is_boolean or (data_type or "").strip().lower() in ("bool", "boolean"):
+        return "boolean"
     dt = (data_type or "").strip().lower()
     if dt in ("uint", "int", "float"):
         if dt == "float":
@@ -186,6 +188,10 @@ class ConfigLoaderMixin:
         self._session_started = datetime.now()
         self._apply_plot_time_mode(self._plot_time_mode, persist=False)
         self._plot_history.clear()
+        if hasattr(self, "_tx_frame_payload_cache"):
+            self._tx_frame_payload_cache.clear()
+        if hasattr(self, "_latest_payload_by_frame"):
+            self._latest_payload_by_frame.clear()
         self._seen_decode_warnings.clear()
         self._unsolicited_detected = False
         self._packet_count = 0
@@ -289,7 +295,7 @@ class ConfigLoaderMixin:
                     "Group": signal.group or "-",
                     "Variable": signal.signal_name,
                     "Start B.": str(signal.start_byte),
-                    "Data Type": format_display_data_type(signal.data_type, signal.byte_length),
+                    "Data Type": format_display_data_type(signal.data_type, signal.byte_length, signal.is_boolean),
                     "Raw": "-",
                     "Value": "-",
                     "Unit": signal.unit,

@@ -107,7 +107,7 @@ class ProtocolWizardDialog(QDialog):
         self.header_hex_edit = QLineEdit(self._header_hex)
 
         self.crc_combo = QComboBox()
-        self.crc_combo.addItems(list(SUPPORTED_CRC_TYPES.keys()))
+        self.crc_combo.addItems(sorted(SUPPORTED_CRC_TYPES))
         self.crc_combo.setCurrentText(self._crc_type)
 
         self.frame_id_size_spin = QSpinBox()
@@ -115,7 +115,7 @@ class ProtocolWizardDialog(QDialog):
         self.frame_id_size_spin.setValue(self._frame_id_size)
 
         self.length_size_spin = QSpinBox()
-        self.length_size_spin.setRange(0, 2)
+        self.length_size_spin.setRange(1, 4)
         self.length_size_spin.setValue(self._length_size)
 
         f_layout = QVBoxLayout()
@@ -298,6 +298,14 @@ class ProtocolWizardDialog(QDialog):
             return
 
         try:
+            crc_type = self.crc_combo.currentText()
+            if crc_type == "none":
+                crc_size = 0
+            elif crc_type == "crc32":
+                crc_size = 4
+            else:
+                crc_size = 2
+
             # Build DataFrames
             protocol_df = pd.DataFrame([{
                 "profile_name": self.profile_name_edit.text() or "Custom Protocol",
@@ -308,8 +316,8 @@ class ProtocolWizardDialog(QDialog):
                 "length_size": self.length_size_spin.value(),
                 "length_meaning": "payload_only",
                 "length_byte_order": "",
-                "crc_type": self.crc_combo.currentText(),
-                "crc_size": 2,
+                "crc_type": crc_type,
+                "crc_size": crc_size,
                 "crc_byte_order": "little",
                 "crc_coverage": "header_to_payload",
                 "footer_hex": "",

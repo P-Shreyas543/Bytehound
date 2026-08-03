@@ -414,9 +414,9 @@ class MainWindow(
 
     def _on_dashboard_connect(self, port: str, baud: int) -> None:
         if self._config is None:
-            from app.decoder.protocol_presets import PRESET_SINGLE_CELL_BMS
+            from ..decoder.protocol_presets import PRESET_SINGLE_CELL_BMS
             self._load_config_from_path(PRESET_SINGLE_CELL_BMS)
-        from app.serial_io.connection import SerialSettings
+        from ..serial_io.serial_worker import SerialSettings
         settings = SerialSettings(port=port, baud_rate=baud)
         self._attempt_connect(settings)
 
@@ -1028,6 +1028,10 @@ class MainWindow(
             title = "Closing" if reason == "Application closed" else "Saving Log"
             self._stop_logging(title=title)
             self._log_activity("[INFO] Logging auto-stopped on disconnect")
+        if hasattr(self, "_tx_frame_payload_cache"):
+            self._tx_frame_payload_cache.clear()
+        if hasattr(self, "_latest_payload_by_frame"):
+            self._latest_payload_by_frame.clear()
         if self._serial is not None:
             try:
                 self._serial.close()   # calls stop() + wait(2000) + port.close()
@@ -1124,8 +1128,18 @@ class MainWindow(
         self._attempt_connect(settings)
 
     def _on_serial_error(self, err: str) -> None:
-        self._log_activity(f"Serial Error: {err}")
-        self._disconnect(reason=f"Error: {err}")
+        """Handle non-fatal worker errors (per-schedule failures).
+
+        The worker's ``error_occurred`` signal is only emitted for
+        per-schedule problems (auto-disable, build failures) — never for
+        connection-level errors. Disconnecting the session was wrong: a
+        single broken schedule killed the entire live data stream. Fatal
+        disconnects are handled by ``connection_lost``.
+        """
+        self._log_activity(f"[ERROR] {err}")
+        if hasattr(self, "_warning_badge") and self._warning_badge is not None:
+            self._warning_badge.setVisible(True)
+            self._warning_badge.setToolTip(err)
 
     def _on_serial_warning(self, msg: str) -> None:
         self._log_activity(f"[WARN] {msg}")

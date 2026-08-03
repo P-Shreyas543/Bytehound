@@ -645,6 +645,7 @@ class WaveshareCanParser(ParserProtocol):
                 raw = bytes(buf_mv[:20])
 
             frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
+            consumed = 19 if is_19_byte_corrupted else 20
             pkt = ParsedPacket(
                 raw=raw,
                 frame_id=frame_id,
@@ -652,7 +653,7 @@ class WaveshareCanParser(ParserProtocol):
                 ok=False,
                 error=err_msg
             )
-            return pkt, 1
+            return pkt, consumed
 
         # Find 0xAA header index
         idx = self._buf.find(0xAA)

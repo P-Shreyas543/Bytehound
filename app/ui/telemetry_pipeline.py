@@ -8,6 +8,7 @@ from typing import Optional, List, Tuple, Deque
 
 from ..decoder.frame_decoder import DecodedFrame, DecodedSignal, decode_frame
 from ..protocol.packet_parser import ParsedPacket
+from .config_loader import format_display_data_type
 from .logging_session import _format_number
 
 
@@ -183,6 +184,10 @@ class TelemetryPipelineMixin:
         # The worker thread already decoded for us so the GUI thread doesn't
         # block on decode work. The rare worker-decode-error fallback path
         # goes through decode_frame here.
+        if not hasattr(self, "_latest_payload_by_frame"):
+            self._latest_payload_by_frame = {}
+        if packet.frame_id is not None:
+            self._latest_payload_by_frame[packet.frame_id] = bytes(packet.payload)
         if not hasattr(self, "_signal_state"):
             self._signal_state = {}
         decoded = pre_decoded if pre_decoded is not None else decode_frame(
@@ -212,13 +217,18 @@ class TelemetryPipelineMixin:
         data_type: str,
         unit: str,
         is_calculated: bool = False,
+        byte_length: int = 1,
+        is_boolean: bool = False,
     ) -> None:
         """Add a new row to the telemetry model (called for runtime-discovered signals)."""
         key = ("calc", signal_name) if is_calculated else (frame_id, signal_name)
         self._signal_unit_map[key] = unit
 
         start_byte_str = "-" if is_calculated else str(start_byte)
-        data_type_str = "float" if is_calculated else (data_type or "-")
+        if is_calculated:
+            data_type_str = "float"
+        else:
+            data_type_str = format_display_data_type(data_type, byte_length, is_boolean)
 
         self._table_model.add_row(
             key=key,
@@ -341,6 +351,8 @@ class TelemetryPipelineMixin:
                     spec.data_type if spec else "-",
                     signal.unit,
                     signal.is_calculated,
+                    byte_length=spec.byte_length if spec else 1,
+                    is_boolean=spec.is_boolean if spec else False,
                 )
 
             if signal.raw_value is None and not signal.is_calculated:

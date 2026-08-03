@@ -51,6 +51,22 @@ def list_available_ports() -> List[str]:
         return []
 
 
+def auto_detect_primary_port() -> Optional[str]:
+    """Auto-detect the most likely connected hardware serial port."""
+    try:
+        ports = list_ports.comports()
+        if not ports:
+            return None
+        # Prefer USB / Serial devices over virtual / bluetooth ports
+        for p in ports:
+            desc = (p.description or "").lower()
+            if "usb" in desc or "serial" in desc or "uart" in desc or "ch340" in desc or "ftdi" in desc or "cp210" in desc:
+                return p.device
+        return ports[0].device
+    except Exception:
+        return None
+
+
 class TcpSocketWrapper:
     def __init__(self, host: str, port: int, timeout: float = 0.05):
         self.host = host

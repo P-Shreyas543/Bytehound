@@ -13,7 +13,7 @@ from __future__ import annotations
 import csv
 import difflib
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from .types import (
     FMT_SIZES,
@@ -81,7 +81,7 @@ def load_config(path: str | Path | dict) -> FrameConfig:
     """Load a config directory, an Excel workbook, or a preset dictionary."""
 
     if isinstance(path, dict):
-        tables = {str(k).lower(): v for k, v in path.items()}
+        tables = _coerce_mapping_tables(path)
         base_label = "Preset"
     else:
         source = Path(path)
@@ -91,9 +91,7 @@ def load_config(path: str | Path | dict) -> FrameConfig:
         elif source.is_file() and source.suffix.lower() == ".json":
             import json
             with source.open("r", encoding="utf-8") as fp:
-                tables = json.load(fp)
-            for key in tables:
-                tables[key] = [{k: hex(v) if k in {"id_or_address", "frame_id", "frame_id_hex"} and isinstance(v, int) and not isinstance(v, bool) else str(v) for k, v in row.items()} for row in tables[key]]
+                tables = _coerce_mapping_tables(json.load(fp))
             base_label = source.name
         elif source.is_file() and source.suffix.lower() in {".yaml", ".yml"}:
             try:
@@ -101,9 +99,7 @@ def load_config(path: str | Path | dict) -> FrameConfig:
             except ImportError as exc:
                 raise ConfigError("YAML config requires pyyaml") from exc
             with source.open("r", encoding="utf-8") as fp:
-                tables = yaml.safe_load(fp)
-            for key in tables:
-                tables[key] = [{k: hex(v) if k in {"id_or_address", "frame_id", "frame_id_hex"} and isinstance(v, int) and not isinstance(v, bool) else str(v) for k, v in row.items()} for row in tables[key]]
+                tables = _coerce_mapping_tables(yaml.safe_load(fp))
             base_label = source.name
         elif source.is_dir():
             tables = _read_csv_tables(source)
@@ -177,6 +173,39 @@ def load_config(path: str | Path | dict) -> FrameConfig:
     return cfg
 
 
+def _coerce_mapping_tables(raw_tables: dict) -> Dict[str, List[Dict[str, str]]]:
+    """Normalize table names and scalar values for dict/JSON/YAML configs."""
+
+    if not isinstance(raw_tables, dict):
+        raise ConfigError("Config mapping must be a dictionary of table rows")
+
+    tables: Dict[str, List[Dict[str, str]]] = {}
+    for key, rows in raw_tables.items():
+        table_name = _normalize_table_name(str(key))
+        if rows is None:
+            rows = []
+        if not isinstance(rows, list):
+            raise ConfigError(f"{table_name}: expected a list of row objects")
+        normalized_rows: List[Dict[str, str]] = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ConfigError(f"{table_name}: expected row objects")
+            normalized_rows.append(
+                {
+                    str(k).strip(): (
+                        hex(v)
+                        if k in {"id_or_address", "frame_id", "frame_id_hex"}
+                        and isinstance(v, int)
+                        and not isinstance(v, bool)
+                        else str(v)
+                    )
+                    for k, v in row.items()
+                }
+            )
+        tables.setdefault(table_name, []).extend(normalized_rows)
+    return tables
+
+
 def _read_csv_tables(directory: Path) -> Dict[str, List[Dict[str, str]]]:
     tables: Dict[str, List[Dict[str, str]]] = {}
     for file in directory.glob("*.csv"):
@@ -219,27 +248,53 @@ def _normalize_table_name(name: str) -> str:
     chars = []
     for ch in name.strip():
         chars.append(ch.lower() if ch.isalnum() else "_")
-    normalized = "_".join("".join(chars).split("_")).strip("_")
+    normalized = "_".join(part for part in "".join(chars).split("_") if part)
     aliases = {
+        "protocols": "protocol",
+        "protocol": "protocol",
+        "frames": "frames",
+        "frame": "frames",
+        "variables": "variables",
+        "variable": "variables",
         "framevariables": "variables",
+        "framevariable": "variables",
+        "frame_variables": "variables",
+        "frame_variable": "variables",
         "frameconfig": "frame_config",
+        "frameconfigs": "frame_config",
+        "frame_config": "frame_config",
+        "frame_configs": "frame_config",
+        "bitfield": "bitfields",
+        "bitfields": "bitfields",
+        "enum": "enums",
+        "enums": "enums",
+        "calcgroup": "calc_groups",
         "calcgroups": "calc_groups",
+        "calc_group": "calc_groups",
+        "calc_groups": "calc_groups",
+        "txcommand": "tx_commands",
         "txcommands": "tx_commands",
+        "tx_command": "tx_commands",
+        "tx_commands": "tx_commands",
+        "txcommandfield": "tx_command_fields",
         "txcommandfields": "tx_command_fields",
+        "tx_command_field": "tx_command_fields",
+        "tx_command_fields": "tx_command_fields",
+        "serialdefault": "serial_defaults",
         "serialdefaults": "serial_defaults",
+        "serial_default": "serial_defaults",
+        "serial_defaults": "serial_defaults",
         "pollingschedule": "polling_schedule",
+        "pollingschedules": "polling_schedule",
+        "polling_schedule": "polling_schedule",
+        "polling_schedules": "polling_schedule",
     }
     return aliases.get(normalized, normalized)
 
 
 def _format_missing_columns(missing: set[str], available: set[str]) -> str:
-    """Render a missing-columns list with did-you-mean hints.
-
-    For each missing column, look for the closest match among the columns
-    the user actually wrote (anything with a similarity ratio above 0.6).
-    The hint catches the most common cause: a header typo like ``frame_id``
-    vs ``frame_id_hex``, or ``signalname`` vs ``signal_name``.
-    """
+    """Render a missing-columns list with did-you-mean hints."""
+    import difflib
     parts: List[str] = []
     for col in sorted(missing):
         match = difflib.get_close_matches(col, list(available), n=1, cutoff=0.6)
@@ -264,6 +319,148 @@ def _required_table(
         raise ConfigError(
             f"{name}: missing required columns: {_format_missing_columns(missing, fields)}"
         )
+    return rows
+
+
+def _optional_columns_ok(rows: List[Dict[str, str]], required: set[str], name: str) -> None:
+    if not rows:
+        return
+    fields = set(rows[0])
+    missing = required - fields
+    if missing:
+        raise ConfigError(
+            f"{name}: missing required columns: {_format_missing_columns(missing, fields)}"
+        )
+
+
+def _is_blank_row(row: Dict[str, str]) -> bool:
+    return all((v or "").strip() == "" for v in row.values())
+
+
+def _check_signal_uniqueness(
+    seen: Dict[int, set[str]], frame_id: int, signal_name: str, *, source: str
+) -> None:
+    """Reject duplicate signal names within the same frame.
+
+    Both the modern Variables loader and the legacy FrameConfig loader
+    enforce this rule. Sharing the helper means a future tweak (e.g.
+    case-insensitive uniqueness, or unicode-normalised) lands in one place.
+    """
+    frame_seen = seen.setdefault(frame_id, set())
+    if signal_name in frame_seen:
+        raise ConfigError(
+            f"{source}: duplicate signal {signal_name!r} in frame 0x{frame_id:X}"
+        )
+    frame_seen.add(signal_name)
+
+
+def _normalize_byte_order(
+    value: str,
+    *,
+    source: str,
+    column: str = "byte_order",
+    default: str = "little",
+) -> str:
+    """Return ``"big"`` or ``"little"`` for a byte-order cell, defaulting to
+    *default* when blank. Raises a clear ConfigError on any other value.
+
+    Both signal loaders (modern + legacy) and the TX-fields loader need this
+    check; centralising it avoids three slightly-different error messages.
+    ``column`` is the user-facing column name so legacy callers (which use
+    ``endianness``) get an error that names the column they actually edited.
+    """
+    normalised = (value or "").strip().lower()
+    if normalised == "":
+        return default
+    if normalised in {"big", "little"}:
+        return normalised
+    raise ConfigError(f"{source}: {column} must be 'big' or 'little' (got {value!r})")
+
+
+def _to_int(value: Any, *, field_name: str) -> int:
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    val_str = str(value).strip()
+    try:
+        return int(val_str, 0)
+    except ValueError:
+        try:
+            return int(val_str, 16)
+        except ValueError as exc:
+            raise ConfigError(f"Invalid integer for {field_name!r}: {value!r}") from exc
+
+
+def _to_optional_int(value: Any, *, field_name: str) -> Optional[int]:
+    if value is None or str(value).strip() == "":
+        return None
+    return _to_int(value, field_name=field_name)
+
+
+def _to_float(value: Any, default: float, field_name: str) -> float:
+    if value is None or str(value).strip() == "":
+        return default
+    try:
+        return float(value)
+    except ValueError as exc:
+        raise ConfigError(f"Invalid number for {field_name!r}: {value!r}") from exc
+
+
+def _to_optional_float(value: Any, field_name: str) -> Optional[float]:
+    if value is None or str(value).strip() == "":
+        return None
+    return _to_float(value, 0.0, field_name)
+
+
+def _to_bool(value: Any, *, default: bool = False, field_name: str = "") -> bool:
+    if isinstance(value, bool):
+        return value
+    s = str(value).strip().lower()
+    if s == "":
+        return default
+    if s in {"true", "1", "yes", "y", "t"}:
+        return True
+    if s in {"false", "0", "no", "n", "f"}:
+        return False
+    raise ConfigError(f"Invalid boolean for {field_name!r}: {value!r}")
+
+
+def _hex_to_bytes(value: str, field_name: str) -> bytes:
+    cleaned = value.replace(" ", "").replace("0x", "").replace("0X", "")
+    if cleaned == "":
+        return b""
+    if len(cleaned) % 2 != 0:
+        raise ConfigError(f"{field_name}: hex string must have even length: {value!r}")
+    try:
+        return bytes.fromhex(cleaned)
+    except ValueError as exc:
+        raise ConfigError(f"{field_name}: invalid hex {value!r}") from exc
+
+
+def _parse_frame_id(value: str, *, field_name: str = "frame_id") -> int:
+    cleaned = value.strip()
+    if cleaned == "":
+        raise ConfigError(f"{field_name} is required")
+    if cleaned.lower().startswith("0x"):
+        return _to_int(cleaned, field_name=field_name)
+    # Spreadsheet users often write IDs as 0010; treat that as hex.
+    try:
+        return int(cleaned, 16)
+    except ValueError as exc:
+        raise ConfigError(f"Invalid frame ID for {field_name}: {value!r}") from exc
+
+
+def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
+    non_blank_rows = [r for r in rows if not _is_blank_row(r)]
+    enabled_rows = [
+        r for r in non_blank_rows if _to_bool(r.get("enabled", "true"), default=True, field_name="protocol.enabled")
+    ]
+    if not enabled_rows:
+        raise ConfigError("protocol: no enabled protocol profile found")
+    if len(enabled_rows) > 1:
+        raise ConfigError("protocol: more than one enabled profile")
+
+    row = enabled_rows[0]
+    parser_type_val = ParserType.parse(row.get("parser_type", "")).value
     return rows
 
 
@@ -455,9 +652,12 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
     else:
         length_meaning = length_meaning_val
 
-    crc_size_val = row.get("crc_size", "")
+    crc_size_val = (row.get("crc_size") or "").strip()
     if is_waveshare and not crc_size_val:
         crc_size = 0
+    elif not crc_size_val:
+        expected_crc_sizes = {"none": 0, "crc16_modbus": 2, "crc16_ccitt": 2, "crc32": 4}
+        crc_size = expected_crc_sizes.get(crc_type, 0)
     else:
         crc_size = _to_int(crc_size_val, field_name="crc_size")
 
@@ -480,11 +680,8 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         crc_size=crc_size,
         crc_byte_order=_normalize_byte_order(
             row.get("crc_byte_order", ""), source="protocol", column="crc_byte_order", default=crc_default),
-        # crc_coverage: only "header_to_payload" is implemented; default to it
-        # so the column can be omitted from user-facing config sheets.
         crc_coverage=(row.get("crc_coverage") or "header_to_payload").strip().lower(),
         footer=_hex_to_bytes(footer_hex_val, "footer_hex"),
-        # escape_mode: only "none" is implemented; default to it.
         escape_mode=(row.get("escape_mode") or "none").strip().lower(),
         enabled=True,
         parser_type=parser_type_val,
@@ -500,6 +697,24 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
 
 
 def _validate_protocol(protocol: ProtocolConfig) -> None:
+    if protocol.frame_id_size < 1:
+        raise ConfigError("protocol: frame_id_size must be >= 1")
+    if protocol.parser_type == "framed" and protocol.length_size < 1:
+        raise ConfigError("protocol: length_size must be >= 1 for framed protocols")
+
+    expected_crc_sizes = {
+        "none": 0,
+        "crc16_modbus": 2,
+        "crc16_ccitt": 2,
+        "crc32": 4,
+    }
+    expected_crc_size = expected_crc_sizes.get(protocol.crc_type)
+    if expected_crc_size is not None and protocol.crc_size != expected_crc_size:
+        raise ConfigError(
+            f"protocol: crc_size must be {expected_crc_size} when "
+            f"crc_type is {protocol.crc_type!r} (got {protocol.crc_size})"
+        )
+
     if protocol.parser_type == "modbus_rtu":
         if protocol.frame_id_byte_order != "big":
             raise ConfigError("protocol: Modbus RTU register addresses (frame_id_byte_order) must be big-endian")
@@ -619,15 +834,142 @@ def _parse_variables(
 
         start_index = _to_int(row.get("start_index", "1") or "1", field_name="start_index")
 
+    if protocol.parser_type == "waveshare_can":
+        if protocol.header != b"\xAA":
+            raise ConfigError("protocol: Waveshare CAN header must be 0xAA")
+        if protocol.footer != b"\x55":
+            raise ConfigError("protocol: Waveshare CAN footer must be 0x55")
+    elif protocol.parser_type != "modbus_rtu":
+        if not protocol.header:
+            raise ConfigError("protocol: header_hex must not be empty")
+    if protocol.frame_id_byte_order not in {"big", "little"}:
+        raise ConfigError("protocol: frame_id_byte_order must be big or little")
+    if protocol.crc_byte_order not in {"big", "little"}:
+        raise ConfigError("protocol: crc_byte_order must be big or little")
+    if protocol.length_meaning not in {"payload_only", "frame_total", "header_to_crc", "payload_plus_crc"}:
+        raise ConfigError(
+            f"protocol: length_meaning must be one of "
+            f"'payload_only', 'frame_total', 'header_to_crc', 'payload_plus_crc' "
+            f"(got {protocol.length_meaning!r})"
+        )
+    if protocol.crc_coverage not in {"header_to_payload", "frame_id_to_payload", "payload_only", "full_frame"}:
+        raise ConfigError(
+            f"protocol: crc_coverage must be one of "
+            f"'header_to_payload', 'frame_id_to_payload', 'payload_only', 'full_frame' "
+            f"(got {protocol.crc_coverage!r})"
+        )
+    if protocol.escape_mode not in {"none", "slip", "hdlc", "cobs"}:
+        raise ConfigError(
+            f"protocol: escape_mode must be one of "
+            f"'none', 'slip', 'hdlc', 'cobs' (got {protocol.escape_mode!r})"
+        )
+    if protocol.parser_type not in {"framed", "modbus_rtu", "waveshare_can"}:
+        raise ConfigError("protocol: parser_type must be framed, modbus_rtu, or waveshare_can")
+
+
+def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
+    frames: Dict[int, FrameDefinition] = {}
+    for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row) or (not row.get("frame_id", "").strip() and not row.get("frame_name", "").strip()):
+            continue
+        frame_id = _parse_frame_id(row["frame_id"], field_name=f"frames row {row_no}.frame_id")
+        enabled = _to_bool(row.get("enabled", "true"), default=True, field_name="frames.enabled")
+        if not enabled:
+            continue
+        direction_raw = (row.get("direction", "") or "").strip().lower()
+        if direction_raw == "":
+            direction = "rxtx"
+        elif direction_raw in {"rx", "tx", "rxtx"}:
+            direction = direction_raw
+        else:
+            raise ConfigError(
+                f"frames row {row_no}: direction must be 'rx', 'tx', 'rxtx', "
+                f"or blank (got {direction_raw!r})"
+            )
+
+        payload_length = _to_optional_int(row.get("payload_length", ""), field_name="payload_length")
+        if frame_id in frames:
+            existing = frames[frame_id]
+            merged_dir = "rxtx" if existing.direction != direction else direction
+            use_existing_rx = (existing.direction == "rx" or direction == "tx")
+            frames[frame_id] = FrameDefinition(
+                frame_id=frame_id,
+                frame_name=existing.frame_name if use_existing_rx else row.get("frame_name", existing.frame_name),
+                payload_length=existing.payload_length if (use_existing_rx and existing.payload_length is not None) else payload_length,
+                enabled=enabled or existing.enabled,
+                description=existing.description or row.get("description", ""),
+                direction=merged_dir,
+            )
+            continue
+
+        frames[frame_id] = FrameDefinition(
+            frame_id=frame_id,
+            frame_name=row.get("frame_name", ""),
+            payload_length=payload_length,
+            enabled=enabled,
+            description=row.get("description", ""),
+            direction=direction,
+        )
+    return frames
+
+
+def _parse_variables(
+    rows: List[Dict[str, str]], frames: Dict[int, FrameDefinition], parser_type: str = "framed"
+) -> List[SignalSpec]:
+    signals: List[SignalSpec] = []
+    offsets: Dict[int, int] = {}
+    bool_bit_counts: Dict[int, int] = {}
+    seen: Dict[int, set[str]] = {}
+
+    is_modbus = (parser_type == "modbus_rtu")
+    default_endian = "big" if is_modbus else "little"
+
+    for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row) or (not row.get("id_or_address", "").strip() and not row.get("signal_name", "").strip()):
+            continue
+        if not _to_bool(row.get("enabled", "true"), default=True, field_name="variables.enabled"):
+            continue
+        frame_id = _parse_frame_id(row["id_or_address"], field_name=f"variables row {row_no}.id_or_address")
+        if frame_id not in frames:
+            # Auto-create a frame definition for Modbus if not defined in frames.csv
+            frames[frame_id] = FrameDefinition(frame_id=frame_id, frame_name=f"Node 0x{frame_id:X}")
+
+        name = row["signal_name"].strip()
+        if not name:
+            raise ConfigError(f"variables row {row_no}: signal_name is required")
+        try:
+            fmt = FmtType.parse(row["data_type"]).value
+        except ValueError as exc:
+            raise ConfigError(f"variables row {row_no}: {exc}") from exc
+
+        count = _to_int(row.get("count", "1") or "1", field_name="count")
+        if count < 1:
+            raise ConfigError(f"variables row {row_no}: count must be >= 1")
+
+        start_index = _to_int(row.get("start_index", "1") or "1", field_name="start_index")
+
         is_bool = fmt in ("bool", "boolean")
+        byte_length = FMT_SIZES[fmt]
+        data_type = _fmt_to_data_type(fmt)
+
+        explicit_start = _to_optional_int(row.get("start_byte"), field_name=f"variables row {row_no}.start_byte")
+        if explicit_start is not None:
+            if frame_id in bool_bit_counts:
+                pending = bool_bit_counts.pop(frame_id)
+                used = (pending + 7) // 8
+                offsets[frame_id] = max(offsets.get(frame_id, 0) + used, explicit_start)
+            else:
+                offsets[frame_id] = explicit_start
+            start = explicit_start
+        else:
+            start = offsets.get(frame_id, 0)
+
         if not is_bool and frame_id in bool_bit_counts:
             pending = bool_bit_counts.pop(frame_id)
             used = (pending + 7) // 8
-            offsets[frame_id] = offsets.get(frame_id, 0) + used
+            offsets[frame_id] = max(offsets.get(frame_id, 0) + used, start)
+            start = offsets[frame_id]
 
-        byte_length = FMT_SIZES[fmt]
-        data_type = _fmt_to_data_type(fmt)
-        start = offsets.get(frame_id, 0)
         frame = frames[frame_id]
         group = row.get("group", "")
         unit = row.get("unit", "")
@@ -640,13 +982,30 @@ def _parse_variables(
             signal_name = name if count == 1 else f"{name}_{curr_idx}"
             _check_signal_uniqueness(seen, frame_id, signal_name, source="variables")
 
+            explicit_bit_raw = row.get("bit_index") or row.get("bit_offset") or row.get("bit_pos") or ""
+            bit_order_raw = (row.get("bit_order") or "").strip().lower()
+            if bit_order_raw not in {"", "lsb", "msb"}:
+                raise ConfigError(
+                    f"variables row {row_no}: bit_order must be 'lsb', 'msb', or blank "
+                    f"(got {bit_order_raw!r})"
+                )
+
             if is_bool:
-                bit_idx = bool_bit_counts.get(frame_id, 0)
-                byte_off = bit_idx // 8
-                bit_off = bit_idx % 8
-                sig_start = start + byte_off
-                sig_bit_off = bit_off
-                bool_bit_counts[frame_id] = bit_idx + 1
+                if explicit_bit_raw.strip():
+                    bit_base = _to_int(explicit_bit_raw.strip(), field_name="bit_index")
+                    bit_off_val = bit_base + idx
+                    sig_start = start + (bit_off_val // 8)
+                    bit_in_byte = bit_off_val % 8
+                    bool_bit_counts[frame_id] = max(
+                        bool_bit_counts.get(frame_id, 0),
+                        (sig_start - start) * 8 + bit_in_byte + 1,
+                    )
+                else:
+                    bit_idx = bool_bit_counts.get(frame_id, 0)
+                    byte_off = bit_idx // 8
+                    bit_in_byte = bit_idx % 8
+                    sig_start = start + byte_off
+                    sig_bit_off = bit_in_byte
             else:
                 sig_start = start + idx * byte_length
                 sig_bit_off = None
@@ -685,6 +1044,8 @@ def _parse_variables(
 
 
 def _fmt_to_data_type(fmt: str) -> str:
+    if fmt in ("bool", "boolean"):
+        return fmt
     if fmt.startswith("float"):
         return "float"
     if fmt.startswith("int"):
@@ -698,6 +1059,7 @@ def _parse_legacy_frame_config(
     signals: List[SignalSpec] = []
     frames: Dict[int, FrameDefinition] = {}
     seen_per_frame: Dict[int, set[str]] = {}
+    legacy_bool_counts: Dict[tuple[int, int], int] = {}
 
     is_modbus = (parser_type == "modbus_rtu")
     default_endian = "big" if is_modbus else "little"
@@ -723,11 +1085,36 @@ def _parse_legacy_frame_config(
         if byte_length < 1 or byte_length > 8:
             raise ConfigError(f"frame_config row {row_no}: byte_length must be 1..8")
         try:
-            data_type = DataType.parse(row["data_type"]).value
+            raw_dt_str = row["data_type"]
+            data_type = DataType.parse(raw_dt_str).value
         except ValueError as exc:
             raise ConfigError(f"frame_config row {row_no}: {exc}") from exc
         if data_type == DataType.FLOAT.value and byte_length not in (4, 8):
             raise ConfigError(f"frame_config row {row_no}: float data_type requires byte_length 4 or 8")
+
+        start_b = _to_int(row["start_byte"], field_name="start_byte")
+        is_bool = raw_dt_str.strip().lower() in ("bool", "boolean")
+        bit_raw = (row.get("bit_index") or row.get("bit_offset") or row.get("bit_pos") or "").strip()
+        bit_order_raw = (row.get("bit_order") or "").strip().lower()
+        if bit_order_raw not in {"", "lsb", "msb"}:
+            raise ConfigError(
+                f"frame_config row {row_no}: bit_order must be 'lsb', 'msb', or blank "
+                f"(got {bit_order_raw!r})"
+            )
+
+        if is_bool or bit_raw:
+            if bit_raw:
+                bit_idx_val = _to_int(bit_raw, field_name="bit_index")
+            else:
+                bit_idx_val = legacy_bool_counts.get((frame_id, start_b), 0)
+                legacy_bool_counts[(frame_id, start_b)] = bit_idx_val + 1
+
+            if bit_order_raw == "msb" or (endianness == "big" and bit_order_raw != "lsb"):
+                sig_bit_off = 7 - (bit_idx_val % 8)
+            else:
+                sig_bit_off = bit_idx_val % 8
+        else:
+            sig_bit_off = None
 
         frame_name = row["frame_name"]
         frames.setdefault(frame_id, FrameDefinition(frame_id=frame_id, frame_name=frame_name))
@@ -736,7 +1123,7 @@ def _parse_legacy_frame_config(
                 frame_id=frame_id,
                 frame_name=frame_name,
                 signal_name=signal_name,
-                start_byte=_to_int(row["start_byte"], field_name="start_byte"),
+                start_byte=start_b,
                 byte_length=byte_length,
                 endianness=endianness,
                 data_type=data_type,
@@ -744,6 +1131,7 @@ def _parse_legacy_frame_config(
                 offset=_to_float(row["offset"], 0.0, "offset"),
                 unit=row["unit"],
                 source_name=signal_name,
+                bit_offset=sig_bit_off,
             )
         )
     return signals, frames
@@ -759,14 +1147,28 @@ def _validate_signal_ranges(signals: Iterable[SignalSpec]) -> None:
         ordered = sorted(specs, key=lambda s: (s.start_byte, s.end_byte, s.bit_offset if s.bit_offset is not None else -1))
         last_end = -1
         last_sig: Optional[SignalSpec] = None
+        bool_bits_seen: Dict[int, set[int]] = {}  # start_byte → set of bit_offsets
         for sig in ordered:
             if sig.is_boolean and last_sig is not None and last_sig.is_boolean and sig.start_byte == last_sig.start_byte:
-                pass
+                # Check for bit_offset collision within the same byte
+                if sig.bit_offset is not None:
+                    byte_bits = bool_bits_seen.setdefault(sig.start_byte, set())
+                    if sig.bit_offset in byte_bits:
+                        raise ConfigError(
+                            f"frame 0x{frame_id:X}: boolean signal {sig.signal_name!r} "
+                            f"collides with another boolean on byte {sig.start_byte}, "
+                            f"bit_offset {sig.bit_offset}"
+                        )
+                    byte_bits.add(sig.bit_offset)
             elif sig.start_byte < last_end:
                 last_name = last_sig.signal_name if last_sig else ""
                 raise ConfigError(
                     f"frame 0x{frame_id:X}: signal {sig.signal_name!r} overlaps {last_name!r}"
                 )
+            else:
+                # First boolean at a new start_byte — register its bit
+                if sig.is_boolean and sig.bit_offset is not None:
+                    bool_bits_seen.setdefault(sig.start_byte, set()).add(sig.bit_offset)
             last_end = sig.end_byte
             last_sig = sig
 

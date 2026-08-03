@@ -51,3 +51,19 @@ def test_main_window_save_state(main_window):
     # Verify save state doesn't crash
     main_window._save_window_state()
 
+
+def test_dashboard_connect_uses_serial_settings(main_window, monkeypatch):
+    captured = {}
+
+    def fake_attempt(settings, is_retry=False):
+        captured["settings"] = settings
+        captured["is_retry"] = is_retry
+        return True
+
+    monkeypatch.setattr(main_window, "_attempt_connect", fake_attempt)
+
+    main_window._on_dashboard_connect("COM7", 57600)
+
+    assert captured["settings"].port == "COM7"
+    assert captured["settings"].baud_rate == 57600
+    assert captured["is_retry"] is False

@@ -107,7 +107,7 @@ def _decode_signal(config: FrameConfig, spec: SignalSpec, payload: bytes) -> Dec
     # raw is already an int here (the isinstance branch); int(raw) was a
     # redundant no-op call that just added per-signal overhead.
     bit_values = _decode_bitfield(config, spec, raw) if isinstance(raw, int) else {}
-    display = _display_text(scaled, enum_label, bit_values)
+    display = _display_text(scaled, enum_label, bit_values, spec)
     return DecodedSignal(
         frame_id=spec.frame_id,
         frame_name=spec.frame_name,
@@ -154,21 +154,22 @@ _INT_FMT_CHAR = {
 
 
 def _decode_raw_at(payload: bytes, spec: SignalSpec) -> Union[int, float]:
-    if spec.bit_offset is not None:
-        return (payload[spec.start_byte] >> spec.bit_offset) & 1
     """Decode a single raw value at ``spec.start_byte`` without slicing.
 
-    ``struct.unpack_from`` reads directly from the payload bytes object;
-    avoiding the per-signal ``payload[start:end]`` slice eliminates one
-    bytes allocation per int/float signal and is faster than
-    ``int.from_bytes`` for every fixed-width type benchmarked
+    Boolean signals are decoded via bit masking (bit_offset or LSB).
+    Numeric signals use ``struct.unpack_from`` which reads directly from
+    the payload bytes object; avoiding the per-signal ``payload[start:end]``
+    slice eliminates one bytes allocation per int/float signal and is
+    faster than ``int.from_bytes`` for every fixed-width type benchmarked
     (microbench: ~1.9× faster for uint16). Odd-byte-length ints
-    (3 / 5 / 6 / 7) have no native struct format code. To avoid slicing
-    and allocation, they are unpacked using a wider struct.unpack_from
-    (4 or 8 bytes) combined with bitwise shifting and masking, provided
-    there are enough remaining bytes in the payload. Otherwise, they
-    fallback to the slice + ``int.from_bytes`` path.
+    (3 / 5 / 6 / 7) have no native struct format code and are unpacked
+    using a wider struct.unpack_from (4 or 8 bytes) combined with bitwise
+    shifting and masking, or fallback to ``int.from_bytes``.
     """
+    if spec.bit_offset is not None:
+        return (payload[spec.start_byte] >> spec.bit_offset) & 1
+    if spec.is_boolean:
+        return payload[spec.start_byte] & 1
     cache_key = (spec.endianness, spec.byte_length, spec.data_type)
     s = _DECODE_STRUCT_CACHE.get(cache_key, _UNCACHED)
     if s is _UNCACHED:
@@ -270,7 +271,7 @@ def _decode_bitfield(config: FrameConfig, spec: SignalSpec, raw: int) -> Dict[st
 
 
 def _display_text(
-    scaled: Optional[float], enum_label: Optional[str], bit_values: Dict[str, bool]
+    scaled: Optional[float], enum_label: Optional[str], bit_values: Dict[str, bool], spec: Optional[SignalSpec] = None
 ) -> str:
     if enum_label:
         return enum_label
@@ -279,6 +280,8 @@ def _display_text(
         return ", ".join(active) if active else "None"
     if scaled is None:
         return "-"
+    if spec is not None and spec.is_boolean:
+        return "1" if scaled != 0 else "0"
     return f"{scaled:.6g}"
 
 

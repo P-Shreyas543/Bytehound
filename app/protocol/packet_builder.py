@@ -69,7 +69,7 @@ def build_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> byt
 
     pre_crc = pc.header + fid_bytes + length_bytes + payload
 
-    if pc.tx_pad_length is not None:
+    if pc.tx_pad_length is not None and pc.tx_pad_length > 0:
         target_total_len = pc.tx_pad_length - pc.crc_size - len(pc.footer)
         if target_total_len < 0:
             raise ValueError(

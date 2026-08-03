@@ -295,9 +295,9 @@ def test_bool_boolean_data_type_aliases(tmp_path):
     )
     cfg = load_config(tmp_path)
     assert len(cfg.all_signals) == 2
-    assert cfg.all_signals[0].data_type == "uint"
+    assert cfg.all_signals[0].data_type == "bool"
     assert cfg.all_signals[0].byte_length == 1
-    assert cfg.all_signals[1].data_type == "uint"
+    assert cfg.all_signals[1].data_type == "boolean"
     assert cfg.all_signals[1].byte_length == 1
     cmd = cfg.tx_commands["SetFlags"]
     assert len(cmd.fields) == 2
@@ -667,5 +667,182 @@ def test_dirty_blank_rows_ignored_in_config_loader(tmp_path):
     assert cfg.all_signals[0].signal_name == "Sig1"
 
 
+def test_format_display_data_type_widths_and_boolean():
+    from app.ui.config_loader import format_display_data_type
+    assert format_display_data_type("uint", 1) == "uint8"
+    assert format_display_data_type("uint", 1, is_boolean=True) == "boolean"
+    assert format_display_data_type("int", 1) == "int8"
+    assert format_display_data_type("uint", 2) == "uint16"
+    assert format_display_data_type("int", 2) == "int16"
+    assert format_display_data_type("uint", 4) == "uint32"
+    assert format_display_data_type("int", 4) == "int32"
+    assert format_display_data_type("float", 4) == "float32"
+    assert format_display_data_type("float", 8) == "float64"
+    assert format_display_data_type("boolean", 1) == "boolean"
+    assert format_display_data_type("bool", 1) == "boolean"
+
+
+def test_boolean_distinct_bit_index_decoding(tmp_path):
+    from app.decoder.config_loader import load_config
+    from app.decoder.frame_decoder import decode_frame
+
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "frame_config.csv").write_text(
+        "frame_id_hex,frame_name,signal_name,start_byte,byte_length,endianness,data_type,scale,offset,unit\n"
+        "6000,Relay,Cell Enable,0,1,little,boolean,1,0,state\n"
+        "6000,Relay,Cell Select,0,1,little,boolean,1,0,state\n",
+        encoding="utf-8",
+    )
+    cfg = load_config(tmp_path)
+    sig_enable = [s for s in cfg.all_signals if s.signal_name == "Cell Enable"][0]
+    sig_select = [s for s in cfg.all_signals if s.signal_name == "Cell Select"][0]
+
+    assert sig_enable.bit_offset == 0
+    assert sig_select.bit_offset == 1
+
+    # Payload 0x02 = binary 0000 0010 (bit 0 = 0, bit 1 = 1)
+    decoded = decode_frame(cfg, 0x6000, b"\x02")
+    by_name = {s.signal_name: s.display_value for s in decoded.signals}
+
+    # Enable must be 0, Select must be 1 (distinct outputs!)
+    assert str(by_name["Cell Enable"]) == "0"
+    assert str(by_name["Cell Select"]) == "1"
+
+
+def test_fmt_to_data_type_preserves_boolean():
+    """BUG-1: _fmt_to_data_type must not lose boolean identity."""
+    from app.decoder.config_loader import _fmt_to_data_type
+
+    assert _fmt_to_data_type("bool") == "bool"
+    assert _fmt_to_data_type("boolean") == "boolean"
+    assert _fmt_to_data_type("uint8") == "uint"
+    assert _fmt_to_data_type("int16") == "int"
+    assert _fmt_to_data_type("float32") == "float"
+
+
+def test_normalize_table_name_collapses_underscores():
+    """SMELL-3: Sheet names with consecutive spaces should still match aliases."""
+    from app.decoder.config_loader import _normalize_table_name
+
+    # Double space → double underscore → collapsed to single underscore
+    assert _normalize_table_name("frame  config") == "frame_config"
+    assert _normalize_table_name("frame___config") == "frame_config"
+    # CamelCase without separator matches the alias key
+    assert _normalize_table_name("FrameVariables") == "variables"
+    # With space, normalizes to 'frame_variables' (no alias match — correct)
+    assert _normalize_table_name("Frame Variables") == "frame_variables"
+    # 'CalcGroups' (no space) hits alias 'calcgroups' → 'calc_groups'
+    assert _normalize_table_name("CalcGroups") == "calc_groups"
+    # Leading/trailing spaces are stripped
+    assert _normalize_table_name("  protocol  ") == "protocol"
+
+
+def test_boolean_bit_offset_collision_raises(tmp_path):
+    """IMP-4: Two booleans with identical start_byte AND bit_offset must error."""
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "frame_config.csv").write_text(
+        "frame_id_hex,frame_name,signal_name,start_byte,byte_length,endianness,data_type,scale,offset,unit,bit_index\n"
+        "6000,Relay,Cell Enable,0,1,little,boolean,1,0,state,0\n"
+        "6000,Relay,Cell Select,0,1,little,boolean,1,0,state,0\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ConfigError, match="collides"):
+        load_config(tmp_path)
+
+
+def test_format_display_data_type_boolean_via_is_boolean():
+    """BUG-1+3: format_display_data_type returns 'boolean' when is_boolean is True,
+    even if data_type is 'uint' (legacy schema)."""
+    from app.ui.config_loader import format_display_data_type
+
+    # Legacy path: data_type="uint" but is_boolean=True → must show "boolean"
+    assert format_display_data_type("uint", 1, is_boolean=True) == "boolean"
+    # Modern path: data_type="bool" → already works
+    assert format_display_data_type("bool", 1) == "boolean"
+    # Non-boolean types
+    assert format_display_data_type("uint", 2) == "uint16"
+    assert format_display_data_type("int", 4) == "int32"
+
+
+def test_preset_table_names_are_normalized():
+    from app.decoder.protocol_presets import BUILTIN_PRESETS
+
+    cfg = load_config(BUILTIN_PRESETS["Single Cell BMS (Default)"])
+
+    assert "Cell Relay Control" in cfg.tx_commands
+    assert cfg.serial_defaults.baud_rate == 115200
+
+
+def test_crc_type_none_requires_crc_size_zero(tmp_path):
+    (tmp_path / "protocol.csv").write_text(
+        "profile_name,header_hex,frame_id_size,frame_id_byte_order,"
+        "length_size,length_meaning,crc_type,crc_size,crc_byte_order,"
+        "crc_coverage,footer_hex,escape_mode,raw_log_format,enabled,parser_type\n"
+        "Bad,AA,1,little,1,payload_only,none,2,little,"
+        "header_to_payload,,none,hex,TRUE,framed\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "variables.csv").write_text(
+        "id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,enabled\n"
+        "0x01,Sig,uint8,1,little,1,0,,TRUE\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="crc_size must be 0"):
+        load_config(tmp_path)
+
+
+def test_framed_protocol_requires_length_size(tmp_path):
+    (tmp_path / "protocol.csv").write_text(
+        "profile_name,header_hex,frame_id_size,frame_id_byte_order,"
+        "length_size,length_meaning,crc_type,crc_size,crc_byte_order,"
+        "crc_coverage,footer_hex,escape_mode,raw_log_format,enabled,parser_type\n"
+        "Bad,AA,1,little,0,payload_only,none,0,little,"
+        "header_to_payload,,none,hex,TRUE,framed\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "variables.csv").write_text(
+        "id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,enabled\n"
+        "0x01,Sig,uint8,1,little,1,0,,TRUE\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="length_size must be >= 1"):
+        load_config(tmp_path)
+
+
+def test_explicit_boolean_bits_advance_modern_variable_offsets(tmp_path):
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "frames.csv").write_text(
+        "frame_id,frame_name,payload_length,enabled,description,direction\n"
+        "0x6000,Control,2,TRUE,,rxtx\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "variables.csv").write_text(
+        "id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,enabled,bit_index\n"
+        "0x6000,Enable,boolean,1,little,1,0,,TRUE,0\n"
+        "0x6000,Select,boolean,1,little,1,0,,TRUE,1\n"
+        "0x6000,Mode,uint8,1,little,1,0,,TRUE,\n",
+        encoding="utf-8",
+    )
+
+    cfg = load_config(tmp_path)
+    by_name = {sig.signal_name: sig for sig in cfg.all_signals}
+
+    assert by_name["Enable"].start_byte == 0
+    assert by_name["Select"].start_byte == 0
+    assert by_name["Mode"].start_byte == 1
+
+
+def test_invalid_bit_order_rejected(tmp_path):
+    _write_basic_protocol(tmp_path)
+    (tmp_path / "variables.csv").write_text(
+        "id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,enabled,bit_order\n"
+        "0x6000,Enable,boolean,1,little,1,0,,TRUE,sideways\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ConfigError, match="bit_order must be"):
+        load_config(tmp_path)
 
 

@@ -104,6 +104,10 @@ class ParameterEditorMixin:
 
         try:
             # Step 1: reverse scale/offset → raw = (user_value - offset) / scale
+            if signal.scale == 0:
+                raise ValueError(
+                    f"Signal '{signal.signal_name}' has scale=0 in config — cannot compute raw value."
+                )
             raw = (val - signal.offset) / signal.scale
 
             # Step 2: encode raw into bytes per data_type and byte_order
@@ -118,8 +122,6 @@ class ParameterEditorMixin:
             else:
                 signed = dt.startswith("int") and not dt.startswith("uint")
                 val_int = round(raw)
-                if signal.is_boolean:
-                    val_int = 1 if val_int != 0 else 0
                 encoded = val_int.to_bytes(signal.byte_length, byteorder, signed=signed)
 
             if len(encoded) != signal.byte_length:
@@ -127,9 +129,36 @@ class ParameterEditorMixin:
                     f"Encoded value is {len(encoded)} bytes but signal expects {signal.byte_length}"
                 )
 
-            # Step 3: place encoded bytes at start_byte in a zero-padded payload
-            payload = bytearray(signal.end_byte)
-            payload[signal.start_byte:signal.end_byte] = encoded
+            # Step 3: place encoded bytes at start_byte using bit-preservation payload cache
+            if not hasattr(self, "_tx_frame_payload_cache"):
+                self._tx_frame_payload_cache = {}
+
+            cached = self._tx_frame_payload_cache.get(signal.frame_id)
+            latest_payloads = getattr(self, "_latest_payload_by_frame", {})
+            latest = latest_payloads.get(signal.frame_id) if isinstance(latest_payloads, dict) else None
+            frame_def = self._config.frames.get(signal.frame_id) if self._config else None
+            target_len = max(
+                signal.end_byte,
+                frame_def.payload_length or 0 if frame_def else 0,
+                len(cached) if cached else 0,
+                len(latest) if latest else 0,
+            )
+            payload = bytearray(target_len)
+            source = cached if cached is not None else latest
+            if source:
+                payload[: min(len(source), target_len)] = source[:target_len]
+
+            if signal.is_boolean:
+                bit_off = signal.bit_offset if signal.bit_offset is not None else 0
+                bit_val = 1 if round(raw) != 0 else 0
+                if bit_val:
+                    payload[signal.start_byte] |= (1 << bit_off)
+                else:
+                    payload[signal.start_byte] &= ~(1 << bit_off)
+            else:
+                payload[signal.start_byte:signal.end_byte] = encoded
+
+            self._tx_frame_payload_cache[signal.frame_id] = payload
 
             # Step 4: wrap in the full packet envelope (header + CRC + footer)
             pkt = build_packet(self._config.protocol, signal.frame_id, bytes(payload))
