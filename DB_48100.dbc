@@ -1,0 +1,116 @@
+VERSION ""
+
+NS_ :
+
+	NS_DESC_
+	CM_
+	BA_DEF_
+	BA_
+	VAL_
+	CAT_MACRO_
+	CAT_
+	FILTER
+	BA_DEF_DEF_
+	EV_DATA_
+	ENVVAR_DATA_
+	SGTYPE_
+	SGTYPE_VAL_
+	BA_DEF_SGTYPE_
+	BA_SGTYPE_
+	SIG_TYPE_REF_
+	VAL_TABLE_
+	SIG_GROUP_
+	SIG_VALTYPE_
+	SIGTYPE_VALTYPE_
+	BO_TX_BU_
+	BA_DEF_REL_
+	BA_REL_
+	BA_DEF_DEF_REL_
+	BA_REL_DEF_
+	BU_SG_REL_
+	BU_EV_REL_
+	BU_BO_REL_
+	SG_MUL_VAL_
+
+BS_:
+
+BU_: BMS Vector__XXX
+
+
+BO_ 496 BMS_Faults_And_Status: 5 BMS
+ SG_ System_Faults : 0|16@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ Balancing_Status : 16|16@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ BMS_Operation_State : 32|8@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 497 BMS_SOC: 8 BMS
+ SG_ OCV_SOC : 0|32@1+ (1,0) [0|0] "%" Vector__XXX
+ SG_ CC_SOC : 32|32@1+ (1,0) [0|0] "%" Vector__XXX
+
+BO_ 498 BMS_State_Capacity: 4 BMS
+ SG_ State_Capacity : 0|32@1+ (1,0) [0|0] "Ah" Vector__XXX
+
+BO_ 499 Testing: 4 BMS
+ SG_ Error : 0|32@1+ (1,0) [0|0] "Ah" Vector__XXX
+
+BO_ 752 BMS_Stack_Current: 8 BMS
+ SG_ Pack_Voltage : 0|32@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Pack_Current : 32|32@1- (0.001,0) [0|0] "A" Vector__XXX
+
+BO_ 753 BMS_Cell_Voltages_1_4: 8 BMS
+ SG_ Cell_Voltage_1 : 0|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_2 : 16|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_3 : 32|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_4 : 48|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+
+BO_ 754 BMS_Cell_Voltages_5_8: 8 BMS
+ SG_ Cell_Voltage_5 : 0|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_6 : 16|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_7 : 32|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_8 : 48|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+
+BO_ 755 BMS_Cell_Voltages_9_12: 8 BMS
+ SG_ Cell_Voltage_9 : 0|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_10 : 16|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_11 : 32|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_12 : 48|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+
+BO_ 756 BMS_Cell_Voltages_13_16: 8 BMS
+ SG_ Cell_Voltage_13 : 0|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_14 : 16|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_15 : 32|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Cell_Voltage_16 : 48|16@1+ (0.001,0) [0|0] "V" Vector__XXX
+
+BO_ 757 BMS_AFE_And_Pack_Temperatures_1: 8 BMS
+ SG_ AFE_Temperature_1 : 0|16@1- (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ AFE_Temperature_2 : 16|16@1- (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_1 : 32|16@1- (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_2 : 48|16@1- (0.1,0) [0|0] "degC" Vector__XXX
+
+BO_ 758 BMS_Pack_Temperatures_3_6: 8 BMS
+ SG_ Pack_Temperature_3 : 0|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_4 : 16|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_5 : 32|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_6 : 48|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+
+BO_ 759 BMS_Pack_Temperatures_7_10: 8 BMS
+ SG_ Pack_Temperature_7 : 0|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_8 : 16|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_9 : 32|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_10 : 48|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+
+BO_ 760 BMS_Pack_Temperatures_11_14: 8 BMS
+ SG_ Pack_Temperature_11 : 0|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_12 : 16|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_13 : 32|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+ SG_ Pack_Temperature_14 : 48|16@1+ (0.1,0) [0|0] "degC" Vector__XXX
+
+BO_ 761 BMS_Contactor_Management: 5 BMS
+ SG_ Precharge_Detect_Voltage : 0|16@1- (0.001,0) [0|0] "V" Vector__XXX
+ SG_ Contactor_Status : 16|8@1+ (1,0) [0|0] "" Vector__XXX
+
+SIG_VALTYPE_ 497 OCV_SOC : 1;
+SIG_VALTYPE_ 497 CC_SOC : 1;
+SIG_VALTYPE_ 498 State_Capacity : 1;
+SIG_VALTYPE_ 499 Error : 1;
+
+VAL_ 496 BMS_Operation_State 0 "Rest" 1 "Discharging" 2 "Charging" ;

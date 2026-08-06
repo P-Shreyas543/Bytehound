@@ -21,3 +21,21 @@ def test_tx_padding_modbus():
     packet = build_modbus_packet(pc, 0x1000, b"")
     # Read holding register 0x1000
     assert packet == b"\x01\x03\x10\x00\x00\x01\x80\xCA"
+
+
+def test_tx_pad_length_zero_normalized():
+    pc = dummy_protocol_config(parser_type="framed", header=b"\xAA", footer=b"\x55", tx_pad_length=0)
+    assert pc.tx_pad_length is None
+    # 7-byte frame (header 1, fid 2, len 1, crc 2, footer 1, payload 0)
+    packet = build_packet(pc, 0x6000, b"")
+    assert len(packet) == 7
+
+
+
+def test_experiment1_excel_loading():
+    from app.decoder.config_loader import load_config
+    cfg = load_config("Experiment1_frame_config.xlsx")
+    assert cfg.protocol.tx_pad_length is None
+    pkt = build_packet(cfg.protocol, 0x6000, b"\x01")
+    assert isinstance(pkt, bytes)
+

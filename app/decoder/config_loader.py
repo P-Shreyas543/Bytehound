@@ -535,7 +535,10 @@ def _to_int(value: Any, *, field_name: str) -> int:
 def _to_optional_int(value: Any, *, field_name: str) -> Optional[int]:
     if value is None or str(value).strip() == "":
         return None
-    return _to_int(value, field_name=field_name)
+    val = _to_int(value, field_name=field_name)
+    if val <= 0:
+        return None
+    return val
 
 
 def _to_float(value: Any, default: float, field_name: str) -> float:

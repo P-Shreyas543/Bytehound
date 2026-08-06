@@ -714,7 +714,7 @@ class FrameFormatWidget(QWidget):
                     ))
             else:
                 fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
-                if self._protocol.tx_pad_length is not None:
+                if self._protocol.tx_pad_length is not None and self._protocol.tx_pad_length > 0:
                     payload_size = max(0, self._protocol.tx_pad_length - fixed_size)
                     data_label = f"Data ({payload_size}-Byte)"
                 else:
@@ -903,7 +903,7 @@ class FrameFormatWidget(QWidget):
 
                     fields.extend(self._compute_tx_field_blocks(command.fields))
 
-                    if self._protocol.tx_pad_length is not None:
+                    if self._protocol.tx_pad_length is not None and self._protocol.tx_pad_length > 0:
                         fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
                         payload_size = len(static_bytes) + self._compute_tx_fields_size(command.fields)
                         padding_size = self._protocol.tx_pad_length - fixed_size - payload_size
@@ -919,7 +919,7 @@ class FrameFormatWidget(QWidget):
 
             if command_name is None:
                 fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
-                if self._protocol.tx_pad_length is not None:
+                if self._protocol.tx_pad_length is not None and self._protocol.tx_pad_length > 0:
                     payload_size = max(0, self._protocol.tx_pad_length - fixed_size)
                     data_label = f"Data ({payload_size}-Byte)"
                 else:

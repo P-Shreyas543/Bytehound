@@ -201,6 +201,10 @@ class ProtocolConfig:
     raw_log_format: str = "hex"
     waveshare_fixed_20_bytes: bool = False
 
+    def __post_init__(self) -> None:
+        if self.tx_pad_length is not None and self.tx_pad_length <= 0:
+            object.__setattr__(self, "tx_pad_length", None)
+
 
 
 @dataclass(frozen=True)
