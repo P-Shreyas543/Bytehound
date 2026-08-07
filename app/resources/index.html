@@ -2441,8 +2441,8 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         </div>
 
         <p><strong>Bundled template content</strong> (the single enabled row that <em>File → Export Template</em> writes
-            — blanks for <code>length_byte_order</code>, <code>crc_coverage</code>, <code>escape_mode</code>, and
-            <code>tx_pad_length</code> mean "use the sensible default"):</p>
+            — blanks or 0 for <code>length_byte_order</code>, <code>crc_coverage</code>, <code>escape_mode</code>, and
+            <code>tx_pad_length</code> mean "use the sensible default" / variable length):</p>
         <pre>profile_name           = Default
 parser_type            = framed              ← `framed`, `modbus_rtu`, or `waveshare_can`
 header_hex             = AA 55
@@ -2459,7 +2459,7 @@ footer_hex             = EE                  ← matches the expected frame trai
 escape_mode            =                     ← defaults to none
 raw_log_format         = hex                 ← `hex` = spaced, `compact` = contiguous
 inter_frame_delay_ms   = 10
-tx_pad_length          =                     ← variable-length TX
+tx_pad_length          =                     ← variable-length TX (blank or 0 disables fixed padding)
 modbus_node_address    = 1                   ← Modbus slave address (ignored when parser_type = framed)
 enabled                = TRUE</pre>
 

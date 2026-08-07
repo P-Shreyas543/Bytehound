@@ -281,7 +281,7 @@ aliases:
 | `raw_log_format`        | str     | `hex` (spaced) or `compact` (contiguous) — drives RawLogger hex column |
 | `enabled`               | bool    | Default true                                           |
 | `parser_type`           | enum    | `framed` (default) \| `modbus_rtu`                     |
-| `tx_pad_length`         | int?    | Pad TX to this many bytes (optional)                   |
+| `tx_pad_length`         | int?    | Pad TX to this many bytes (optional; 0, blank, or unset = variable-length TX) |
 | `inter_frame_delay_ms`  | int     | Default 10                                             |
 
 ### 5.2 `frames` (optional when `variables` is present)
@@ -457,9 +457,10 @@ For Modbus, `build_modbus_packet`:
 - 2-byte payload → FC 06 single-register write.
 - Larger payload → FC 16 multi-register write.
 
-`tx_pad_length` (if set) zero-pads `coverage` (header..payload) before CRC so
+`tx_pad_length` (if set and > 0) zero-pads `coverage` (header..payload) before CRC so
 every TX frame is exactly `tx_pad_length` bytes on the wire — required for
 MCUs that use buffer-full / DMA-complete RX interrupts (`HAL_UART_Receive_IT`).
+Setting `tx_pad_length` to 0, blank, or `None` disables padding (variable-length frames).
 CRC is computed *over* the padding, so the receiver's checksum still validates.
 
 Validation (raised as `ValueError`, caught by `CommandBuildError` upstream):

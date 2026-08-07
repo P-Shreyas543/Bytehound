@@ -3157,6 +3157,58 @@ class AnalysisSuiteWindow(QMainWindow):
     # ──────────────────────────────────────────────────────────────────
     # Export
     # ──────────────────────────────────────────────────────────────────
+    def _export_visible_csv(self):
+        visible_logs = [e for e in self._logs.values() if e.visible]
+        checked_params = self._get_checked_params()
+        if not visible_logs or not checked_params:
+            self._popup_information("Export CSV", "Please load active logs and check at least one parameter.")
+            return
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Current View to CSV", get_analysis_dir(),
+            "CSV Files (*.csv)")
+        if not path:
+            return
+        if not path.lower().endswith('.csv'):
+            path += '.csv'
+
+        rows = []
+        x_range = None
+        if self._plot_widgets:
+            x_range = self._plot_widgets[0].getPlotItem().vb.viewRange()[0]
+
+        for entry in visible_logs:
+            t = entry.elapsed + entry.time_offset
+            for param in checked_params:
+                if param in entry.columns:
+                    y = entry.columns[param]
+                    curve_label = f"{entry.name or entry.id} · {param}"
+                    rows.append({
+                        "curve": curve_label,
+                        "log_name": entry.name or entry.id,
+                        "param": param,
+                        "x": t,
+                        "y": y,
+                        "x_range": x_range,
+                    })
+
+        if not rows:
+            self._popup_information("Export CSV", "No matching parameter series to export.")
+            return
+
+        self._status.showMessage("Exporting CSV...", 3000)
+        self._csv_export_thread = CSVExportThread(path, rows, rate=1, parent=self)
+        self._csv_export_thread.sigFinished.connect(
+            lambda out_path, row_count: self._status.showMessage(
+                f"Exported {row_count} rows to {os.path.basename(out_path)}", 5000
+            )
+        )
+        self._csv_export_thread.sigError.connect(
+            lambda err: self._popup_warning("Export Error", err)
+        )
+        self._csv_export_thread.finished.connect(lambda: setattr(self, "_csv_export_thread", None))
+        self._csv_export_thread.start()
+
     def _export_image(self):
         if not self._plot_widgets:
             self._popup_information("Export", "No plots to export.")
