@@ -161,3 +161,29 @@ def test_set_max_samples_applies_retroactively():
     buf.set_max_samples(chunk)
     assert buf.first_x() is not None and buf.first_x() >= float(chunk)
     assert buf.last_x() == float(3 * chunk + 4)
+
+
+def test_append_time_reset_clears_buffer():
+    buf = TimeSeriesBuffer()
+    for i in range(100):
+        buf.append(float(i), float(i * 2))
+    assert buf.last_x() == 99.0
+    # Time resets to 0.0 (session restart / device reboot > 1s back)
+    buf.append(0.0, 50.0)
+    assert len(buf) == 1
+    assert buf.first_x() == 0.0
+    assert buf.last_x() == 0.0
+    xs, ys = buf.arrays()
+    assert list(xs) == [0.0]
+    assert list(ys) == [50.0]
+
+
+def test_append_minor_jitter_clamps_x():
+    buf = TimeSeriesBuffer()
+    buf.append(10.0, 100.0)
+    # Slight out-of-order arrival (e.g. 9.8s <= 10.0s)
+    buf.append(9.8, 105.0)
+    xs, ys = buf.arrays()
+    assert list(xs) == [10.0, 10.0]
+    assert list(ys) == [100.0, 105.0]
+

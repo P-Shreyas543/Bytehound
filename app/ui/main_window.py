@@ -1071,6 +1071,8 @@ class MainWindow(
             self._serial.open()
             self._serial.set_polling_global(self._polling_action.isChecked())
             self._session_started = datetime.now()
+            for buf in self._plot_history.values():
+                buf.clear()
             self._ui_timer.start()
 
             self._set_connection_ui(True)

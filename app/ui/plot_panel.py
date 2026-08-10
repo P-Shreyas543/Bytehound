@@ -148,6 +148,16 @@ class TimeSeriesBuffer:
         self._maybe_drop()
 
     def append(self, x: float, y: float) -> None:
+        last = self.last_x()
+        if last is not None and x < last:
+            if (last - x) > 1.0:
+                # Time reset to zero or jumped back significantly (e.g. device reboot/reconnect).
+                # Auto-clear buffer to prevent drawing backward horizontal lines across the plot.
+                self.clear()
+            else:
+                # Minor jitter or out-of-order packet: clamp x to last_x to enforce monotonicity.
+                x = last
+
         if self._cur_fill >= self.CHUNK_SIZE:
             # Seal the current chunk and start a fresh one.
             self._chunks_x.append(self._cur_x)

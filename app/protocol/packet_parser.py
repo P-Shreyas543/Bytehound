@@ -171,18 +171,18 @@ class _Unframer:
 
     def _feed_slip(self, data: bytes) -> None:
         for b in data:
-            if self._esc_pending:
+            if b == _SLIP_END:
+                self._esc_pending = False
+                self._emit_current()
+            elif self._esc_pending:
                 if b == _SLIP_ESC_END:
                     self._cur.append(_SLIP_END)
                 elif b == _SLIP_ESC_ESC:
                     self._cur.append(_SLIP_ESC)
                 else:
-                    # Invalid escape sequence — drop the current frame and
-                    # resync on the next END byte.
+                    # Invalid escape sequence — drop the current frame
                     self._cur.clear()
                 self._esc_pending = False
-            elif b == _SLIP_END:
-                self._emit_current()
             elif b == _SLIP_ESC:
                 self._esc_pending = True
             else:
@@ -191,11 +191,14 @@ class _Unframer:
 
     def _feed_hdlc(self, data: bytes) -> None:
         for b in data:
-            if self._esc_pending:
+            if b == _HDLC_FLAG:
+                if self._esc_pending:
+                    self._cur.clear()
+                    self._esc_pending = False
+                self._emit_current()
+            elif self._esc_pending:
                 self._cur.append(b ^ _HDLC_XOR)
                 self._esc_pending = False
-            elif b == _HDLC_FLAG:
-                self._emit_current()
             elif b == _HDLC_ESC:
                 self._esc_pending = True
             else:

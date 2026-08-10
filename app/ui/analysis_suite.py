@@ -1250,6 +1250,23 @@ class AnalysisSuiteWindow(QMainWindow):
         match = re.search(r'\(([^()]*)\)\s*$', name)
         return match.group(1).strip() if match else ""
 
+    @staticmethod
+    def _moving_average(arr: np.ndarray, window: int) -> np.ndarray:
+        """Compute rolling average over arr with window size `window`, NaN-safe."""
+        if len(arr) == 0 or window <= 1:
+            return arr
+        w = min(window, len(arr))
+        kernel = np.ones(w) / float(w)
+        valid_mask = ~np.isnan(arr)
+        if not np.any(valid_mask):
+            return arr
+        clean_arr = np.where(valid_mask, arr, 0.0)
+        sum_conv = np.convolve(clean_arr, kernel, mode='same')
+        count_conv = np.convolve(valid_mask.astype(float), kernel, mode='same')
+        with np.errstate(divide='ignore', invalid='ignore'):
+            out = np.where(count_conv > 0, sum_conv / count_conv, np.nan)
+        return out
+
 
     def _axis_title_for_group(self, group: list[str]) -> str:
         """Compact label suitable for a rotated Y-axis title — strips units

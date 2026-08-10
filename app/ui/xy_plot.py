@@ -201,6 +201,11 @@ class XYPlotWindow(QMainWindow):
                 continue
             x = entry.columns[x_param]
             y = entry.columns[y_param]
+            if len(x) != len(y) and len(x) > 0 and len(y) > 0:
+                # Resample y to match x's grid
+                grid_x = np.linspace(0, 1, len(x))
+                grid_y = np.linspace(0, 1, len(y))
+                y = np.interp(grid_x, grid_y, y)
             mask = ~(np.isnan(x) | np.isnan(y))
             pen = pg.mkPen(None) if filled else pg.mkPen(entry.color, width=1)
             brush = pg.mkBrush(entry.color) if filled else pg.mkBrush(None)
