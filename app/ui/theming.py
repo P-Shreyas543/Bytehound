@@ -11,6 +11,7 @@ from typing import Tuple
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor, QPen
+from PySide6.QtWidgets import QWidget
 
 try:
     import pyqtgraph as pg

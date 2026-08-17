@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QToolButton,
     QVBoxLayout,
+    QWidget,
 )
 
 try:
