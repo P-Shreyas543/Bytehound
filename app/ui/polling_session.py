@@ -47,8 +47,7 @@ class PollingSessionMixin:
                 if res != QMessageBox.StandardButton.Yes:
                     self._polling_action.setChecked(False)
                     return
-            is_modbus = (self._config.protocol.parser_type == "modbus_rtu") if self._config else False
-            dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self, is_modbus=is_modbus)
+            dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self)
             if dlg.exec() != QDialog.DialogCode.Accepted:
                 self._polling_action.setChecked(False)
                 return
@@ -85,8 +84,7 @@ class PollingSessionMixin:
         if self._config is None:
             self._popup_warning("Poll Schedule", "Load a configuration first.")
             return
-        is_modbus = (self._config.protocol.parser_type == "modbus_rtu") if self._config else False
-        dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self, is_modbus=is_modbus)
+        dlg = PollingConfigDialog(self._config.polling_schedules, self._settings, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
         enabled_ids = dlg.get_enabled_ids()

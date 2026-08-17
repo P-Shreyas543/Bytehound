@@ -1,9 +1,0 @@
-id_or_address,signal_name,bit_index,label,active_text,inactive_text
-0x0030,Status Bits,0,Charging,YES,NO
-0x0030,Status Bits,1,Discharging,YES,NO
-0x0030,Status Bits,2,Balancing,YES,NO
-0x0030,Status Bits,3,Fault,FAULT,OK
-0x0030,Status Bits,4,Overvoltage,FAULT,OK
-0x0030,Status Bits,5,Undervoltage,FAULT,OK
-0x0030,Status Bits,6,Overtemp,FAULT,OK
-0x0030,Status Bits,7,Ready,YES,NO

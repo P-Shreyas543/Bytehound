@@ -2,7 +2,6 @@ import pandas as pd
 
 protocol = pd.DataFrame([{
     'profile_name': 'single cell configuration',
-    'parser_type': 'framed',
     'header_hex': 'AA 55',
     'frame_id_size': 2,
     'frame_id_byte_order': 'little',
@@ -18,7 +17,6 @@ protocol = pd.DataFrame([{
     'raw_log_format': 'hex',
     'inter_frame_delay_ms': 10,
     'tx_pad_length': 12,
-    'modbus_node_address': 1,
     'enabled': True
 }])
 

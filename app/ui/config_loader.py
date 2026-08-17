@@ -105,9 +105,10 @@ class ConfigLoaderMixin:
             path = Path(item)
             if path.exists():
                 try:
-                    self._load_config_from_path(path)
+                    self._load_config_from_path(path, suppress_popups=True)
                     return
-                except ConfigError:
+                except Exception as exc:
+                    self._log_activity(f"[WARN] Skipped recent config {path}: {exc}")
                     continue
         # No usable recent config — leave _config=None so the central
         # widget shows the first-run empty state with Import Config /
@@ -159,17 +160,12 @@ class ConfigLoaderMixin:
         # The running PollingWorker captured its protocol/parser/schedules at
         # construction time. Loading a new config replaces self._config and
         # self._parser, but the worker keeps decoding live bytes with the OLD
-        # rules until it is restarted. Tell the user.
+        # rules until it is restarted. Tell the user via status/toast.
         if self._serial is not None and self._serial.is_open:
-            self._popup_information(
-                "Reconnect required",
-                "The new configuration is loaded for the UI, but the live "
-                "serial connection is still using the previous protocol and "
-                "polling schedule. Disconnect and reconnect to apply the new "
-                "settings on the wire.",
-            )
+            if hasattr(self, "_toast"):
+                self._toast("Reconnect required to apply new config on live serial worker.")
 
-    def _load_config_from_path(self, path: Path) -> None:
+    def _load_config_from_path(self, path: Path, suppress_popups: bool = False) -> None:
         # Keep a snapshot so we can revert on failure
         _prev_config = self._config
         _prev_config_path = self._config_path
@@ -180,8 +176,9 @@ class ConfigLoaderMixin:
             self._config = _prev_config
             self._config_path = _prev_config_path
             self._parser = _prev_parser
-            self._popup_critical("Config error", str(exc))
-            return
+            if not suppress_popups:
+                self._popup_critical("Config error", str(exc))
+            raise
         self._config_path = path
         self._parser = create_parser(self._config.protocol)
         self._tx_logger_parser = create_parser(self._config.protocol)

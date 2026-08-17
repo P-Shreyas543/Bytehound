@@ -480,89 +480,6 @@ class FramedParser(ParserProtocol):
         )
 
 
-class ModbusRtuParser(ParserProtocol):
-    def __init__(self, protocol: ProtocolConfig) -> None:
-        self.protocol = protocol
-        self._buf = bytearray()
-
-    def feed(self, data: bytes) -> None:
-        self._buf.extend(data)
-        _trim_if_overflow(self._buf, "ModbusRtuParser")
-
-    def extract_all(self) -> List[ParsedPacket]:
-        out: List[ParsedPacket] = []
-        while True:
-            pkt, consumed = self._try_parse_one()
-            if pkt is None and consumed == 0:
-                break
-            del self._buf[:consumed]
-            if pkt is not None:
-                out.append(pkt)
-        return out
-
-    @property
-    def buffered_bytes(self) -> int:
-        return len(self._buf)
-
-    def _try_parse_one(self) -> Tuple[Optional[ParsedPacket], int]:
-        if len(self._buf) < 4:
-            return None, 0
-
-        address = self._buf[0]
-        fc = self._buf[1]
-
-        expected_len = 0
-        if fc in (3, 4):
-            if len(self._buf) < 3:
-                return None, 0
-            byte_count = self._buf[2]
-            # Modbus FC3/4 byte_count counts register data bytes. Valid range
-            # is 2..250 (1..125 16-bit registers). Anything outside means we
-            # latched onto random bytes — skip 1 to resync rather than waiting
-            # for a length that will never arrive.
-            if byte_count < 2 or byte_count > 250 or byte_count % 2 != 0:
-                return None, 1
-            expected_len = 5 + byte_count
-        elif fc in (6, 16):
-            expected_len = 8
-        elif fc >= 0x80:
-            expected_len = 5
-        else:
-            return None, 1
-
-        if len(self._buf) < expected_len:
-            return None, 0
-
-        buf_mv = memoryview(self._buf)
-        frame = bytes(buf_mv[:expected_len])
-
-        if fc in (3, 4):
-            payload = bytes(buf_mv[3 : expected_len - 2])
-        elif fc in (6, 16):
-            payload = bytes(buf_mv[4:6])
-        else:
-            payload = b""
-
-        received_crc = int.from_bytes(buf_mv[expected_len - 2 : expected_len], "little")
-        expected_crc = crc_mod.compute("crc16_modbus", bytes(buf_mv[:expected_len - 2]))
-
-        if received_crc != expected_crc:
-            return (
-                ParsedPacket(
-                    raw=frame, frame_id=address, payload=b"",
-                    ok=False,
-                    error=f"Modbus CRC mismatch: got 0x{received_crc:04X}, expected 0x{expected_crc:04X}"
-                ),
-                expected_len
-            )
-
-        return (
-            ParsedPacket(
-                raw=frame, frame_id=address, payload=payload, ok=True, error=None
-            ),
-            expected_len
-        )
-
 
 class WaveshareCanParser(ParserProtocol):
     def __init__(self, protocol: ProtocolConfig) -> None:
@@ -592,71 +509,41 @@ class WaveshareCanParser(ParserProtocol):
         if len(self._buf) < 1:
             return None, 0
 
-        buf_mv = memoryview(self._buf)
-
-        # Check for Fixed 20-byte (or 19-byte clone) Protocol header directly
-        if len(self._buf) >= 2 and buf_mv[0] == 0xAA and buf_mv[1] == 0x55:
-            if len(self._buf) < 19:
-                return None, 0
-
-            # 1. Try 20-byte checksum first (Standard Waveshare fixed protocol)
-            if len(self._buf) >= 20:
-                expected_chk_20 = (sum(buf_mv[:19]) + 1) & 0xFF
-                if expected_chk_20 == buf_mv[19]:
-                    raw = bytes(buf_mv[:20])
-                    dlc = buf_mv[9]
-                    if dlc > 8:
-                        dlc = 8
-                    frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
-                    payload = bytes(buf_mv[10 : 10 + dlc])
-                    pkt = ParsedPacket(
-                        raw=raw, frame_id=frame_id, payload=payload, ok=True, error=None
-                    )
-                    return pkt, 20
-
-            # 2. Try 19-byte checksum (Clone/alternative firmware omits 0x00 padding)
-            expected_chk_19 = (sum(buf_mv[:18]) + 1) & 0xFF
-            if expected_chk_19 == buf_mv[18]:
-                raw = bytes(buf_mv[:19])
-                dlc = buf_mv[9]
-                if dlc > 8:
-                    dlc = 8
-                frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
-                payload = bytes(buf_mv[10 : 10 + dlc])
-                pkt = ParsedPacket(
-                    raw=raw, frame_id=frame_id, payload=payload, ok=True, error=None
-                )
-                return pkt, 19
-
-            # If we don't have 20 bytes yet and 19-byte check failed, wait for more data
+        # Check for Fixed 20-byte Protocol header directly
+        if len(self._buf) >= 2 and self._buf[0] == 0xAA and self._buf[1] == 0x55:
             if len(self._buf) < 20:
                 return None, 0
 
-            # 3. Both failed. Check if the 20th byte is the start of the next frame (0xAA).
-            # If so, this was likely a corrupted 19-byte frame.
-            is_19_byte_corrupted = (len(self._buf) >= 20 and self._buf[19] == 0xAA)
+            # Verify checksum: (sum of first 19 bytes + 1) & 0xFF
+            expected_chk = (sum(self._buf[:19]) + 1) & 0xFF
+            received_chk = self._buf[19]
+            if expected_chk != received_chk:
+                pkt = ParsedPacket(
+                    raw=bytes(self._buf[:20]),
+                    frame_id=0,
+                    payload=b"",
+                    ok=False,
+                    error=f"Waveshare CAN checksum mismatch: expected 0x{expected_chk:02X}, got 0x{received_chk:02X}",
+                )
+                return pkt, 20
 
-            if is_19_byte_corrupted:
-                expected_chk = (sum(buf_mv[:18]) + 1) & 0xFF
-                received_chk = buf_mv[18]
-                err_msg = f"Waveshare CAN checksum mismatch (19-byte): got 0x{received_chk:02X}, expected 0x{expected_chk:02X}"
-                raw = bytes(buf_mv[:19])
-            else:
-                expected_chk = (sum(buf_mv[:19]) + 1) & 0xFF
-                received_chk = buf_mv[19]
-                err_msg = f"Waveshare CAN checksum mismatch: got 0x{received_chk:02X}, expected 0x{expected_chk:02X}"
-                raw = bytes(buf_mv[:20])
+            raw = bytes(self._buf[:20])
+            dlc = self._buf[9]
+            if dlc > 8:
+                dlc = 8
+            
+            # Frame ID is 4 bytes at index 5, little-endian
+            frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
+            payload = bytes(self._buf[10 : 10 + dlc])
 
-            frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
-            consumed = 19 if is_19_byte_corrupted else 20
             pkt = ParsedPacket(
                 raw=raw,
                 frame_id=frame_id,
-                payload=b"",
-                ok=False,
-                error=err_msg
+                payload=payload,
+                ok=True,
+                error=None
             )
-            return pkt, consumed
+            return pkt, 20
 
         # Find 0xAA header index
         idx = self._buf.find(0xAA)
@@ -669,7 +556,40 @@ class WaveshareCanParser(ParserProtocol):
         if len(self._buf) < 2:
             return None, 0
 
-        type_byte = buf_mv[1]
+        type_byte = self._buf[1]
+        
+        # If type_byte is 0x55, it's a Fixed 20-byte frame (AA 55)
+        if type_byte == 0x55:
+            if len(self._buf) < 20:
+                return None, 0
+            
+            expected_chk = (sum(self._buf[:19]) + 1) & 0xFF
+            received_chk = self._buf[19]
+            if expected_chk != received_chk:
+                pkt = ParsedPacket(
+                    raw=bytes(self._buf[:20]),
+                    frame_id=0,
+                    payload=b"",
+                    ok=False,
+                    error=f"Waveshare CAN checksum mismatch: expected 0x{expected_chk:02X}, got 0x{received_chk:02X}",
+                )
+                return pkt, 20
+
+            raw = bytes(self._buf[:20])
+            dlc = self._buf[9]
+            if dlc > 8:
+                dlc = 8
+            frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
+            payload = bytes(self._buf[10 : 10 + dlc])
+
+            pkt = ParsedPacket(
+                raw=raw,
+                frame_id=frame_id,
+                payload=payload,
+                ok=True,
+                error=None
+            )
+            return pkt, 20
 
         # Otherwise, check if type_byte is valid for Variable-Length Protocol
         if (type_byte & 0xC0) != 0xC0:
@@ -688,15 +608,16 @@ class WaveshareCanParser(ParserProtocol):
         if len(self._buf) < total_size:
             return None, 0
 
-        footer_byte = buf_mv[total_size - 1]
+        footer_byte = self._buf[total_size - 1]
         if footer_byte != 0x55:
             return None, 1
 
-        raw = bytes(buf_mv[:total_size])
+        raw = bytes(self._buf[:total_size])
         id_offset = 2
-        frame_id = int.from_bytes(buf_mv[id_offset : id_offset + id_size], byteorder='little')
+        fid_bytes = bytes(self._buf[id_offset : id_offset + id_size])
+        frame_id = int.from_bytes(fid_bytes, byteorder='little')
         payload_offset = id_offset + id_size
-        payload = bytes(buf_mv[payload_offset : payload_offset + dlc])
+        payload = bytes(self._buf[payload_offset : payload_offset + dlc])
 
         pkt = ParsedPacket(
             raw=raw,
@@ -709,8 +630,6 @@ class WaveshareCanParser(ParserProtocol):
 
 
 def create_parser(protocol: ProtocolConfig) -> ParserProtocol:
-    if protocol.parser_type == "modbus_rtu":
-        return ModbusRtuParser(protocol)
     if protocol.parser_type == "waveshare_can":
         return WaveshareCanParser(protocol)
     return FramedParser(protocol)

@@ -16,7 +16,7 @@ from ..decoder.types import SignalSpec, FrameConfig
 class SignalCardWidget(QFrame):
     """Sleek visual telemetry card displaying real-time value, status, range gauge, and quick plot."""
 
-    quick_plot_requested = Signal(str)  # signal_name
+    quick_plot_requested = Signal(str, object)  # signal_name, target_widget
 
     def __init__(self, spec: SignalSpec, parent=None):
         super().__init__(parent)
@@ -38,20 +38,22 @@ class SignalCardWidget(QFrame):
         layout.setSpacing(6)
         layout.setContentsMargins(10, 10, 10, 10)
 
-        # Header row: Name + Quick Plot Button
+        # Header row: Name + Quick Plot Feedback Button
         h_layout = QHBoxLayout()
         h_layout.setSpacing(4)
         name_label = QLabel(self.signal_name)
 
-        plot_btn = QPushButton("📈")
-        plot_btn.setToolTip("Click to add signal to Live Plot")
-        plot_btn.setAccessibleName(f"Quick plot {self.signal_name}")
-        plot_btn.setFixedSize(26, 26)
-        plot_btn.setCursor(Qt.CursorShape.PointingHandCursor)
-        plot_btn.clicked.connect(lambda: self.quick_plot_requested.emit(self.signal_name))
+        self.plot_btn = QPushButton()
+        self.plot_btn.setObjectName("quickPlotBtn")
+        self.plot_btn.setCheckable(True)
+        self.plot_btn.setToolTip("Click to add signal to Live Plot")
+        self.plot_btn.setAccessibleName(f"Quick plot {self.signal_name}")
+        self.plot_btn.setFixedSize(24, 24)
+        self.plot_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.plot_btn.clicked.connect(lambda: self.quick_plot_requested.emit(self.signal_name, self.plot_btn))
 
         h_layout.addWidget(name_label, 1)
-        h_layout.addWidget(plot_btn)
+        h_layout.addWidget(self.plot_btn)
 
         # Value + Unit Row
         val_h = QHBoxLayout()
@@ -96,6 +98,20 @@ class SignalCardWidget(QFrame):
         if has_range and not self.is_boolean:
             layout.addWidget(self.range_bar)
         layout.addLayout(stat_h)
+
+    def set_plot_active(self, active: bool, panels: Optional[List[int]] = None) -> None:
+        """Update active plot selection state with visual checkmark feedback."""
+        self.plot_btn.setChecked(active)
+        self.plot_btn.setProperty("active", active)
+        if active:
+            self.plot_btn.setText("✓")
+            panel_str = f" (Panel {', '.join(map(str, panels))})" if panels else ""
+            self.plot_btn.setToolTip(f"In Live Plot{panel_str} — Click to manage graph panels")
+        else:
+            self.plot_btn.setText("")
+            self.plot_btn.setToolTip("Click to add signal to Live Plot")
+        self.plot_btn.style().unpolish(self.plot_btn)
+        self.plot_btn.style().polish(self.plot_btn)
 
     def update_value(self, value: float | int | str, status: str = "ok") -> None:
         if self.is_boolean:
@@ -152,7 +168,7 @@ class SignalCardWidget(QFrame):
 class TelemetryCardsView(QWidget):
     """Grid container organizing signal cards into subsystem groups with live search filter."""
 
-    quick_plot_requested = Signal(str)
+    quick_plot_requested = Signal(str, object)  # signal_name, target_widget
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -279,3 +295,20 @@ class TelemetryCardsView(QWidget):
         if signal_name in self._cards:
             self._cards[signal_name].update_value(value, status)
 
+    def sync_plot_active_states(self, panels_or_keys: Any) -> None:
+        """Synchronize checkmark selection states across all signal cards."""
+        card_panels: Dict[str, List[int]] = {}
+        if isinstance(panels_or_keys, list) and panels_or_keys and hasattr(panels_or_keys[0], "assigned_keys"):
+            for idx, panel in enumerate(panels_or_keys):
+                for key in panel.assigned_keys:
+                    sig_name = key[1]
+                    card_panels.setdefault(sig_name, []).append(idx + 1)
+        elif isinstance(panels_or_keys, (list, set, tuple)):
+            for item in panels_or_keys:
+                if isinstance(item, tuple) and len(item) == 2:
+                    sig_name = item[1]
+                    card_panels.setdefault(sig_name, []).append(1)
+
+        for sig_name, card in self._cards.items():
+            assigned = card_panels.get(sig_name, [])
+            card.set_plot_active(bool(assigned), assigned)

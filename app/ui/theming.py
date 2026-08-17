@@ -107,9 +107,14 @@ QMenu::separator {
 #   2. White separators / bleed-through behind the main table
 #   3. Toolbar icon buttons too dark against the dark toolbar
 _QSS_DARK_OVERRIDES = """
-/* 1. Main window and separator backgrounds */
-QMainWindow, QMainWindow::separator {
+/* 1. Main window, dialogs, and separator backgrounds */
+QMainWindow, QDialog, QMainWindow::separator {
     background-color: #0F172A;
+    color: #F8FAFC;
+}
+QTabWidget::pane {
+    border: 1px solid #334155;
+    background-color: #1E293B;
 }
 /* The central panel contains the filter bar + main table.
    objectName is set to "centralPanel" in _build_main_layout(). */
@@ -294,6 +299,28 @@ QPushButton:disabled, QToolButton:disabled {
     color: #64748B;
     border-color: #1E293B;
 }
+QPushButton#quickPlotBtn {
+    background-color: transparent;
+    border: 1.5px solid #475569;
+    border-radius: 5px;
+    color: #F8FAFC;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 0px;
+}
+QPushButton#quickPlotBtn:hover {
+    border-color: #38BDF8;
+    background-color: rgba(56, 189, 248, 0.18);
+}
+QPushButton#quickPlotBtn[active="true"] {
+    background-color: #2563EB;
+    border: 1.5px solid #3B82F6;
+    color: #FFFFFF;
+}
+QPushButton#quickPlotBtn[active="true"]:hover {
+    background-color: #1D4ED8;
+    border-color: #60A5FA;
+}
 
 /* 14. Splitters */
 QSplitter::handle {
@@ -355,9 +382,14 @@ QLabel[value_state="ok"] { color: #38BDF8; }
 # switch. Explicit hex codes here guarantee the light theme actually looks
 # light, mirroring the role each rule plays in the dark variant.
 _QSS_LIGHT_OVERRIDES = """
-/* 1. Main window and separator backgrounds */
-QMainWindow, QMainWindow::separator {
+/* 1. Main window, dialogs, and separator backgrounds */
+QMainWindow, QDialog, QMainWindow::separator {
     background-color: #F1F5F9;
+    color: #1F2937;
+}
+QTabWidget::pane {
+    border: 1px solid #E5E7EB;
+    background-color: #FFFFFF;
 }
 /* Central panel + its direct widget children */
 QWidget#centralPanel {
@@ -539,6 +571,28 @@ QPushButton:disabled, QToolButton:disabled {
     color: #94A3B8;
     border-color: #E2E8F0;
 }
+QPushButton#quickPlotBtn {
+    background-color: #FFFFFF;
+    border: 1.5px solid #CBD5E1;
+    border-radius: 5px;
+    color: #1F2937;
+    font-size: 14px;
+    font-weight: bold;
+    padding: 0px;
+}
+QPushButton#quickPlotBtn:hover {
+    border-color: #2563EB;
+    background-color: #EFF6FF;
+}
+QPushButton#quickPlotBtn[active="true"] {
+    background-color: #2563EB;
+    border: 1.5px solid #1D4ED8;
+    color: #FFFFFF;
+}
+QPushButton#quickPlotBtn[active="true"]:hover {
+    background-color: #1D4ED8;
+    border-color: #1E40AF;
+}
 
 /* 13. Splitters */
 QSplitter::handle {
@@ -646,6 +700,29 @@ def build_card_qss(theme: str) -> str:
     return qss
 
 
+def apply_dialog_theme(dialog: QWidget) -> None:
+    """Apply current app theme (card QSS + native titlebar style) to any QDialog or popup."""
+    try:
+        from PySide6.QtCore import QSettings, QTimer
+        from PySide6.QtWidgets import QApplication
+        from PySide6.QtGui import QPalette
+        from .analysis_theme import APP_NAME, APP_ORG
+
+        raw_theme = str(QSettings(APP_ORG, APP_NAME).value("ui/theme", "dark"))
+        effective = resolve_theme(raw_theme)
+        dialog.setStyleSheet(build_card_qss(effective))
+
+        dark = (effective == "dark")
+        app = QApplication.instance()
+        accent = app.palette().color(QPalette.ColorRole.Highlight) if app else QColor("#2563EB")
+        QTimer.singleShot(0, lambda: (
+            _apply_windows_dark_titlebar(dialog, dark),
+            _apply_windows_accent_titlebar(dialog, accent)
+        ))
+    except Exception:
+        pass
+
+
 class ThemingMixin:
     """MainWindow mixin holding theme/styling methods."""
 
@@ -691,8 +768,14 @@ class ThemingMixin:
         # Cover dialogs/popups Qt has spawned that aren't descendants of self.
         app = QApplication.instance()
         if app is not None:
+            raw_theme = str(self._settings.value("ui/theme", "dark"))
+            effective = resolve_theme(raw_theme)
+            card_qss = build_card_qss(effective)
             for tlw in app.topLevelWidgets():
                 if isinstance(tlw, QWidget):
+                    if tlw is not self:
+                        tlw.setStyleSheet(card_qss)
+                    repolish(tlw)
                     repolish(tlw)
 
     def _apply_card_qss(self, theme: str) -> None:

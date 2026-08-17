@@ -1,17 +1,17 @@
 {
-    "version": "1.1.3",
-    "document_version": "1.1.3",
+    "version": "1.2.0",
+    "document_version": "1.2.0",
     "Developer": "Shreyas P",
     "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "DECIBELS LAB PRIVATE LIMITED",
     "publisher_webpage": "https://lms.decibelslab.com/",
-    "build_date": "2026-07-31",
+    "build_date": "2026-08-14",
     "license": "MIT",
     "license_url": "https://bytehound.shreyasp182002.workers.dev/LICENSE",
     "homepage": "https://bytehound.shreyasp182002.workers.dev/",
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
-    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.1.2.exe",
-    "release_notes": "v1.1.2 Release - Outbound TX Boolean Fields & Dynamic Telemetry Readback Updates.\n\nChanges:\n  - Outbound TX Boolean Fields: Full support for bool/boolean data types in TX command field specifications, automatically bit-packed into 8-bit byte flags.\n  - Live Telemetry Readback Labels: Parameter Editor and TX Command form fields dynamically display real-time 'Current: X' telemetry readback values.\n  - Merged RX/TX Frame Definitions: Config loader support for merged RX/TX frame definitions (direction='rxtx' or duplicate frame IDs across RX/TX rows).\n  - Calculations Unit Inheritance: Dynamically inherits unit configurations for statistics from matching variable group signals when not explicitly specified.\n  - Prefixless Calculations Logging: Logged calculation Excel headers are now prefixless (e.g. 'Cell Voltages min (V)' instead of '0x0100.Cells avg (V)') for clean data reporting.\n  - Non-Blocking Thread Shutdown: Serial worker unblocks kernel I/O calls on close to ensure instantaneous thread teardown.",
+    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.2.0.exe",
+    "release_notes": "v1.2.0 Release - Interactive Live Plot Graph Selection & Redesigned Protocol Wizard.\n\nChanges:\n  - Live Plot Panel Selector & Checkmark Feedback: Signal cards feature vibrant checkmark feedback ('✓' in #2563EB) and target graph selector menus ('Graph Panel 1', 'Graph Panel 2', 'Add to New Graph Panel').\n  - Redesigned Configuration Wizard: 1-click Quick-Start presets ('16-Cell BMS Pack', 'Single-Cell BMS', 'CAN/RS485 Telemetry Stream'), drop-down combobox delegates for Data Type & Direction, instant row deletion, and real-time on-wire packet diagram preview.\n  - Decoded Logger Group Calculations Fix: Single-instance calculation header placement per group cycle under final frame ID (e.g. 0x2F4 for Cell Voltages), eliminating duplicate calculation columns in Excel/CSV exports.\n  - Startup & Shutdown Audit: Suppressed popups on startup default config loading, non-blocking serial worker thread teardown, and clean temporary file crash recovery.",
     "sha256": "a2ad419f2c7f6f1d1b4499d8fc64dd4dbd8a5eb73e13fd2cdf3b5545cf31f773"
 }

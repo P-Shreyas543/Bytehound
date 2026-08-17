@@ -100,12 +100,34 @@ def export_excel_template(source_dir: str | Path, target_path: str | Path) -> Pa
                     dv = DataValidation(type="list", formula1=f'"{",".join(sorted(SUPPORTED_FMT_TYPES))}"', allow_blank=True)
                 elif col_name == "crc_type":
                     dv = DataValidation(type="list", formula1=f'"{",".join(sorted(SUPPORTED_CRC_TYPES))}"', allow_blank=True)
-                elif col_name in ("endianness", "frame_id_byte_order", "crc_byte_order", "length_byte_order"):
+                elif col_name in ("endianness", "byte_order", "frame_id_byte_order", "crc_byte_order", "length_byte_order"):
                     dv = DataValidation(type="list", formula1=f'"{",".join([m.value for m in ByteOrder])}"', allow_blank=True)
-                elif col_name == "parser_type":
-                    dv = DataValidation(type="list", formula1=f'"{",".join([m.value for m in ParserType])}"', allow_blank=True)
                 elif col_name == "read_write":
                     dv = DataValidation(type="list", formula1=f'"{",".join([m.value for m in ReadWrite])}"', allow_blank=True)
+                elif col_name == "direction":
+                    dv = DataValidation(type="list", formula1='"rx,tx,rxtx"', allow_blank=True)
+                elif col_name == "enabled":
+                    dv = DataValidation(type="list", formula1='"TRUE,FALSE"', allow_blank=True)
+                elif col_name == "length_meaning":
+                    dv = DataValidation(type="list", formula1='"payload_only,frame_total,header_to_crc,payload_plus_crc"', allow_blank=True)
+                elif col_name == "crc_coverage":
+                    dv = DataValidation(type="list", formula1='"header_to_payload,frame_id_to_payload,payload_only,full_frame"', allow_blank=True)
+                elif col_name == "escape_mode":
+                    dv = DataValidation(type="list", formula1='"none,slip,hdlc,cobs"', allow_blank=True)
+                elif col_name == "raw_log_format":
+                    dv = DataValidation(type="list", formula1='"hex,compact"', allow_blank=True)
+                elif col_name == "operations":
+                    dv = DataValidation(type="list", formula1='"min,max,sum,diff,avg,min|max,min|max|avg,min|max|diff|avg,sum|avg"', allow_blank=True)
+                elif col_name == "frame_id_size":
+                    dv = DataValidation(type="list", formula1='"1,2,4"', allow_blank=True)
+                elif col_name == "length_size":
+                    dv = DataValidation(type="list", formula1='"0,1,2,4"', allow_blank=True)
+                elif col_name == "crc_size":
+                    dv = DataValidation(type="list", formula1='"0,2,4"', allow_blank=True)
+                elif col_name == "parity":
+                    dv = DataValidation(type="list", formula1='"N,E,O,M,S"', allow_blank=True)
+                elif col_name == "baud_rate":
+                    dv = DataValidation(type="list", formula1='"9600,19200,38400,57600,115200"', allow_blank=True)
 
                 if dv:
                     dv.add(val_range)

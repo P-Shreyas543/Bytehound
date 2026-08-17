@@ -10,34 +10,55 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
-    QLineEdit, QSpinBox, QDoubleSpinBox, QTableWidget, QTableWidgetItem, QHeaderView,
-    QStackedWidget, QMessageBox, QGroupBox, QFileDialog
+    QLineEdit, QSpinBox, QTableWidget, QTableWidgetItem, QHeaderView,
+    QStackedWidget, QMessageBox, QGroupBox, QFileDialog, QItemDelegate
 )
 
-from ..decoder.types import SUPPORTED_CRC_TYPES, SUPPORTED_DATA_TYPES, ByteOrder, ParserType
+from ..decoder.types import SUPPORTED_CRC_TYPES, SUPPORTED_DATA_TYPES
+from .theming import apply_dialog_theme
+
+
+class ComboBoxDelegate(QItemDelegate):
+    """Table cell delegate rendering a dropdown combo box for seamless options picking."""
+
+    def __init__(self, options: List[str], parent=None):
+        super().__init__(parent)
+        self.options = options
+
+    def createEditor(self, parent, option, index):
+        combo = QComboBox(parent)
+        combo.addItems(self.options)
+        return combo
+
+    def setEditorData(self, editor: QComboBox, index):
+        val = index.model().data(index, Qt.ItemDataRole.EditRole) or ""
+        idx = editor.findText(str(val))
+        if idx >= 0:
+            editor.setCurrentIndex(idx)
+
+    def setModelData(self, editor: QComboBox, model, index):
+        model.setData(index, editor.currentText(), Qt.ItemDataRole.EditRole)
 
 
 class ProtocolWizardDialog(QDialog):
-    """Interactive Step-by-Step Protocol & Frame Builder Wizard."""
+    """Interactive Step-by-Step Protocol & Frame Builder Wizard with Presets and Dropdown Delegates."""
 
     protocol_created = Signal(str)  # Output path of generated xlsx config
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("🪄 New Protocol & Frame Configuration Wizard")
-        self.resize(900, 650)
-        self.setMinimumSize(400, 300)
+        apply_dialog_theme(self)
+        self.setWindowTitle("🪄 Protocol & Frame Configuration Wizard")
+        self.resize(920, 680)
+        self.setMinimumSize(750, 520)
 
         # Config state
         self._profile_name = "Custom Device Protocol"
         self._parser_type = "framed"
         self._header_hex = "AA 55"
         self._frame_id_size = 2
-        self._frame_id_byte_order = "little"
         self._length_size = 1
         self._crc_type = "crc16_modbus"
-        self._crc_size = 2
-        self._crc_byte_order = "little"
         self._baud_rate = 115200
 
         self._frames: List[Dict[str, Any]] = [
@@ -53,7 +74,7 @@ class ProtocolWizardDialog(QDialog):
     def _init_ui(self) -> None:
         main_layout = QVBoxLayout(self)
 
-        # Title bar banner
+        # Header banner
         banner = QWidget()
         banner.setStyleSheet("background-color: palette(alternate-base); border-bottom: 1px solid palette(mid);")
         b_layout = QHBoxLayout(banner)
@@ -103,26 +124,50 @@ class ProtocolWizardDialog(QDialog):
     def _build_step1_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
+        layout.setSpacing(12)
+
+        # Quick Preset Toolbar
+        preset_box = QGroupBox("🚀 Quick-Start Presets (1-Click Template Setup)")
+        p_layout = QHBoxLayout(preset_box)
+        
+        bms_16c_btn = QPushButton("🔋 16-Cell BMS Pack")
+        bms_16c_btn.setToolTip("Auto-load 16-Cell BMS frame structure and signal definitions")
+        bms_16c_btn.clicked.connect(self._apply_16cell_bms_preset)
+
+        bms_single_btn = QPushButton("⚡ Single-Cell BMS")
+        bms_single_btn.setToolTip("Auto-load single cell BMS telemetry profile")
+        bms_single_btn.clicked.connect(self._apply_single_cell_preset)
+
+        can_telemetry_btn = QPushButton("📡 CAN/RS485 Telemetry Stream")
+        can_telemetry_btn.setToolTip("Auto-load multi-sensor telemetry stream profile")
+        can_telemetry_btn.clicked.connect(self._apply_sensor_preset)
+
+        p_layout.addWidget(bms_16c_btn)
+        p_layout.addWidget(bms_single_btn)
+        p_layout.addWidget(can_telemetry_btn)
 
         box = QGroupBox("Physical Serial & Protocol Header Setup")
         b_layout = QVBoxLayout(box)
 
         self.profile_name_edit = QLineEdit(self._profile_name)
         self.header_hex_edit = QLineEdit(self._header_hex)
+        self.header_hex_edit.textChanged.connect(self._update_format_preview)
 
         self.crc_combo = QComboBox()
         self.crc_combo.addItems(sorted(SUPPORTED_CRC_TYPES))
         self.crc_combo.setCurrentText(self._crc_type)
+        self.crc_combo.currentTextChanged.connect(self._update_format_preview)
 
         self.frame_id_size_spin = QSpinBox()
         self.frame_id_size_spin.setRange(1, 4)
         self.frame_id_size_spin.setValue(self._frame_id_size)
+        self.frame_id_size_spin.valueChanged.connect(self._update_format_preview)
 
         self.length_size_spin = QSpinBox()
         self.length_size_spin.setRange(1, 4)
         self.length_size_spin.setValue(self._length_size)
+        self.length_size_spin.valueChanged.connect(self._update_format_preview)
 
-        f_layout = QVBoxLayout()
         h1 = QHBoxLayout()
         h1.addWidget(QLabel("Protocol Name:"))
         h1.addWidget(self.profile_name_edit, 1)
@@ -146,38 +191,50 @@ class ProtocolWizardDialog(QDialog):
         b_layout.addLayout(h3)
         b_layout.addLayout(h4)
 
-        # Accessibility and Tab Order
-        self.profile_name_edit.setAccessibleName("Protocol Name")
-        self.header_hex_edit.setAccessibleName("Header Hex")
-        self.frame_id_size_spin.setAccessibleName("Frame ID Size")
-        self.length_size_spin.setAccessibleName("Payload Length Size")
-        self.crc_combo.setAccessibleName("CRC Type")
-        QWidget.setTabOrder(self.profile_name_edit, self.header_hex_edit)
-        QWidget.setTabOrder(self.header_hex_edit, self.frame_id_size_spin)
-        QWidget.setTabOrder(self.frame_id_size_spin, self.length_size_spin)
-        QWidget.setTabOrder(self.length_size_spin, self.crc_combo)
+        # On-wire Diagram Banner
+        self.diagram_lbl = QLabel()
+        self.diagram_lbl.setStyleSheet(
+            "background-color: palette(window); border: 1px dashed palette(mid); "
+            "border-radius: 6px; padding: 8px; font-family: Consolas, monospace; "
+            "font-weight: bold; color: palette(highlight);"
+        )
+        self._update_format_preview()
 
+        layout.addWidget(preset_box)
         layout.addWidget(box)
+        layout.addWidget(self.diagram_lbl)
         layout.addStretch()
         return page
+
+    def _update_format_preview(self) -> None:
+        hdr = self.header_hex_edit.text().strip() or "NONE"
+        fid = f"Frame ID ({self.frame_id_size_spin.value()}B)"
+        len_s = f"Length ({self.length_size_spin.value()}B)"
+        crc_name = self.crc_combo.currentText()
+        if crc_name == "none":
+            crc = "NO CRC (0B)"
+        elif crc_name.startswith("crc16"):
+            crc = f"CRC-16 ({crc_name})"
+        elif crc_name == "crc32":
+            crc = f"CRC-32 ({crc_name})"
+        else:
+            crc = f"CRC ({crc_name})"
+        self.diagram_lbl.setText(f"On-Wire Packet Diagram:  [{hdr}]  ➜  [{fid}]  ➜  [{len_s}]  ➜  [Payload...]  ➜  [{crc}]")
 
     def _build_step2_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
 
-        lbl = QLabel("Define serial frame IDs, frame names, and expected payload byte lengths:")
+        lbl = QLabel("Define message frame IDs, frame names, payload lengths, and directions:")
         lbl.setStyleSheet("color: palette(mid);")
 
         self.frames_table = QTableWidget(len(self._frames), 4)
         self.frames_table.setAccessibleName("Frames Configuration Table")
         self.frames_table.setHorizontalHeaderLabels(["Frame ID", "Frame Name", "Payload Length", "Direction"])
         self.frames_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.frames_table.setItemDelegateForColumn(3, ComboBoxDelegate(["rx", "rxtx", "tx"], self.frames_table))
 
-        for r, f in enumerate(self._frames):
-            self.frames_table.setItem(r, 0, QTableWidgetItem(f["frame_id"]))
-            self.frames_table.setItem(r, 1, QTableWidgetItem(f["frame_name"]))
-            self.frames_table.setItem(r, 2, QTableWidgetItem(str(f["payload_length"])))
-            self.frames_table.setItem(r, 3, QTableWidgetItem(f["direction"]))
+        self._populate_frames_table()
 
         btn_h = QHBoxLayout()
         add_f_btn = QPushButton("➕ Add Frame")
@@ -194,11 +251,19 @@ class ProtocolWizardDialog(QDialog):
         layout.addLayout(btn_h)
         return page
 
+    def _populate_frames_table(self) -> None:
+        self.frames_table.setRowCount(len(self._frames))
+        for r, f in enumerate(self._frames):
+            self.frames_table.setItem(r, 0, QTableWidgetItem(f["frame_id"]))
+            self.frames_table.setItem(r, 1, QTableWidgetItem(f["frame_name"]))
+            self.frames_table.setItem(r, 2, QTableWidgetItem(str(f["payload_length"])))
+            self.frames_table.setItem(r, 3, QTableWidgetItem(f["direction"]))
+
     def _build_step3_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
 
-        lbl = QLabel("Define decoded signals (data variables, scale factors, units, and ranges):")
+        lbl = QLabel("Define telemetry signals (data types, scale factors, units, and groups):")
         lbl.setStyleSheet("color: palette(mid);")
 
         self.vars_table = QTableWidget(len(self._variables), 8)
@@ -206,15 +271,11 @@ class ProtocolWizardDialog(QDialog):
         self.vars_table.setHorizontalHeaderLabels(["Frame ID", "Signal Name", "Data Type", "Scale", "Offset", "Unit", "Group", "Description"])
         self.vars_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
 
-        for r, v in enumerate(self._variables):
-            self.vars_table.setItem(r, 0, QTableWidgetItem(v["id_or_address"]))
-            self.vars_table.setItem(r, 1, QTableWidgetItem(v["signal_name"]))
-            self.vars_table.setItem(r, 2, QTableWidgetItem(v["data_type"]))
-            self.vars_table.setItem(r, 3, QTableWidgetItem(str(v["scale"])))
-            self.vars_table.setItem(r, 4, QTableWidgetItem(str(v["offset"])))
-            self.vars_table.setItem(r, 5, QTableWidgetItem(v["unit"]))
-            self.vars_table.setItem(r, 6, QTableWidgetItem(v["group"]))
-            self.vars_table.setItem(r, 7, QTableWidgetItem(v.get("description", "")))
+        # Dropdown delegates for Data Type
+        valid_dtypes = sorted(list(SUPPORTED_DATA_TYPES))
+        self.vars_table.setItemDelegateForColumn(2, ComboBoxDelegate(valid_dtypes, self.vars_table))
+
+        self._populate_vars_table()
 
         btn_h = QHBoxLayout()
         add_v_btn = QPushButton("➕ Add Signal")
@@ -231,6 +292,18 @@ class ProtocolWizardDialog(QDialog):
         layout.addLayout(btn_h)
         return page
 
+    def _populate_vars_table(self) -> None:
+        self.vars_table.setRowCount(len(self._variables))
+        for r, v in enumerate(self._variables):
+            self.vars_table.setItem(r, 0, QTableWidgetItem(v["id_or_address"]))
+            self.vars_table.setItem(r, 1, QTableWidgetItem(v["signal_name"]))
+            self.vars_table.setItem(r, 2, QTableWidgetItem(v["data_type"]))
+            self.vars_table.setItem(r, 3, QTableWidgetItem(str(v["scale"])))
+            self.vars_table.setItem(r, 4, QTableWidgetItem(str(v["offset"])))
+            self.vars_table.setItem(r, 5, QTableWidgetItem(v["unit"]))
+            self.vars_table.setItem(r, 6, QTableWidgetItem(v["group"]))
+            self.vars_table.setItem(r, 7, QTableWidgetItem(v.get("description", "")))
+
     def _build_step4_page(self) -> QWidget:
         page = QWidget()
         layout = QVBoxLayout(page)
@@ -243,7 +316,7 @@ class ProtocolWizardDialog(QDialog):
 
         save_btn = QPushButton("💾 Generate & Save Workbook (.xlsx)")
         save_btn.setAccessibleName("Generate and Save Configuration")
-        save_btn.setAccessibleDescription("Generates the Excel configuration file and prompts to save it to disk.")
+        save_btn.setStyleSheet("font-weight: bold; padding: 10px; font-size: 14px;")
         save_btn.clicked.connect(self._save_wizard_config)
 
         b_layout.addWidget(self.summary_label)
@@ -253,6 +326,75 @@ class ProtocolWizardDialog(QDialog):
         layout.addWidget(box)
         layout.addStretch()
         return page
+
+    # --- Preset Quick-Starts ---
+    def _apply_16cell_bms_preset(self) -> None:
+        self.profile_name_edit.setText("16-Cell BMS Telemetry")
+        self.header_hex_edit.setText("AA 55")
+        self.crc_combo.setCurrentText("crc16_modbus")
+        self.frame_id_size_spin.setValue(2)
+        self.length_size_spin.setValue(1)
+
+        self._frames = [
+            {"frame_id": "0x2F0", "frame_name": "BMS_Stack_Current", "payload_length": 8, "direction": "rx"},
+            {"frame_id": "0x2F1", "frame_name": "BMS_Cell_Voltages_1_4", "payload_length": 8, "direction": "rx"},
+            {"frame_id": "0x2F2", "frame_name": "BMS_Cell_Voltages_5_8", "payload_length": 8, "direction": "rx"},
+            {"frame_id": "0x2F3", "frame_name": "BMS_Cell_Voltages_9_12", "payload_length": 8, "direction": "rx"},
+            {"frame_id": "0x2F4", "frame_name": "BMS_Cell_Voltages_13_16", "payload_length": 8, "direction": "rx"},
+        ]
+        self._populate_frames_table()
+
+        self._variables = [
+            {"id_or_address": "0x2F0", "signal_name": "Pack_Voltage", "data_type": "uint32", "scale": 0.001, "offset": 0, "unit": "V", "group": "Pack Parameters"},
+            {"id_or_address": "0x2F0", "signal_name": "Pack_Current", "data_type": "int32", "scale": 0.001, "offset": 0, "unit": "A", "group": "Pack Parameters"},
+        ]
+        for i in range(1, 17):
+            fid = f"0x2F{(i-1)//4 + 1}"
+            self._variables.append({
+                "id_or_address": fid,
+                "signal_name": f"Cell_Voltage_{i}",
+                "data_type": "uint16",
+                "scale": 0.001,
+                "offset": 0,
+                "unit": "V",
+                "group": "Cell Voltages"
+            })
+        self._populate_vars_table()
+
+    def _apply_single_cell_preset(self) -> None:
+        self.profile_name_edit.setText("Single-Cell BMS Protocol")
+        self.header_hex_edit.setText("AA 55")
+        self.crc_combo.setCurrentText("crc16_modbus")
+
+        self._frames = [
+            {"frame_id": "0x1000", "frame_name": "BMS Status", "payload_length": 8, "direction": "rx"},
+            {"frame_id": "0x2000", "frame_name": "Cell Voltages", "payload_length": 8, "direction": "rx"},
+        ]
+        self._populate_frames_table()
+
+        self._variables = [
+            {"id_or_address": "0x1000", "signal_name": "Cell Voltage", "data_type": "uint16", "scale": 0.001, "offset": 0, "unit": "V", "group": "Main"},
+            {"id_or_address": "0x1000", "signal_name": "Cell Current", "data_type": "int16", "scale": 0.01, "offset": 0, "unit": "A", "group": "Main"},
+            {"id_or_address": "0x2000", "signal_name": "SOC", "data_type": "uint8", "scale": 1.0, "offset": 0, "unit": "%", "group": "Status"},
+        ]
+        self._populate_vars_table()
+
+    def _apply_sensor_preset(self) -> None:
+        self.profile_name_edit.setText("Multi-Sensor Telemetry")
+        self.header_hex_edit.setText("AA 55")
+        self.crc_combo.setCurrentText("none")
+
+        self._frames = [
+            {"frame_id": "0x0100", "frame_name": "Sensors 1-4", "payload_length": 8, "direction": "rx"},
+        ]
+        self._populate_frames_table()
+
+        self._variables = [
+            {"id_or_address": "0x0100", "signal_name": "Temp_Sensor_1", "data_type": "int16", "scale": 0.1, "offset": 0, "unit": "°C", "group": "Temperatures"},
+            {"id_or_address": "0x0100", "signal_name": "Temp_Sensor_2", "data_type": "int16", "scale": 0.1, "offset": 0, "unit": "°C", "group": "Temperatures"},
+            {"id_or_address": "0x0100", "signal_name": "Pressure_1", "data_type": "uint16", "scale": 0.01, "offset": 0, "unit": "bar", "group": "Pressures"},
+        ]
+        self._populate_vars_table()
 
     def _add_frame_row(self) -> None:
         r = self.frames_table.rowCount()
@@ -265,28 +407,25 @@ class ProtocolWizardDialog(QDialog):
     def _del_frame_row(self) -> None:
         r = self.frames_table.currentRow()
         if r >= 0:
-            resp = QMessageBox.question(self, "Delete Frame", "Are you sure you want to delete this frame?")
-            if resp == QMessageBox.StandardButton.Yes:
-                self.frames_table.removeRow(r)
+            self.frames_table.removeRow(r)
 
     def _add_var_row(self) -> None:
         r = self.vars_table.rowCount()
         self.vars_table.insertRow(r)
-        self.vars_table.setItem(r, 0, QTableWidgetItem("0x1000"))
+        fid = self.frames_table.item(0, 0).text() if self.frames_table.rowCount() > 0 and self.frames_table.item(0, 0) else "0x1000"
+        self.vars_table.setItem(r, 0, QTableWidgetItem(fid))
         self.vars_table.setItem(r, 1, QTableWidgetItem(f"Signal_{r+1}"))
         self.vars_table.setItem(r, 2, QTableWidgetItem("uint16"))
         self.vars_table.setItem(r, 3, QTableWidgetItem("1.0"))
         self.vars_table.setItem(r, 4, QTableWidgetItem("0"))
-        self.vars_table.setItem(r, 5, QTableWidgetItem("mV"))
+        self.vars_table.setItem(r, 5, QTableWidgetItem("V"))
         self.vars_table.setItem(r, 6, QTableWidgetItem("General"))
         self.vars_table.setItem(r, 7, QTableWidgetItem(""))
 
     def _del_var_row(self) -> None:
         r = self.vars_table.currentRow()
         if r >= 0:
-            resp = QMessageBox.question(self, "Delete Signal", "Are you sure you want to delete this signal?")
-            if resp == QMessageBox.StandardButton.Yes:
-                self.vars_table.removeRow(r)
+            self.vars_table.removeRow(r)
 
     def _on_next(self) -> None:
         idx = self.stack.currentIndex()
@@ -305,6 +444,9 @@ class ProtocolWizardDialog(QDialog):
         self.back_btn.setEnabled(idx > 0)
         self.next_btn.setVisible(idx < 3)
 
+        if idx == 2:
+            self._update_step3_delegates()
+
         titles = [
             "Step 1 of 4: Communication & Framing Setup",
             "Step 2 of 4: Serial Frame Definitions",
@@ -312,6 +454,19 @@ class ProtocolWizardDialog(QDialog):
             "Step 4 of 4: Export Configuration Workbook"
         ]
         self.title_lbl.setText(titles[idx])
+
+    def _update_step3_delegates(self) -> None:
+        """Populate Frame ID, Unit, and Group dropdown delegates in Step 3 table."""
+        frame_ids = []
+        for r in range(self.frames_table.rowCount()):
+            item = self.frames_table.item(r, 0)
+            if item and item.text().strip():
+                frame_ids.append(item.text().strip())
+        if not frame_ids:
+            frame_ids = ["0x1000"]
+        self.vars_table.setItemDelegateForColumn(0, ComboBoxDelegate(frame_ids, self.vars_table))
+        self.vars_table.setItemDelegateForColumn(5, ComboBoxDelegate(["V", "A", "°C", "%", "s", "ms", "Hz", "W", "Wh", "Ohm", "m/s", "RPM"], self.vars_table))
+        self.vars_table.setItemDelegateForColumn(6, ComboBoxDelegate(["Cell Voltages", "Pack Parameters", "Temperatures", "Pressures", "Main", "General"], self.vars_table))
 
     def _save_wizard_config(self) -> None:
         file_path, _ = QFileDialog.getSaveFileName(self, "Save Protocol Workbook", "custom_protocol.xlsx", "Excel Files (*.xlsx)")
@@ -334,10 +489,8 @@ class ProtocolWizardDialog(QDialog):
                 QMessageBox.warning(self, "Invalid Input", "Payload Length Size must be >= 1 for framed protocols.")
                 return
 
-            # Build DataFrames
             protocol_df = pd.DataFrame([{
                 "profile_name": self.profile_name_edit.text() or "Custom Protocol",
-                "parser_type": "framed",
                 "header_hex": self.header_hex_edit.text(),
                 "frame_id_size": self.frame_id_size_spin.value(),
                 "frame_id_byte_order": "little",
@@ -353,7 +506,6 @@ class ProtocolWizardDialog(QDialog):
                 "raw_log_format": "hex",
                 "inter_frame_delay_ms": 10,
                 "tx_pad_length": 0,
-                "modbus_node_address": 1,
                 "enabled": True
             }])
 

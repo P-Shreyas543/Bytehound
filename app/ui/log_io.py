@@ -179,19 +179,33 @@ class LogLoaderThread(QThread):
         self.sigFinished.emit(self._log_id, self._path, entry)
 
     def _load_xlsx(self):
-        """Parse a .xlsx file. Supports three schemas using high-performance pandas."""
+        """Parse a .xlsx file. Supports multi-sheet datasets (Data, Data_2, Data_3...) using high-performance pandas."""
         import pandas as pd
         sheet_candidates, col_candidates, scale_mapping = self._get_schema_settings()
         try:
             xls = pd.ExcelFile(self._path)
-            sheet = None
+            
+            # Find all matching data sheets (e.g., Data, Data_2, Data_3 or Record, Record_2...)
+            matching_sheets = []
             for cand in sheet_candidates:
-                if cand in xls.sheet_names:
-                    sheet = cand
+                matched = [s for s in xls.sheet_names if s == cand or s.startswith(f"{cand}_")]
+                if matched:
+                    matching_sheets = matched
                     break
-            if not sheet:
-                sheet = 'Data' if 'Data' in xls.sheet_names else ('Record' if 'Record' in xls.sheet_names else xls.sheet_names[0])
-            df = pd.read_excel(xls, sheet_name=sheet)
+            
+            if not matching_sheets:
+                matched_data = [s for s in xls.sheet_names if s == "Data" or s.startswith("Data_")]
+                if matched_data:
+                    matching_sheets = matched_data
+                else:
+                    matched_record = [s for s in xls.sheet_names if s == "Record" or s.startswith("Record_")]
+                    matching_sheets = matched_record if matched_record else [xls.sheet_names[0]]
+
+            if len(matching_sheets) == 1:
+                df = pd.read_excel(xls, sheet_name=matching_sheets[0])
+            else:
+                dfs = [pd.read_excel(xls, sheet_name=s) for s in matching_sheets]
+                df = pd.concat(dfs, ignore_index=True)
         except Exception as e:
             self.error.emit(self._path, f"Failed to parse Excel: {e}")
             return

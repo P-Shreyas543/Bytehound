@@ -72,3 +72,26 @@ This document lists future development tasks for Bytehound. Each ticket represen
   * TX commands with `bool`/`boolean` fields render toggle inputs and validate 0/1 states.
   * Commands format bit-packed byte flags accurately on the wire.
   * Byte visualizer widget renders bit-packed flag breakdown tooltips.
+
+---
+
+## TKT-008: Live Plot Graph Panel Selection & Checkmark Feedback
+* **Status**: Completed (v1.2.0)
+* **Target Components**: 
+  * `app/ui/telemetry_cards.py`
+  * `app/ui/main_window.py`
+  * `app/ui/theming.py`
+
+---
+
+## TKT-009: Redesigned Protocol & Frame Configuration Wizard
+* **Status**: Completed (v1.2.0)
+* **Target Components**: 
+  * `app/ui/config_wizard.py`
+
+---
+
+## TKT-010: Group Calculation Header Column Binding Fix
+* **Status**: Completed (v1.2.0)
+* **Target Components**: 
+  * `app/serial_logging/decoded_logger.py`

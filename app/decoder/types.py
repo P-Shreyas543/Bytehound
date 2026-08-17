@@ -40,7 +40,6 @@ class ByteOrder(str, enum.Enum):
 
 class ParserType(str, enum.Enum):
     FRAMED = "framed"
-    MODBUS_RTU = "modbus_rtu"
     WAVESHARE_CAN = "waveshare_can"
 
     @classmethod
@@ -50,7 +49,7 @@ class ParserType(str, enum.Enum):
             if member.value == normalised:
                 return member
         raise ValueError(
-            f"parser_type must be 'framed', 'modbus_rtu', or 'waveshare_can' (got {value!r})"
+            f"parser_type must be 'framed' or 'waveshare_can' (got {value!r})"
         )
 
 
@@ -190,9 +189,6 @@ class ProtocolConfig:
     # ``length_size=1`` (the common case) this field is irrelevant; it only
     # matters for protocols whose length is multi-byte.
     length_byte_order: Optional[str] = None
-    #: Modbus RTU node address (slave ID). Only relevant when
-    #: ``parser_type == "modbus_rtu"``. Defaults to 1.
-    modbus_node_address: int = 1
     #: How the raw CSV logger formats the ``hex`` column.
     #: ``"hex"`` (default) writes space-separated bytes: ``AA 55 01 20``.
     #: ``"compact"`` writes contiguous bytes: ``AA550120``. Both are

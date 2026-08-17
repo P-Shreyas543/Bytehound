@@ -445,54 +445,6 @@ def test_duplicate_enum_value_rejected(tmp_path):
         load_config(tmp_path)
 
 
-def test_modbus_rtu_endianness_checks(tmp_path):
-    # Invalid register address (frame_id_byte_order)
-    (tmp_path / "protocol.csv").write_text(
-        "profile_name,header_hex,frame_id_size,frame_id_byte_order,"
-        "length_size,length_meaning,crc_type,crc_size,crc_byte_order,"
-        "crc_coverage,footer_hex,escape_mode,raw_log_format,enabled,parser_type\n"
-        "Modbus Invalid,01,1,little,1,payload_only,crc16_modbus,2,little,"
-        "header_to_payload,,none,hex,TRUE,modbus_rtu\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "variables.csv").write_text(
-        "id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,enabled\n"
-        "1,Sig,uint16,1,big,1,0,V,TRUE\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ConfigError, match="Modbus RTU register addresses .* must be big-endian"):
-        load_config(tmp_path)
-
-    # Invalid CRC byte order
-    (tmp_path / "protocol.csv").write_text(
-        "profile_name,header_hex,frame_id_size,frame_id_byte_order,"
-        "length_size,length_meaning,crc_type,crc_size,crc_byte_order,"
-        "crc_coverage,footer_hex,escape_mode,raw_log_format,enabled,parser_type\n"
-        "Modbus Invalid,01,1,big,1,payload_only,crc16_modbus,2,big,"
-        "header_to_payload,,none,hex,TRUE,modbus_rtu\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ConfigError, match="Modbus RTU CRC checksum .* must be little-endian"):
-        load_config(tmp_path)
-
-    # Invalid data value byte order (variables.csv)
-    (tmp_path / "protocol.csv").write_text(
-        "profile_name,header_hex,frame_id_size,frame_id_byte_order,"
-        "length_size,length_meaning,crc_type,crc_size,crc_byte_order,"
-        "crc_coverage,footer_hex,escape_mode,raw_log_format,enabled,parser_type\n"
-        "Modbus Valid,01,1,big,1,payload_only,crc16_modbus,2,little,"
-        "header_to_payload,,none,hex,TRUE,modbus_rtu\n",
-        encoding="utf-8",
-    )
-    (tmp_path / "variables.csv").write_text(
-        "id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,enabled\n"
-        "1,Sig,uint16,1,little,1,0,V,TRUE\n",
-        encoding="utf-8",
-    )
-    with pytest.raises(ConfigError, match="Modbus RTU data values .* must be big-endian"):
-        load_config(tmp_path)
-
-
 def test_duplicate_bitfield_index_or_label_rejected(tmp_path):
     _write_basic_protocol(tmp_path)
     (tmp_path / "variables.csv").write_text(

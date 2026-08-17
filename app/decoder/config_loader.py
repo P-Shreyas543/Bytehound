@@ -606,7 +606,6 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
 
     row = enabled_rows[0]
     parser_type_val = ParserType.parse(row.get("parser_type", "")).value
-    is_modbus = parser_type_val == "modbus_rtu"
     is_waveshare = parser_type_val == "waveshare_can"
 
     try:
@@ -630,8 +629,8 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
             f"protocol: raw_log_format must be 'hex' or 'compact' (got {raw_log_format_raw!r})"
         )
 
-    frame_id_default = "big" if is_modbus else "little"
-    crc_default = "little" if is_modbus else "little"
+    frame_id_default = "little"
+    crc_default = "little"
 
     header_hex_val = row.get("header_hex", "")
     if is_waveshare and not header_hex_val:
@@ -691,7 +690,6 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         tx_pad_length=_to_optional_int(row.get("tx_pad_length", ""), field_name="tx_pad_length"),
         inter_frame_delay_ms=_to_int(row.get("inter_frame_delay_ms", "10"), field_name="inter_frame_delay_ms"),
         length_byte_order=length_byte_order,
-        modbus_node_address=_to_int(row.get("modbus_node_address", "1"), field_name="modbus_node_address"),
         raw_log_format=raw_log_format_raw,
         waveshare_fixed_20_bytes=waveshare_fixed_20_bytes,
     )
@@ -718,17 +716,12 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
             f"crc_type is {protocol.crc_type!r} (got {protocol.crc_size})"
         )
 
-    if protocol.parser_type == "modbus_rtu":
-        if protocol.frame_id_byte_order != "big":
-            raise ConfigError("protocol: Modbus RTU register addresses (frame_id_byte_order) must be big-endian")
-        if protocol.crc_byte_order != "little":
-            raise ConfigError("protocol: Modbus RTU CRC checksum (crc_byte_order) must be little-endian")
     if protocol.parser_type == "waveshare_can":
         if protocol.header != b"\xAA":
             raise ConfigError("protocol: Waveshare CAN header must be 0xAA")
         if protocol.footer != b"\x55":
             raise ConfigError("protocol: Waveshare CAN footer must be 0x55")
-    elif protocol.parser_type != "modbus_rtu":
+    else:
         if not protocol.header:
             raise ConfigError("protocol: header_hex must not be empty")
     if protocol.frame_id_byte_order not in {"big", "little"}:
@@ -752,8 +745,8 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
             f"protocol: escape_mode must be one of "
             f"'none', 'slip', 'hdlc', 'cobs' (got {protocol.escape_mode!r})"
         )
-    if protocol.parser_type not in {"framed", "modbus_rtu", "waveshare_can"}:
-        raise ConfigError("protocol: parser_type must be framed, modbus_rtu, or waveshare_can")
+    if protocol.parser_type not in {"framed", "waveshare_can"}:
+        raise ConfigError("protocol: parser_type must be framed or waveshare_can")
 
 
 def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
@@ -820,8 +813,8 @@ def _parse_variables(
             continue
         frame_id = _parse_frame_id(row["id_or_address"], field_name=f"variables row {row_no}.id_or_address")
         if frame_id not in frames:
-            # Auto-create a frame definition for Modbus if not defined in frames.csv
-            frames[frame_id] = FrameDefinition(frame_id=frame_id, frame_name=f"Node 0x{frame_id:X}")
+            # Auto-create a frame definition if missing in frames table
+            frames[frame_id] = FrameDefinition(frame_id=frame_id, frame_name=f"Frame 0x{frame_id:X}")
 
         name = row["signal_name"].strip()
         if not name:
@@ -892,8 +885,7 @@ def _parse_variables(
     bool_bit_counts: Dict[int, int] = {}
     seen: Dict[int, set[str]] = {}
 
-    is_modbus = (parser_type == "modbus_rtu")
-    default_endian = "big" if is_modbus else "little"
+    default_endian = "little"
 
     for row_no, row in enumerate(rows, start=2):
         if _is_blank_row(row) or (not row.get("id_or_address", "").strip() and not row.get("signal_name", "").strip()):
@@ -902,8 +894,7 @@ def _parse_variables(
             continue
         frame_id = _parse_frame_id(row["id_or_address"], field_name=f"variables row {row_no}.id_or_address")
         if frame_id not in frames:
-            # Auto-create a frame definition for Modbus if not defined in frames.csv
-            frames[frame_id] = FrameDefinition(frame_id=frame_id, frame_name=f"Node 0x{frame_id:X}")
+            frames[frame_id] = FrameDefinition(frame_id=frame_id, frame_name=f"Frame 0x{frame_id:X}")
 
         name = row["signal_name"].strip()
         if not name:
@@ -945,8 +936,6 @@ def _parse_variables(
         group = row.get("group", "")
         unit = row.get("unit", "")
         endian = _normalize_byte_order(row.get("byte_order", ""), source=f"variables row {row_no}", default=default_endian)
-        if is_modbus and endian != "big":
-            raise ConfigError(f"variables row {row_no}: Modbus RTU data values (byte_order) must be big-endian")
 
         for idx in range(count):
             curr_idx = start_index + idx
@@ -1037,8 +1026,7 @@ def _parse_legacy_frame_config(
     seen_per_frame: Dict[int, set[str]] = {}
     legacy_bool_counts: Dict[tuple[int, int], int] = {}
 
-    is_modbus = (parser_type == "modbus_rtu")
-    default_endian = "big" if is_modbus else "little"
+    default_endian = "little"
 
     for row_no, row in enumerate(rows, start=2):
         if _is_blank_row(row) or (not row.get("frame_id_hex", "").strip() and not row.get("signal_name", "").strip()):
@@ -1055,8 +1043,6 @@ def _parse_legacy_frame_config(
             column="endianness",
             default=default_endian,
         )
-        if is_modbus and endianness != "big":
-            raise ConfigError(f"frame_config row {row_no}: Modbus RTU data values (endianness) must be big-endian")
         byte_length = _to_int(row["byte_length"], field_name="byte_length")
         if byte_length < 1 or byte_length > 8:
             raise ConfigError(f"frame_config row {row_no}: byte_length must be 1..8")

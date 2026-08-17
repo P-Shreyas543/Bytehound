@@ -435,16 +435,14 @@ class FrameFormatWidget(QWidget):
         selector_layout = QHBoxLayout()
         selector_layout.setContentsMargins(0, 0, 0, 0)
 
-        lbl_text = "Select Register:" if self._protocol.parser_type == "modbus_rtu" else "Select Frame Structure:"
-        self._select_lbl = QLabel(lbl_text)
+        self._select_lbl = QLabel("Select Frame Structure:")
         self._select_lbl.setStyleSheet("font-weight: bold; font-size: 11px;")
         selector_layout.addWidget(self._select_lbl)
 
         self._combo = QComboBox()
         self._combo.setMinimumWidth(220)
 
-        default_item = "All Registers (General)" if self._protocol.parser_type == "modbus_rtu" else "All Frames (General Template)"
-        self._combo.addItem(default_item, userData=None)
+        self._combo.addItem("All Frames (General Template)", userData=None)
 
         # Add all loaded frames to the dropdown
         for frame_id in sorted(self._config.frames.keys()):
@@ -608,59 +606,30 @@ class FrameFormatWidget(QWidget):
             self._grid_widget.deleteLater()
             self._grid_widget = None
 
-        # Define fields: (Label, Size in bytes, Color key, Tooltip description)
-        if self._protocol.parser_type == "modbus_rtu":
-            if frame_id is not None:
-                # Modbus Register specific frame layout
-                signals = self._config.signals_by_frame.get(frame_id, [])
-                if signals:
-                    sig_names = ", ".join(s.signal_name for s in signals)
-                    data_desc = f"Mapped signals: {sig_names}"
-                    data_label = signals[0].signal_name if len(signals) == 1 else "Reg Data"
-                else:
-                    data_desc = "No variables configured at this address"
-                    data_label = "Reg Data"
-
-                fields = [
-                    ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
-                    ("Func Code", 1, "Emerald", "Function Code (e.g. 0x03 Read, 0x06 Write)"),
-                    ("Reg Addr", 2, "Indigo", f"Register Start Address: 0x{frame_id:04X} ({frame_id})"),
-                    (data_label, 2, "Teal", f"Register Data/Value (2 bytes, Big-endian)\n{data_desc}"),
-                    ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)"),
-                ]
-            else:
-                fields = [
-                    ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
-                    ("Func Code", 1, "Emerald", "Function Code (e.g. 0x03 Read, 0x06 Write)"),
-                    ("Reg Addr", 2, "Indigo", "Register Start Address (2 bytes, Big-endian)"),
-                    ("Reg Value", 2, "Teal", "Register Data/Value (2-byte response/request, Big-endian)"),
-                    ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)"),
-                ]
-        else:
-            fields = []
-            if self._protocol.header:
-                fields.append((
-                    "Header",
-                    len(self._protocol.header),
-                    "Amber",
-                    f"Frame Header Hex: 0x{self._protocol.header.hex().upper()}"
-                ))
-            if self._protocol.frame_id_size > 0:
-                fid_val_desc = f" (Value: 0x{frame_id:04X})" if frame_id is not None else ""
-                fields.append((
-                    "Frame ID",
-                    self._protocol.frame_id_size,
-                    "Emerald",
-                    f"Frame Identifier ({self._protocol.frame_id_size} bytes, {self._protocol.frame_id_byte_order}-endian){fid_val_desc}"
-                ))
-            if self._protocol.length_size > 0:
-                len_bo = self._protocol.length_byte_order or self._protocol.frame_id_byte_order
-                fields.append((
-                    "Length",
-                    self._protocol.length_size,
-                    "Indigo",
-                    f"Payload Length ({self._protocol.length_size} bytes, {len_bo}-endian, meaning: {self._protocol.length_meaning})"
-                ))
+        fields = []
+        if self._protocol.header:
+            fields.append((
+                "Header",
+                len(self._protocol.header),
+                "Amber",
+                f"Frame Header Hex: 0x{self._protocol.header.hex().upper()}"
+            ))
+        if self._protocol.frame_id_size > 0:
+            fid_val_desc = f" (Value: 0x{frame_id:04X})" if frame_id is not None else ""
+            fields.append((
+                "Frame ID",
+                self._protocol.frame_id_size,
+                "Emerald",
+                f"Frame Identifier ({self._protocol.frame_id_size} bytes, {self._protocol.frame_id_byte_order}-endian){fid_val_desc}"
+            ))
+        if self._protocol.length_size > 0:
+            len_bo = self._protocol.length_byte_order or self._protocol.frame_id_byte_order
+            fields.append((
+                "Length",
+                self._protocol.length_size,
+                "Indigo",
+                f"Payload Length ({self._protocol.length_size} bytes, {len_bo}-endian, meaning: {self._protocol.length_meaning})"
+            ))
 
             if frame_id is not None:
                 # Add specific signals for selected Frame ID
@@ -794,159 +763,93 @@ class FrameFormatWidget(QWidget):
             self._tx_grid_widget.deleteLater()
             self._tx_grid_widget = None
 
-        if self._protocol.parser_type == "modbus_rtu":
+        fields = []
+        if self._protocol.header:
+            fields.append((
+                "Header",
+                len(self._protocol.header),
+                "Amber",
+                f"Frame Header Hex: 0x{self._protocol.header.hex().upper()}"
+            ))
+        if self._protocol.frame_id_size > 0:
+            fid_val_desc = ""
             if command_name is not None:
                 command = self._config.tx_commands.get(command_name)
                 if command is not None:
-                    static_bytes = self._hex_to_bytes(command.payload_hex)
-                    fields_size = self._compute_tx_fields_size(command.fields)
-                    total_payload_size = len(static_bytes) + fields_size
+                    fid_val_desc = f" (Value: 0x{command.frame_id:04X})"
+            fields.append((
+                "Frame ID",
+                self._protocol.frame_id_size,
+                "Emerald",
+                f"Frame Identifier ({self._protocol.frame_id_size} bytes, {self._protocol.frame_id_byte_order}-endian){fid_val_desc}"
+            ))
+        if self._protocol.length_size > 0:
+            len_bo = self._protocol.length_byte_order or self._protocol.frame_id_byte_order
+            fields.append((
+                "Length",
+                self._protocol.length_size,
+                "Indigo",
+                f"Payload Length ({self._protocol.length_size} bytes, {len_bo}-endian, meaning: {self._protocol.length_meaning})"
+            ))
 
-                    if total_payload_size == 0:
-                        fields = [
-                            ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
-                            ("Func Code", 1, "Emerald", "Function Code: 0x03 (Read Holding Registers)"),
-                            ("Reg Addr", 2, "Indigo", f"Register Start Address: 0x{command.frame_id:04X} ({command.frame_id})"),
-                            ("Quantity", 2, "Teal", "Quantity of registers to read (2 bytes, default 1)"),
-                            ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)"),
-                        ]
-                    elif total_payload_size == 2:
-                        val_desc = "Register Write Value (2 bytes)"
-                        val_label = "Value"
-                        if command.fields:
-                            f = command.fields[0]
-                            val_label = f.field_name
-                            val_desc = f"Field: {f.field_name}\nType: {f.fmt}\nUnit: {f.unit or '-'}"
-                        elif static_bytes:
-                            val_desc = f"Static value hex: 0x{static_bytes.hex().upper()}"
-                            val_label = f"Value (0x{static_bytes.hex().upper()})"
+        if command_name is not None:
+            command = self._config.tx_commands.get(command_name)
+            if command is not None:
+                static_bytes = self._hex_to_bytes(command.payload_hex)
+                if static_bytes:
+                    fields.append((
+                        "Static Payload",
+                        len(static_bytes),
+                        "Teal",
+                        f"Static payload bytes: 0x{static_bytes.hex().upper()}"
+                    ))
 
-                        fields = [
-                            ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
-                            ("Func Code", 1, "Emerald", "Function Code: 0x06 (Write Single Register)"),
-                            ("Reg Addr", 2, "Indigo", f"Register Start Address: 0x{command.frame_id:04X} ({command.frame_id})"),
-                            (val_label, 2, "Teal", f"Register Data/Value (2-byte response/request, Big-endian)\n{val_desc}"),
-                            ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)"),
-                        ]
-                    else:
-                        qty = total_payload_size // 2
-                        fields = [
-                            ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
-                            ("Func Code", 1, "Emerald", "Function Code: 0x10 (Write Multiple Registers)"),
-                            ("Reg Addr", 2, "Indigo", f"Register Start Address: 0x{command.frame_id:04X} ({command.frame_id})"),
-                            ("Quantity", 2, "Teal", f"Quantity of registers (2 bytes, value: {qty})"),
-                            ("Byte Count", 1, "Teal", f"Byte count (1 byte, value: {total_payload_size})"),
-                        ]
-                        if static_bytes:
-                            fields.append((
-                                "Static Payload",
-                                len(static_bytes),
-                                "Teal",
-                                f"Static payload bytes: 0x{static_bytes.hex().upper()}"
-                            ))
-                        fields.extend(self._compute_tx_field_blocks(command.fields))
-                        fields.append(
-                            ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)")
-                        )
-                else:
-                    command_name = None
+                fields.extend(self._compute_tx_field_blocks(command.fields))
 
-            if command_name is None:
-                fields = [
-                    ("Node Addr", 1, "Amber", f"Node/Slave Address (0x{self._protocol.modbus_node_address:02X})"),
-                    ("Func Code", 1, "Emerald", "Function Code (e.g. 0x03 Read, 0x06/0x10 Write)"),
-                    ("Reg Addr", 2, "Indigo", "Register Start Address (2 bytes, Big-endian)"),
-                    ("Reg Value", 2, "Teal", "Register Data/Value (2-byte response/request, Big-endian)"),
-                    ("CRC-16", 2, "Pink", "CRC-16 Checksum (2 bytes, Little-endian)"),
-                ]
-        else:
-            fields = []
-            if self._protocol.header:
-                fields.append((
-                    "Header",
-                    len(self._protocol.header),
-                    "Amber",
-                    f"Frame Header Hex: 0x{self._protocol.header.hex().upper()}"
-                ))
-            if self._protocol.frame_id_size > 0:
-                fid_val_desc = ""
-                if command_name is not None:
-                    command = self._config.tx_commands.get(command_name)
-                    if command is not None:
-                        fid_val_desc = f" (Value: 0x{command.frame_id:04X})"
-                fields.append((
-                    "Frame ID",
-                    self._protocol.frame_id_size,
-                    "Emerald",
-                    f"Frame Identifier ({self._protocol.frame_id_size} bytes, {self._protocol.frame_id_byte_order}-endian){fid_val_desc}"
-                ))
-            if self._protocol.length_size > 0:
-                len_bo = self._protocol.length_byte_order or self._protocol.frame_id_byte_order
-                fields.append((
-                    "Length",
-                    self._protocol.length_size,
-                    "Indigo",
-                    f"Payload Length ({self._protocol.length_size} bytes, {len_bo}-endian, meaning: {self._protocol.length_meaning})"
-                ))
-
-            if command_name is not None:
-                command = self._config.tx_commands.get(command_name)
-                if command is not None:
-                    static_bytes = self._hex_to_bytes(command.payload_hex)
-                    if static_bytes:
-                        fields.append((
-                            "Static Payload",
-                            len(static_bytes),
-                            "Teal",
-                            f"Static payload bytes: 0x{static_bytes.hex().upper()}"
-                        ))
-
-                    fields.extend(self._compute_tx_field_blocks(command.fields))
-
-                    if self._protocol.tx_pad_length is not None and self._protocol.tx_pad_length > 0:
-                        fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
-                        payload_size = len(static_bytes) + self._compute_tx_fields_size(command.fields)
-                        padding_size = self._protocol.tx_pad_length - fixed_size - payload_size
-                        if padding_size > 0:
-                            fields.append((
-                                "Padding",
-                                padding_size,
-                                "Muted",
-                                f"Zero padding to reach fixed tx_pad_length={self._protocol.tx_pad_length}"
-                            ))
-                else:
-                    command_name = None
-
-            if command_name is None:
-                fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
                 if self._protocol.tx_pad_length is not None and self._protocol.tx_pad_length > 0:
-                    payload_size = max(0, self._protocol.tx_pad_length - fixed_size)
-                    data_label = f"Data ({payload_size}-Byte)"
-                else:
-                    payload_size = 8
-                    data_label = "Data (8-Byte)"
+                    fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
+                    payload_size = len(static_bytes) + self._compute_tx_fields_size(command.fields)
+                    padding_size = self._protocol.tx_pad_length - fixed_size - payload_size
+                    if padding_size > 0:
+                        fields.append((
+                            "Padding",
+                            padding_size,
+                            "Muted",
+                            f"Zero padding to reach fixed tx_pad_length={self._protocol.tx_pad_length}"
+                        ))
+            else:
+                command_name = None
 
-                fields.append((
-                    data_label,
-                    payload_size,
-                    "Teal",
-                    "Payload Data (configured fields)"
-                ))
+        if command_name is None:
+            fixed_size = len(self._protocol.header) + self._protocol.frame_id_size + self._protocol.length_size + self._protocol.crc_size + len(self._protocol.footer)
+            if self._protocol.tx_pad_length is not None and self._protocol.tx_pad_length > 0:
+                payload_size = max(0, self._protocol.tx_pad_length - fixed_size)
+                data_label = f"Data ({payload_size}-Byte)"
+            else:
+                payload_size = 8
+                data_label = "Data (8-Byte)"
 
-            if self._protocol.crc_size > 0:
-                fields.append((
-                    f"CRC-{self._protocol.crc_size*8}",
-                    self._protocol.crc_size,
-                    "Pink",
-                    f"CRC Checksum ({self._protocol.crc_size} bytes, type: {self._protocol.crc_type}, {self._protocol.crc_byte_order}-endian)"
-                ))
-            if self._protocol.footer:
-                fields.append((
-                    "Footer",
-                    len(self._protocol.footer),
-                    "Grey",
-                    f"Frame Footer Hex: 0x{self._protocol.footer.hex().upper()}"
-                ))
+            fields.append((
+                data_label,
+                payload_size,
+                "Teal",
+                "Payload Data (configured fields)"
+            ))
+
+        if self._protocol.crc_size > 0:
+            fields.append((
+                f"CRC-{self._protocol.crc_size*8}",
+                self._protocol.crc_size,
+                "Pink",
+                f"CRC Checksum ({self._protocol.crc_size} bytes, type: {self._protocol.crc_type}, {self._protocol.crc_byte_order}-endian)"
+            ))
+        if self._protocol.footer:
+            fields.append((
+                "Footer",
+                len(self._protocol.footer),
+                "Grey",
+                f"Frame Footer Hex: 0x{self._protocol.footer.hex().upper()}"
+            ))
 
         self._tx_grid_widget = self._build_byte_grid(fields)
         self._tx_scroll_area.setWidget(self._tx_grid_widget)

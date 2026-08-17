@@ -47,8 +47,6 @@ def build_waveshare_can_packet(protocol: ProtocolConfig, frame_id: int, payload:
 
 
 def build_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> bytes:
-    if protocol.parser_type == "modbus_rtu":
-        return build_modbus_packet(protocol, frame_id, payload)
     if protocol.parser_type == "waveshare_can":
         return build_waveshare_can_packet(protocol, frame_id, payload)
 
@@ -101,31 +99,3 @@ def build_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> byt
 
     inner = pre_crc + crc_bytes + pc.footer
     return escape_frame(inner, pc.escape_mode)
-
-
-def build_modbus_packet(protocol: ProtocolConfig, target_id: int, payload: bytes) -> bytes:
-    """Build a Modbus RTU request. target_id is used to construct the frame.
-    If payload is empty, we assume it's a read request (FC 03).
-    If payload is not empty, we assume it's a write request (FC 06 or 16).
-    """
-    node_address = protocol.modbus_node_address
-
-    if not payload:
-        # Read Holding Registers (FC 03)
-        # target_id is the starting address. We'll default to reading 1 register.
-        # The polling engine should ideally pass how many to read, but we'll assume 1 for now if empty.
-        fc = 3
-        req = bytes([node_address, fc]) + target_id.to_bytes(2, "big") + (1).to_bytes(2, "big")
-    else:
-        # Write Single Register (FC 06) if payload is 2 bytes
-        # or Write Multiple Registers (FC 16) if more
-        if len(payload) == 2:
-            fc = 6
-            req = bytes([node_address, fc]) + target_id.to_bytes(2, "big") + payload
-        else:
-            fc = 16
-            qty = len(payload) // 2
-            req = bytes([node_address, fc]) + target_id.to_bytes(2, "big") + qty.to_bytes(2, "big") + bytes([len(payload)]) + payload
-
-    crc = crc_mod.compute("crc16_modbus", req)
-    return req + crc.to_bytes(2, "little")

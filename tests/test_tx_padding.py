@@ -1,5 +1,5 @@
 from tests.conftest import dummy_protocol_config
-from app.protocol.packet_builder import build_packet, build_modbus_packet
+from app.protocol.packet_builder import build_packet
 
 def test_tx_padding_framed():
     pc = dummy_protocol_config(parser_type="framed", header=b"\xAA", footer=b"\x55", tx_pad_length=10)
@@ -13,14 +13,6 @@ def test_tx_padding_framed():
     # The padding should be after payload.
     # packet[:-3] is everything up to padding. packet[-3] is crc byte 1.
     assert packet[5:7] == b"\x00\x00"
-
-def test_tx_padding_modbus():
-    # Modbus packet builder doesn't currently implement tx_pad_length in our code
-    # We should probably test that it just builds normal modbus frames
-    pc = dummy_protocol_config(parser_type="modbus_rtu")
-    packet = build_modbus_packet(pc, 0x1000, b"")
-    # Read holding register 0x1000
-    assert packet == b"\x01\x03\x10\x00\x00\x01\x80\xCA"
 
 
 def test_tx_pad_length_zero_normalized():

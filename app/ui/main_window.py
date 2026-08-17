@@ -291,19 +291,17 @@ class MainWindow(
 
         # Timer removed; using PollingWorker QThread
 
-        # Live-plot history. One TimeSeriesBuffer per signal — append-only
-        # chunked storage that retains every sample since session start.
-        # The display "Window" combo (Last 1 min / 5 min / … / All) controls
-        # how much of the buffer is rendered, not what is stored. The soft
-        # cap below is a marathon-run safety valve; ``None`` keeps everything.
-        # 0 in QSettings is interpreted as "unbounded" so users who already
-        # have the default persisted don't suddenly get a different cap.
-        raw_cap = self._settings.value("plot/history_max_samples", 0)
+        # Live-plot history. One TimeSeriesBuffer per signal.
+        # Default soft cap of 100,000 samples per signal acts as a marathon-run
+        # safety valve to prevent RAM exhaustion (OOM crashes) during 2-3 day runs.
+        raw_cap = self._settings.value("plot/history_max_samples", 100_000)
         try:
             cap_int = int(raw_cap)
         except (TypeError, ValueError):
-            cap_int = 0
-        self._plot_history_max_samples: Optional[int] = cap_int if cap_int > 0 else None
+            cap_int = 100_000
+        if cap_int <= 0:
+            cap_int = 100_000  # Enforce marathon-run safety cap
+        self._plot_history_max_samples: Optional[int] = cap_int
         # Display window in seconds. 0 / None means "All session".
         raw_window = self._settings.value("plot/window_seconds", 300)  # default 5 min
         try:
@@ -381,7 +379,7 @@ class MainWindow(
         # Rebuild icon tints after all widgets exist so secondary menu/toolbar
         # icons get the correct colour even without a manual theme switch.
         _saved_theme = str(self._settings.value("ui/theme", "dark"))
-        self._rebuild_action_icons(_saved_theme)
+        self._apply_theme(_saved_theme)
 
         self._default_state = self.saveState()
         self._default_geometry = self.saveGeometry()
@@ -445,17 +443,66 @@ class MainWindow(
             except Exception as exc:
                 self._popup_critical("Preset Error", str(exc))
 
-    def _on_quick_plot_signal(self, signal_name: str) -> None:
+    def _on_quick_plot_signal(self, signal_name: str, target_widget: Optional[QWidget] = None) -> None:
         if self._config is None:
             return
         for frame_id, sigs in self._config.signals_by_frame.items():
             for sig in sigs:
                 if sig.signal_name == signal_name:
                     key = (frame_id, signal_name)
-                    if key not in self._plot_keys:
-                        self._add_signal_to_panel(0, key)
-                        self._toast(f"Added {signal_name} to Live Plot")
+                    if len(self._plot_panels) > 1:
+                        self._show_panel_selection_menu(key, target_widget)
+                    else:
+                        if key not in self._plot_keys:
+                            self._add_signal_to_panel(0, key)
+                        else:
+                            self._remove_signal_from_panel(0, key)
+                    if hasattr(self, "_cards_view") and self._cards_view is not None:
+                        self._cards_view.sync_plot_active_states(self._plot_panels)
                     return
+
+    def _show_panel_selection_menu(self, key: Tuple[int, str], target_widget: Optional[QWidget] = None) -> None:
+        from PySide6.QtGui import QCursor
+        menu = QMenu(self)
+        title_act = menu.addAction(f"📊 Live Plot Panels for '{key[1]}':")
+        title_act.setEnabled(False)
+        menu.addSeparator()
+
+        for idx, panel in enumerate(self._plot_panels):
+            is_on_panel = key in panel.assigned_keys
+            act = menu.addAction(f"Graph Panel {idx + 1}")
+            act.setCheckable(True)
+            act.setChecked(is_on_panel)
+            act.setData((idx, is_on_panel))
+
+        menu.addSeparator()
+        add_new_act = menu.addAction("➕ Add to New Graph Panel")
+        add_new_act.setData(("new", False))
+
+        pos = target_widget.mapToGlobal(target_widget.rect().bottomLeft()) if target_widget and hasattr(target_widget, "mapToGlobal") else QCursor.pos()
+        selected = menu.exec(pos)
+        if selected is None or selected == title_act:
+            return
+
+        data = selected.data()
+        if not data:
+            return
+        panel_idx, is_on_panel = data
+        if panel_idx == "new":
+            if hasattr(self, "_layout_combo") and self._layout_combo is not None:
+                curr_idx = self._layout_combo.currentIndex()
+                if curr_idx + 1 < self._layout_combo.count():
+                    self._layout_combo.setCurrentIndex(curr_idx + 1)
+            new_idx = len(self._plot_panels) - 1
+            self._add_signal_to_panel(new_idx, key)
+        else:
+            if is_on_panel:
+                self._remove_signal_from_panel(panel_idx, key)
+            else:
+                self._add_signal_to_panel(panel_idx, key)
+
+        if hasattr(self, "_cards_view") and self._cards_view is not None:
+            self._cards_view.sync_plot_active_states(self._plot_panels)
 
 
 

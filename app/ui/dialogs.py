@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..decoder.types import SerialDefaults
+from .theming import apply_dialog_theme
 from ..serial_io.serial_worker import (
     POLL_PIPELINE_TX_GAP_FLOOR_MS,
     SerialSettings,
@@ -38,6 +39,7 @@ class ConnectionDialog(QDialog):
         config_defaults: SerialDefaults | None = None,
     ) -> None:
         super().__init__(parent)
+        apply_dialog_theme(self)
         self.setWindowTitle("Connection Settings")
         self.setMinimumWidth(380)
         self._settings = settings
@@ -311,13 +313,13 @@ class PollingConfigDialog(QDialog):
     ``QSettings`` so they survive between sessions.
     """
 
-    def __init__(self, schedules, settings: QSettings, parent=None, is_modbus: bool = False) -> None:
+    def __init__(self, schedules, settings: QSettings, parent=None) -> None:
         super().__init__(parent)
+        apply_dialog_theme(self)
         self.setWindowTitle("Configure Poll Schedule")
         self.setMinimumWidth(320)
         self._settings = settings
         self._schedules = schedules
-        self._is_modbus = is_modbus
 
         layout = QVBoxLayout(self)
         layout.setSpacing(10)
@@ -358,7 +360,7 @@ class PollingConfigDialog(QDialog):
         self._pipeline_chk.setToolTip(
             "Send up to N polls without waiting for each response. Replies "
             "are matched by frame_id. Disable if the device drops or "
-            "corrupts overlapping requests. Not available for Modbus RTU."
+            "corrupts overlapping requests."
         )
         self._pipeline_chk.setChecked(
             settings.value("poll/pipelining", False, type=bool)
@@ -370,20 +372,6 @@ class PollingConfigDialog(QDialog):
         self._pipeline_depth.setToolTip("Max number of in-flight poll requests.")
         self._pipeline_depth.setEnabled(self._pipeline_chk.isChecked())
         self._pipeline_chk.toggled.connect(self._pipeline_depth.setEnabled)
-
-        if self._is_modbus:
-            self._pipeline_chk.setChecked(False)
-            self._pipeline_chk.setEnabled(False)
-            self._pipeline_chk.setToolTip(
-                "Pipelined polling is disabled for Modbus RTU. Modbus RTU "
-                "responses do not carry transaction tags to match them back to "
-                "requests, requiring strictly sequential polling."
-            )
-            self._pipeline_depth.setEnabled(False)
-            self._pipeline_depth.setValue(1)
-            self._pipeline_depth.setToolTip(
-                "Modbus RTU requires sequential polling (max 1 in-flight)."
-            )
 
         # Per-TX spacing floor — applies to BOTH sequential and pipelined
         # polling. Default 100 ms because real-hardware testing on a
@@ -450,8 +438,6 @@ class PollingConfigDialog(QDialog):
     def get_pipelining(self) -> Tuple[bool, int, int]:
         """Return (enabled, max_in_flight, tx_gap_ms) for pipelined polling."""
         gap_ms = int(self._pipeline_gap_ms.value())
-        if self._is_modbus:
-            return False, 1, gap_ms
         depth = int(self._pipeline_depth.value())
         return self._pipeline_chk.isChecked() and depth > 1, depth, gap_ms
 
@@ -463,6 +449,7 @@ class LoggingSettingsDialog(QDialog):
 
     def __init__(self, settings: QSettings, parent=None) -> None:
         super().__init__(parent)
+        apply_dialog_theme(self)
         self.setWindowTitle("Logging Settings")
         self.setMinimumWidth(320)
         self._settings = settings
@@ -548,6 +535,7 @@ class YRangeDialog(QDialog):
         current_max: float,
     ) -> None:
         super().__init__(parent)
+        apply_dialog_theme(self)
         self.setWindowTitle(f"Set Y Range — {panel_label}")
         self.setModal(True)
         self.resize(280, 130)
@@ -618,6 +606,7 @@ class PlotTriggerDialog(QDialog):
 
     def __init__(self, signals: list[str], parent=None) -> None:
         super().__init__(parent)
+        apply_dialog_theme(self)
         self.setWindowTitle("Configure Auto-Pause Trigger")
         self.setMinimumWidth(320)
 
@@ -677,6 +666,7 @@ class PlotSettingsDialog(QDialog):
 
     def __init__(self, settings: QSettings, parent=None) -> None:
         super().__init__(parent)
+        apply_dialog_theme(self)
         self.setWindowTitle("Plot Settings")
         self.setMinimumWidth(340)
         self._settings = settings
@@ -767,6 +757,7 @@ class SchemaMapperDialog(QDialog):
 
     def __init__(self, settings: QSettings, parent=None) -> None:
         super().__init__(parent)
+        apply_dialog_theme(self)
         self.setWindowTitle("Import Schema Mapper")
         self.setMinimumWidth(400)
         self._settings = settings
@@ -835,6 +826,7 @@ class AboutDialog(QDialog):
 
     def __init__(self, version_info: dict, logo_path: str | Path | None, parent=None) -> None:
         super().__init__(parent)
+        apply_dialog_theme(self)
         self.setWindowTitle("About Bytehound")
         self.setModal(True)
         self.setMinimumSize(540, 270)
@@ -1045,6 +1037,7 @@ class ReportIssueDialog(QDialog):
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
+        apply_dialog_theme(self)
         self.setWindowTitle("Report Issue")
         self.setMinimumWidth(500)
         self._attachments: list[dict] = []

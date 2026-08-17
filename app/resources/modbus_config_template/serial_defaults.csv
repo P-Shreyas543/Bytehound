@@ -1,2 +1,0 @@
-baud_rate,data_bits,stop_bits,parity,timeout_ms
-19200,8,1,N,100

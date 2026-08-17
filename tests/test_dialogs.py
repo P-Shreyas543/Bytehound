@@ -35,7 +35,7 @@ def test_plot_trigger_dialog(qapp):
     assert res["log"] is False
 
 
-def test_polling_config_dialog_modbus(qapp):
+def test_polling_config_dialog(qapp):
     settings = QSettings("BytehoundTest", "Test")
     settings.clear()
 
@@ -47,21 +47,7 @@ def test_polling_config_dialog_modbus(qapp):
         PollingScheduleSpec(target_id=0x01, interval_ms=1000, timeout_ms=100, enabled=True)
     ]
 
-    # Test Modbus RTU is True
-    dlg_modbus = PollingConfigDialog(schedules, settings, is_modbus=True)
-
-    # Verify pipelining controls are disabled and checked state is False
-    assert not dlg_modbus._pipeline_chk.isEnabled()
-    assert not dlg_modbus._pipeline_chk.isChecked()
-    assert not dlg_modbus._pipeline_depth.isEnabled()
-    assert dlg_modbus._pipeline_depth.value() == 1
-
-    enabled_pipe, depth, gap = dlg_modbus.get_pipelining()
-    assert enabled_pipe is False
-    assert depth == 1
-
-    # Test Modbus RTU is False
-    dlg_normal = PollingConfigDialog(schedules, settings, is_modbus=False)
+    dlg_normal = PollingConfigDialog(schedules, settings)
 
     # Verify pipelining controls are enabled
     assert dlg_normal._pipeline_chk.isEnabled()
@@ -96,36 +82,9 @@ def test_about_dialog(qapp):
 def test_frame_format_widget(qapp):
     from app.ui.widgets import FrameFormatWidget
     from app.decoder.types import ProtocolConfig, FrameConfig
-
-    # 1. Modbus RTU
-    p_modbus = ProtocolConfig(
-        profile_name="Modbus Test",
-        header=b"\x01",
-        frame_id_size=1,
-        frame_id_byte_order="big",
-        length_size=1,
-        length_meaning="payload_only",
-        crc_type="crc16_modbus",
-        crc_size=2,
-        crc_byte_order="little",
-        crc_coverage="header_to_payload",
-        footer=b"",
-        escape_mode="none",
-        enabled=True,
-        parser_type="modbus_rtu",
-        modbus_node_address=5
-    )
-    cfg_modbus = FrameConfig(protocol=p_modbus)
-    w_modbus = FrameFormatWidget(cfg_modbus)
-    # Check that it builds grid cells inside _grid_widget
-    layout = w_modbus._grid_widget.layout()
-    assert layout is not None
     from PySide6.QtWidgets import QLabel
-    labels = [layout.itemAt(i).widget() for i in range(layout.count()) if isinstance(layout.itemAt(i).widget(), QLabel)]
-    # We should have "Byte 0" to "Byte 7" (8 bytes total) in row 0, and the spanned labels in row 1
-    assert len(labels) > 8
 
-    # 2. Framed Protocol
+    # 1. Framed Protocol
     p_framed = ProtocolConfig(
         profile_name="Framed Test",
         header=b"\xAA\x55",
@@ -227,60 +186,6 @@ def test_frame_format_widget(qapp):
     labels_tx = [layout_tx.itemAt(i).widget() for i in range(layout_tx.count()) if isinstance(layout_tx.itemAt(i).widget(), QLabel)]
     has_field_label = any(l.text() == "Field1" or "Field1" in l.text() for l in labels_tx)
     assert has_field_label
-
-    # 5. Modbus RTU Protocol with TX commands and Tab Widget
-    p_modbus_tx = ProtocolConfig(
-        profile_name="Modbus TX Test",
-        header=b"\x01",
-        frame_id_size=1,
-        frame_id_byte_order="big",
-        length_size=1,
-        length_meaning="payload_only",
-        crc_type="crc16_modbus",
-        crc_size=2,
-        crc_byte_order="little",
-        crc_coverage="header_to_payload",
-        footer=b"",
-        escape_mode="none",
-        enabled=True,
-        parser_type="modbus_rtu",
-        modbus_node_address=5
-    )
-    tx_cmds_modbus = {
-        "WriteReg": TxCommandSpec(
-            command_name="WriteReg",
-            frame_id=0x2000,
-            payload_hex="CC DD",
-            description="Modbus Write Command",
-            enabled=True,
-            fields=[]
-        ),
-        "WriteMultiple": TxCommandSpec(
-            command_name="WriteMultiple",
-            frame_id=0x2000,
-            payload_hex="11 22 33 44",
-            description="Modbus Write Multiple Command",
-            enabled=True,
-            fields=[]
-        )
-    }
-    cfg_modbus_tx = FrameConfig(protocol=p_modbus_tx, tx_commands=tx_cmds_modbus)
-    w_modbus_tx = FrameFormatWidget(cfg_modbus_tx)
-
-    assert hasattr(w_modbus_tx, "_tab_widget")
-    assert w_modbus_tx._tx_combo.count() == 3  # default + WriteReg + WriteMultiple
-
-    # Select WriteReg (total payload size = 2, so FC 06)
-    w_modbus_tx._tx_combo.setCurrentIndex(1)
-    layout_mr = w_modbus_tx._tx_grid_widget.layout()
-    labels_mr = [layout_mr.itemAt(i).widget() for i in range(layout_mr.count()) if isinstance(layout_mr.itemAt(i).widget(), QLabel)]
-    assert any("Func Code" in l.text() for l in labels_mr)
-
-    # Select WriteMultiple (total payload size = 4, so FC 16)
-    w_modbus_tx._tx_combo.setCurrentIndex(2)
-    layout_wm = w_modbus_tx._tx_grid_widget.layout()
-    labels_wm = [layout_wm.itemAt(i).widget() for i in range(layout_wm.count()) if isinstance(layout_wm.itemAt(i).widget(), QLabel)]
-    assert any("Func Code" in l.text() for l in labels_wm)
 
 
 def test_report_issue_dialog_and_reporter(qapp, monkeypatch):

@@ -1,6 +1,0 @@
-id_or_address,signal_name,value,label
-0x0031,BMS State,0,Idle
-0x0031,BMS State,1,Charging
-0x0031,BMS State,2,Discharging
-0x0031,BMS State,3,Fault
-0x0031,BMS State,4,Service

@@ -538,11 +538,6 @@ class PollingWorker(QThread):
         depth = max(1, min(int(depth), 16))
         if depth <= 1:
             enabled = False
-        if self.protocol.parser_type == "modbus_rtu" and enabled:
-            self.warning_occurred.emit(
-                "Pipelined polling is not supported for Modbus RTU; ignored."
-            )
-            enabled = False
         with QMutexLocker(self._mutex):
             self._pipelining_enabled = enabled
             self._pipeline_depth = depth
@@ -605,8 +600,8 @@ class PollingWorker(QThread):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    def _is_disconnect_error(self, exc: serial.SerialException) -> bool:
-        """Return True if the exception looks like a physical USB unplug."""
+    def _is_disconnect_error(self, exc: Exception) -> bool:
+        """Return True if the exception looks like a physical USB unplug or network drop."""
         msg = str(exc).lower()
         # WinError numeric codes embedded in the exception string
         for code in _DISCONNECT_WINERRORS:
@@ -620,6 +615,10 @@ class PollingWorker(QThread):
             "input/output error",
             "port is closed",
             "handle is invalid",
+            "not functioning",
+            "connection reset",
+            "connection aborted",
+            "broken pipe",
         )
         return any(phrase in msg for phrase in disconnect_phrases)
 
@@ -812,10 +811,7 @@ class PollingWorker(QThread):
                         gap_ms = (self._pipeline_tx_gap_ms if self._pipeline_tx_gap_ms is not None else POLL_TX_GAP_FLOOR_MS)
                         self._write_serial(tx_data, min_gap_ms=gap_ms)
                         self.tx_recorded.emit(tx_data)
-                        if self.protocol.parser_type == "modbus_rtu":
-                            self._await_modbus_response(tx_data, target_id=None)
-                        else:
-                            time.sleep(0.01)
+                        time.sleep(0.01)
                     # Removed `continue` so RX can drain immediately after priority TX!
 
                 # 2. Read settings under the lock
@@ -933,8 +929,8 @@ class PollingWorker(QThread):
                                 sleep_s = 0.02
                 time.sleep(sleep_s)
 
-            except serial.SerialException as exc:
-                if self._is_disconnect_error(exc):
+            except (serial.SerialException, OSError) as exc:
+                if self._is_disconnect_error(exc) or isinstance(exc, OSError):
                     # Physical unplug — clean up and notify the UI.
                     try:
                         if self._serial is not None:
@@ -985,30 +981,19 @@ class PollingWorker(QThread):
             else POLL_TX_GAP_FLOOR_MS
         )
 
-        if self.protocol.parser_type == "modbus_rtu":
-            from ..protocol.packet_builder import build_modbus_packet
-            try:
-                req = build_modbus_packet(self.protocol, target_id, b"")
-                self._drain_pending_rx()
-                self._write_serial(req, min_gap_ms=gap_ms)
-                self.tx_recorded.emit(req)
-                self._await_modbus_response(req, target_id, timeout_ms)
-            except ValueError as exc:
-                self._disable_failed_schedule(sched, exc)
-        else:
-            from ..protocol.packet_builder import build_packet
-            try:
-                req = build_packet(self.protocol, target_id, b"")
-                self._drain_pending_rx()
-                self._write_serial(req, min_gap_ms=gap_ms)
-                self.tx_recorded.emit(req)
-                self._await_response(timeout_ms, target_id)
-            except ValueError as exc:
-                # Most common cause: target_id does not fit in the configured
-                # frame_id_size, or the protocol config is otherwise malformed.
-                # Without this guard, polling kept retrying every interval and
-                # silently failed forever.
-                self._disable_failed_schedule(sched, exc)
+        from ..protocol.packet_builder import build_packet
+        try:
+            req = build_packet(self.protocol, target_id, b"")
+            self._drain_pending_rx()
+            self._write_serial(req, min_gap_ms=gap_ms)
+            self.tx_recorded.emit(req)
+            self._await_response(timeout_ms, target_id)
+        except ValueError as exc:
+            # Most common cause: target_id does not fit in the configured
+            # frame_id_size, or the protocol config is otherwise malformed.
+            # Without this guard, polling kept retrying every interval and
+            # silently failed forever.
+            self._disable_failed_schedule(sched, exc)
 
     # ------------------------------------------------------------------
     # Pipelined polling helpers
@@ -1274,17 +1259,6 @@ class PollingWorker(QThread):
                 self._watchdog_fired = False
                 self._parser.feed(data)
                 extracted = self._parser.extract_all()
-                # Patch Modbus responses whose parser returns frame_id=1
-                # (a quirk of the current parser implementation) so the
-                # match predicate below can use a uniform comparison.
-                # ParsedPacket is frozen; rebuild via dataclasses.replace so
-                # nothing else in flight sees a half-updated object.
-                if self.protocol.parser_type == "modbus_rtu" and target_id is not None:
-                    extracted = [
-                        dataclass_replace(p, frame_id=target_id)
-                        if p.ok and p.frame_id == 1 else p
-                        for p in extracted
-                    ]
                 if extracted:
                     # Emit every frame (matching or not) through batching —
                     # unrelated continuous-stream packets are still real

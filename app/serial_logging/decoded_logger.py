@@ -539,6 +539,10 @@ class DecodedLogger:
         if not hasattr(self, "_tmp_data_path") or not self._tmp_data_path.exists():
             return
 
+        import shutil
+        MAX_ROWS_PER_SHEET = 1_000_000
+        excel_success = False
+
         wb = Workbook(write_only=True)
         try:
             meta_ws = wb.create_sheet(title=self.METADATA_SHEET)
@@ -554,10 +558,26 @@ class DecodedLogger:
                 value = str(metadata[key]).replace("\n", " ").strip()
                 meta_ws.append([key, value])
 
+            sheet_index = 1
             data_ws = wb.create_sheet(title=self.DATA_SHEET)
+            header_row = None
+            current_sheet_rows = 0
+
             with self._tmp_data_path.open("r", encoding="utf-8", newline="") as f:
                 reader = csv.reader(f)
                 for row in reader:
+                    if header_row is None:
+                        header_row = row
+                        data_ws.append(row)
+                        current_sheet_rows += 1
+                        continue
+
+                    if current_sheet_rows >= MAX_ROWS_PER_SHEET:
+                        sheet_index += 1
+                        data_ws = wb.create_sheet(title=f"{self.DATA_SHEET}_{sheet_index}")
+                        data_ws.append(header_row)
+                        current_sheet_rows = 1
+
                     typed_row = []
                     for cell in row:
                         if cell == "":
@@ -571,8 +591,11 @@ class DecodedLogger:
                             except ValueError:
                                 typed_row.append(cell)
                     data_ws.append(typed_row)
+                    current_sheet_rows += 1
 
+            self.path.parent.mkdir(parents=True, exist_ok=True)
             wb.save(self.path)
+            excel_success = True
         except Exception as exc:
             self._record_error("compile", exc)
         finally:
@@ -580,22 +603,37 @@ class DecodedLogger:
                 wb.close()
             except Exception:
                 pass
-            if self.path.exists() and self.path.stat().st_size > 0:
-                try:
-                    self._tmp_data_path.unlink(missing_ok=True)
-                    self._tmp_meta_path.unlink(missing_ok=True)
-                except Exception:
-                    pass
+
+        if excel_success and self.path.exists() and self.path.stat().st_size > 0:
+            try:
+                self._tmp_data_path.unlink(missing_ok=True)
+                self._tmp_meta_path.unlink(missing_ok=True)
+            except Exception:
+                pass
+        else:
+            # Fallback to preserving raw CSV if openpyxl compilation failed
+            try:
+                csv_target = self.path.with_suffix(".csv")
+                shutil.copy2(self._tmp_data_path, csv_target)
+                _LOG.info("Preserved raw temp log as CSV fallback: %s", csv_target)
+                self._tmp_data_path.unlink(missing_ok=True)
+                self._tmp_meta_path.unlink(missing_ok=True)
+            except Exception as copy_exc:
+                _LOG.error("Failed to copy CSV fallback for %s: %s", self.path, copy_exc)
 
     @classmethod
     def recover_temp_files(cls, data_path: Path, meta_path: Path, target_path: Path) -> None:
-        """Build the final xlsx file from leftover temp files."""
-        if not data_path.exists():
+        """Build the final xlsx file from leftover temp files with multi-sheet support and CSV fallback."""
+        if not data_path.exists() or data_path.stat().st_size == 0:
             return
 
         import json
         import csv
+        import shutil
         from openpyxl import Workbook
+
+        MAX_ROWS_PER_SHEET = 1_000_000
+        excel_success = False
 
         wb = Workbook(write_only=True)
         try:
@@ -603,16 +641,35 @@ class DecodedLogger:
             meta_ws.append(["Key", "Value"])
             metadata = {}
             if meta_path.exists():
-                with meta_path.open("r", encoding="utf-8") as f:
-                    metadata = json.load(f)
+                try:
+                    with meta_path.open("r", encoding="utf-8") as f:
+                        metadata = json.load(f)
+                except Exception:
+                    pass
             for key in sorted(metadata):
                 value = str(metadata[key]).replace("\n", " ").strip()
                 meta_ws.append([key, value])
 
+            sheet_index = 1
             data_ws = wb.create_sheet(title="Data")
+            header_row = None
+            current_sheet_rows = 0
+
             with data_path.open("r", encoding="utf-8", newline="") as f:
                 reader = csv.reader(f)
                 for row in reader:
+                    if header_row is None:
+                        header_row = row
+                        data_ws.append(row)
+                        current_sheet_rows += 1
+                        continue
+
+                    if current_sheet_rows >= MAX_ROWS_PER_SHEET:
+                        sheet_index += 1
+                        data_ws = wb.create_sheet(title=f"Data_{sheet_index}")
+                        data_ws.append(header_row)
+                        current_sheet_rows = 1
+
                     typed_row = []
                     for cell in row:
                         if cell == "":
@@ -626,21 +683,33 @@ class DecodedLogger:
                             except ValueError:
                                 typed_row.append(cell)
                     data_ws.append(typed_row)
+                    current_sheet_rows += 1
 
             target_path.parent.mkdir(parents=True, exist_ok=True)
             wb.save(target_path)
-
-            # Clean up temp files
-            data_path.unlink(missing_ok=True)
-            meta_path.unlink(missing_ok=True)
+            excel_success = True
         except Exception as exc:
-            _LOG.error("Failed to recover decoded log from %s: %s", data_path, exc, exc_info=True)
-            raise exc
+            _LOG.error("Failed to recover decoded log as Excel from %s: %s", data_path, exc, exc_info=True)
         finally:
             try:
                 wb.close()
             except Exception:
                 pass
+
+        if excel_success and target_path.exists() and target_path.stat().st_size > 0:
+            data_path.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
+        else:
+            # Fallback to preserving raw CSV if openpyxl recovery failed
+            try:
+                csv_target = target_path.with_suffix(".csv")
+                shutil.copy2(data_path, csv_target)
+                _LOG.info("Recovered raw temp log as CSV fallback: %s", csv_target)
+                data_path.unlink(missing_ok=True)
+                meta_path.unlink(missing_ok=True)
+            except Exception as copy_exc:
+                _LOG.error("Failed to copy raw temp log to CSV fallback %s: %s", target_path, copy_exc)
+                # DO NOT UNLINK data_path or meta_path if fallback fails! Keep raw temp file safe!
 
     def _record_error(self, context: str, exc: Exception) -> None:
         _LOG.error("DecodedLogger %s error (writer thread)", context, exc_info=True)
@@ -737,8 +806,10 @@ class DecodedLogger:
                 if calc.frame_id is not None:
                     if calc.frame_id != frame_id:
                         continue
-                elif frame_id not in frames_by_group.get(calc.group, []):
-                    continue
+                else:
+                    group_frames = frames_by_group.get(calc.group, [])
+                    if not group_frames or frame_id != group_frames[-1]:
+                        continue
 
                 # Resolve unit: use calc.unit or inherit from the group's signals
                 calc_unit = calc.unit

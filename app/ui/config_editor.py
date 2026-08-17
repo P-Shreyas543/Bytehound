@@ -17,10 +17,12 @@ from PySide6.QtWidgets import (
 from ..decoder.config_loader import _read_excel_tables
 from ..decoder.template_io import CONFIG_CSV_FILES, _sheet_name_from_csv
 from ..decoder.types import SUPPORTED_CRC_TYPES, SUPPORTED_FMT_TYPES, SUPPORTED_DATA_TYPES, ByteOrder, ParserType, ReadWrite
+from .theming import apply_dialog_theme
 
 class ConfigEditorWindow(QMainWindow):
     def __init__(self, parent=None):
         super().__init__(parent)
+        apply_dialog_theme(self)
         self.setWindowTitle("Bytehound Configuration Editor")
         self.resize(1100, 750)
         self.setWindowModality(Qt.WindowModality.ApplicationModal)
@@ -241,7 +243,7 @@ class ConfigEditorWindow(QMainWindow):
             elif col_name in ("endianness", "byte_order", "frame_id_byte_order", "crc_byte_order", "length_byte_order"):
                 items = [m.value for m in ByteOrder]
             elif col_name == "parser_type":
-                items = [m.value for m in ParserType]
+                items = ["framed"]
             elif col_name == "read_write":
                 items = [m.value for m in ReadWrite]
             elif col_name == "direction":

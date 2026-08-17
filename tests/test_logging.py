@@ -874,3 +874,56 @@ def test_decoded_logger_rxtx_with_command_does_not_block_cycle(tmp_path):
     logger = DecodedLogger(path, config)
     assert logger._required_cycle_frame_ids == [0x0100]
     assert logger._trigger_id == 0x0100
+
+
+def test_recover_temp_files_csv_fallback_on_excel_error(tmp_path, monkeypatch):
+    """When Excel workbook creation fails, recover_temp_files preserves data as CSV fallback and unlinks temp files."""
+    data_tmp = tmp_path / "test_session.xlsx.tmp_data"
+    meta_tmp = tmp_path / "test_session.xlsx.tmp_meta"
+    target_xlsx = tmp_path / "test_session.xlsx"
+
+    data_tmp.write_text("header1,header2\nval1,val2\n", encoding="utf-8")
+    meta_tmp.write_text('{"app": "Bytehound"}', encoding="utf-8")
+
+    # Force openpyxl Workbook.save to fail
+    def mock_save(*args, **kwargs):
+        raise RuntimeError("Simulated openpyxl save error")
+
+    from openpyxl import Workbook
+    monkeypatch.setattr(Workbook, "save", mock_save)
+
+    DecodedLogger.recover_temp_files(data_tmp, meta_tmp, target_xlsx)
+
+    # Excel save failed, so target_xlsx does not exist, BUT CSV fallback target DOES exist
+    target_csv = tmp_path / "test_session.csv"
+    assert target_csv.exists()
+    assert "val1,val2" in target_csv.read_text(encoding="utf-8")
+    # Temp files cleaned up after successful fallback copy
+    assert not data_tmp.exists()
+
+
+def test_recover_temp_files_never_deletes_on_catastrophic_failure(tmp_path, monkeypatch):
+    """If both Excel and CSV fallback fail, temp data is NEVER unlinked."""
+    data_tmp = tmp_path / "test_session.xlsx.tmp_data"
+    meta_tmp = tmp_path / "test_session.xlsx.tmp_meta"
+    target_xlsx = tmp_path / "test_session.xlsx"
+
+    data_tmp.write_text("header1,header2\nval1,val2\n", encoding="utf-8")
+    meta_tmp.write_text('{"app": "Bytehound"}', encoding="utf-8")
+
+    def mock_save(*args, **kwargs):
+        raise RuntimeError("Simulated openpyxl save error")
+
+    def mock_copy2(*args, **kwargs):
+        raise OSError("Simulated disk copy failure")
+
+    from openpyxl import Workbook
+    import shutil
+    monkeypatch.setattr(Workbook, "save", mock_save)
+    monkeypatch.setattr(shutil, "copy2", mock_copy2)
+
+    DecodedLogger.recover_temp_files(data_tmp, meta_tmp, target_xlsx)
+
+    # Raw temp file MUST remain intact so user never loses data
+    assert data_tmp.exists()
+

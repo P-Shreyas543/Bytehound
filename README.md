@@ -80,6 +80,15 @@ When filing a bug at <https://github.com/P-Shreyas543/Bytehound/issues>, please 
 
 Help → View Documentation opens [`app/resources/index.html`](app/resources/index.html) — a complete handbook covering configuration, UART frame definition, TX commands, logging, plotting, analysis suite, and troubleshooting.
 
+## What's new in v1.2.0
+
+| Feature | Details |
+|---|---|
+| Live Plot Graph Panel Selection | Signal cards feature vibrant checkmark feedback (`✓` in `#2563EB`) and target graph selector menus (`Graph Panel 1`, `Graph Panel 2`, `Add to New Graph Panel`). |
+| Redesigned Configuration Wizard | 1-click Quick-Start presets (`🔋 16-Cell BMS Pack`, `⚡ Single-Cell BMS`, `📡 CAN/RS485 Telemetry Stream`), drop-down combobox delegates for `Data Type` & `Direction`, instant row deletion, and real-time on-wire packet diagram preview. |
+| Group Calculation Column Binding | Single-instance calculation header placement per group cycle under final frame ID (e.g. `0x2F4` for `Cell Voltages`), resolving duplicate calculation columns in Excel/CSV exports. |
+| Startup & Shutdown Audit | Suppressed popups on startup default config loading, non-blocking serial worker thread teardown, and clean temporary file crash recovery. |
+
 ## What's new in v1.1.2
 
 | Feature | Details |
