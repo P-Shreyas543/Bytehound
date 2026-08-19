@@ -43,14 +43,8 @@ _PROTOCOL_REQUIRED = {
     "profile_name",
     "header_hex",
     "frame_id_size",
-    "frame_id_byte_order",
     "length_size",
-    "length_meaning",
     "crc_type",
-    "crc_size",
-    "crc_byte_order",
-    # crc_coverage is optional — only one value is supported so it
-    # defaults to the single valid value.
 }
 
 _LEGACY_FRAME_CONFIG_REQUIRED = {
@@ -74,7 +68,7 @@ _ENUMS_REQUIRED = {"id_or_address", "signal_name", "value", "label"}
 _CALC_GROUPS_REQUIRED = {"group_name", "operations"}
 _TX_COMMANDS_REQUIRED = {"command_name", "id_or_address"}
 _TX_COMMAND_FIELDS_REQUIRED = {"command_name", "signal_name", "data_type"}
-_SERIAL_DEFAULTS_REQUIRED = {"baud_rate", "data_bits", "stop_bits", "parity", "timeout_ms"}
+_SERIAL_DEFAULTS_REQUIRED = {"baud_rate"}
 
 
 def load_config(path: str | Path | dict) -> FrameConfig:
@@ -109,12 +103,15 @@ def load_config(path: str | Path | dict) -> FrameConfig:
     protocol_rows = tables.get("protocol", [])
     required_cols = set(_PROTOCOL_REQUIRED)
     if protocol_rows:
-        try:
-            parser_type_val = ParserType.parse(protocol_rows[0].get("parser_type", "")).value
-            if parser_type_val == "waveshare_can":
-                required_cols = {"profile_name"}
-        except ValueError:
-            pass
+        for r in protocol_rows:
+            if not _is_blank_row(r) and _to_bool(r.get("enabled", "true"), default=True, field_name="protocol.enabled"):
+                try:
+                    parser_type_val = ParserType.parse(r.get("parser_type", "")).value
+                    if parser_type_val == "waveshare_can":
+                        required_cols = {"profile_name"}
+                except ValueError:
+                    pass
+                break
 
     protocol = _parse_protocol(_required_table(tables, "protocol", required_cols))
 
@@ -140,6 +137,12 @@ def load_config(path: str | Path | dict) -> FrameConfig:
             _required_table(tables, "frame_config", _LEGACY_FRAME_CONFIG_REQUIRED),
             parser_type=protocol.parser_type,
         )
+    elif "frames" in tables or "tx_commands" in tables or "polling_schedule" in tables:
+        signals = []
+        if "frames" in tables:
+            frames = _parse_frames(_required_table(tables, "frames", _FRAMES_REQUIRED))
+        else:
+            frames = {}
     else:
         raise ConfigError(
             f"{base_label}: expected variables.csv + frames.csv or frame_config.csv"
@@ -649,7 +652,7 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         length_size = _to_int(length_size_val, field_name="length_size")
 
     length_meaning_val = (row.get("length_meaning") or "").strip().lower()
-    if is_waveshare and not length_meaning_val:
+    if not length_meaning_val:
         length_meaning = "payload_only"
     else:
         length_meaning = length_meaning_val
@@ -671,7 +674,7 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
     waveshare_fixed_20_bytes = _to_bool(waveshare_fixed_val, default=False, field_name="protocol.waveshare_fixed_20_bytes")
 
     protocol = ProtocolConfig(
-        profile_name=row["profile_name"],
+        profile_name=(row.get("profile_name") or "Default").strip(),
         header=_hex_to_bytes(header_hex_val, "header_hex"),
         frame_id_size=frame_id_size,
         frame_id_byte_order=_normalize_byte_order(
@@ -747,88 +750,6 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
         )
     if protocol.parser_type not in {"framed", "waveshare_can"}:
         raise ConfigError("protocol: parser_type must be framed or waveshare_can")
-
-
-def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
-    frames: Dict[int, FrameDefinition] = {}
-    for row_no, row in enumerate(rows, start=2):
-        if _is_blank_row(row) or (not row.get("frame_id", "").strip() and not row.get("frame_name", "").strip()):
-            continue
-        frame_id = _parse_frame_id(row["frame_id"], field_name=f"frames row {row_no}.frame_id")
-        enabled = _to_bool(row.get("enabled", "true"), default=True, field_name="frames.enabled")
-        if not enabled:
-            continue
-        direction_raw = (row.get("direction", "") or "").strip().lower()
-        if direction_raw == "":
-            direction = "rxtx"
-        elif direction_raw in {"rx", "tx", "rxtx"}:
-            direction = direction_raw
-        else:
-            raise ConfigError(
-                f"frames row {row_no}: direction must be 'rx', 'tx', 'rxtx', "
-                f"or blank (got {direction_raw!r})"
-            )
-
-        payload_length = _to_optional_int(row.get("payload_length", ""), field_name="payload_length")
-        if frame_id in frames:
-            existing = frames[frame_id]
-            merged_dir = "rxtx" if existing.direction != direction else direction
-            use_existing_rx = (existing.direction == "rx" or direction == "tx")
-            frames[frame_id] = FrameDefinition(
-                frame_id=frame_id,
-                frame_name=existing.frame_name if use_existing_rx else row.get("frame_name", existing.frame_name),
-                payload_length=existing.payload_length if (use_existing_rx and existing.payload_length is not None) else payload_length,
-                enabled=enabled or existing.enabled,
-                description=existing.description or row.get("description", ""),
-                direction=merged_dir,
-            )
-            continue
-
-        frames[frame_id] = FrameDefinition(
-            frame_id=frame_id,
-            frame_name=row.get("frame_name", ""),
-            payload_length=payload_length,
-            enabled=enabled,
-            description=row.get("description", ""),
-            direction=direction,
-        )
-    return frames
-
-
-def _parse_variables(
-    rows: List[Dict[str, str]], frames: Dict[int, FrameDefinition], parser_type: str = "framed"
-) -> List[SignalSpec]:
-    signals: List[SignalSpec] = []
-    offsets: Dict[int, int] = {}
-    bool_bit_counts: Dict[int, int] = {}
-    seen: Dict[int, set[str]] = {}
-
-    is_modbus = (parser_type == "modbus_rtu")
-    default_endian = "big" if is_modbus else "little"
-
-    for row_no, row in enumerate(rows, start=2):
-        if _is_blank_row(row) or (not row.get("id_or_address", "").strip() and not row.get("signal_name", "").strip()):
-            continue
-        if not _to_bool(row.get("enabled", "true"), default=True, field_name="variables.enabled"):
-            continue
-        frame_id = _parse_frame_id(row["id_or_address"], field_name=f"variables row {row_no}.id_or_address")
-        if frame_id not in frames:
-            # Auto-create a frame definition if missing in frames table
-            frames[frame_id] = FrameDefinition(frame_id=frame_id, frame_name=f"Frame 0x{frame_id:X}")
-
-        name = row["signal_name"].strip()
-        if not name:
-            raise ConfigError(f"variables row {row_no}: signal_name is required")
-        try:
-            fmt = FmtType.parse(row["data_type"]).value
-        except ValueError as exc:
-            raise ConfigError(f"variables row {row_no}: {exc}") from exc
-
-        count = _to_int(row.get("count", "1") or "1", field_name="count")
-        if count < 1:
-            raise ConfigError(f"variables row {row_no}: count must be >= 1")
-
-        start_index = _to_int(row.get("start_index", "1") or "1", field_name="start_index")
 
 
 def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
@@ -1314,11 +1235,11 @@ def _parse_serial_defaults(rows: List[Dict[str, str]]) -> SerialDefaults:
     _optional_columns_ok(non_blank, _SERIAL_DEFAULTS_REQUIRED, "serial_defaults")
     row = non_blank[0]
     return SerialDefaults(
-        baud_rate=_to_int(row["baud_rate"], field_name="serial_defaults.baud_rate"),
-        data_bits=_to_int(row["data_bits"], field_name="serial_defaults.data_bits"),
-        stop_bits=_to_float(row["stop_bits"], 1.0, "serial_defaults.stop_bits"),
-        parity=(row["parity"] or "N").strip().upper(),
-        timeout_ms=_to_int(row["timeout_ms"], field_name="serial_defaults.timeout_ms"),
+        baud_rate=_to_int(row.get("baud_rate", 115200), field_name="serial_defaults.baud_rate"),
+        data_bits=_to_int(row.get("data_bits", 8), field_name="serial_defaults.data_bits"),
+        stop_bits=_to_float(row.get("stop_bits", 1.0), 1.0, "serial_defaults.stop_bits"),
+        parity=(row.get("parity", "N") or "N").strip().upper(),
+        timeout_ms=_to_int(row.get("timeout_ms", 100), field_name="serial_defaults.timeout_ms"),
     )
 
 

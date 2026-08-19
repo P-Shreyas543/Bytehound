@@ -58,72 +58,72 @@ class ConfigLoaderMixin:
 
         def _row(lbl: str, val: str) -> None:
             v = QLabel(val)
-            v.setWordWrap(True)
             v.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            form.addRow(lbl, v)
+            form.addRow(f"<b>{lbl}:</b>", v)
 
-        _row("Config file:", self._config_label.text())
-        _row("Protocol:", self._protocol_label.text())
-        _row("Frames:", self._frames_label.text())
-        _row("Logging:", self._logging_label.text())
+        if self._config is None:
+            _row("Configuration", "None loaded")
+        else:
+            _row("Config path", str(self._config_path) if self._config_path else "(preset)")
+            p = self._config.protocol
+            _row("Profile name", p.profile_name)
+            _row("Parser type", p.parser_type)
+            _row("Header hex", p.header.hex(" ").upper() if p.header else "(none)")
+            _row("Footer hex", p.footer.hex(" ").upper() if p.footer else "(none)")
+            _row("Frame ID size", f"{p.frame_id_size} byte(s), {p.frame_id_byte_order}-endian")
+            _row("Length size", f"{p.length_size} byte(s) ({p.length_meaning})")
+            _row("CRC type", f"{p.crc_type} ({p.crc_size} bytes, {p.crc_byte_order})")
+            _row("Escape mode", p.escape_mode)
+            _row("Inter-frame delay", f"{p.inter_frame_delay_ms} ms")
+            _row("TX pad length", f"{p.tx_pad_length} bytes" if p.tx_pad_length else "(disabled)")
+            _row("Frames loaded", str(len(self._config.frames)))
+            _row("Signals loaded", str(len(self._config.all_signals)))
+            _row("Calculations", str(len(self._config.calc_groups)))
+            _row("TX commands", str(len(self._config.tx_commands)))
+            _row("Polling schedules", str(len(self._config.polling_schedules)))
 
         root.addLayout(form)
 
-        if self._config and self._config.protocol:
-            from PySide6.QtWidgets import QFrame
-            # Separator line
-            line = QFrame()
-            line.setFrameShape(QFrame.Shape.HLine)
-            line.setFrameShadow(QFrame.Shadow.Sunken)
-            root.addWidget(line)
-
-            # Label header
-            fmt_lbl = QLabel("On-Wire Frame Format (Hover for info):")
-            fmt_lbl.setStyleSheet("font-weight: bold;")
-            root.addWidget(fmt_lbl)
-
-            # Block diagram widget
-            from .widgets import FrameFormatWidget
-            fmt_widget = FrameFormatWidget(self._config, parent=dlg)
-            root.addWidget(fmt_widget)
-            dlg.setMinimumWidth(560)
-
-        btn_row = QDialogButtonBox()
-        open_log_btn = QPushButton("📂  Open Log Folder")
-        open_log_btn.clicked.connect(self._on_open_log_folder)
-        btn_row.addButton(open_log_btn, QDialogButtonBox.ButtonRole.ActionRole)
-        btn_row.addButton(QDialogButtonBox.StandardButton.Close)
-        btn_row.rejected.connect(dlg.reject)
-        root.addWidget(btn_row)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Close)
+        buttons.rejected.connect(dlg.reject)
+        root.addWidget(buttons)
 
         dlg.exec()
 
-    def _load_default_config(self) -> None:
-        self._populate_recent_selector()
-        recent = self._recent_paths()
-        for item in recent:
-            path = Path(item)
-            if path.exists():
-                try:
-                    self._load_config_from_path(path, suppress_popups=True)
-                    return
-                except Exception as exc:
-                    self._log_activity(f"[WARN] Skipped recent config {path}: {exc}")
-                    continue
-        # No usable recent config — leave _config=None so the central
-        # widget shows the first-run empty state with Import Config /
-        # Export Template buttons. The bundled template is still
-        # reachable from File → Export Template.
-        self._set_status("No configuration loaded")
+    def _on_export_excel_template(self) -> None:
+        """File → Export Config Template (Excel)…"""
+        from ..decoder.template_io import export_excel_template
+
+        self._log_activity("[ACTION] Export Excel template")
+        target_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Save Bytehound Config Template",
+            "bytehound_config_template.xlsx",
+            "Excel Workbook (*.xlsx);;All Files (*.*)",
+        )
+        if not target_path:
+            return
+
+        try:
+            export_excel_template(None, target_path)
+            self._popup_info("Template Exported", f"Successfully created template at:\n{target_path}")
+            self._log_activity(f"Exported template to: {target_path}")
+        except Exception as exc:
+            self._popup_critical("Export Failed", f"Could not create template: {exc}")
+            self._log_activity(f"Failed to export template: {exc}")
 
     def _on_load_config(self) -> None:
-        self._log_activity("[ACTION] Load configuration (dialog opened)")
-        start_dir = str(Path(__file__).resolve().parents[1] / "resources")
+        self._log_activity("[ACTION] Load config (file dialog)")
+        # Start picker at the directory of the currently-loaded config, or current working dir.
+        start_dir = ""
+        if self._config_path and Path(self._config_path).is_file():
+            start_dir = str(Path(self._config_path).parent)
+
         path_str, _ = QFileDialog.getOpenFileName(
             self,
-            "Select configuration (Excel workbook or any CSV in a config folder)",
+            "Select Configuration",
             start_dir,
-            "Config (*.xlsx *.xlsm *.csv);;Excel workbook (*.xlsx *.xlsm);;CSV files (*.csv);;All files (*)",
+            "Config Files (*.xlsx *.xlsm protocol.csv);;Excel Files (*.xlsx *.xlsm);;CSV Files (protocol.csv);;All Files (*.*)",
         )
         if not path_str:
             return
@@ -154,6 +154,8 @@ class ConfigLoaderMixin:
 
         try:
             self._load_config_from_path(path)
+        except ConfigError:
+            return
         finally:
             progress.close()
 
@@ -246,8 +248,8 @@ class ConfigLoaderMixin:
         self._log_activity(f"[ACTION] Load recent config: {path_text}")
         try:
             self._load_config_from_path(Path(path_text))
-        except ConfigError as exc:
-            self._popup_critical("Config error", str(exc))
+        except ConfigError:
+            pass
 
     def _recent_paths(self) -> list[str]:
         value = self._settings.value("recent_configs", [])
@@ -315,3 +317,20 @@ class ConfigLoaderMixin:
             f"Frames: {len(self._config.signals_by_frame)}   Variables: {signal_count}   TX: {len(self._config.tx_commands)}"
         )
 
+    def _load_default_config(self) -> None:
+        recents = self._recent_paths()
+        if recents:
+            first_path = Path(recents[0])
+            if first_path.exists():
+                try:
+                    self._load_config_from_path(first_path, suppress_popups=True)
+                    return
+                except Exception:
+                    pass
+        from ..decoder.template_io import get_bundled_template_dir
+        bundled = get_bundled_template_dir()
+        if bundled.exists():
+            try:
+                self._load_config_from_path(bundled, suppress_popups=True)
+            except Exception:
+                pass

@@ -7,6 +7,7 @@ from app.decoder.config_loader import load_config
 
 def test_builtin_presets_exist():
     assert "Single Cell BMS (Default)" in BUILTIN_PRESETS
+    assert "Waveshare USB-CAN Adapter" in BUILTIN_PRESETS
     assert "Simple Hex Telemetry" in BUILTIN_PRESETS
 
 
@@ -16,3 +17,5 @@ def test_builtin_presets_load_cleanly():
         assert cfg is not None
         assert cfg.protocol is not None
         assert len(cfg.all_signals) > 0
+        if name == "Waveshare USB-CAN Adapter":
+            assert cfg.protocol.parser_type == "waveshare_can"

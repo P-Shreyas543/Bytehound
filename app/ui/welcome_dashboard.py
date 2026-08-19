@@ -30,19 +30,35 @@ class WelcomeDashboardWidget(QWidget):
         self._init_ui()
 
     def _init_ui(self) -> None:
-        main_layout = QVBoxLayout(self)
+        from PySide6.QtWidgets import QScrollArea
+
+        outer_layout = QVBoxLayout(self)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
+
+        container = QWidget()
+        container.setObjectName("welcomeContainer")
+        main_layout = QVBoxLayout(container)
         main_layout.setContentsMargins(24, 24, 24, 24)
         main_layout.setSpacing(20)
 
         # Header Banner
         header = QFrame()
+        header.setObjectName("welcomeHeader")
         header.setFrameShape(QFrame.Shape.StyledPanel)
         header_layout = QHBoxLayout(header)
 
         title_v = QVBoxLayout()
         app_title = QLabel("🐾 Bytehound Telemetry & Control Suite")
+        app_title.setObjectName("welcomeTitle")
         
         app_subtitle = QLabel("Framed Serial Telemetry Logger, Command Controller & Multi-Grid Oscilloscope")
+        app_subtitle.setObjectName("welcomeSubtitle")
 
         title_v.addWidget(app_title)
         title_v.addWidget(app_subtitle)
@@ -72,7 +88,7 @@ class WelcomeDashboardWidget(QWidget):
         self.baud_combo = QComboBox()
         self.baud_combo.setAccessibleName("Baud Rate Selection")
         self.baud_combo.setAccessibleDescription("Select the baud rate for the serial connection.")
-        self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600"])
+        self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1000000", "2000000"])
         self.baud_combo.setCurrentText("115200")
 
         self.refresh_ports_btn = QPushButton("🔄 Refresh Ports")
@@ -134,6 +150,7 @@ class WelcomeDashboardWidget(QWidget):
         s3_layout = QVBoxLayout(step3_box)
 
         self.recent_list = QListWidget()
+        self.recent_list.setMinimumHeight(120)
         self.recent_list.setAccessibleName("Recent Profiles List")
         self.recent_list.setAccessibleDescription("Double click a recent profile to instantly connect and load its configuration.")
         self.recent_list.itemDoubleClicked.connect(self._on_recent_double_clicked)
@@ -146,6 +163,9 @@ class WelcomeDashboardWidget(QWidget):
 
         main_layout.addLayout(grid_layout)
         main_layout.addStretch()
+
+        scroll.setWidget(container)
+        outer_layout.addWidget(scroll)
 
     def update_ports(self, ports: List[str]) -> None:
         current = self.port_combo.currentText()
@@ -185,6 +205,14 @@ class WelcomeDashboardWidget(QWidget):
     def _on_preset_applied(self) -> None:
         preset_key = self.preset_combo.currentData()
         if preset_key:
+            preset_dict = BUILTIN_PRESETS.get(preset_key)
+            if preset_dict and "SerialDefaults" in preset_dict and preset_dict["SerialDefaults"]:
+                baud = preset_dict["SerialDefaults"][0].get("baud_rate")
+                if baud:
+                    baud_str = str(baud)
+                    if self.baud_combo.findText(baud_str) == -1:
+                        self.baud_combo.addItem(baud_str)
+                    self.baud_combo.setCurrentText(baud_str)
             self.preset_selected.emit(preset_key)
 
     def _on_recent_double_clicked(self, item: QListWidgetItem) -> None:

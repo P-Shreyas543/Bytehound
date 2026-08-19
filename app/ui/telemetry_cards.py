@@ -222,6 +222,29 @@ class TelemetryCardsView(QWidget):
         self.empty_label.hide()
         main_layout.addWidget(self.empty_label)
 
+    def _calculate_columns(self) -> int:
+        viewport_w = self.scroll_area.viewport().width() if hasattr(self, "scroll_area") and self.scroll_area.viewport() else self.width()
+        if viewport_w <= 100:
+            return 3
+        return max(1, min(6, max(1, (viewport_w - 40) // 270)))
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        new_cols = self._calculate_columns()
+        if getattr(self, "_current_cols", 3) != new_cols:
+            self._current_cols = new_cols
+            self._relayout_grids()
+
+    def _relayout_grids(self) -> None:
+        cols = getattr(self, "_current_cols", 3)
+        for grp_box in self._group_boxes:
+            cards = list(grp_box.findChildren(SignalCardWidget))
+            grid = grp_box.layout()
+            if isinstance(grid, QGridLayout):
+                for i, card in enumerate(cards):
+                    grid.removeWidget(card)
+                    grid.addWidget(card, i // cols, i % cols)
+
     def _on_group_mode_changed(self) -> None:
         self._group_by = self.group_combo.currentData() or "subsystem"
         self.rebuild_from_config(self._config)
@@ -251,12 +274,13 @@ class TelemetryCardsView(QWidget):
                 grp = spec.group.strip() if spec.group and spec.group.strip() else "General Subsystem"
             groups.setdefault(grp, []).append(spec)
 
+        self._current_cols = self._calculate_columns()
+        col_count = self._current_cols
         for grp_name, specs in groups.items():
             grp_box = QGroupBox(f" {grp_name} ({len(specs)} signals)")
             grid = QGridLayout(grp_box)
             grid.setSpacing(12)
 
-            col_count = 3
             for i, spec in enumerate(specs):
                 card = SignalCardWidget(spec)
                 card.quick_plot_requested.connect(self.quick_plot_requested.emit)

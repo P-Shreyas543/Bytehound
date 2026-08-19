@@ -798,3 +798,29 @@ def test_invalid_bit_order_rejected(tmp_path):
         load_config(tmp_path)
 
 
+def test_bundled_template_export_includes_parser_type_and_start_index(tmp_path):
+    bundled_template_dir = Path(__file__).resolve().parents[1] / "app" / "resources" / "config_template"
+    target_xlsx = tmp_path / "test_template.xlsx"
+    export_excel_template(bundled_template_dir, target_xlsx)
+
+    import openpyxl
+    wb = openpyxl.load_workbook(target_xlsx)
+    assert "ReadMe" in wb.sheetnames
+    assert "Protocol" in wb.sheetnames
+    assert "Variables" in wb.sheetnames
+
+    proto_sheet = wb["Protocol"]
+    proto_headers = [proto_sheet.cell(1, c).value for c in range(1, proto_sheet.max_column + 1)]
+    assert "parser_type" in proto_headers
+
+    vars_sheet = wb["Variables"]
+    vars_headers = [vars_sheet.cell(1, c).value for c in range(1, vars_sheet.max_column + 1)]
+    assert "start_index" in vars_headers
+    assert "count" in vars_headers
+
+    # Verify template loads cleanly into FrameConfig
+    cfg = load_config(target_xlsx)
+    assert cfg.protocol.parser_type == "framed"
+    assert len(cfg.all_signals) > 0
+
+

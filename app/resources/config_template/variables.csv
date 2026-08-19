@@ -1,9 +1,9 @@
-id_or_address,signal_name,data_type,count,byte_order,scale,offset,unit,group,read_write,min_value,max_value,description,enabled
-0x1000,Pack Voltage,uint16,1,little,0.01,0,V,,R,0,60,Total pack voltage,TRUE
-0x1000,Pack Current,int16,1,little,0.1,0,A,,R,-200,200,Charge (+) / discharge (-) current,TRUE
-0x1000,Pack SOC,uint8,1,little,1,0,%,,R,0,100,State of charge 0-100%,TRUE
-0x1000,Pack Temperature,int16,1,little,0.1,-40,°C,,R,-40,85,Pack temperature sensor,TRUE
-0x2000,Cell Voltage,uint16,8,little,0.001,0,V,Cell Voltages,R,2.5,4.2,8 individual cell voltages expanded automatically,TRUE
-0x3000,Fault Flags,uint8,1,little,1,0,,,R,,,Bitfield register - see Bitfields sheet,TRUE
-0x3000,BMS State,uint8,1,little,1,0,,,R,,,State machine value - see Enums sheet,TRUE
-0x2000,Voltage Limit,uint16,1,little,0.01,0,V,,RW,0,60,User-configurable overvoltage threshold,TRUE
+id_or_address,signal_name,data_type,count,start_index,byte_order,scale,offset,unit,group,read_write,min_value,max_value,description,enabled
+0x1000,Pack Voltage,uint16,1,1,little,0.01,0,V,,R,0,60,Total pack voltage,TRUE
+0x1000,Pack Current,int16,1,1,little,0.1,0,A,,R,-200,200,Charge (+) / discharge (-) current,TRUE
+0x1000,Pack SOC,uint8,1,1,little,1,0,%,,R,0,100,State of charge 0-100%,TRUE
+0x1000,Pack Temperature,int16,1,1,little,0.1,-40,°C,,R,-40,85,Pack temperature sensor,TRUE
+0x2000,Cell Voltage,uint16,8,1,little,0.001,0,V,Cell Voltages,R,2.5,4.2,8 individual cell voltages expanded automatically (Cell Voltage_1..8),TRUE
+0x3000,Fault Flags,uint8,1,1,little,1,0,,,R,,,Bitfield register - see Bitfields sheet,TRUE
+0x3000,BMS State,uint8,1,1,little,1,0,,,R,,,State machine value - see Enums sheet,TRUE
+0x2000,Voltage Limit,uint16,1,1,little,0.01,0,V,,RW,0,60,User-configurable overvoltage threshold,TRUE

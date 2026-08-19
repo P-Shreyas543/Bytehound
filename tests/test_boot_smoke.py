@@ -565,6 +565,7 @@ def test_window_state_schema_version_discards_stale_blobs(qapp) -> None:
         w = MainWindow()
         try:
             # _restore_window_state runs during __init__; stale blobs gone.
+            s.sync()
             assert s.value("window/geometry") in (None, ""), \
                 "stale geometry not cleared on schema mismatch"
             assert s.value("window/state") in (None, ""), \

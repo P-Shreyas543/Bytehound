@@ -67,38 +67,16 @@ class TxPanelMixin:
         self._tx_field_inputs.clear()
         if self._config is None:
             return
-        # Hide commands whose target frame is marked rx-only in frames.csv —
-        # sending to an rx-only frame is a config mistake. Commands whose
-        # frame_id is unknown to the frames map are left visible
-        # (auto-created frames default to rxtx).
-        # Silent omission was confusing users who added a TX command and
-        # then saw nothing in the dropdown, so log every hidden command
-        # with the reason — visible in the Activity log.
-        frames = self._config.frames
-        visible: list[str] = []
-        for name, cmd in self._config.tx_commands.items():
-            frame = frames.get(cmd.frame_id)
-            if frame is None or frame.is_tx_capable:
-                visible.append(name)
-            else:
-                self._log_activity(
-                    f"[WARN] TX command {name!r} hidden — frame 0x{cmd.frame_id:04X} "
-                    f"({frame.frame_name}) is direction={frame.direction!r}; "
-                    f"set it to 'tx' or 'rxtx' in frames.csv to make this command sendable."
-                )
+
+        visible: list[str] = list(self._config.tx_commands.keys())
         visible.sort()
         for name in visible:
             description = self._config.tx_commands[name].description.strip()
             self._tx_command_combo.addItem(name)
             if description:
-                # Per-item tooltip — hovering over each entry in the open
-                # dropdown surfaces the TxCommands.description text.
                 idx = self._tx_command_combo.count() - 1
                 self._tx_command_combo.setItemData(idx, description, Qt.ItemDataRole.ToolTipRole)
-        # Keep the combo's own tooltip in sync with the currently selected
-        # entry so the description is also visible without opening the dropdown.
-        # Connect once: _populate_tx_commands runs on every config reload,
-        # so guard with a flag to avoid stacking N copies of the slot.
+
         if not getattr(self, "_tx_tooltip_signal_bound", False):
             self._tx_command_combo.currentIndexChanged.connect(self._refresh_tx_combo_tooltip)
             self._tx_tooltip_signal_bound = True
@@ -140,7 +118,10 @@ class TxPanelMixin:
             if tx_field.default is not None:
                 val_str = f"{int(tx_field.default)}" if tx_field.is_boolean else f"{tx_field.default:g}"
                 editor.setText(val_str)
+            else:
+                editor.setText("0")
             editor.setPlaceholderText("Set value...")
+            editor.textChanged.connect(self._preview_tx_command)
 
             row_layout.addWidget(curr_lbl)
             row_layout.addWidget(editor)

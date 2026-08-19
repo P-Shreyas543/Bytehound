@@ -325,6 +325,8 @@ class TelemetryPipelineMixin:
 
         plot_visible = getattr(self, "_plot_dock", None) is None or self._plot_dock.isVisible()
         if plot_visible:
+            if self._session_started is None:
+                self._session_started = datetime.now()
             elapsed = (datetime.now() - self._session_started).total_seconds()
         for signal in [*decoded.signals, *decoded.calculations]:
             key = ("calc", signal.signal_name) if signal.is_calculated else (signal.frame_id, signal.signal_name)

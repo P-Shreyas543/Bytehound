@@ -395,8 +395,19 @@ class UIBuildersMixin:
 
         self._view_table_btn = QPushButton("📋 Table View", center_widget)
         self._view_cards_btn = QPushButton("🎴 Subsystem Cards", center_widget)
-        self._view_table_btn.clicked.connect(lambda: self._view_stack.setCurrentIndex(0))
-        self._view_cards_btn.clicked.connect(lambda: self._view_stack.setCurrentIndex(1))
+        self._view_table_btn.setCheckable(True)
+        self._view_cards_btn.setCheckable(True)
+        self._view_table_btn.setChecked(True)
+        self._view_table_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._view_cards_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        def _switch_view(idx: int):
+            self._view_stack.setCurrentIndex(idx)
+            self._view_table_btn.setChecked(idx == 0)
+            self._view_cards_btn.setChecked(idx == 1)
+
+        self._view_table_btn.clicked.connect(lambda: _switch_view(0))
+        self._view_cards_btn.clicked.connect(lambda: _switch_view(1))
         top_row.addWidget(self._view_table_btn)
         top_row.addWidget(self._view_cards_btn)
 

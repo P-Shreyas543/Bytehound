@@ -882,6 +882,7 @@ class MainWindow(
             # layout from __init__ stand.
             self._settings.remove("window/geometry")
             self._settings.remove("window/state")
+            self._settings.sync()
             return
         geometry = self._settings.value("window/geometry")
         state = self._settings.value("window/state")

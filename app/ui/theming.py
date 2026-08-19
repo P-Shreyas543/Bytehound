@@ -186,8 +186,8 @@ QCheckBox {
     background-color: transparent;
 }
 
-/* 7. Main data table body */
-QTableView {
+/* 7. Main data table body & dock detail tables */
+QTableView, QTableWidget {
     background-color: #0F172A;
     alternate-background-color: #1E293B;
     color: #F8FAFC;
@@ -195,7 +195,7 @@ QTableView {
     border: 1px solid #334155;
     border-radius: 3px;
 }
-QTableView::item:selected {
+QTableView::item:selected, QTableWidget::item:selected {
     background-color: #2563EB;
     color: #F8FAFC;
 }
@@ -295,6 +295,16 @@ QPushButton:hover, QToolButton:hover {
 QPushButton:pressed, QToolButton:pressed {
     background-color: #0F172A;
 }
+QPushButton:checked, QToolButton:checked {
+    background-color: #2563EB;
+    border-color: #3B82F6;
+    color: #FFFFFF;
+    font-weight: bold;
+}
+QPushButton:checked:hover, QToolButton:checked:hover {
+    background-color: #1D4ED8;
+    border-color: #60A5FA;
+}
 QPushButton:disabled, QToolButton:disabled {
     background-color: #1E293B;
     color: #64748B;
@@ -373,6 +383,54 @@ QLabel[value_state="error"] { color: #F87171; }
 QLabel[value_state="warn"] { color: #FBBF24; }
 QLabel[value_state="inactive"] { color: #94A3B8; }
 QLabel[value_state="ok"] { color: #38BDF8; }
+
+/* 17. Welcome Dashboard, Signal Cards & Status Bar */
+QWidget#welcomeContainer {
+    background-color: #0F172A;
+}
+QFrame#welcomeHeader {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+QLabel#welcomeTitle {
+    color: #F8FAFC;
+    font-size: 16px;
+    font-weight: bold;
+}
+QLabel#welcomeSubtitle {
+    color: #94A3B8;
+    font-size: 12px;
+}
+QFrame#SignalCard {
+    background-color: #1E293B;
+    border: 1px solid #334155;
+    border-radius: 8px;
+}
+QFrame#SignalCard:hover {
+    border-color: #475569;
+    background-color: #243044;
+}
+QFrame#SignalCard QLabel {
+    color: #F8FAFC;
+}
+QStatusBar {
+    background-color: #0F172A;
+    color: #94A3B8;
+    border-top: 1px solid #334155;
+}
+QStatusBar QLabel {
+    color: #CBD5E1;
+}
+QProgressBar {
+    background-color: #0F172A;
+    border: 1px solid #334155;
+    border-radius: 2px;
+}
+QProgressBar::chunk {
+    background-color: #2563EB;
+    border-radius: 2px;
+}
 """
 
 
@@ -458,8 +516,8 @@ QCheckBox {
     background-color: transparent;
 }
 
-/* 6. Main data table body */
-QTableView {
+/* 6. Main data table body & dock detail tables */
+QTableView, QTableWidget {
     background-color: #FFFFFF;
     alternate-background-color: #F9FAFB;
     color: #1F2937;
@@ -467,7 +525,7 @@ QTableView {
     border: 1px solid #E5E7EB;
     border-radius: 3px;
 }
-QTableView::item:selected {
+QTableView::item:selected, QTableWidget::item:selected {
     background-color: #2563EB;
     color: #FFFFFF;
 }
@@ -567,6 +625,16 @@ QPushButton:hover, QToolButton:hover {
 QPushButton:pressed, QToolButton:pressed {
     background-color: #E2E8F0;
 }
+QPushButton:checked, QToolButton:checked {
+    background-color: #2563EB;
+    border-color: #1D4ED8;
+    color: #FFFFFF;
+    font-weight: bold;
+}
+QPushButton:checked:hover, QToolButton:checked:hover {
+    background-color: #1D4ED8;
+    border-color: #1E40AF;
+}
 QPushButton:disabled, QToolButton:disabled {
     background-color: #F1F5F9;
     color: #94A3B8;
@@ -645,6 +713,54 @@ QLabel[value_state="error"] { color: #DC2626; }
 QLabel[value_state="warn"] { color: #D97706; }
 QLabel[value_state="inactive"] { color: #64748B; }
 QLabel[value_state="ok"] { color: #0284C7; }
+
+/* 16. Welcome Dashboard, Signal Cards & Status Bar */
+QWidget#welcomeContainer {
+    background-color: #F1F5F9;
+}
+QFrame#welcomeHeader {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+}
+QLabel#welcomeTitle {
+    color: #0F172A;
+    font-size: 16px;
+    font-weight: bold;
+}
+QLabel#welcomeSubtitle {
+    color: #64748B;
+    font-size: 12px;
+}
+QFrame#SignalCard {
+    background-color: #FFFFFF;
+    border: 1px solid #CBD5E1;
+    border-radius: 8px;
+}
+QFrame#SignalCard:hover {
+    border-color: #94A3B8;
+    background-color: #F8FAFC;
+}
+QFrame#SignalCard QLabel {
+    color: #0F172A;
+}
+QStatusBar {
+    background-color: #F8FAFC;
+    color: #475569;
+    border-top: 1px solid #E2E8F0;
+}
+QStatusBar QLabel {
+    color: #334155;
+}
+QProgressBar {
+    background-color: #E2E8F0;
+    border: 1px solid #CBD5E1;
+    border-radius: 2px;
+}
+QProgressBar::chunk {
+    background-color: #2563EB;
+    border-radius: 2px;
+}
 """
 
 
@@ -744,28 +860,28 @@ class ThemingMixin:
         from PySide6.QtWidgets import QApplication, QWidget
         seen: set[int] = set()
 
-        def repolish(w: QWidget) -> None:
-            wid = id(w)
-            if wid in seen:
+        def repolish_tree(root: QWidget) -> None:
+            if not isinstance(root, QWidget):
                 return
-            seen.add(wid)
-            qss = w.styleSheet()
-            if qss and "palette(" in qss:
-                # Three-step invalidation. Qt sometimes short-circuits
-                # ``setStyleSheet(same_string)`` as a no-op, leaving the
-                # cached resolved palette() colours untouched. Clearing
-                # first, then unpolish/polish, then re-applying the
-                # original string guarantees the QSS engine re-runs
-                # palette() resolution against the live app palette.
-                w.setStyleSheet("")
-                w.style().unpolish(w)
-                w.style().polish(w)
-                w.setStyleSheet(qss)
-                w.update()
-            for child in w.findChildren(QWidget):
-                repolish(child)
+            all_widgets = [root] + list(root.findChildren(QWidget))
+            for w in all_widgets:
+                wid = id(w)
+                if wid in seen:
+                    continue
+                seen.add(wid)
+                qss = w.styleSheet()
+                if qss and "palette(" in qss:
+                    w.setStyleSheet("")
+                    w.style().unpolish(w)
+                    w.style().polish(w)
+                    w.setStyleSheet(qss)
+                    w.update()
+                else:
+                    w.style().unpolish(w)
+                    w.style().polish(w)
+                    w.update()
 
-        repolish(self)
+        repolish_tree(self)
         # Cover dialogs/popups Qt has spawned that aren't descendants of self.
         app = QApplication.instance()
         if app is not None:
@@ -776,8 +892,7 @@ class ThemingMixin:
                 if isinstance(tlw, QWidget):
                     if tlw is not self:
                         tlw.setStyleSheet(card_qss)
-                    repolish(tlw)
-                    repolish(tlw)
+                    repolish_tree(tlw)
 
     def _apply_card_qss(self, theme: str) -> None:
         """Install card + dock QSS.  Called on startup and on every theme switch.
@@ -966,26 +1081,28 @@ class ThemingMixin:
             action.setIcon(_icon(name, color))
 
         # Secondary: follow the active theme
-        for action, name in [
-            (self._load_config_action,      "mdi6.file-import-outline"),
-            (self._export_template_action,  "mdi6.file-export-outline"),
-            (self._clear_action,            "mdi6.broom"),
-            (self._copy_value_action,       "mdi6.content-copy"),
-            (self._copy_table_action,       "mdi6.table-arrow-right"),
-            (self._exit_action,             "mdi6.exit-to-app"),
-            (self._info_action,             "mdi6.information-outline"),
-            (self._analysis_action,         "mdi6.chart-multiple"),
-            (self._logging_settings_action, "mdi6.tune-vertical"),
-            (self._plot_settings_action,    "mdi6.chart-line"),
-            (self._diagnostics_action,      "mdi6.clipboard-text-outline"),
-            (self._report_issue_action,     "mdi6.bug"),
-            # Names MUST match the icons used at QAction construction in
-            # _create_actions(); otherwise the menu icon silently changes
-            # shape the first time the user switches theme.
-            (self._docs_action,             "mdi6.book-open-page-variant-outline"),
-            (self._update_action,           "mdi6.cloud-download-outline"),
-        ]:
-            action.setIcon(_icon(name, color))
+        secondary_actions = [
+            (getattr(self, "_load_config_action", None),      "mdi6.file-import-outline"),
+            (getattr(self, "_edit_config_action", None),      "mdi6.file-document-edit-outline"),
+            (getattr(self, "_wizard_action", None),           "mdi6.wand"),
+            (getattr(self, "_system_diagnostic_action", None),"mdi6.stethoscope"),
+            (getattr(self, "_export_template_action", None),  "mdi6.file-export-outline"),
+            (getattr(self, "_clear_action", None),            "mdi6.broom"),
+            (getattr(self, "_copy_value_action", None),       "mdi6.content-copy"),
+            (getattr(self, "_copy_table_action", None),       "mdi6.table-arrow-right"),
+            (getattr(self, "_exit_action", None),             "mdi6.exit-to-app"),
+            (getattr(self, "_info_action", None),             "mdi6.information-outline"),
+            (getattr(self, "_analysis_action", None),         "mdi6.chart-multiple"),
+            (getattr(self, "_logging_settings_action", None), "mdi6.tune-vertical"),
+            (getattr(self, "_plot_settings_action", None),    "mdi6.chart-line"),
+            (getattr(self, "_diagnostics_action", None),      "mdi6.clipboard-text-outline"),
+            (getattr(self, "_report_issue_action", None),     "mdi6.bug"),
+            (getattr(self, "_docs_action", None),             "mdi6.book-open-page-variant-outline"),
+            (getattr(self, "_update_action", None),           "mdi6.cloud-download-outline"),
+        ]
+        for action, name in secondary_actions:
+            if action is not None:
+                action.setIcon(_icon(name, color))
 
         # View menu is rebuilt from scratch each time — call it with the new tint
         self._populate_view_menu()

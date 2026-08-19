@@ -675,6 +675,8 @@
                     </li>
                     <li><a href="#section-5">5. Customizing Your Data (The Excel Config)</a>
                         <ul class="sub-menu">
+                            <li><a href="#protocol-wizard">Visual Protocol Wizard (Ctrl+N)</a></li>
+                            <li><a href="#comprehensive-config-examples">Worked Examples &amp; Recipes ⭐</a></li>
                             <li><a href="#config-protocol">Sheet 1 — Protocol</a></li>
                             <li><a href="#sheet-frames">Sheet 2 — Frames</a></li>
                             <li><a href="#variables">Sheet 3 — Variables</a></li>
@@ -2132,6 +2134,18 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
                 Config</strong> to load it. Changes take effect immediately.
         </div>
 
+        <div class="success" id="protocol-wizard">
+            <strong>🪄 Visual Protocol & Frame Configuration Wizard (Ctrl+N):</strong><br>
+            Instead of manually editing spreadsheets, launch the 5-step visual wizard via <strong>File → Protocol & Frame Wizard…</strong> or shortcut <kbd>Ctrl+N</kbd>:
+            <ol>
+                <li><strong>Step 1: Protocol & Communication Settings</strong> — Choose framing mode (Framed Serial or Waveshare CAN), configure headers (e.g. <code>AA 55</code>), length sizes, CRC algorithms, and default baud rates.</li>
+                <li><strong>Step 2: Frame Identifiers & Directions</strong> — Define message frame IDs (e.g. <code>0x1000</code>), friendly frame names, expected payload sizes, and communication directions (<code>rx</code>, <code>tx</code>, or <code>rxtx</code>).</li>
+                <li><strong>Step 3: Telemetry Signals & Array Definitions</strong> — Add telemetry signals with data types, scaling, offsets, units, engineering groups, and multi-sensor array expansions (<code>count</code> and <code>start_index</code>).</li>
+                <li><strong>Step 4: Transmit Commands & Dynamic Fields</strong> — Configure control commands with static hex payloads or attach interactive dynamic input parameters with scaling, limits, and boolean flag packing.</li>
+                <li><strong>Step 5: Review & Generate Configuration</strong> — Inspect the live summary of your configuration and export a ready-to-run <code>.xlsx</code> workbook with pre-populated Excel dropdowns.</li>
+            </ol>
+        </div>
+
         <div class="note">
             <strong>Alternative CSV Folder Configuration:</strong> Instead of a single Excel <code>.xlsx</code>
             workbook, you can configure Bytehound using a directory containing individual CSV files. When importing,
@@ -2546,8 +2560,8 @@ enabled                = TRUE</pre>
                 <td><code>uint16</code></td>
                 <td>Raw data type in the payload: <code>uint8</code>, <code>int8</code>, <code>uint16</code>,
                     <code>int16</code>, <code>uint32</code>, <code>int32</code>, <code>float32</code>,
-                    <code>float64</code> (with <code>single</code> and <code>double</code> supported as aliases for
-                    <code>float32</code> and <code>float64</code>). Byte width is derived from the type and used to compute the next signal's
+                    <code>float64</code> (with <code>single</code>/<code>double</code> aliases), or <code>boolean</code> (or <code>bool</code>).
+                    Consecutive boolean fields are automatically bit-packed into single bytes. Byte width is derived from the type and used to compute the next signal's
                     start offset automatically.</td>
             </tr>
             <tr>
@@ -2555,8 +2569,14 @@ enabled                = TRUE</pre>
                 <td>integer</td>
                 <td><code>12</code> <em>(default: 1)</em></td>
                 <td>Repeat count. <code>count=12</code> on a signal named <code>Cell V</code> auto-creates
-                    <code>Cell V 1</code> … <code>Cell V 12</code> at consecutive byte offsets — no copy-pasting 12
+                    <code>Cell V_1</code> … <code>Cell V_12</code> at consecutive byte offsets — no copy-pasting 12
                     rows. Must be ≥ 1.</td>
+            </tr>
+            <tr>
+                <td><code>start_index</code></td>
+                <td>integer</td>
+                <td><code>1</code> <em>(default: 1)</em></td>
+                <td>Starting numerical index for array signal names when <code>count &gt; 1</code>. Set <code>0</code> for 0-based arrays (<code>Cell_0..Cell_15</code>) or <code>1</code> for 1-based arrays (<code>Cell_1..Cell_16</code>).</td>
             </tr>
             <tr>
                 <td><code>byte_order</code></td>
@@ -3059,9 +3079,9 @@ Set Voltage Limit | 0x2000        |             | Set the overvoltage threshold 
                 <td><code>uint16</code></td>
                 <td>How the value is encoded in the outgoing packet: <code>uint8</code>, <code>int8</code>,
                     <code>uint16</code>, <code>int16</code>, <code>uint32</code>, <code>int32</code>,
-                    <code>float32</code>, or <code>float64</code> (with <code>single</code> and <code>double</code> supported as aliases for
-                    <code>float32</code> and <code>float64</code>). Value is lowercased on load; unsupported types reject
-                    the config.</td>
+                    <code>float32</code>, <code>float64</code> (with <code>single</code>/<code>double</code> aliases), or <code>boolean</code> (or <code>bool</code>).
+                    <strong>Automatic Boolean Packing:</strong> consecutive boolean fields are automatically bit-packed into a single byte (up to 8 flags per byte, bits 0 to 7).
+                    Value is lowercased on load; unsupported types reject the config.</td>
             </tr>
             <tr>
                 <td><code>byte_order</code></td>
@@ -3105,10 +3125,15 @@ Set Voltage Limit | 0x2000        |             | Set the overvoltage threshold 
                 <td><code>default</code></td>
                 <td>number</td>
                 <td><code>100</code> <em>(blank ok)</em></td>
-                <td>Pre-filled value shown in the input box when the command form opens. Leave blank to require the user
-                    to enter a value before previewing or sending.</td>
+                <td>Pre-filled value shown in the input box when the command form opens. Leave blank to default to 0 for instant live packet preview.</td>
             </tr>
         </table>
+        <div class="note">
+            <strong>Why are there two sheets for TX?</strong>
+            <code>TxCommands</code> (Sheet 7) defines <em>what commands exist</em> and their target Frame ID / CAN ID.
+            <code>TxCommandFields</code> (Sheet 8) defines the <em>interactive input boxes</em> that appear when a command is selected.
+            This 1-to-many design lets static hex commands (like <code>Reset Faults = FF FF</code>) remain simple with 0 fields, while dynamic commands can have multiple custom parameters.
+        </div>
         <div class="warning">
             <strong>Field matching is silent.</strong> Rows whose <code>command_name</code> does not match an enabled
             TxCommands row are parsed but never shown. If two fields on the same command reuse the same
@@ -3177,9 +3202,9 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
         <p><strong>Bundled template content</strong> (polls all three telemetry frames with per-frame intervals and
             timeouts):</p>
         <pre>id_or_address | interval_ms | timeout_ms | enabled
-0x1000        | 100         | 50         | true
-0x2000        | 500         | 100        | true
-0x3000        | 200         | 50         | true</pre>
+0x1000        | 100         | 50         | TRUE
+0x2000        | 500         | 100        | TRUE
+0x3000        | 200         | 50         | TRUE</pre>
 
         <hr>
 
@@ -3241,6 +3266,179 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
             matches what the Connection dialog uses by default):</p>
         <pre>baud_rate | data_bits | stop_bits | parity | timeout_ms
 115200    | 8         | 1         | N      | 100</pre>
+
+        <hr>
+
+        <h3 id="comprehensive-config-examples">⭐ Real-World Configuration Recipes &amp; Worked Examples</h3>
+        <p>Below are concrete, battle-tested configuration patterns you can copy directly into your Excel sheets for common embedded hardware scenarios.</p>
+
+        <!-- Recipe 1 -->
+        <div class="success">
+            <h4 style="margin-top:0;">Recipe 1: Bidirectional Boolean Control &amp; Telemetry (RX + TX)</h4>
+            <p><strong>Scenario:</strong> You have a hardware flag (e.g. <code>Relay_State</code>, <code>Precharge_Active</code>, or <code>Heater_Enable</code>) that your microcontroller broadcasts in live telemetry (RX), and you also want to toggle or set its state from Bytehound (TX).</p>
+            <p><strong>1. In <code>Frames</code> sheet:</strong> Set <code>direction = rxtx</code> to permit both RX telemetry and TX writing.</p>
+            <pre>frame_id | frame_name     | payload_length | direction | enabled
+0x1000   | Power Control  | 4              | rxtx      | TRUE</pre>
+            <p><strong>2. In <code>Variables</code> sheet:</strong> Declare the boolean telemetry signal with <code>data_type = boolean</code> and <code>read_write = RW</code>.</p>
+            <pre>id_or_address | signal_name   | data_type | scale | offset | unit | read_write | enabled
+0x1000        | Relay_State   | boolean   | 1     | 0      |      | RW         | TRUE</pre>
+            <p><strong>3. In <code>TxCommands</code> sheet:</strong> Create the command entry.</p>
+            <pre>command_name    | id_or_address | payload_hex | description                         | enabled
+Set Relay State | 0x1000        |             | Set the power relay active/inactive | TRUE</pre>
+            <p><strong>4. In <code>TxCommandFields</code> sheet:</strong> Attach the boolean toggle parameter.</p>
+            <pre>command_name    | signal_name   | data_type | scale | offset | min_value | max_value | default
+Set Relay State | Relay_State   | boolean   | 1     | 0      | 0         | 1         | 1</pre>
+            <p><strong>What happens in the app:</strong> The live state is displayed continuously in the Data Table and Value Cards as a green/gray status badge. In the <strong>TX Commands</strong> panel, selecting <em>Set Relay State</em> presents an interactive toggle switch where you can send <code>1</code> (ON) or <code>0</code> (OFF) and immediately verify the live RX telemetry response.</p>
+        </div>
+
+        <!-- Recipe 2 -->
+        <div class="info">
+            <h4 style="margin-top:0;">Recipe 2: Dense 16-Bit Status Register with Multi-Bit Flags (Bitfields)</h4>
+            <p><strong>Scenario:</strong> A microcontroller transmits a 16-bit packed fault register at byte offset 0. Each bit represents a distinct hardware alarm or operating state.</p>
+            <p><strong>1. In <code>Variables</code> sheet:</strong> Declare the container register as <code>uint16</code>.</p>
+            <pre>id_or_address | signal_name    | data_type | scale | offset | unit | enabled
+0x3000        | Fault_Register | uint16    | 1     | 0      |      | TRUE</pre>
+            <p><strong>2. In <code>Bitfields</code> sheet:</strong> Map individual bit indices (0 to 15) to descriptive labels and custom alarm texts.</p>
+            <pre>id_or_address | signal_name    | bit_index | label          | active_text | inactive_text
+0x3000        | Fault_Register | 0         | OverVoltage    | FAULT       | OK
+0x3000        | Fault_Register | 1         | UnderVoltage   | FAULT       | OK
+0x3000        | Fault_Register | 2         | OverCurrent    | FAULT       | OK
+0x3000        | Fault_Register | 3         | OverTemp       | FAULT       | OK
+0x3000        | Fault_Register | 7         | ContactorClosed| CLOSED      | OPEN
+0x3000        | Fault_Register | 15        | MasterAlarm    | ALARM_ON    | NORMAL</pre>
+            <p><strong>What happens in the app:</strong> The <strong>Bitfields</strong> dock panel illuminates color-coded badges in real time (red for active fault conditions, green for healthy states), showing exactly which subsystem tripped.</p>
+        </div>
+
+        <!-- Recipe 3 -->
+        <div class="note">
+            <h4 style="margin-top:0;">Recipe 3: State Machine Decoding with Enums</h4>
+            <p><strong>Scenario:</strong> The firmware broadcasts an internal state machine integer (e.g. <code>0</code>, <code>1</code>, <code>2</code>, <code>3</code>, <code>255</code>) that needs to be displayed as human-readable text.</p>
+            <p><strong>1. In <code>Variables</code> sheet:</strong></p>
+            <pre>id_or_address | signal_name    | data_type | scale | offset | unit | enabled
+0x4000        | Device_State   | uint8     | 1     | 0      |      | TRUE</pre>
+            <p><strong>2. In <code>Enums</code> sheet:</strong></p>
+            <pre>id_or_address | signal_name    | value | label
+0x4000        | Device_State   | 0     | STANDBY
+0x4000        | Device_State   | 1     | PRECHARGE
+0x4000        | Device_State   | 2     | RUNNING
+0x4000        | Device_State   | 3     | SHUTDOWN
+0x4000        | Device_State   | 255   | EMERGENCY_STOP</pre>
+            <p><strong>What happens in the app:</strong> The Data Table and Value Cards display <code>RUNNING</code> or <code>EMERGENCY_STOP</code> directly instead of raw numbers <code>2</code> or <code>255</code>.</p>
+        </div>
+
+        <!-- Recipe 4 -->
+        <div class="success">
+            <h4 style="margin-top:0;">Recipe 4: Automotive Sensor Scaling &amp; Inverted Sensor Math</h4>
+            <p><strong>Scenario:</strong> Converting raw ADC counts into real-world units using standard linear transfer functions: <code>Value = Raw × Scale + Offset</code>.</p>
+            <table>
+                <tr>
+                    <th>Sensor Type</th>
+                    <th>Raw Data Type</th>
+                    <th>Scale</th>
+                    <th>Offset</th>
+                    <th>Unit</th>
+                    <th>Resulting Conversion</th>
+                </tr>
+                <tr>
+                    <td><strong>Automotive NTC Temperature</strong></td>
+                    <td><code>uint8</code></td>
+                    <td><code>0.5</code></td>
+                    <td><code>-40</code></td>
+                    <td><code>°C</code></td>
+                    <td>Raw <code>130</code> → <code>130 × 0.5 − 40 = 25.0 °C</code></td>
+                </tr>
+                <tr>
+                    <td><strong>Inverted Vacuum/Pressure Sensor</strong></td>
+                    <td><code>int16</code></td>
+                    <td><code>-0.1</code></td>
+                    <td><code>100</code></td>
+                    <td><code>bar</code></td>
+                    <td>Raw <code>200</code> → <code>200 × (−0.1) + 100 = 80.0 bar</code></td>
+                </tr>
+                <tr>
+                    <td><strong>High-Resolution Voltage</strong></td>
+                    <td><code>uint16</code></td>
+                    <td><code>0.001</code></td>
+                    <td><code>0</code></td>
+                    <td><code>V</code></td>
+                    <td>Raw <code>3300</code> → <code>3300 × 0.001 = 3.300 V</code></td>
+                </tr>
+            </table>
+        </div>
+
+        <!-- Recipe 5 -->
+        <div class="info">
+            <h4 style="margin-top:0;">Recipe 5: Multi-Cell Battery Array Expansion (0-based vs 1-based)</h4>
+            <p><strong>Scenario:</strong> A battery management system sends 16 consecutive cell voltages and 4 module temperatures in one frame. Rather than writing 20 spreadsheet rows, define 2 rows with array expansion:</p>
+            <pre>id_or_address | signal_name   | data_type | count | start_index | scale | offset | unit | group
+0x2000        | Cell Voltage  | uint16    | 16    | 1           | 0.001 | 0      | V    | Cells
+0x2000        | Mod_Temp      | int16     | 4     | 0           | 0.1   | 0      | °C   | Temperatures</pre>
+            <p><strong>Result:</strong> Automatically generates:
+                <ul>
+                    <li>1-based indexing: <code>Cell Voltage_1</code> through <code>Cell Voltage_16</code> (32 bytes total).</li>
+                    <li>0-based indexing: <code>Mod_Temp_0</code> through <code>Mod_Temp_3</code> (8 bytes total).</li>
+                </ul>
+            </p>
+        </div>
+
+        <!-- Recipe 6 -->
+        <div class="note">
+            <h4 style="margin-top:0;">Recipe 6: Real-Time Multi-Signal Math Aggregations (CalcGroups)</h4>
+            <p><strong>Scenario:</strong> Automatically calculate real-time minimum cell voltage, maximum cell voltage, cell voltage delta ($\Delta V$), and average cell voltage across all 16 cells defined in Recipe 5.</p>
+            <pre>group_name | operations          | unit | frame_id | enabled
+Cells      | min|max|diff|avg    | V    | 0x2000   | TRUE</pre>
+            <p><strong>Result:</strong> Bytehound synthesizes four real-time virtual signals: <code>Cells min</code>, <code>Cells max</code>, <code>Cells diff</code>, and <code>Cells avg</code>. These update instantly on every incoming packet and can be plotted, logged, or assigned to alarm thresholds.</p>
+        </div>
+
+        <!-- Recipe 7 -->
+        <div class="success">
+            <h4 style="margin-top:0;">Recipe 7: Dynamic Parameter TX with Automatic Boolean Bit-Packing</h4>
+            <p><strong>Scenario:</strong> Send a command packet containing a Target Voltage (float, scale 0.01), a Target Current (int16, scale 0.1), and two boolean enable flags (<code>Enable_Output</code>, <code>Buzzer_On</code>).</p>
+            <p><strong>1. In <code>TxCommands</code> sheet:</strong></p>
+            <pre>command_name   | id_or_address | payload_hex | description         | enabled
+Set_Parameters | 0x6000        |             | Write configuration | TRUE</pre>
+            <p><strong>2. In <code>TxCommandFields</code> sheet:</strong></p>
+            <pre>command_name   | signal_name   | data_type | scale | offset | min_value | max_value | default
+Set_Parameters | Target_Volt   | uint16    | 0.01  | 0      | 0         | 60        | 48.0
+Set_Parameters | Target_Curr   | int16     | 0.1   | 0      | -50       | 50        | 0.0
+Set_Parameters | Enable_Output | boolean   | 1     | 0      | 0         | 1         | 0
+Set_Parameters | Buzzer_On     | boolean   | 1     | 0      | 0         | 1         | 0</pre>
+            <p><strong>Binary wire payload:</strong>
+                <ul>
+                    <li><code>Target_Volt = 48.5 V</code> $\rightarrow$ encoded as <code>4850</code> (<code>0x12F2</code> $\rightarrow$ 2 bytes <code>F2 12</code>).</li>
+                    <li><code>Target_Curr = -15.5 A</code> $\rightarrow$ encoded as <code>-155</code> (<code>0xFF65</code> $\rightarrow$ 2 bytes <code>65 FF</code>).</li>
+                    <li><code>Enable_Output = 1</code> and <code>Buzzer_On = 1</code> $\rightarrow$ <strong>consecutive booleans are automatically packed</strong> into 1 byte: <code>(1 &lt;&lt; 0) | (1 &lt;&lt; 1) = 0x03</code>.</li>
+                    <li>Total payload = 5 bytes (<code>F2 12 65 FF 03</code>).</li>
+                </ul>
+            </p>
+        </div>
+
+        <!-- Recipe 8 -->
+        <div class="info">
+            <h4 style="margin-top:0;">Recipe 8: Periodic Polling Schedule for Request-Response Devices</h4>
+            <p><strong>Scenario:</strong> Your hardware only returns data when queried. You want to poll fast telemetry (<code>0x1000</code>) at 10 Hz (100 ms) and slow telemetry (<code>0x2000</code>) at 2 Hz (500 ms).</p>
+            <pre>id_or_address | interval_ms | timeout_ms | enabled
+0x1000        | 100         | 50         | TRUE
+0x2000        | 500         | 100        | TRUE</pre>
+            <p><strong>How to use:</strong> Load the configuration and enable the <strong>Auto-Fetch</strong> toolbar button. Bytehound's background serial worker will automatically handle round-robin polling and timeout retries.</p>
+        </div>
+
+        <!-- Recipe 9 -->
+        <div class="note">
+            <h4 style="margin-top:0;">Recipe 9: Waveshare USB-CAN Adapter Telemetry (Standard &amp; Extended CAN IDs)</h4>
+            <p><strong>Scenario:</strong> Monitoring CAN bus traffic using a Waveshare USB-CAN-A or USB-CAN-B adapter.</p>
+            <p><strong>1. In <code>Protocol</code> sheet:</strong></p>
+            <pre>profile_name   | parser_type    | header_hex | footer_hex | enabled
+CAN Monitor    | waveshare_can  | AA         | 55         | TRUE</pre>
+            <p><strong>2. In <code>Frames</code> sheet:</strong> Define standard 11-bit CAN IDs and extended 29-bit CAN IDs.</p>
+            <pre>frame_id   | frame_name     | payload_length | direction | enabled
+0x02F0     | Inverter_Telemetry | 8          | rx        | TRUE
+0x18FF50E5 | Battery_BMS_Ext    | 8          | rx        | TRUE</pre>
+            <p><strong>3. In <code>Variables</code> sheet:</strong> Extract signals from the 8-byte CAN payloads.</p>
+            <pre>id_or_address | signal_name   | data_type | scale | offset | unit
+0x02F0        | Motor_RPM     | int16     | 1     | 0      | RPM
+0x18FF50E5    | Pack_Voltage  | uint16    | 0.01  | 0      | V</pre>
+        </div>
 
         <!-- Section 6 -->
         <h2 id="section-6">6. Appearance &amp; Updates</h2>

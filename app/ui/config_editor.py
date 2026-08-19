@@ -243,7 +243,7 @@ class ConfigEditorWindow(QMainWindow):
             elif col_name in ("endianness", "byte_order", "frame_id_byte_order", "crc_byte_order", "length_byte_order"):
                 items = [m.value for m in ByteOrder]
             elif col_name == "parser_type":
-                items = ["framed"]
+                items = ["framed", "waveshare_can"]
             elif col_name == "read_write":
                 items = [m.value for m in ReadWrite]
             elif col_name == "direction":
@@ -259,7 +259,7 @@ class ConfigEditorWindow(QMainWindow):
             elif col_name == "raw_log_format":
                 items = ["hex", "compact"]
             elif col_name == "baud_rate":
-                items = ["9600", "19200", "38400", "57600", "115200"]
+                items = ["9600", "19200", "38400", "57600", "115200", "230400", "921600", "2000000"]
                 is_editable = True
             elif col_name == "data_bits":
                 items = ["5", "6", "7", "8"]

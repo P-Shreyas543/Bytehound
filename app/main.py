@@ -172,6 +172,12 @@ def _show_crash_dialog(exc_type, exc, tb) -> None:
 
 
 def _run_app() -> int:
+    os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+    os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
+    from PySide6.QtCore import Qt
+    if hasattr(QApplication, "setHighDpiScaleFactorRoundingPolicy"):
+        QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+
     app = QApplication(sys.argv)
 
     icon_path = _find_logo("logo_sq.ico") or _find_logo("logo_sq.png")
