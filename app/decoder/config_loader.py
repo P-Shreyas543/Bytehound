@@ -417,6 +417,10 @@ def _to_optional_float(value: Any, field_name: str) -> Optional[float]:
 def _to_bool(value: Any, *, default: bool = False, field_name: str = "") -> bool:
     if isinstance(value, bool):
         return value
+    # Excel sometimes delivers numeric cell values directly (int/float).
+    # Treat non-zero as True, zero as False — consistent with Python truthiness.
+    if isinstance(value, (int, float)):
+        return value != 0
     s = str(value).strip().lower()
     if s == "":
         return default
@@ -424,6 +428,11 @@ def _to_bool(value: Any, *, default: bool = False, field_name: str = "") -> bool
         return True
     if s in {"false", "0", "no", "n", "f"}:
         return False
+    # Last-chance: if the string represents an integer, use its truthiness.
+    try:
+        return int(s) != 0
+    except ValueError:
+        pass
     raise ConfigError(f"Invalid boolean for {field_name!r}: {value!r}")
 
 
@@ -562,6 +571,10 @@ def _to_optional_float(value: Any, field_name: str) -> Optional[float]:
 def _to_bool(value: Any, *, default: bool = False, field_name: str = "") -> bool:
     if isinstance(value, bool):
         return value
+    # Excel sometimes delivers numeric cell values directly (int/float).
+    # Treat non-zero as True, zero as False — consistent with Python truthiness.
+    if isinstance(value, (int, float)):
+        return value != 0
     s = str(value).strip().lower()
     if s == "":
         return default
@@ -569,6 +582,11 @@ def _to_bool(value: Any, *, default: bool = False, field_name: str = "") -> bool
         return True
     if s in {"false", "0", "no", "n", "f"}:
         return False
+    # Last-chance: if the string represents an integer, use its truthiness.
+    try:
+        return int(s) != 0
+    except ValueError:
+        pass
     raise ConfigError(f"Invalid boolean for {field_name!r}: {value!r}")
 
 
