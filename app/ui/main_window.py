@@ -41,10 +41,8 @@ except ImportError:  # pragma: no cover - exercised only when optional dep missi
 
 
 if pg is not None:
-    # Global, intentional: keeps rendering consistent across Live Plot and Analysis Suite.
-    # useOpenGL offloads QPainter primitives to the GPU — meaningful CPU reduction
-    # at high refresh rates with multiple panels.
-    pg.setConfigOptions(antialias=True, useOpenGL=True)
+    # Use standard Qt rendering to prevent OpenGL window context flashing on startup.
+    pg.setConfigOptions(antialias=True, useOpenGL=False)
 
 
 try:

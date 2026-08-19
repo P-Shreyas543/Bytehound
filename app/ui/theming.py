@@ -365,7 +365,33 @@ QFrame#checkableGroupPopup {
     border-radius: 4px;
 }
 
-/* 16. Telemetry Card status pills */
+/* 16. View Switcher Buttons */
+QPushButton#viewSwitcherBtn {
+    background-color: #1E293B;
+    color: #94A3B8;
+    border: 1px solid #334155;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-weight: 600;
+}
+QPushButton#viewSwitcherBtn:hover {
+    background-color: #334155;
+    color: #F8FAFC;
+    border-color: #475569;
+}
+QPushButton#viewSwitcherBtn:checked {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border: 1px solid #3B82F6;
+    font-weight: bold;
+}
+QPushButton#viewSwitcherBtn:checked:hover {
+    background-color: #1D4ED8;
+    color: #FFFFFF;
+    border: 1px solid #60A5FA;
+}
+
+/* 17. Telemetry Card status pills */
 QLabel[status_type="ok"] {
     background-color: #064E3B; color: #34D399; border: 1px solid #059669; border-radius: 8px; padding: 2px 8px;
 }
@@ -695,7 +721,33 @@ QFrame#checkableGroupPopup {
     border-radius: 4px;
 }
 
-/* 15. Telemetry Card status pills */
+/* 15. View Switcher Buttons */
+QPushButton#viewSwitcherBtn {
+    background-color: #F8FAFC;
+    color: #475569;
+    border: 1px solid #CBD5E1;
+    border-radius: 4px;
+    padding: 4px 12px;
+    font-weight: 600;
+}
+QPushButton#viewSwitcherBtn:hover {
+    background-color: #E2E8F0;
+    color: #0F172A;
+    border-color: #94A3B8;
+}
+QPushButton#viewSwitcherBtn:checked {
+    background-color: #2563EB;
+    color: #FFFFFF;
+    border: 1px solid #1D4ED8;
+    font-weight: bold;
+}
+QPushButton#viewSwitcherBtn:checked:hover {
+    background-color: #1D4ED8;
+    color: #FFFFFF;
+    border: 1px solid #1E40AF;
+}
+
+/* 16. Telemetry Card status pills */
 QLabel[status_type="ok"] {
     background-color: #D1FAE5; color: #065F46; border: 1px solid #10B981; border-radius: 8px; padding: 2px 8px;
 }
@@ -1103,6 +1155,11 @@ class ThemingMixin:
         for action, name in secondary_actions:
             if action is not None:
                 action.setIcon(_icon(name, color))
+
+        if hasattr(self, "_view_table_btn") and self._view_table_btn is not None:
+            self._view_table_btn.setIcon(_icon("mdi6.table-large", color))
+        if hasattr(self, "_view_cards_btn") and self._view_cards_btn is not None:
+            self._view_cards_btn.setIcon(_icon("mdi6.view-grid-outline", color))
 
         # View menu is rebuilt from scratch each time — call it with the new tint
         self._populate_view_menu()

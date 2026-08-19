@@ -30,7 +30,7 @@ import numpy as np
 import pyqtgraph as pg
 
 # ── Global pyqtgraph config (must run before any PlotWidget is created) ──
-pg.setConfigOptions(antialias=True, useOpenGL=True)
+pg.setConfigOptions(antialias=True, useOpenGL=False)
 from PySide6.QtCore import Qt, QSettings, QTimer, QThread, Signal
 from PySide6.QtGui import (
     QAction, QColor, QFont, QKeySequence,

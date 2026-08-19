@@ -251,7 +251,6 @@ class UIBuildersMixin:
 
         tools_menu = menubar.addMenu("&Tools")
         tools_menu.addAction(self._system_diagnostic_action)
-        tools_menu.addAction(self._wizard_action)
         tools_menu.addAction(self._analysis_action)
         tools_menu.addAction(self._logging_settings_action)
         tools_menu.addAction(self._plot_settings_action)
@@ -318,6 +317,8 @@ class UIBuildersMixin:
         Parameter Editor, Raw Console, Activity Log) in
         ``_build_main_layout``.
         """
+        if not getattr(self, "_initial_show_done", False):
+            return
         if floating:
             dock.setWindowFlags(
                 Qt.WindowType.Window
@@ -393,12 +394,22 @@ class UIBuildersMixin:
         self._view_stack.addWidget(self._table)       # index 0: Table
         self._view_stack.addWidget(self._cards_view)  # index 1: Subsystem Cards
 
-        self._view_table_btn = QPushButton("📋 Table View", center_widget)
-        self._view_cards_btn = QPushButton("🎴 Subsystem Cards", center_widget)
+        from .theming import resolve_theme
+        _saved_theme = str(self._settings.value("ui/theme", "dark"))
+        _ic = "#F8FAFC" if resolve_theme(_saved_theme) == "dark" else "#1F2937"
+
+        self._view_table_btn = QPushButton("Table View", center_widget)
+        self._view_table_btn.setObjectName("viewSwitcherBtn")
+        self._view_table_btn.setIcon(_icon("mdi6.table-large", _ic))
         self._view_table_btn.setCheckable(True)
-        self._view_cards_btn.setCheckable(True)
         self._view_table_btn.setChecked(True)
         self._view_table_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+
+        self._view_cards_btn = QPushButton("Subsystem Cards", center_widget)
+        self._view_cards_btn.setObjectName("viewSwitcherBtn")
+        self._view_cards_btn.setIcon(_icon("mdi6.view-grid-outline", _ic))
+        self._view_cards_btn.setCheckable(True)
+        self._view_cards_btn.setChecked(False)
         self._view_cards_btn.setCursor(Qt.CursorShape.PointingHandCursor)
 
         def _switch_view(idx: int):

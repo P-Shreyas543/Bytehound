@@ -31,7 +31,7 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import QApplication
 
-from app.ui.main_window import MainWindow, APP_ORG, APP_NAME, _find_logo
+from app.ui.main_window import MainWindow, APP_ORG, APP_NAME, APP_DISPLAY_NAME, _find_logo
 from app.ui.widgets import TitleBarThemeFilter
 
 _LOG_MAX_BYTES = 5 * 1024 * 1024
@@ -179,6 +179,9 @@ def _run_app() -> int:
         QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
     app = QApplication(sys.argv)
+    app.setApplicationName(APP_NAME)
+    app.setApplicationDisplayName(APP_DISPLAY_NAME)
+    app.setOrganizationName(APP_ORG)
 
     icon_path = _find_logo("logo_sq.ico") or _find_logo("logo_sq.png")
     if icon_path is not None:

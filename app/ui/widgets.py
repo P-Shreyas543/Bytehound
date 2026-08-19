@@ -202,8 +202,15 @@ class _CheckableGroupCombo(QPushButton):
         self.setText("All groups  ▾")
         self.setCursor(Qt.CursorShape.PointingHandCursor)
 
-        # Popup container ──────────────────────────────────────
-        self._popup = QFrame(self.window(), Qt.WindowType.Popup)
+        self._popup: Optional[QFrame] = None
+        self._list: Optional[QListWidget] = None
+        self.clicked.connect(self._show_popup)
+
+    def _ensure_popup(self) -> None:
+        if self._popup is not None:
+            return
+        parent_window = self.window() if self.window() is not self else None
+        self._popup = QFrame(parent_window, Qt.WindowType.Popup)
         self._popup.setObjectName("checkableGroupPopup")
         self._popup.setFrameShape(QFrame.Shape.StyledPanel)
         self._popup.setFrameShadow(QFrame.Shadow.Raised)
@@ -215,9 +222,7 @@ class _CheckableGroupCombo(QPushButton):
         self._list.setFrameShape(QFrame.Shape.NoFrame)
         self._list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         layout.addWidget(self._list)
-
         self._list.itemChanged.connect(self._on_item_changed)
-        self.clicked.connect(self._show_popup)
 
     # ── public API ────────────────────────────────────────────
 
@@ -226,6 +231,9 @@ class _CheckableGroupCombo(QPushButton):
 
         Existing selection is cleared (all groups selected = show all).
         """
+        self._ensure_popup()
+        if self._list is None:
+            return
         self._list.blockSignals(True)
         self._list.clear()
 
@@ -254,7 +262,7 @@ class _CheckableGroupCombo(QPushButton):
 
         An empty set means *all* groups are selected (or there are no groups).
         """
-        if self._list.count() == 0:
+        if self._list is None or self._list.count() == 0:
             return set()
         all_item = self._list.item(0)
         if all_item and all_item.checkState() == Qt.CheckState.Checked:
@@ -269,6 +277,9 @@ class _CheckableGroupCombo(QPushButton):
     # ── internals ─────────────────────────────────────────────
 
     def _show_popup(self) -> None:
+        self._ensure_popup()
+        if self._popup is None:
+            return
         # Position popup below the button
         pos = self.mapToGlobal(self.rect().bottomLeft())
         self._popup.move(pos)
@@ -277,6 +288,8 @@ class _CheckableGroupCombo(QPushButton):
         self._popup.raise_()
 
     def _on_item_changed(self, changed_item: QListWidgetItem) -> None:
+        if self._list is None:
+            return
         self._list.blockSignals(True)
         if self._list.row(changed_item) == 0:
             # "All groups" toggled → apply to all
@@ -297,6 +310,8 @@ class _CheckableGroupCombo(QPushButton):
         self.selection_changed.emit()
 
     def _update_button_label(self) -> None:
+        if self._list is None:
+            return
         checked = [
             self._list.item(i).text()
             for i in range(1, self._list.count())
@@ -391,7 +406,8 @@ class TitleBarThemeFilter(QObject):
     def eventFilter(self, obj, event) -> bool:
         if event.type() == QEvent.Type.Show:
             try:
-                if hasattr(obj, "isWindow") and obj.isWindow() and hasattr(obj, "winId"):
+                from PySide6.QtWidgets import QMainWindow, QDialog
+                if isinstance(obj, (QMainWindow, QDialog)) and hasattr(obj, "winId"):
                     from .theming import resolve_theme
                     from PySide6.QtGui import QPalette
                     from PySide6.QtWidgets import QApplication
