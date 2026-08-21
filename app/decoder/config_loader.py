@@ -768,8 +768,8 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
             f"protocol: escape_mode must be one of "
             f"'none', 'slip', 'hdlc', 'cobs' (got {protocol.escape_mode!r})"
         )
-    if protocol.parser_type not in {"framed", "waveshare_can"}:
-        raise ConfigError("protocol: parser_type must be framed or waveshare_can")
+    if protocol.parser_type not in {"framed", "waveshare_can", "waveshare_can_20_bytes"}:
+        raise ConfigError("protocol: parser_type must be framed, waveshare_can, or waveshare_can_20_bytes")
 
 
 def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:

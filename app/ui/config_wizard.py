@@ -175,9 +175,24 @@ class ProtocolWizardDialog(QDialog):
 
         self.profile_name_edit = QLineEdit(self._profile_name)
         self.parser_type_combo = QComboBox()
-        self.parser_type_combo.addItems([m.value for m in ParserType])
-        self.parser_type_combo.setCurrentText(self._parser_type)
-        self.parser_type_combo.currentTextChanged.connect(self._on_parser_type_changed)
+        parser_options = [
+            ("Framed Serial / UART (Custom Framing)", "framed"),
+            ("Waveshare CAN — Variable Length (0xAA ... 0x55)", "waveshare_can"),
+            ("Waveshare CAN — Fixed 20 Bytes (0xAA 0x55 ...)", "waveshare_can_20_bytes"),
+        ]
+        for label, val in parser_options:
+            self.parser_type_combo.addItem(label, val)
+
+        try:
+            norm_init_ptype = ParserType.parse(self._parser_type).value
+        except Exception:
+            norm_init_ptype = "framed"
+        for i in range(self.parser_type_combo.count()):
+            if self.parser_type_combo.itemData(i) == norm_init_ptype:
+                self.parser_type_combo.setCurrentIndex(i)
+                break
+
+        self.parser_type_combo.currentIndexChanged.connect(self._on_parser_type_changed)
 
         self.baud_combo = QComboBox()
         self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1000000", "2000000"])
@@ -242,7 +257,20 @@ class ProtocolWizardDialog(QDialog):
         layout.addStretch()
         return page
 
-    def _on_parser_type_changed(self, ptype: str) -> None:
+    def _get_selected_parser_type(self) -> str:
+        if hasattr(self, "parser_type_combo"):
+            data = self.parser_type_combo.currentData()
+            if data:
+                return str(data)
+            txt = self.parser_type_combo.currentText()
+            try:
+                return ParserType.parse(txt).value
+            except Exception:
+                return "framed"
+        return "framed"
+
+    def _on_parser_type_changed(self, index: int = 0) -> None:
+        ptype = self._get_selected_parser_type()
         if ptype in ("waveshare_can", "waveshare_can_20_bytes"):
             self.header_hex_edit.setText("AA 55" if ptype == "waveshare_can_20_bytes" else "AA")
             self.crc_combo.setCurrentText("none")
@@ -258,14 +286,14 @@ class ProtocolWizardDialog(QDialog):
         self._update_format_preview()
 
     def _update_format_preview(self) -> None:
-        ptype = self.parser_type_combo.currentText() if hasattr(self, "parser_type_combo") else "framed"
+        ptype = self._get_selected_parser_type()
         if ptype == "waveshare_can_20_bytes":
-            self.diagram_lbl.setText("Waveshare CAN 20-Byte Packet:  [0xAA 0x55]  ➜  [Type 0x01]  ➜  [Mode]  ➜  [Seq]  ➜  [CAN ID (4B)]  ➜  [DLC (1B)]  ➜  [Data (8B)]  ➜  [Sum+1 (1B)]")
+            self.diagram_lbl.setText("Waveshare CAN (Fixed 20 Bytes):  [0xAA 0x55]  ➜  [Type 0x01]  ➜  [Mode]  ➜  [Seq]  ➜  [CAN ID (4B)]  ➜  [DLC (1B)]  ➜  [Data (8B)]  ➜  [Sum+1 (1B)]")
             return
         if ptype == "waveshare_can":
             fid_bytes = self.frame_id_size_spin.value()
             fid_desc = "2B (Standard 11-bit)" if fid_bytes == 2 else "4B (Extended 29-bit)"
-            self.diagram_lbl.setText(f"Waveshare CAN Packet:  [0xAA]  ➜  [Type/DLC (0xC0..0xEF)]  ➜  [CAN ID ({fid_desc})]  ➜  [Data (0-8B)]  ➜  [0x55]")
+            self.diagram_lbl.setText(f"Waveshare CAN (Variable Length):  [0xAA]  ➜  [Type/DLC (0xC0..0xEF)]  ➜  [CAN ID ({fid_desc})]  ➜  [Data (0-8B)]  ➜  [0x55]")
             return
 
         hdr = self.header_hex_edit.text().strip() or "NONE"
@@ -508,7 +536,8 @@ class ProtocolWizardDialog(QDialog):
 
     def _refresh_step5_summary(self) -> None:
         pname = self.profile_name_edit.text() or "Custom Protocol"
-        ptype = self.parser_type_combo.currentText()
+        ptype = self._get_selected_parser_type()
+        ptype_display = self.parser_type_combo.currentText()
         baud = self.baud_combo.currentText()
         n_frames = self.frames_table.rowCount()
         
@@ -521,11 +550,16 @@ class ProtocolWizardDialog(QDialog):
         n_tx = self.tx_cmd_table.rowCount()
         n_tx_flds = self.tx_fields_table.rowCount()
         crc = self.crc_combo.currentText() if ptype == "framed" else "None (Hardware DLC Checksum)"
-        hdr = self.header_hex_edit.text() if ptype == "framed" else "0xAA (CAN Type Byte)"
+        if ptype == "waveshare_can_20_bytes":
+            hdr = "0xAA 0x55 (Fixed 20B Header)"
+        elif ptype == "waveshare_can":
+            hdr = "0xAA (CAN Type Byte)"
+        else:
+            hdr = self.header_hex_edit.text()
 
         self.summary_label.setText(
             f"<b>Profile Name:</b> {pname}<br>"
-            f"<b>Parser Engine:</b> <code>{ptype}</code><br>"
+            f"<b>Parser Engine:</b> <code>{ptype}</code> ({ptype_display})<br>"
             f"<b>Default Baud Rate:</b> {baud} baud<br>"
             f"<b>Framing & Checksum:</b> Header: <code>{hdr}</code> | CRC: <code>{crc}</code><br>"
             f"<b>Configured Frames:</b> {n_frames} frame(s)<br>"
@@ -641,9 +675,9 @@ class ProtocolWizardDialog(QDialog):
             return
 
         try:
-            ptype = self.parser_type_combo.currentText() if hasattr(self, "parser_type_combo") else "framed"
+            ptype = self._get_selected_parser_type()
             crc_type = self.crc_combo.currentText()
-            if crc_type == "none" or ptype == "waveshare_can":
+            if crc_type == "none" or ptype in ("waveshare_can", "waveshare_can_20_bytes"):
                 crc_size = 0
             elif crc_type == "crc32":
                 crc_size = 4
@@ -657,20 +691,30 @@ class ProtocolWizardDialog(QDialog):
                 QMessageBox.warning(self, "Invalid Input", "Payload Length Size must be >= 1 for framed protocols.")
                 return
 
+            if ptype == "waveshare_can_20_bytes":
+                header_hex = "AA 55"
+                footer_hex = ""
+            elif ptype == "waveshare_can":
+                header_hex = "AA"
+                footer_hex = "55"
+            else:
+                header_hex = self.header_hex_edit.text()
+                footer_hex = ""
+
             protocol_df = pd.DataFrame([{
                 "profile_name": self.profile_name_edit.text() or "Custom Protocol",
                 "parser_type": ptype,
-                "header_hex": "AA" if ptype == "waveshare_can" else self.header_hex_edit.text(),
+                "header_hex": header_hex,
                 "frame_id_size": self.frame_id_size_spin.value(),
                 "frame_id_byte_order": "little",
                 "length_size": self.length_size_spin.value(),
                 "length_meaning": "payload_only",
                 "length_byte_order": "",
-                "crc_type": "none" if ptype == "waveshare_can" else crc_type,
-                "crc_size": 0 if ptype == "waveshare_can" else crc_size,
+                "crc_type": "none" if ptype in ("waveshare_can", "waveshare_can_20_bytes") else crc_type,
+                "crc_size": 0 if ptype in ("waveshare_can", "waveshare_can_20_bytes") else crc_size,
                 "crc_byte_order": "little",
                 "crc_coverage": "header_to_payload",
-                "footer_hex": "55" if ptype == "waveshare_can" else "",
+                "footer_hex": footer_hex,
                 "escape_mode": "none",
                 "raw_log_format": "hex",
                 "inter_frame_delay_ms": 10,

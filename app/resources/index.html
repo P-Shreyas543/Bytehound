@@ -708,7 +708,7 @@
             <header class="content-header">
                 <button class="menu-toggle" id="menu-toggle">☰</button>
                 <div class="header-right">
-                    <span class="version-badge">Manual — Version 1.2.1</span>
+                    <span class="version-badge">Manual — Version 1.2.2</span>
                     <button class="theme-toggle" id="theme-toggle" title="Toggle Theme">🌓</button>
                 </div>
             </header>
@@ -2134,6 +2134,18 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
                 Config</strong> to load it. Changes take effect immediately.
         </div>
 
+        <div class="warning">
+            <strong>📌 Do I need to fill both FrameConfig and Variables? — No!</strong><br>
+            <strong><code>FrameConfig</code></strong> is the top-level container in Bytehound that holds all parsed configuration data together in memory. It was also the name of an older, single-sheet legacy format (<code>frame_config.csv</code>).<br>
+            In the modern workbook, you <strong>only</strong> need to fill:
+            <ul style="margin-top: 6px; margin-bottom: 4px;">
+                <li><strong><code>Protocol</code> (Required)</strong> — Sync headers, frame ID size, length size, and CRC algorithms.</li>
+                <li><strong><code>Variables</code> / <code>FrameVariables</code> (Required for decoding)</strong> — Signal names, data types, byte order, scale factors, offsets, and units.</li>
+                <li><strong><code>Frames</code> (Optional / Recommended)</strong> — Friendly frame names and expected payload lengths. <em>(If omitted, frames are auto-created from the <code>Variables</code> sheet)</em>.</li>
+                <li><em>All other sheets (<code>Bitfields</code>, <code>Enums</code>, <code>CalcGroups</code>, <code>TxCommands</code>, <code>SerialDefaults</code>) are optional.</em></li>
+            </ul>
+        </div>
+
         <div class="success" id="protocol-wizard">
             <strong>🪄 Visual Protocol & Frame Configuration Wizard (Ctrl+N):</strong><br>
             Instead of manually editing spreadsheets, launch the 5-step visual wizard via <strong>File → Protocol & Frame Wizard…</strong> or shortcut <kbd>Ctrl+N</kbd>:
@@ -2204,6 +2216,18 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
                 <td>text</td>
                 <td><code>BMS_v2</code></td>
                 <td>Free-text label for this protocol profile.</td>
+            </tr>
+            <tr>
+                <td><code>parser_type</code></td>
+                <td>enum</td>
+                <td><code>framed</code></td>
+                <td>Selects the packet parsing engine:
+                    <ul style="margin: 4px 0 0 16px; padding: 0;">
+                        <li><code>framed</code>: Custom framed serial / UART packets (Header, Length, Frame ID, CRC, Footer).</li>
+                        <li><code>waveshare_can</code> (or <code>variable_length</code>): Waveshare USB-CAN <strong>Variable-Length Protocol</strong> (4–12 bytes per packet starting with <code>0xAA</code>, type/DLC byte, CAN ID, payload, ending with <code>0x55</code>).</li>
+                        <li><code>waveshare_can_20_bytes</code> (or <code>fixed_20_bytes</code>): Waveshare USB-CAN <strong>Fixed 20-Byte Protocol</strong> (fixed 20-byte packets starting with <code>0xAA 0x55</code> with trailing checksum).</li>
+                    </ul>
+                </td>
             </tr>
 
 
@@ -2378,12 +2402,13 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             &nbsp;<code>[ Header ] ➜ [ Frame ID ] ➜ [ Length ] ➜ [ Payload ] ➜ [ CRC ] ➜ [ Footer? ]</code>
         </div>
         <div class="note">
-            <strong>waveshare_can is fully supported.</strong> Set <code>parser_type = waveshare_can</code> to interface
-            with Waveshare USB-CAN-A adapters over virtual serial ports. This parser automatically decodes both
-            <strong>Variable-Length Protocol</strong> frames and <strong>Fixed 20-Byte Protocol</strong> frames (checksum validated).
-            When active, the <code>id_or_address</code> column represents the CAN ID (e.g. <code>0x0123</code>). Columns like
-            <code>header_hex</code>, <code>footer_hex</code>, and <code>length_size</code> can be omitted or left blank in your configuration, as they automatically fallback to Waveshare defaults.
-            To build and send commands to a Waveshare adapter running in Fixed 20-Byte Protocol mode, set <code>waveshare_fixed_20_bytes</code> (or <code>waveshare_fixed</code>) to <code>True</code> in the Protocol configuration.
+            <strong>Waveshare USB-CAN Parsers:</strong>
+            <ul>
+                <li><code>parser_type = framed</code>: Standard custom framed protocols (header + frame ID + length + payload + CRC + footer).</li>
+                <li><code>parser_type = waveshare_can</code>: Waveshare USB-CAN <strong>Variable-Length Protocol</strong> (4–12 bytes per packet starting with <code>0xAA</code>, type/DLC byte, CAN ID, payload, ending with <code>0x55</code>).</li>
+                <li><code>parser_type = waveshare_can_20_bytes</code>: Waveshare USB-CAN <strong>Fixed 20-Byte Protocol</strong> (fixed 20-byte packets starting with <code>0xAA 0x55</code> with trailing checksum).</li>
+            </ul>
+            When active, the <code>id_or_address</code> column represents the CAN ID (e.g. <code>0x0123</code> or <code>0x18FEE000</code>). Columns like <code>header_hex</code>, <code>footer_hex</code>, and <code>length_size</code> can be omitted or left blank in your configuration, as they automatically fallback to Waveshare defaults.
         </div>
 
         <h4 id="tx-pad-length">Fixed-length TX (<code>tx_pad_length</code>) — for buffer-full RX interrupts</h4>

@@ -1,17 +1,17 @@
 {
-    "version": "1.2.1",
-    "document_version": "1.2.1",
+    "version": "1.2.2",
+    "document_version": "1.2.2",
     "Developer": "Shreyas P",
     "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "DECIBELS LAB PRIVATE LIMITED",
     "publisher_webpage": "https://lms.decibelslab.com/",
-    "build_date": "2026-08-19",
+    "build_date": "2026-08-21",
     "license": "MIT",
     "license_url": "https://bytehound.shreyasp182002.workers.dev/LICENSE",
     "homepage": "https://bytehound.shreyasp182002.workers.dev/",
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
-    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.2.1.exe",
-    "release_notes": "v1.2.1 Release - Multi-Frame Group Calculations, Waveshare USB-CAN Engine, Clean Startup & UI Polishing.\n\nChanges:\n  - Group-Based Multi-Frame Calculations: Calculation groups (min, max, diff, avg, sum) dynamically aggregate signals across multiple frames (e.g. 16S cell voltages across 4 frames 0x2F1-0x2F4) on the final frame arrival without duplicate logging columns.\n  - Waveshare USB-CAN Protocol Support: Live hardware streaming verified at 2,000,000 baud over virtual COM ports.\n  - Robust Configuration Parsing: Excel loader defensively handles numeric booleans, type conversions, and cross-sheet signal name validation with zero crash dialogs on boot.\n  - Startup & Theme Polish: Eliminated temporary 'Python' window flashes and dock promotion flicker on boot-up; perfected high-contrast vector icons and styling for Light, Dark, and System Default themes.\n  - Menu De-duplication: Cleaned duplicate tool actions and streamlined navigation shortcuts.",
-    "sha256": "7ba6db6ae9e4c2ef6867ad3f037007a00b5fb2132e8e5cef4e2b83d80ab6a179"
+    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.2.2.exe",
+    "release_notes": "v1.2.2 Release - Waveshare CAN Fixed/Variable Parser Separation & Explicit Sheet Dropdown Options.\n\nChanges:\n  - Explicit Parser Types in Sheet & UI: Direct dropdown support for 'framed', 'waveshare_can' (Variable-Length), and 'waveshare_can_20_bytes' (Fixed 20-Byte) in Excel template validations, In-App Config Editor, and Protocol Wizard.\n  - False Checksum Error Elimination: Strict parser mode separation prevents variable-length CAN frames with 0xAA 0x55 sequences from triggering spurious 20-byte checksum mismatches.\n  - Automatic Fixed-Mode Configuration: Selecting 'waveshare_can_20_bytes' automatically configures fixed 20-byte parsing and TX packet building without extra manual flag requirements.\n  - Documentation & Manual Sync: Updated built-in manual and documentation covering all parser options and configuration columns.",
+    "sha256": "56f442642fcb2924d655535e1d9632d807c37160937d13b9b2543b1e66333b65"
 }

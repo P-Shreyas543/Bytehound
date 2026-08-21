@@ -46,13 +46,65 @@ class ParserType(str, enum.Enum):
     @classmethod
     def parse(cls, value: str) -> "ParserType":
         normalised = (value or "framed").strip().lower()
-        if normalised in ("waveshare_can_20_bytes", "waveshare_20_bytes", "waveshare_can_20", "waveshare_fixed", "waveshare_fixed_20_bytes", "waveshare_can_fixed"):
+        if normalised in (
+            "waveshare_can_20_bytes",
+            "waveshare_can_20",
+            "waveshare_20_bytes",
+            "waveshare_fixed",
+            "waveshare_fixed_20_bytes",
+            "waveshare_can_fixed",
+            "waveshare_can_fixed_20_bytes",
+            "fixed_20_bytes",
+            "fixed_20_byte",
+            "fixed 20 bytes",
+            "fixed 20 byte",
+            "fixed_20",
+            "fixed 20",
+            "20_bytes",
+            "20 bytes",
+            "can_fixed_20_bytes",
+            "can_fixed",
+            "can fixed 20 bytes",
+            "waveshare can (fixed 20 bytes)",
+            "waveshare can (fixed 20-byte)",
+            "waveshare can - fixed 20 bytes",
+            "waveshare (fixed 20 bytes)",
+        ):
             return cls.WAVESHARE_CAN_20_BYTES
+        if normalised in (
+            "waveshare_can",
+            "waveshare_can_variable",
+            "waveshare_can_variable_length",
+            "waveshare_variable",
+            "waveshare_variable_length",
+            "variable_length",
+            "variable length",
+            "can_variable",
+            "can_variable_length",
+            "can variable",
+            "can variable length",
+            "waveshare can (variable length)",
+            "waveshare can - variable length",
+            "waveshare (variable length)",
+            "waveshare",
+        ):
+            return cls.WAVESHARE_CAN
+        if normalised in (
+            "framed",
+            "frame",
+            "custom_framed",
+            "custom framed",
+            "serial_framed",
+            "serial framed",
+            "framed serial / uart (custom)",
+            "framed serial",
+        ):
+            return cls.FRAMED
         for member in cls:
             if member.value == normalised:
                 return member
         raise ValueError(
-            f"parser_type must be 'framed', 'waveshare_can', or 'waveshare_can_20_bytes' (got {value!r})"
+            f"parser_type must be 'framed', 'waveshare_can' (variable length), or 'waveshare_can_20_bytes' (fixed 20 bytes) (got {value!r})"
         )
 
 

@@ -49,15 +49,43 @@ A core tenet: **no variables or frame structures are hard-coded**. Everything is
 1. **File → Export Template** to save a `frame_config_template.xlsx`.
 
 ### Editing the Configuration
-The workbook contains sheets:
-- **Protocol** — framing rules (header bytes, length size, CRC type/byte order, footer if any).
-- **Frames** — Frame IDs, names, expected payload length, direction.
-- **FrameVariables** — payload byte layout per frame (data type, scale factor, offset, unit, count, group, byte order).
-- **Bitfields** — per-bit names for variables marked as bitfields.
-- **Enums** — value-to-label maps for enum variables.
-- **CalcGroups** — group statistics (min/max/diff/sum/avg) over arrays.
-- **TxCommands / TxCommandFields** — outbound command templates and editable fields.
-- **SerialDefaults** — default baud, parity, stop bits, etc.
+
+> **Note on `FrameConfig` vs `Variables`:**
+> `FrameConfig` is the overall container representing the entire configuration. You **do not** need to fill a separate `FrameConfig` sheet alongside `Variables`. In modern configs, you only configure the sheets below.
+
+#### Sheet Overview & Requirements:
+- **`Protocol` (Required)** — Framing rules:
+  - `profile_name`: Name for your protocol profile.
+  - `parser_type` *(optional, default `framed`)*:
+    - `framed`: Standard custom microcontroller / UART framing.
+    - `waveshare_can` (or `variable_length`): Waveshare USB-CAN Variable-Length protocol (`0xAA ... 0x55`).
+    - `waveshare_can_20_bytes` (or `fixed_20_bytes`): Waveshare USB-CAN Fixed 20-Byte protocol (`0xAA 0x55 ...`).
+  - `header_hex`: Sync header bytes in hex (e.g. `AA55` or `0xAA 0x55`).
+  - `frame_id_size`: Size of frame ID in bytes (e.g. `1`, `2`, or `4` for CAN).
+  - `length_size`: Size of payload length field in bytes (`1` or `2`).
+  - `crc_type`: CRC algorithm (e.g. `crc16_modbus`, `crc8`, `none`, `sum8`, `xor8`).
+  - `footer_hex` *(optional)*: Trailing footer bytes if applicable.
+- **`Variables` / `FrameVariables` (Required for decoding)** — Payload byte layout per frame:
+  - `id_or_address`: Frame ID in hex (e.g. `0x10`) or decimal.
+  - `signal_name`: Variable name (e.g. `Battery_Voltage`, `Temperature`).
+  - `start_byte`: Zero-indexed byte offset inside the payload (or left empty for auto-packing).
+  - `data_type`: Type (`uint8`, `int8`, `uint16`, `int16`, `uint32`, `int32`, `float32`, `float64`, `boolean`).
+  - `byte_order`: `little_endian` (`le`) or `big_endian` (`be`).
+  - `scale` & `offset`: Multiplier and additive offset (Engineering value = `raw * scale + offset`).
+  - `unit`: Display unit (e.g. `V`, `A`, `°C`, `RPM`).
+  - `count` *(optional)*: Number of elements if this variable is an array.
+  - `group` *(optional)*: Category tag for UI grouping and filtering.
+- **`Frames` (Optional / Recommended)** — Frame metadata:
+  - `frame_id`: Frame ID matching `id_or_address`.
+  - `frame_name`: Human-readable name for the frame.
+  - `length` *(optional)*: Expected payload length in bytes.
+  - `direction` *(optional)*: `rx`, `tx`, or `rxtx`.
+  *(Note: If the `Frames` sheet is omitted, frames are auto-created from the entries in `Variables`)*.
+- **`Bitfields` (Optional)** — Per-bit names for variables with `data_type: bitfield`.
+- **`Enums` (Optional)** — Value-to-label mappings for enumerated status variables.
+- **`CalcGroups` (Optional)** — Group statistics (`min`, `max`, `diff`, `sum`, `avg`) over array variables.
+- **`TxCommands` / `TxCommandFields` (Optional)** — Outbound command packets and editable parameter fields.
+- **`SerialDefaults` (Optional)** — Default connection parameters (`baud_rate`, `parity`, `stop_bits`, `data_bits`).
 
 ### Importing a Configuration
 1. **File → Import Config**.
