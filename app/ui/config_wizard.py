@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 from ..decoder.template_io import load_template_tables, write_workbook_from_tables
-from ..decoder.types import SUPPORTED_CRC_TYPES, SUPPORTED_DATA_TYPES
+from ..decoder.types import SUPPORTED_CRC_TYPES, SUPPORTED_DATA_TYPES, ParserType
 from .theming import apply_dialog_theme
 
 
@@ -175,7 +175,7 @@ class ProtocolWizardDialog(QDialog):
 
         self.profile_name_edit = QLineEdit(self._profile_name)
         self.parser_type_combo = QComboBox()
-        self.parser_type_combo.addItems(["framed", "waveshare_can"])
+        self.parser_type_combo.addItems([m.value for m in ParserType])
         self.parser_type_combo.setCurrentText(self._parser_type)
         self.parser_type_combo.currentTextChanged.connect(self._on_parser_type_changed)
 
@@ -243,8 +243,8 @@ class ProtocolWizardDialog(QDialog):
         return page
 
     def _on_parser_type_changed(self, ptype: str) -> None:
-        if ptype == "waveshare_can":
-            self.header_hex_edit.setText("AA")
+        if ptype in ("waveshare_can", "waveshare_can_20_bytes"):
+            self.header_hex_edit.setText("AA 55" if ptype == "waveshare_can_20_bytes" else "AA")
             self.crc_combo.setCurrentText("none")
             self.header_hex_edit.setEnabled(False)
             self.crc_combo.setEnabled(False)
@@ -259,6 +259,9 @@ class ProtocolWizardDialog(QDialog):
 
     def _update_format_preview(self) -> None:
         ptype = self.parser_type_combo.currentText() if hasattr(self, "parser_type_combo") else "framed"
+        if ptype == "waveshare_can_20_bytes":
+            self.diagram_lbl.setText("Waveshare CAN 20-Byte Packet:  [0xAA 0x55]  ➜  [Type 0x01]  ➜  [Mode]  ➜  [Seq]  ➜  [CAN ID (4B)]  ➜  [DLC (1B)]  ➜  [Data (8B)]  ➜  [Sum+1 (1B)]")
+            return
         if ptype == "waveshare_can":
             fid_bytes = self.frame_id_size_spin.value()
             fid_desc = "2B (Standard 11-bit)" if fid_bytes == 2 else "4B (Extended 29-bit)"

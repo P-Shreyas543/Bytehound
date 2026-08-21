@@ -132,9 +132,29 @@ def test_waveshare_can_build_invalid():
         build_packet(protocol, 0x123, b"\x01\x02\x03\x04\x05\x06\x07\x08\x09")
 
 
+def test_waveshare_can_parse_payload_with_aa_55():
+    protocol = make_waveshare_protocol(frame_id_size=2)
+    parser = create_parser(protocol)
+
+    # Standard data frame with payload containing AA 55: ID 0x01F0, payload AA 55 12
+    # AA + C3 + F0 01 + AA 55 12 + 55
+    raw_packet = b"\xAA\xC3\xF0\x01\xAA\x55\x12\x55"
+    parser.feed(raw_packet)
+    packets = parser.extract_all()
+
+    assert len(packets) == 1
+    p = packets[0]
+    assert p.ok
+    assert p.frame_id == 0x01F0
+    assert p.payload == b"\xAA\x55\x12"
+    assert p.raw == raw_packet
+
+
 def test_waveshare_can_parse_fixed_happy():
     protocol = make_waveshare_protocol()
-    parser = create_parser(protocol)
+    import dataclasses
+    fixed_protocol = dataclasses.replace(protocol, parser_type="waveshare_can_20_bytes", waveshare_fixed_20_bytes=True)
+    parser = create_parser(fixed_protocol)
 
     # Happy path for fixed 20-byte frame:
     # AA 55 01 01 01 F0 02 00 00 04 7B BA 90 01 FF FF FF F8 00 B4
@@ -152,7 +172,9 @@ def test_waveshare_can_parse_fixed_happy():
 
 def test_waveshare_can_parse_fixed_bad_checksum():
     protocol = make_waveshare_protocol()
-    parser = create_parser(protocol)
+    import dataclasses
+    fixed_protocol = dataclasses.replace(protocol, parser_type="waveshare_can_20_bytes", waveshare_fixed_20_bytes=True)
+    parser = create_parser(fixed_protocol)
 
     # Bad checksum at the end (B5 instead of B4)
     raw_packet = b"\xAA\x55\x01\x01\x01\xF0\x02\x00\x00\x04\x7B\xBA\x90\x01\xFF\xFF\xFF\xF8\x00\xB5"
@@ -162,17 +184,19 @@ def test_waveshare_can_parse_fixed_bad_checksum():
     assert packets[0].ok is False
     assert "checksum mismatch" in packets[0].error
 
-    # Recover with standard variable-length frame
-    parser.feed(b"\xAA\xC0\x10\x00\x55")
+    # Recover with subsequent valid fixed frame
+    valid_packet = b"\xAA\x55\x01\x01\x01\xF0\x02\x00\x00\x04\x7B\xBA\x90\x01\xFF\xFF\xFF\xF8\x00\xB4"
+    parser.feed(valid_packet)
     packets = parser.extract_all()
     assert len(packets) == 1
-    assert packets[0].frame_id == 0x10
+    assert packets[0].frame_id == 0x2F0
+    assert packets[0].ok is True
 
 
 def test_waveshare_can_build_fixed_standard():
     import dataclasses
     protocol = make_waveshare_protocol()
-    fixed_protocol = dataclasses.replace(protocol, waveshare_fixed_20_bytes=True)
+    fixed_protocol = dataclasses.replace(protocol, parser_type="waveshare_can_20_bytes", waveshare_fixed_20_bytes=True)
 
     built = build_packet(fixed_protocol, 0x2F0, b"\x7B\xBA\x90\x01")
     assert built == b"\xAA\x55\x01\x01\x01\xF0\x02\x00\x00\x04\x7B\xBA\x90\x01\x00\x00\x00\x00\x00\xBF"
@@ -181,7 +205,7 @@ def test_waveshare_can_build_fixed_standard():
 def test_waveshare_can_build_fixed_extended():
     import dataclasses
     protocol = make_waveshare_protocol(frame_id_size=4)
-    fixed_protocol = dataclasses.replace(protocol, waveshare_fixed_20_bytes=True)
+    fixed_protocol = dataclasses.replace(protocol, parser_type="waveshare_can_20_bytes", waveshare_fixed_20_bytes=True)
 
     built = build_packet(fixed_protocol, 0x12345678, b"\x99")
     assert built == b"\xAA\x55\x01\x02\x01\x78\x56\x34\x12\x01\x99\x00\x00\x00\x00\x00\x00\x00\x00\xB2"

@@ -243,7 +243,7 @@ class ConfigEditorWindow(QMainWindow):
             elif col_name in ("endianness", "byte_order", "frame_id_byte_order", "crc_byte_order", "length_byte_order"):
                 items = [m.value for m in ByteOrder]
             elif col_name == "parser_type":
-                items = ["framed", "waveshare_can"]
+                items = [m.value for m in ParserType]
             elif col_name == "read_write":
                 items = [m.value for m in ReadWrite]
             elif col_name == "direction":

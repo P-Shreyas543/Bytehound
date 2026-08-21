@@ -41,15 +41,18 @@ class ByteOrder(str, enum.Enum):
 class ParserType(str, enum.Enum):
     FRAMED = "framed"
     WAVESHARE_CAN = "waveshare_can"
+    WAVESHARE_CAN_20_BYTES = "waveshare_can_20_bytes"
 
     @classmethod
     def parse(cls, value: str) -> "ParserType":
         normalised = (value or "framed").strip().lower()
+        if normalised in ("waveshare_can_20_bytes", "waveshare_20_bytes", "waveshare_can_20", "waveshare_fixed", "waveshare_fixed_20_bytes", "waveshare_can_fixed"):
+            return cls.WAVESHARE_CAN_20_BYTES
         for member in cls:
             if member.value == normalised:
                 return member
         raise ValueError(
-            f"parser_type must be 'framed' or 'waveshare_can' (got {value!r})"
+            f"parser_type must be 'framed', 'waveshare_can', or 'waveshare_can_20_bytes' (got {value!r})"
         )
 
 

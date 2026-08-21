@@ -627,7 +627,7 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
 
     row = enabled_rows[0]
     parser_type_val = ParserType.parse(row.get("parser_type", "")).value
-    is_waveshare = parser_type_val == "waveshare_can"
+    is_waveshare = parser_type_val in ("waveshare_can", "waveshare_can_20_bytes")
 
     try:
         crc_type = CrcType.parse(row.get("crc_type", "none" if is_waveshare else "")).value
@@ -690,6 +690,8 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
 
     waveshare_fixed_val = row.get("waveshare_fixed_20_bytes") or row.get("waveshare_fixed") or ""
     waveshare_fixed_20_bytes = _to_bool(waveshare_fixed_val, default=False, field_name="protocol.waveshare_fixed_20_bytes")
+    if parser_type_val == "waveshare_can_20_bytes":
+        waveshare_fixed_20_bytes = True
 
     protocol = ProtocolConfig(
         profile_name=(row.get("profile_name") or "Default").strip(),

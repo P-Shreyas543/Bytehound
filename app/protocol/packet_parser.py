@@ -509,8 +509,30 @@ class WaveshareCanParser(ParserProtocol):
         if len(self._buf) < 1:
             return None, 0
 
-        # Check for Fixed 20-byte Protocol header directly
-        if len(self._buf) >= 2 and self._buf[0] == 0xAA and self._buf[1] == 0x55:
+        is_fixed = (
+            self.protocol.waveshare_fixed_20_bytes
+            or self.protocol.parser_type == "waveshare_can_20_bytes"
+        )
+
+        if is_fixed:
+            # Fixed 20-byte Protocol: Frame header must be AA 55
+            idx = 0
+            while idx < len(self._buf):
+                pos = self._buf.find(0xAA, idx)
+                if pos == -1:
+                    return None, len(self._buf)
+                if pos + 1 < len(self._buf):
+                    if self._buf[pos + 1] == 0x55:
+                        if pos > 0:
+                            return None, pos
+                        break
+                    else:
+                        idx = pos + 1
+                else:
+                    if pos > 0:
+                        return None, pos
+                    return None, 0
+
             if len(self._buf) < 20:
                 return None, 0
 
@@ -531,7 +553,7 @@ class WaveshareCanParser(ParserProtocol):
             dlc = self._buf[9]
             if dlc > 8:
                 dlc = 8
-            
+
             # Frame ID is 4 bytes at index 5, little-endian
             frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
             payload = bytes(self._buf[10 : 10 + dlc])
@@ -541,10 +563,11 @@ class WaveshareCanParser(ParserProtocol):
                 frame_id=frame_id,
                 payload=payload,
                 ok=True,
-                error=None
+                error=None,
             )
             return pkt, 20
 
+        # Variable-Length Protocol (waveshare_can):
         # Find 0xAA header index
         idx = self._buf.find(0xAA)
         if idx == -1:
@@ -557,41 +580,7 @@ class WaveshareCanParser(ParserProtocol):
             return None, 0
 
         type_byte = self._buf[1]
-        
-        # If type_byte is 0x55, it's a Fixed 20-byte frame (AA 55)
-        if type_byte == 0x55:
-            if len(self._buf) < 20:
-                return None, 0
-            
-            expected_chk = (sum(self._buf[:19]) + 1) & 0xFF
-            received_chk = self._buf[19]
-            if expected_chk != received_chk:
-                pkt = ParsedPacket(
-                    raw=bytes(self._buf[:20]),
-                    frame_id=0,
-                    payload=b"",
-                    ok=False,
-                    error=f"Waveshare CAN checksum mismatch: expected 0x{expected_chk:02X}, got 0x{received_chk:02X}",
-                )
-                return pkt, 20
-
-            raw = bytes(self._buf[:20])
-            dlc = self._buf[9]
-            if dlc > 8:
-                dlc = 8
-            frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
-            payload = bytes(self._buf[10 : 10 + dlc])
-
-            pkt = ParsedPacket(
-                raw=raw,
-                frame_id=frame_id,
-                payload=payload,
-                ok=True,
-                error=None
-            )
-            return pkt, 20
-
-        # Otherwise, check if type_byte is valid for Variable-Length Protocol
+        # Check if type_byte is valid for Variable-Length Protocol (starts with 0xC0 or 0xE0)
         if (type_byte & 0xC0) != 0xC0:
             # Not a valid frame start. Drop the 0xAA byte to resync.
             return None, 1
@@ -624,12 +613,12 @@ class WaveshareCanParser(ParserProtocol):
             frame_id=frame_id,
             payload=payload,
             ok=True,
-            error=None
+            error=None,
         )
         return pkt, total_size
 
 
 def create_parser(protocol: ProtocolConfig) -> ParserProtocol:
-    if protocol.parser_type == "waveshare_can":
+    if protocol.parser_type in ("waveshare_can", "waveshare_can_20_bytes"):
         return WaveshareCanParser(protocol)
     return FramedParser(protocol)
