@@ -210,3 +210,20 @@ def test_waveshare_can_build_fixed_extended():
     built = build_packet(fixed_protocol, 0x12345678, b"\x99")
     assert built == b"\xAA\x55\x01\x02\x01\x78\x56\x34\x12\x01\x99\x00\x00\x00\x00\x00\x00\x00\x00\xB2"
 
+
+def test_waveshare_can_variable_length_alias():
+    import dataclasses
+    protocol = make_waveshare_protocol(frame_id_size=2)
+    var_protocol = dataclasses.replace(protocol, parser_type="waveshare_can_variable_length")
+
+    parser = create_parser(var_protocol)
+    parser.feed(b"\xAA\xC4\xF0\x02\x7B\xBA\x90\x01\x55")
+    packets = parser.extract_all()
+    assert len(packets) == 1
+    assert packets[0].frame_id == 0x2F0
+    assert packets[0].payload == b"\x7B\xBA\x90\x01"
+
+    built = build_packet(var_protocol, 0x2F0, b"\x7B\xBA\x90\x01")
+    assert built == b"\xAA\xC4\xF0\x02\x7B\xBA\x90\x01\x55"
+
+

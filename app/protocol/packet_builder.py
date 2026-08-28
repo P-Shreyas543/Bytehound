@@ -51,7 +51,7 @@ def build_waveshare_can_packet(protocol: ProtocolConfig, frame_id: int, payload:
 
 
 def build_packet(protocol: ProtocolConfig, frame_id: int, payload: bytes) -> bytes:
-    if protocol.parser_type in ("waveshare_can", "waveshare_can_20_bytes"):
+    if protocol.parser_type in ("waveshare_can", "waveshare_can_variable_length", "waveshare_can_20_bytes"):
         return build_waveshare_can_packet(protocol, frame_id, payload)
 
     pc = protocol

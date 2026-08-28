@@ -198,7 +198,7 @@ class TelemetryPipelineMixin:
             if self._log_started_perf is not None:
                 elapsed_ms = int((time.perf_counter() - self._log_started_perf) * 1000)
             else:
-                t0 = self._log_started or self._session_started
+                t0 = self._log_started or self._session_started or datetime.now()
                 elapsed_ms = int((datetime.now() - t0).total_seconds() * 1000)
             self._decoded_logger.log_frame(decoded, elapsed_ms)
 

@@ -382,7 +382,7 @@ def test_waveshare_usb_can_standard_and_extended_frames(make_workbook):
     wb_path = make_workbook({"Protocol": protocol_df, "Frames": frames_df, "Variables": vars_df})
     cfg = load_config(wb_path)
 
-    assert cfg.protocol.parser_type == "waveshare_can"
+    assert cfg.protocol.parser_type in ("waveshare_can", "waveshare_can_variable_length")
 
     # Decode standard 11-bit frame (0x02F0) with Pack_Voltage = 48.0V (4800)
     payload_std = struct.pack("<H6x", 4800)

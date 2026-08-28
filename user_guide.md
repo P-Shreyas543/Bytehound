@@ -58,7 +58,7 @@ A core tenet: **no variables or frame structures are hard-coded**. Everything is
   - `profile_name`: Name for your protocol profile.
   - `parser_type` *(optional, default `framed`)*:
     - `framed`: Standard custom microcontroller / UART framing.
-    - `waveshare_can` (or `variable_length`): Waveshare USB-CAN Variable-Length protocol (`0xAA ... 0x55`).
+    - `waveshare_can_variable_length` (or `waveshare_can`, `variable_length`): Waveshare USB-CAN Variable-Length protocol (`0xAA ... 0x55`).
     - `waveshare_can_20_bytes` (or `fixed_20_bytes`): Waveshare USB-CAN Fixed 20-Byte protocol (`0xAA 0x55 ...`).
   - `header_hex`: Sync header bytes in hex (e.g. `AA55` or `0xAA 0x55`).
   - `frame_id_size`: Size of frame ID in bytes (e.g. `1`, `2`, or `4` for CAN).

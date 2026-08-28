@@ -547,7 +547,15 @@ class WaveshareCanParser(ParserProtocol):
                     ok=False,
                     error=f"Waveshare CAN checksum mismatch: expected 0x{expected_chk:02X}, got 0x{received_chk:02X}",
                 )
-                return pkt, 20
+                # Resynchronize: check if another 0xAA 0x55 header is present starting at index 1
+                next_header = -1
+                max_search = min(len(self._buf) - 1, 20)
+                for k in range(1, max_search + 1):
+                    if k + 1 < len(self._buf) and self._buf[k] == 0xAA and self._buf[k + 1] == 0x55:
+                        next_header = k
+                        break
+                advance_bytes = next_header if next_header != -1 else 20
+                return pkt, advance_bytes
 
             raw = bytes(self._buf[:20])
             dlc = self._buf[9]
@@ -619,6 +627,6 @@ class WaveshareCanParser(ParserProtocol):
 
 
 def create_parser(protocol: ProtocolConfig) -> ParserProtocol:
-    if protocol.parser_type in ("waveshare_can", "waveshare_can_20_bytes"):
+    if protocol.parser_type in ("waveshare_can", "waveshare_can_variable_length", "waveshare_can_20_bytes"):
         return WaveshareCanParser(protocol)
     return FramedParser(protocol)

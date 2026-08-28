@@ -1,17 +1,17 @@
 {
-    "version": "1.2.2",
-    "document_version": "1.2.2",
+    "version": "1.2.3",
+    "document_version": "1.2.3",
     "Developer": "Shreyas P",
     "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "DECIBELS LAB PRIVATE LIMITED",
     "publisher_webpage": "https://lms.decibelslab.com/",
-    "build_date": "2026-08-21",
+    "build_date": "2026-08-28",
     "license": "MIT",
     "license_url": "https://bytehound.shreyasp182002.workers.dev/LICENSE",
     "homepage": "https://bytehound.shreyasp182002.workers.dev/",
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
-    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.2.2.exe",
-    "release_notes": "v1.2.2 Release - Waveshare CAN Fixed/Variable Parser Separation & Explicit Sheet Dropdown Options.\n\nChanges:\n  - Explicit Parser Types in Sheet & UI: Direct dropdown support for 'framed', 'waveshare_can' (Variable-Length), and 'waveshare_can_20_bytes' (Fixed 20-Byte) in Excel template validations, In-App Config Editor, and Protocol Wizard.\n  - False Checksum Error Elimination: Strict parser mode separation prevents variable-length CAN frames with 0xAA 0x55 sequences from triggering spurious 20-byte checksum mismatches.\n  - Automatic Fixed-Mode Configuration: Selecting 'waveshare_can_20_bytes' automatically configures fixed 20-byte parsing and TX packet building without extra manual flag requirements.\n  - Documentation & Manual Sync: Updated built-in manual and documentation covering all parser options and configuration columns.",
-    "sha256": "56f442642fcb2924d655535e1d9632d807c37160937d13b9b2543b1e66333b65"
+    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.2.3.exe",
+    "release_notes": "v1.2.3 Release - Waveshare CAN Variable-Length Renaming, Dedicated 20-Byte Preset & Self-Healing Stream Resynchronization.\n\nChanges:\n  - Explicit 'waveshare_can_variable_length' Parser: Renamed parser type identifier across all UI dialogs, wizards, and Excel template validators for maximum clarity while preserving full backward compatibility with 'waveshare_can'.\n  - Out-of-the-Box Fixed 20-Byte Preset: Added dedicated 'Waveshare USB-CAN (Fixed 20-Byte)' preset to the preset catalog and Welcome Dashboard for 1-click loading.\n  - Self-Healing Sliding-Window Resync: Enhanced fixed 20-byte CAN parser with dynamic boundary sliding window recovery (k=19 byte detection) so physical line drops or high-baud FIFO glitches immediately re-align on the next packet without cascading checksum errors.\n  - Startup Serial Buffer Purge: Automatically flushes serial input buffers upon opening COM ports to eliminate cold-boot stale byte fragments.\n  - Robust Logging Timestamps: Bulletproofed timestamp ingestion across Raw and Decoded loggers to seamlessly support datetime, epoch floats, and automatic clock fallbacks.\n  - High-DPI Warning Cleanup: Suppressed benign Qt Windows GDI platform display enumeration warnings.",
+    "sha256": "aa0a7cb46eb962e8ee56d2d8e1dc42102579a2d8d876a2c87133d817241eb7f9"
 }

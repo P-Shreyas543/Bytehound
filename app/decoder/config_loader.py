@@ -107,7 +107,7 @@ def load_config(path: str | Path | dict) -> FrameConfig:
             if not _is_blank_row(r) and _to_bool(r.get("enabled", "true"), default=True, field_name="protocol.enabled"):
                 try:
                     parser_type_val = ParserType.parse(r.get("parser_type", "")).value
-                    if parser_type_val == "waveshare_can":
+                    if parser_type_val in ("waveshare_can", "waveshare_can_variable_length", "waveshare_can_20_bytes"):
                         required_cols = {"profile_name"}
                 except ValueError:
                     pass
@@ -627,7 +627,7 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
 
     row = enabled_rows[0]
     parser_type_val = ParserType.parse(row.get("parser_type", "")).value
-    is_waveshare = parser_type_val in ("waveshare_can", "waveshare_can_20_bytes")
+    is_waveshare = parser_type_val in ("waveshare_can", "waveshare_can_variable_length", "waveshare_can_20_bytes")
 
     try:
         crc_type = CrcType.parse(row.get("crc_type", "none" if is_waveshare else "")).value
@@ -739,7 +739,7 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
             f"crc_type is {protocol.crc_type!r} (got {protocol.crc_size})"
         )
 
-    if protocol.parser_type == "waveshare_can":
+    if protocol.parser_type in ("waveshare_can", "waveshare_can_variable_length"):
         if protocol.header != b"\xAA":
             raise ConfigError("protocol: Waveshare CAN header must be 0xAA")
         if protocol.footer != b"\x55":
@@ -768,8 +768,8 @@ def _validate_protocol(protocol: ProtocolConfig) -> None:
             f"protocol: escape_mode must be one of "
             f"'none', 'slip', 'hdlc', 'cobs' (got {protocol.escape_mode!r})"
         )
-    if protocol.parser_type not in {"framed", "waveshare_can", "waveshare_can_20_bytes"}:
-        raise ConfigError("protocol: parser_type must be framed, waveshare_can, or waveshare_can_20_bytes")
+    if protocol.parser_type not in {"framed", "waveshare_can", "waveshare_can_variable_length", "waveshare_can_20_bytes"}:
+        raise ConfigError("protocol: parser_type must be framed, waveshare_can_variable_length, or waveshare_can_20_bytes")
 
 
 def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:

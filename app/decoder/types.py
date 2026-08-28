@@ -40,8 +40,11 @@ class ByteOrder(str, enum.Enum):
 
 class ParserType(str, enum.Enum):
     FRAMED = "framed"
-    WAVESHARE_CAN = "waveshare_can"
+    WAVESHARE_CAN_VARIABLE_LENGTH = "waveshare_can_variable_length"
     WAVESHARE_CAN_20_BYTES = "waveshare_can_20_bytes"
+
+    # Backward compatibility alias
+    WAVESHARE_CAN = "waveshare_can_variable_length"
 
     @classmethod
     def parse(cls, value: str) -> "ParserType":
@@ -72,11 +75,11 @@ class ParserType(str, enum.Enum):
         ):
             return cls.WAVESHARE_CAN_20_BYTES
         if normalised in (
-            "waveshare_can",
-            "waveshare_can_variable",
             "waveshare_can_variable_length",
-            "waveshare_variable",
+            "waveshare_can_variable",
+            "waveshare_can",
             "waveshare_variable_length",
+            "waveshare_variable",
             "variable_length",
             "variable length",
             "can_variable",
@@ -88,7 +91,7 @@ class ParserType(str, enum.Enum):
             "waveshare (variable length)",
             "waveshare",
         ):
-            return cls.WAVESHARE_CAN
+            return cls.WAVESHARE_CAN_VARIABLE_LENGTH
         if normalised in (
             "framed",
             "frame",
@@ -104,7 +107,7 @@ class ParserType(str, enum.Enum):
             if member.value == normalised:
                 return member
         raise ValueError(
-            f"parser_type must be 'framed', 'waveshare_can' (variable length), or 'waveshare_can_20_bytes' (fixed 20 bytes) (got {value!r})"
+            f"parser_type must be 'framed', 'waveshare_can_variable_length' (variable length), or 'waveshare_can_20_bytes' (fixed 20 bytes) (got {value!r})"
         )
 
 

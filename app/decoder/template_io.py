@@ -101,7 +101,7 @@ def write_workbook_from_tables(tables: dict[str, pd.DataFrame], target_path: str
         readme.append(["1. Generic Microcontroller Serial Framing (STM32, NXP, ESP32, Arduino):"])
         readme.append(["   - In Protocol sheet: Set parser_type = 'framed', specify header_hex (e.g. AA 55), frame_id_size (e.g. 2), crc_type (e.g. crc16_modbus)."])
         readme.append(["2. Waveshare USB-CAN Adapters (USB-CAN-A / USB-CAN-B):"])
-        readme.append(["   - Variable-Length CAN Mode: Set parser_type = 'waveshare_can' or 'variable_length' (Header 0xAA, DLC, CAN ID, payload, footer 0x55)."])
+        readme.append(["   - Variable-Length CAN Mode: Set parser_type = 'waveshare_can_variable_length' (Header 0xAA, DLC, CAN ID, payload, footer 0x55)."])
         readme.append(["   - Fixed 20-Byte CAN Mode: Set parser_type = 'waveshare_can_20_bytes' or 'fixed_20_bytes' (Fixed 20-byte frames starting with 0xAA 0x55)."])
         readme.append(["   - In Variables sheet: Put CAN IDs in id_or_address (e.g. 0x0123 for standard 11-bit ID or 0x18FF50E5 for extended 29-bit ID)."])
         readme.append([])

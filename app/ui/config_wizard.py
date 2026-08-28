@@ -177,7 +177,7 @@ class ProtocolWizardDialog(QDialog):
         self.parser_type_combo = QComboBox()
         parser_options = [
             ("Framed Serial / UART (Custom Framing)", "framed"),
-            ("Waveshare CAN — Variable Length (0xAA ... 0x55)", "waveshare_can"),
+            ("Waveshare CAN — Variable Length (0xAA ... 0x55)", "waveshare_can_variable_length"),
             ("Waveshare CAN — Fixed 20 Bytes (0xAA 0x55 ...)", "waveshare_can_20_bytes"),
         ]
         for label, val in parser_options:
@@ -269,9 +269,20 @@ class ProtocolWizardDialog(QDialog):
                 return "framed"
         return "framed"
 
+    def set_parser_type(self, ptype: str) -> None:
+        try:
+            norm = ParserType.parse(ptype).value
+        except Exception:
+            norm = ptype
+        for i in range(self.parser_type_combo.count()):
+            if self.parser_type_combo.itemData(i) == norm or self.parser_type_combo.itemText(i) == ptype:
+                self.parser_type_combo.setCurrentIndex(i)
+                return
+        self.parser_type_combo.setCurrentText(ptype)
+
     def _on_parser_type_changed(self, index: int = 0) -> None:
         ptype = self._get_selected_parser_type()
-        if ptype in ("waveshare_can", "waveshare_can_20_bytes"):
+        if ptype in ("waveshare_can", "waveshare_can_variable_length", "waveshare_can_20_bytes"):
             self.header_hex_edit.setText("AA 55" if ptype == "waveshare_can_20_bytes" else "AA")
             self.crc_combo.setCurrentText("none")
             self.header_hex_edit.setEnabled(False)
@@ -290,7 +301,7 @@ class ProtocolWizardDialog(QDialog):
         if ptype == "waveshare_can_20_bytes":
             self.diagram_lbl.setText("Waveshare CAN (Fixed 20 Bytes):  [0xAA 0x55]  ➜  [Type 0x01]  ➜  [Mode]  ➜  [Seq]  ➜  [CAN ID (4B)]  ➜  [DLC (1B)]  ➜  [Data (8B)]  ➜  [Sum+1 (1B)]")
             return
-        if ptype == "waveshare_can":
+        if ptype in ("waveshare_can", "waveshare_can_variable_length"):
             fid_bytes = self.frame_id_size_spin.value()
             fid_desc = "2B (Standard 11-bit)" if fid_bytes == 2 else "4B (Extended 29-bit)"
             self.diagram_lbl.setText(f"Waveshare CAN (Variable Length):  [0xAA]  ➜  [Type/DLC (0xC0..0xEF)]  ➜  [CAN ID ({fid_desc})]  ➜  [Data (0-8B)]  ➜  [0x55]")
@@ -552,7 +563,7 @@ class ProtocolWizardDialog(QDialog):
         crc = self.crc_combo.currentText() if ptype == "framed" else "None (Hardware DLC Checksum)"
         if ptype == "waveshare_can_20_bytes":
             hdr = "0xAA 0x55 (Fixed 20B Header)"
-        elif ptype == "waveshare_can":
+        elif ptype in ("waveshare_can", "waveshare_can_variable_length"):
             hdr = "0xAA (CAN Type Byte)"
         else:
             hdr = self.header_hex_edit.text()
@@ -677,7 +688,7 @@ class ProtocolWizardDialog(QDialog):
         try:
             ptype = self._get_selected_parser_type()
             crc_type = self.crc_combo.currentText()
-            if crc_type == "none" or ptype in ("waveshare_can", "waveshare_can_20_bytes"):
+            if crc_type == "none" or ptype in ("waveshare_can", "waveshare_can_variable_length", "waveshare_can_20_bytes"):
                 crc_size = 0
             elif crc_type == "crc32":
                 crc_size = 4
@@ -694,7 +705,7 @@ class ProtocolWizardDialog(QDialog):
             if ptype == "waveshare_can_20_bytes":
                 header_hex = "AA 55"
                 footer_hex = ""
-            elif ptype == "waveshare_can":
+            elif ptype in ("waveshare_can", "waveshare_can_variable_length"):
                 header_hex = "AA"
                 footer_hex = "55"
             else:
@@ -710,8 +721,8 @@ class ProtocolWizardDialog(QDialog):
                 "length_size": self.length_size_spin.value(),
                 "length_meaning": "payload_only",
                 "length_byte_order": "",
-                "crc_type": "none" if ptype in ("waveshare_can", "waveshare_can_20_bytes") else crc_type,
-                "crc_size": 0 if ptype in ("waveshare_can", "waveshare_can_20_bytes") else crc_size,
+                "crc_type": "none" if ptype in ("waveshare_can", "waveshare_can_variable_length", "waveshare_can_20_bytes") else crc_type,
+                "crc_size": 0 if ptype in ("waveshare_can", "waveshare_can_variable_length", "waveshare_can_20_bytes") else crc_size,
                 "crc_byte_order": "little",
                 "crc_coverage": "header_to_payload",
                 "footer_hex": footer_hex,

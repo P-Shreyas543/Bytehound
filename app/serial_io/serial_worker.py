@@ -458,6 +458,10 @@ class PollingWorker(QThread):
                 timeout=0.05,
                 write_timeout=0.05,
             )
+            try:
+                self._serial.reset_input_buffer()
+            except Exception:
+                pass
         self._stop_event.clear()
         self._last_rx_time = time.monotonic()
         self._last_emit_time = time.monotonic()

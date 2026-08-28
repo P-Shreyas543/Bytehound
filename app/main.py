@@ -174,7 +174,23 @@ def _show_crash_dialog(exc_type, exc, tb) -> None:
 def _run_app() -> int:
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
     os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
-    from PySide6.QtCore import Qt
+    os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.*=false")
+
+    from PySide6.QtCore import Qt, qInstallMessageHandler, QtMsgType
+
+    def _qt_message_handler(msg_type, context, message):
+        # Filter benign Windows GDI display enumeration warnings
+        if "Unable to obtain handle for monitor" in message or "monitorData" in message:
+            return
+        if msg_type == QtMsgType.QtWarningMsg:
+            logging.getLogger("qt").debug("%s", message)
+        elif msg_type == QtMsgType.QtCriticalMsg:
+            logging.getLogger("qt").error("%s", message)
+        elif msg_type == QtMsgType.QtFatalMsg:
+            logging.getLogger("qt").critical("%s", message)
+
+    qInstallMessageHandler(_qt_message_handler)
+
     if hasattr(QApplication, "setHighDpiScaleFactorRoundingPolicy"):
         QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
 
@@ -273,4 +289,5 @@ if __name__ == "__main__":
     multiprocessing.freeze_support()
     # Enable crisp rendering on 4K / HiDPI monitors before QApplication starts.
     os.environ.setdefault("QT_ENABLE_HIGHDPI_SCALING", "1")
+    os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.*=false")
     sys.exit(main())

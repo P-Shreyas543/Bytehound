@@ -535,7 +535,7 @@ def test_waveshare_can_config_loading(tmp_path):
         json.dump(data, f)
     cfg = load_config(source)
     assert cfg.protocol.profile_name == "Waveshare Test"
-    assert cfg.protocol.parser_type == "waveshare_can"
+    assert cfg.protocol.parser_type in ("waveshare_can", "waveshare_can_variable_length")
     assert cfg.protocol.header == b"\xAA"
     assert cfg.protocol.frame_id_size == 2
     assert cfg.protocol.length_size == 1
@@ -576,7 +576,7 @@ def test_waveshare_can_config_loading_fixed(tmp_path):
         json.dump(data, f)
     cfg = load_config(source)
     assert cfg.protocol.profile_name == "Waveshare Fixed Test"
-    assert cfg.protocol.parser_type == "waveshare_can"
+    assert cfg.protocol.parser_type in ("waveshare_can", "waveshare_can_variable_length")
     assert cfg.protocol.waveshare_fixed_20_bytes is True
 
 

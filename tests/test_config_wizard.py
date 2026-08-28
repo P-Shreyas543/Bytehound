@@ -46,16 +46,23 @@ def test_protocol_wizard_init_and_navigation(qapp):
 def test_protocol_wizard_parser_type_toggle(qapp):
     dlg = ProtocolWizardDialog()
 
-    # Switch to Waveshare CAN
-    dlg.parser_type_combo.setCurrentText("waveshare_can")
-    assert dlg.parser_type_combo.currentText() == "waveshare_can"
+    # Switch to Waveshare CAN Variable Length
+    dlg.set_parser_type("waveshare_can_variable_length")
+    assert dlg._get_selected_parser_type() == "waveshare_can_variable_length"
     assert dlg.baud_combo.currentText() == "2000000"
     assert dlg.header_hex_edit.text() == "AA"
     assert dlg.crc_combo.currentText() == "none"
 
+    # Switch to Waveshare CAN Fixed 20 Bytes
+    dlg.set_parser_type("waveshare_can_20_bytes")
+    assert dlg._get_selected_parser_type() == "waveshare_can_20_bytes"
+    assert dlg.baud_combo.currentText() == "2000000"
+    assert dlg.header_hex_edit.text() == "AA 55"
+    assert dlg.crc_combo.currentText() == "none"
+
     # Switch back to Framed
-    dlg.parser_type_combo.setCurrentText("framed")
-    assert dlg.parser_type_combo.currentText() == "framed"
+    dlg.set_parser_type("framed")
+    assert dlg._get_selected_parser_type() == "framed"
     assert dlg.baud_combo.currentText() == "115200"
     assert dlg.header_hex_edit.isEnabled() is True
     assert dlg.crc_combo.isEnabled() is True

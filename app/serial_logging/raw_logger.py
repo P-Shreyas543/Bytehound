@@ -218,7 +218,13 @@ class RawLogger:
                 self.open()
             if self._writer_thread is None:
                 return
-            ts = (timestamp or datetime.now()).strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
+            if isinstance(timestamp, (int, float)):
+                ts_dt = datetime.fromtimestamp(timestamp)
+            elif isinstance(timestamp, datetime):
+                ts_dt = timestamp
+            else:
+                ts_dt = datetime.now()
+            ts = ts_dt.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
             try:
                 self._queue.put_nowait((ts, direction.upper(), raw, delta_t_ms))
             except queue.Full:
