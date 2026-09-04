@@ -193,6 +193,25 @@ def test_waveshare_can_parse_fixed_bad_checksum():
     assert packets[0].ok is True
 
 
+def test_waveshare_can_parse_fixed_dropped_bytes_chunked_recovery():
+    import dataclasses
+    protocol = make_waveshare_protocol()
+    fixed_protocol = dataclasses.replace(protocol, parser_type="waveshare_can_20_bytes", waveshare_fixed_20_bytes=True)
+    valid_packet = b"\xAA\x55\x01\x01\x01\xF0\x02\x00\x00\x04\x7B\xBA\x90\x01\xFF\xFF\xFF\xF8\x00\xB4"
+
+    # Test drops of 1..19 bytes from a packet delivered in 20-byte chunks
+    for drop in (1, 5, 13, 19):
+        stream = valid_packet[:drop] + valid_packet * 3
+        parser = create_parser(fixed_protocol)
+        pkts = []
+        for i in range(0, len(stream), 20):
+            parser.feed(stream[i:i+20])
+            pkts.extend(parser.extract_all())
+        valid_pkts = [p for p in pkts if p.ok]
+        assert len(valid_pkts) >= 2, f"Failed recovery for drop={drop}"
+        assert all(p.frame_id == 0x2F0 for p in valid_pkts)
+
+
 def test_waveshare_can_build_fixed_standard():
     import dataclasses
     protocol = make_waveshare_protocol()

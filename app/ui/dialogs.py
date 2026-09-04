@@ -227,7 +227,10 @@ class ConnectionDialog(QDialog):
                 self._port_combo.setCurrentIndex(i)
                 break
         cd = self._config_defaults
-        self._baud_combo.setCurrentText(str(s.value("conn/baud", str(cd.baud_rate))))
+        default_baud = str(cd.baud_rate) if (cd and cd.baud_rate) else str(s.value("conn/baud", "115200"))
+        if self._baud_combo.findText(default_baud) == -1:
+            self._baud_combo.addItem(default_baud)
+        self._baud_combo.setCurrentText(default_baud)
         self._data_bits_combo.setCurrentText(str(s.value("conn/data_bits", str(cd.data_bits))))
         self._stop_bits_combo.setCurrentText(str(s.value("conn/stop_bits", f"{cd.stop_bits:g}")))
         self._parity_combo.setCurrentText(str(s.value("conn/parity", cd.parity)))

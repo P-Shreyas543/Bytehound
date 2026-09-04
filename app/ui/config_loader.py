@@ -236,6 +236,12 @@ class ConfigLoaderMixin:
         self._refresh_config_status()
         if hasattr(self, "_cards_view") and self._cards_view is not None:
             self._cards_view.rebuild_from_config(self._config)
+        if hasattr(self._config, "serial_defaults") and self._config.serial_defaults:
+            baud = self._config.serial_defaults.baud_rate
+            if baud:
+                self._settings.setValue("conn/baud", str(baud))
+                if hasattr(self, "_welcome_dashboard") and self._welcome_dashboard is not None:
+                    self._welcome_dashboard.set_baud(baud)
         self._remember_config(path)
         self._refresh_action_state()
         self._set_status(f"Loaded config from {path}")

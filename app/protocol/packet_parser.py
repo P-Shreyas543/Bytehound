@@ -549,12 +549,16 @@ class WaveshareCanParser(ParserProtocol):
                 )
                 # Resynchronize: check if another 0xAA 0x55 header is present starting at index 1
                 next_header = -1
-                max_search = min(len(self._buf) - 1, 20)
-                for k in range(1, max_search + 1):
-                    if k + 1 < len(self._buf) and self._buf[k] == 0xAA and self._buf[k + 1] == 0x55:
+                for k in range(1, len(self._buf) - 1):
+                    if self._buf[k] == 0xAA and self._buf[k + 1] == 0x55:
                         next_header = k
                         break
-                advance_bytes = next_header if next_header != -1 else 20
+                if next_header != -1:
+                    advance_bytes = next_header
+                elif len(self._buf) > 0 and self._buf[-1] == 0xAA:
+                    advance_bytes = len(self._buf) - 1
+                else:
+                    advance_bytes = 1
                 return pkt, advance_bytes
 
             raw = bytes(self._buf[:20])

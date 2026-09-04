@@ -89,7 +89,11 @@ class WelcomeDashboardWidget(QWidget):
         self.baud_combo.setAccessibleName("Baud Rate Selection")
         self.baud_combo.setAccessibleDescription("Select the baud rate for the serial connection.")
         self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1000000", "2000000"])
-        self.baud_combo.setCurrentText("115200")
+        from PySide6.QtCore import QSettings
+        saved_baud = str(QSettings("Bytehound", "Bytehound").value("conn/baud", "115200"))
+        if self.baud_combo.findText(saved_baud) == -1:
+            self.baud_combo.addItem(saved_baud)
+        self.baud_combo.setCurrentText(saved_baud)
 
         self.refresh_ports_btn = QPushButton("🔄 Refresh Ports")
         self.refresh_ports_btn.setAccessibleName("Refresh Ports Button")
@@ -192,6 +196,12 @@ class WelcomeDashboardWidget(QWidget):
             item = QListWidgetItem(f"📄 {Path(p).name}  ({p})")
             item.setData(Qt.UserRole, p)
             self.recent_list.addItem(item)
+
+    def set_baud(self, baud: int) -> None:
+        baud_str = str(baud)
+        if self.baud_combo.findText(baud_str) == -1:
+            self.baud_combo.addItem(baud_str)
+        self.baud_combo.setCurrentText(baud_str)
 
     def _on_connect_clicked(self) -> None:
         port = self.port_combo.currentText()
