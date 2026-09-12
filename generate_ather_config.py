@@ -1,25 +1,24 @@
-"""Generate Bytehound Excel configuration for Ather Energy BMS/Vehicle CAN database
+"""Generator script for Ather_v1_0_1.xlsx configuration workbook.
 
-Protocol: Waveshare USB-CAN Fixed 20-Byte mode
-Serial: 115200 baud (COM10 default)
-Source: Ather_v1_0_1.dbc + Live Ather Bus Telemetry
-Target: Ather_v1_0_1.xlsx
+Builds an Excel configuration file from Ather_v1_0_1.dbc and live bus telemetry
+with 100% 8-byte payload coverage, user-understandable descriptions, and 2,000,000 baud default.
 """
+
+from __future__ import annotations
 
 from pathlib import Path
 import pandas as pd
 from app.decoder.config_loader import load_config
 
-# 1. Protocol Configuration (Waveshare USB-CAN Fixed 20-Byte)
+# 1. Protocol Sheet (Waveshare CAN 20-byte fixed framing)
 protocol = pd.DataFrame([{
     'profile_name': 'Ather Energy CAN (Fixed 20-Byte)',
     'parser_type': 'waveshare_can_20_bytes',
     'header_hex': 'AA 55',
-    'frame_id_size': 2,
+    'frame_id_size': 4,
     'frame_id_byte_order': 'little',
     'length_size': 1,
     'length_meaning': 'payload_only',
-    'length_byte_order': '',
     'crc_type': 'none',
     'crc_size': 0,
     'crc_byte_order': 'little',
@@ -34,31 +33,31 @@ protocol = pd.DataFrame([{
 
 # 2. Frames defined in Ather DBC + Live Active Bus Telemetry
 frames = pd.DataFrame([
-    # Standard 14S Cell Voltage Frames
-    {'frame_id': '0x132', 'frame_name': 'Cell_Voltages_1_4', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Individual Cell Voltages 1-4 (0.1 mV resolution)'},
-    {'frame_id': '0x133', 'frame_name': 'Cell_Voltages_5_8', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Individual Cell Voltages 5-8 (0.1 mV resolution)'},
-    {'frame_id': '0x134', 'frame_name': 'Cell_Voltages_9_12', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Individual Cell Voltages 9-12 (0.1 mV resolution)'},
-    {'frame_id': '0x135', 'frame_name': 'Cell_Voltages_13_14', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Individual Cell Voltages 13-14 and Pack Temperature 5'},
-    # Thermal Frames
-    {'frame_id': '0x136', 'frame_name': 'Battery_Temperatures_1_2', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Battery Pack Thermal Sensors 1 & 2'},
-    {'frame_id': '0x137', 'frame_name': 'Battery_Temperatures_3_4', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Battery Pack Thermal Sensors 3 & 4'},
+    # Standard 14S Cell Voltage Frames (DBC: Series_Vol_*)
+    {'frame_id': '0x132', 'frame_name': 'Series_Vol_1_4', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Individual Cell Voltages 1-4 (0.1 mV resolution)'},
+    {'frame_id': '0x133', 'frame_name': 'Series_Vol_5_8', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Individual Cell Voltages 5-8 (0.1 mV resolution)'},
+    {'frame_id': '0x134', 'frame_name': 'Series_Vol_9_12', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Individual Cell Voltages 9-12 (0.1 mV resolution)'},
+    {'frame_id': '0x135', 'frame_name': 'Series_Vol_13_14', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Individual Cell Voltages 13-14 and Auxiliary Sensors'},
+    # Thermal Frames (DBC: BT1_3, BT4_6)
+    {'frame_id': '0x136', 'frame_name': 'BT1_3', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Battery Pack Thermal Sensors 1, 2, 3'},
+    {'frame_id': '0x137', 'frame_name': 'BT4_6', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Battery Pack Thermal Sensors 4, 5, 6'},
     {'frame_id': '0x170', 'frame_name': 'Module_Temperatures', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Internal BMS Module & Power Stage Temperatures'},
-    # Pack Telemetry & State
+    # Pack Telemetry & State (DBC: BC, SOC, Pack_Telemetry)
     {'frame_id': '0x141', 'frame_name': 'Pack_Telemetry', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Live Battery Pack Voltage & Standby Current'},
-    {'frame_id': '0x209', 'frame_name': 'Battery_State_Of_Charge', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Battery State of Charge (SOC %)'},
+    {'frame_id': '0x209', 'frame_name': 'SOC', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Battery State of Charge (SOC %)'},
     {'frame_id': '0x147', 'frame_name': 'Pack_Limits', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Live Pack Voltage & Discharge Power Limits'},
     {'frame_id': '0x148', 'frame_name': 'Pack_Charge_Limits', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Live Pack Charge Power & Current Limits'},
-    {'frame_id': '0x601', 'frame_name': 'Battery_Current_Flow', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'High Resolution Battery Current Flow (-0.001 A resolution)'},
-    # Vehicle & Auxiliary
+    {'frame_id': '0x601', 'frame_name': 'BC', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Battery Current Flow (-0.001 A resolution)'},
+    # Vehicle & Auxiliary (DBC: VS, VT, DM, KS)
     {'frame_id': '0x153', 'frame_name': 'Auxiliary_Power', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Auxiliary 12V DC-DC System Rail'},
-    {'frame_id': '0x18C', 'frame_name': 'Vehicle_Speed_Telemetry', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Vehicle Speed Telemetry (0.1 km/h resolution)'},
-    {'frame_id': '0x28C', 'frame_name': 'Throttle_Telemetry', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Vehicle Throttle Input Position'},
-    {'frame_id': '0x101', 'frame_name': 'Drive_Mode_Status', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Vehicle Drive Mode State'},
-    {'frame_id': '0x205', 'frame_name': 'Key_Switch_Status', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Key Switch Ignition State'},
-    # Charger
-    {'frame_id': '0x002', 'frame_name': 'Charger_Status', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'EV Charger Connection Status'},
-    {'frame_id': '0x003', 'frame_name': 'Charger_Current', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'EV Charger Output Current (0.001 A resolution)'},
-    # Advanced Cell Diagnostics
+    {'frame_id': '0x18C', 'frame_name': 'VS', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Vehicle Speed Telemetry (0.1 Kmph)'},
+    {'frame_id': '0x28C', 'frame_name': 'VT', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Vehicle Throttle Position (0.006 scale)'},
+    {'frame_id': '0x101', 'frame_name': 'DM', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Vehicle Drive Mode State'},
+    {'frame_id': '0x205', 'frame_name': 'KS', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Key Switch Ignition State'},
+    # Charger (DBC: CS, CC)
+    {'frame_id': '0x002', 'frame_name': 'CS', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'EV Charger Connection Status'},
+    {'frame_id': '0x003', 'frame_name': 'CC', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'EV Charger Output Current & Voltage'},
+    # Advanced Cell Diagnostics (Live Ather Bus Channels)
     {'frame_id': '0x13A', 'frame_name': 'Cell_Resistances_1_4', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Cell Internal Resistances 1-4 (0.1 mOhm)'},
     {'frame_id': '0x13B', 'frame_name': 'Cell_Resistances_5_8', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Cell Internal Resistances 5-8 (0.1 mOhm)'},
     {'frame_id': '0x13C', 'frame_name': 'Cell_Resistances_9_12', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Cell Internal Resistances 9-12 (0.1 mOhm)'},
@@ -71,39 +70,39 @@ frames = pd.DataFrame([
     {'frame_id': '0x146', 'frame_name': 'Cell_OCV_13_14', 'payload_length': 8, 'direction': 'rx', 'enabled': True, 'description': 'Cell Open Circuit Voltages 13-14 (mV resolution)'},
 ])
 
-# 3. Clean, User-Understandable Variables with 100% 8-byte frame coverage
+# 3. Clean, User-Understandable Variables matching Ather DBC with full 8-byte frame coverage
 variables_data = [
-    # --- 14S Cell Voltages (0.1 mV resolution, group: Cell Voltages) ---
-    ('0x132', 'Cell_Voltage_1', 'uint16', 1, 0, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 1 Voltage', True),
-    ('0x132', 'Cell_Voltage_2', 'uint16', 1, 2, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 2 Voltage', True),
-    ('0x132', 'Cell_Voltage_3', 'uint16', 1, 4, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 3 Voltage', True),
-    ('0x132', 'Cell_Voltage_4', 'uint16', 1, 6, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 4 Voltage', True),
+    # --- 14S Cell Voltages (DBC: Vol1..Vol14, 0.1 mV resolution, group: Cell Voltages) ---
+    ('0x132', 'Vol1', 'uint16', 1, 0, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 1 Voltage (Series Vol 1)', True),
+    ('0x132', 'Vol2', 'uint16', 1, 2, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 2 Voltage (Series Vol 2)', True),
+    ('0x132', 'Vol3', 'uint16', 1, 4, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 3 Voltage (Series Vol 3)', True),
+    ('0x132', 'Vol4', 'uint16', 1, 6, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 4 Voltage (Series Vol 4)', True),
 
-    ('0x133', 'Cell_Voltage_5', 'uint16', 1, 0, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 5 Voltage', True),
-    ('0x133', 'Cell_Voltage_6', 'uint16', 1, 2, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 6 Voltage', True),
-    ('0x133', 'Cell_Voltage_7', 'uint16', 1, 4, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 7 Voltage', True),
-    ('0x133', 'Cell_Voltage_8', 'uint16', 1, 6, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 8 Voltage', True),
+    ('0x133', 'Vol5', 'uint16', 1, 0, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 5 Voltage (Series Vol 5)', True),
+    ('0x133', 'Vol6', 'uint16', 1, 2, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 6 Voltage (Series Vol 6)', True),
+    ('0x133', 'Vol7', 'uint16', 1, 4, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 7 Voltage (Series Vol 7)', True),
+    ('0x133', 'Vol8', 'uint16', 1, 6, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 8 Voltage (Series Vol 8)', True),
 
-    ('0x134', 'Cell_Voltage_9', 'uint16', 1, 0, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 9 Voltage', True),
-    ('0x134', 'Cell_Voltage_10', 'uint16', 1, 2, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 10 Voltage', True),
-    ('0x134', 'Cell_Voltage_11', 'uint16', 1, 4, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 11 Voltage', True),
-    ('0x134', 'Cell_Voltage_12', 'uint16', 1, 6, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 12 Voltage', True),
+    ('0x134', 'Vol9', 'uint16', 1, 0, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 9 Voltage (Series Vol 9)', True),
+    ('0x134', 'Vol10', 'uint16', 1, 2, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 10 Voltage (Series Vol 10)', True),
+    ('0x134', 'Vol11', 'uint16', 1, 4, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 11 Voltage (Series Vol 11)', True),
+    ('0x134', 'Vol12', 'uint16', 1, 6, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 12 Voltage (Series Vol 12)', True),
 
-    ('0x135', 'Cell_Voltage_13', 'uint16', 1, 0, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 13 Voltage', True),
-    ('0x135', 'Cell_Voltage_14', 'uint16', 1, 2, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 14 Voltage', True),
-    ('0x135', 'Battery_Temperature_5', 'uint16', 1, 4, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Pack Temperature Sensor 5', True),
-    ('0x135', 'Pack_Min_Temp_Threshold', 'int16', 1, 6, 'little', 0.01, 0, '°C', 'Pack Parameters', -50.0, 50.0, 'Minimum Operating Temperature Threshold', True),
+    ('0x135', 'Vol13', 'uint16', 1, 0, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 13 Voltage (Series Vol 13)', True),
+    ('0x135', 'Vol14', 'uint16', 1, 2, 'little', 0.0001, 0, 'V', 'Cell Voltages', 2.0, 4.5, 'Cell 14 Voltage (Series Vol 14)', True),
+    ('0x135', 'Series_Vol_Aux_1', 'uint16', 1, 4, 'little', 0.01, 0, '°C', 'Diagnostic Channels', -20.0, 80.0, 'Series Voltage Frame Auxiliary Sensor 1', True),
+    ('0x135', 'Series_Vol_Aux_2', 'int16', 1, 6, 'little', 0.01, 0, '°C', 'Diagnostic Channels', -50.0, 50.0, 'Series Voltage Frame Auxiliary Sensor 2', True),
 
-    # --- Active Battery Temperatures (0.01 °C resolution, physically populated pack thermistors) ---
-    ('0x136', 'Battery_Temp_Sensor_1_Raw', 'uint16', 1, 0, 'little', 0.01, 0, '°C', 'Diagnostic Channels', -20.0, 500.0, 'Sensor 1 Open-Circuit Pullup Reading', True),
-    ('0x136', 'Battery_Temperature_1', 'uint16', 1, 2, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Pack Temperature Sensor 1', True),
-    ('0x136', 'Battery_Temp_Sensor_3_Raw', 'uint16', 1, 4, 'little', 0.01, 0, '°C', 'Diagnostic Channels', -20.0, 500.0, 'Sensor 3 Open-Circuit Pullup Reading', True),
-    ('0x136', 'Battery_Temperature_2', 'uint16', 1, 6, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Pack Temperature Sensor 2', True),
+    # --- Battery Pack Thermal Sensors (DBC: Battery_Temp_1..Battery_Temp_6, 0.01 °C, group: Battery Temperatures) ---
+    ('0x136', 'Battery_Temp_1', 'uint16', 1, 0, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Temperature Sensor 1', True),
+    ('0x136', 'Battery_Temp_2', 'uint16', 1, 2, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Temperature Sensor 2', True),
+    ('0x136', 'Battery_Temp_3', 'uint16', 1, 4, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Temperature Sensor 3', True),
+    ('0x136', 'BT1_3_Reserved', 'uint16', 1, 6, 'little', 0.01, 0, '°C', 'Diagnostic Channels', -20.0, 500.0, 'BT1_3 Reserved Channel / Sensor 2 Physical', True),
 
-    ('0x137', 'Battery_Temp_Sensor_4_Raw', 'uint16', 1, 0, 'little', 0.01, 0, '°C', 'Diagnostic Channels', -20.0, 500.0, 'Sensor 4 Open-Circuit Pullup Reading', True),
-    ('0x137', 'Battery_Temperature_3', 'uint16', 1, 2, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Pack Temperature Sensor 3', True),
-    ('0x137', 'Battery_Temp_Sensor_5_Raw', 'uint16', 1, 4, 'little', 0.01, 0, '°C', 'Diagnostic Channels', -20.0, 500.0, 'Sensor 5 Unpopulated Channel Reading', True),
-    ('0x137', 'Battery_Temperature_4', 'uint16', 1, 6, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Pack Temperature Sensor 4', True),
+    ('0x137', 'BT4_6_Reserved', 'uint16', 1, 0, 'little', 0.01, 0, '°C', 'Diagnostic Channels', -20.0, 500.0, 'BT4_6 Reserved Channel', True),
+    ('0x137', 'Battery_Temp_4', 'uint16', 1, 2, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Temperature Sensor 4', True),
+    ('0x137', 'Battery_Temp_5', 'uint16', 1, 4, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Temperature Sensor 5', True),
+    ('0x137', 'Battery_Temp_6', 'uint16', 1, 6, 'little', 0.01, 0, '°C', 'Battery Temperatures', -20.0, 80.0, 'Battery Temperature Sensor 6', True),
 
     # --- Internal BMS Module & Power Stage Temperatures ---
     ('0x170', 'Module_Temperature_1', 'uint16', 1, 0, 'little', 0.01, 0, '°C', 'Module Temperatures', -20.0, 100.0, 'BMS Module Temperature Sensor 1', True),
@@ -111,16 +110,21 @@ variables_data = [
     ('0x170', 'Module_Temperature_3', 'uint16', 1, 4, 'little', 0.01, 0, '°C', 'Module Temperatures', -20.0, 100.0, 'BMS Module Temperature Sensor 3', True),
     ('0x170', 'Power_Stage_Temperature', 'uint16', 1, 6, 'little', 0.01, 0, '°C', 'Module Temperatures', -20.0, 100.0, 'Power Stage MOSFET Temperature', True),
 
-    # --- Pack Telemetry & State ---
+    # --- Pack Telemetry & High Resolution Current (DBC: BC Battery_Current) ---
     ('0x141', 'Pack_Voltage', 'uint16', 1, 0, 'little', 0.01, 0, 'V', 'Pack Parameters', 0.0, 60.0, 'Total Battery Pack Voltage', True),
     ('0x141', 'Pack_Current', 'int16', 1, 2, 'little', 0.01, 0, 'A', 'Pack Parameters', -100.0, 100.0, 'Battery Pack Standby / Live Current', True),
     ('0x141', 'Pack_Telemetry_Status', 'uint32', 1, 4, 'little', 1.0, 0, '', 'Pack Parameters', 0, 4294967295, 'Pack Telemetry Status Word', True),
 
-    ('0x209', 'Battery_SOC_Algorithm_State', 'uint32', 1, 0, 'little', 1.0, 0, '', 'Pack Parameters', 0, 4294967295, 'Battery SOC Algorithm State Word', True),
-    ('0x209', 'Battery_SOC', 'uint8', 1, 4, 'little', 1.0, 0, '%', 'Pack Parameters', 0.0, 100.0, 'Battery State of Charge', True),
-    ('0x209', 'Battery_SOC_Diagnostic_Word', 'uint16', 1, 5, 'little', 1.0, 0, '', 'Pack Parameters', 0, 65535, 'Battery SOC Diagnostic Word', True),
-    ('0x209', 'Battery_SOC_Quality_Flag', 'uint8', 1, 7, 'little', 1.0, 0, '', 'Pack Parameters', 0, 255, 'Battery SOC Quality Flag', True),
+    ('0x601', 'Battery_Current', 'int32', 1, 0, 'little', -0.001, 0, 'A', 'Pack Parameters', -200.0, 200.0, 'Battery Current Flow (DBC BC: -0.001 A resolution)', True),
+    ('0x601', 'BC_Status', 'uint32', 1, 4, 'little', 1.0, 0, '', 'Pack Parameters', 0, 4294967295, 'Battery Current Status Flags', True),
 
+    # --- Battery State of Charge (DBC: SOC Battery_SOC) ---
+    ('0x209', 'SOC_Algorithm_State', 'uint32', 1, 0, 'little', 1.0, 0, '', 'Pack Parameters', 0, 4294967295, 'Battery SOC Algorithm State Word', True),
+    ('0x209', 'Battery_SOC', 'uint8', 1, 4, 'little', 1.0, 0, '%', 'Pack Parameters', 0.0, 100.0, 'Battery State of Charge (%)', True),
+    ('0x209', 'SOC_Diagnostic_Word', 'uint16', 1, 5, 'little', 1.0, 0, '', 'Pack Parameters', 0, 65535, 'Battery SOC Diagnostic Word', True),
+    ('0x209', 'SOC_Quality_Flag', 'uint8', 1, 7, 'little', 1.0, 0, '', 'Pack Parameters', 0, 255, 'Battery SOC Quality Flag', True),
+
+    # --- Pack Limits ---
     ('0x147', 'Pack_Status_Header', 'uint32', 1, 0, 'little', 1.0, 0, '', 'Pack Parameters', 0, 4294967295, 'Pack Limits Header Word', True),
     ('0x147', 'Pack_Voltage_Threshold', 'uint16', 1, 4, 'little', 0.01, 0, 'V', 'Pack Parameters', 0.0, 60.0, 'Pack Voltage Upper Threshold', True),
     ('0x147', 'Discharge_Power_Limit', 'uint16', 1, 6, 'little', 1.0, 0, 'W', 'Pack Parameters', 0.0, 10000.0, 'Discharge Power Limit', True),
@@ -129,45 +133,42 @@ variables_data = [
     ('0x148', 'Pack_Current_Limit', 'uint16', 1, 4, 'little', 1.0, 0, 'A', 'Pack Parameters', 0.0, 150.0, 'Pack Current Limit', True),
     ('0x148', 'Charge_Power_Limit', 'uint16', 1, 6, 'little', 1.0, 0, 'W', 'Pack Parameters', 0.0, 10000.0, 'Charge Power Limit', True),
 
-    ('0x601', 'Battery_Current_Flow', 'int32', 1, 0, 'little', -0.001, 0, 'A', 'Pack Parameters', -200.0, 200.0, 'Battery Current Flow (High Res)', True),
-    ('0x601', 'Current_Flow_Status', 'uint32', 1, 4, 'little', 1.0, 0, '', 'Pack Parameters', 0, 4294967295, 'Battery Current Flow Status Flags', True),
-
-    # --- Vehicle & Auxiliary Parameters ---
+    # --- Vehicle & Auxiliary Parameters (DBC: VS, VT, DM, KS, Aux) ---
     ('0x153', 'Auxiliary_Power_Status', 'uint16', 1, 0, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 65535, 'Auxiliary Power Status Word', True),
     ('0x153', 'Auxiliary_12V_Voltage', 'uint16', 1, 2, 'little', 0.001, 0, 'V', 'Vehicle Parameters', 0.0, 16.0, 'Auxiliary 12V DC-DC System Rail', True),
     ('0x153', 'Pack_Overvoltage_Threshold', 'uint16', 1, 4, 'little', 0.01, 0, 'V', 'Pack Parameters', 0.0, 60.0, 'Pack Overvoltage Protection Threshold', True),
     ('0x153', 'Pack_Undervoltage_Threshold', 'uint16', 1, 6, 'little', 0.01, 0, 'V', 'Pack Parameters', 0.0, 60.0, 'Pack Undervoltage Protection Threshold', True),
 
-    ('0x18C', 'Vehicle_Speed_Status', 'uint8', 1, 0, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 255, 'Vehicle Speed Status Byte', True),
-    ('0x18C', 'Vehicle_Speed', 'int16', 1, 1, 'little', 0.1, 0, 'km/h', 'Vehicle Parameters', 0.0, 150.0, 'Vehicle Speed Telemetry', True),
+    ('0x18C', 'VS_Status', 'uint8', 1, 0, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 255, 'Vehicle Speed Status Byte', True),
+    ('0x18C', 'Vehicle_Speed', 'int16', 1, 1, 'little', 0.1, 0, 'km/h', 'Vehicle Parameters', 0.0, 150.0, 'Vehicle Speed (DBC VS: 0.1 Kmph)', True),
     ('0x18C', 'Motor_RPM', 'uint16', 1, 3, 'little', 1.0, 0, 'RPM', 'Vehicle Parameters', 0, 15000, 'Traction Motor Speed', True),
     ('0x18C', 'Vehicle_Status_Flags', 'uint8', 1, 5, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 255, 'Vehicle Status Flags', True),
     ('0x18C', 'Odometer_Reading', 'uint16', 1, 6, 'little', 1.0, 0, 'km', 'Vehicle Parameters', 0, 65535, 'Vehicle Odometer Reading', True),
 
-    ('0x28C', 'Throttle_Controller_Status', 'uint16', 1, 0, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 65535, 'Throttle Controller Status', True),
+    ('0x28C', 'VT_Status', 'uint16', 1, 0, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 65535, 'Throttle Controller Status', True),
     ('0x28C', 'Throttle_Sensor_Offset', 'uint8', 1, 2, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 255, 'Throttle Sensor Offset', True),
-    ('0x28C', 'Throttle_Position', 'uint16', 1, 3, 'little', 0.006, 0, '%', 'Vehicle Parameters', 0.0, 100.0, 'Throttle Input Position', True),
+    ('0x28C', 'Throttle_2', 'uint16', 1, 3, 'little', 0.006, 0, '%', 'Vehicle Parameters', 0.0, 100.0, 'Vehicle Throttle Position (DBC VT: 0.006 scale)', True),
     ('0x28C', 'Throttle_Diagnostic_Code', 'uint16', 1, 5, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 65535, 'Throttle Diagnostic Code', True),
     ('0x28C', 'Throttle_Subsystem_Flag', 'uint8', 1, 7, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 255, 'Throttle Subsystem Flag', True),
 
-    ('0x101', 'Drive_Mode', 'boolean', 1, 0, 'little', 1, 0, 'bool', 'Vehicle Parameters', 0, 1, 'Vehicle Drive Mode State', True),
-    ('0x101', 'Drive_Controller_Status', 'uint32', 1, 1, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 4294967295, 'Drive Controller Status Word', True),
-    ('0x101', 'Drive_Subsystem_State', 'uint16', 1, 5, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 65535, 'Drive Subsystem State', True),
-    ('0x101', 'Drive_Diagnostic_Byte', 'uint8', 1, 7, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 255, 'Drive Diagnostic Byte', True),
+    ('0x101', 'Drive_Mode', 'boolean', 1, 0, 'little', 1, 0, 'bool', 'Vehicle Parameters', 0, 1, 'Vehicle Drive Mode (DBC DM: 1=DRIVE, 0=STANDBY)', True),
+    ('0x101', 'DM_Controller_Status', 'uint32', 1, 1, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 4294967295, 'Drive Controller Status Word', True),
+    ('0x101', 'DM_Subsystem_State', 'uint16', 1, 5, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 65535, 'Drive Subsystem State', True),
+    ('0x101', 'DM_Diagnostic_Byte', 'uint8', 1, 7, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 255, 'Drive Diagnostic Byte', True),
 
-    ('0x205', 'Key_Switch', 'boolean', 1, 0, 'little', 1, 0, 'bool', 'Vehicle Parameters', 0, 1, 'Ignition Key Switch State', True),
-    ('0x205', 'Key_Switch_Controller_Word', 'uint32', 1, 1, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 4294967295, 'Key Switch Controller Word', True),
-    ('0x205', 'Key_Switch_Subsystem_State', 'uint16', 1, 5, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 65535, 'Key Switch Subsystem State', True),
-    ('0x205', 'Key_Switch_Diagnostic_Byte', 'uint8', 1, 7, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 255, 'Key Switch Diagnostic Byte', True),
+    ('0x205', 'Key_Switch', 'boolean', 1, 0, 'little', 1, 0, 'bool', 'Vehicle Parameters', 0, 1, 'Ignition Key Switch (DBC KS: 1=ON, 0=OFF)', True),
+    ('0x205', 'KS_Controller_Word', 'uint32', 1, 1, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 4294967295, 'Key Switch Controller Word', True),
+    ('0x205', 'KS_Subsystem_State', 'uint16', 1, 5, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 65535, 'Key Switch Subsystem State', True),
+    ('0x205', 'KS_Diagnostic_Byte', 'uint8', 1, 7, 'little', 1.0, 0, '', 'Vehicle Parameters', 0, 255, 'Key Switch Diagnostic Byte', True),
 
-    # --- Charger ---
+    # --- Charger (DBC: CS, CC) ---
     ('0x002', 'Charger_Status', 'uint8', 1, 0, 'little', 1.0, 0, '', 'Charger', 0, 255, 'Charger Connection Status', True),
-    ('0x002', 'Charger_Status_Extended', 'uint32', 1, 1, 'little', 1.0, 0, '', 'Charger', 0, 4294967295, 'Charger Status Extended', True),
-    ('0x002', 'Charger_Hardware_Flags', 'uint16', 1, 5, 'little', 1.0, 0, '', 'Charger', 0, 65535, 'Charger Hardware Flags', True),
-    ('0x002', 'Charger_Diagnostic_Code', 'uint8', 1, 7, 'little', 1.0, 0, '', 'Charger', 0, 255, 'Charger Diagnostic Code', True),
+    ('0x002', 'CS_Extended', 'uint32', 1, 1, 'little', 1.0, 0, '', 'Charger', 0, 4294967295, 'Charger Status Extended', True),
+    ('0x002', 'CS_Hardware_Flags', 'uint16', 1, 5, 'little', 1.0, 0, '', 'Charger', 0, 65535, 'Charger Hardware Flags', True),
+    ('0x002', 'CS_Diagnostic_Code', 'uint8', 1, 7, 'little', 1.0, 0, '', 'Charger', 0, 255, 'Charger Diagnostic Code', True),
 
-    ('0x003', 'Charger_Current_Prefix', 'uint32', 1, 0, 'little', 1.0, 0, '', 'Charger', 0, 4294967295, 'Charger Current Prefix', True),
-    ('0x003', 'Charger_Current', 'uint16', 1, 4, 'little', 0.001, 0, 'A', 'Charger', 0.0, 50.0, 'Charger Output Current', True),
+    ('0x003', 'CC_Prefix', 'uint32', 1, 0, 'little', 1.0, 0, '', 'Charger', 0, 4294967295, 'Charger Current Prefix', True),
+    ('0x003', 'Charger_Current', 'uint16', 1, 4, 'little', 0.001, 0, 'A', 'Charger', 0.0, 50.0, 'Charger Output Current (DBC CC)', True),
     ('0x003', 'Charger_Voltage', 'uint16', 1, 6, 'little', 0.01, 0, 'V', 'Charger', 0.0, 100.0, 'Charger Output Voltage', True),
 
     # --- Cell Internal Resistances (0.1 mOhm resolution) ---
@@ -256,6 +257,7 @@ calc_groups = pd.DataFrame([
     {'group_name': 'Module Temperatures', 'operations': 'min|max|diff|avg', 'unit': '°C', 'frame_id': None, 'enabled': True},
     {'group_name': 'Cell Internal Resistances', 'operations': 'min|max|diff|avg', 'unit': 'mOhm', 'frame_id': None, 'enabled': True},
     {'group_name': 'Cell Open Circuit Voltages', 'operations': 'min|max|diff|avg', 'unit': 'V', 'frame_id': None, 'enabled': True},
+    {'group_name': 'Cell State of Charge', 'operations': 'min|max|diff|avg', 'unit': '%', 'frame_id': None, 'enabled': True},
 ])
 
 # 5. Serial Defaults (COM10 2,000,000 baud)
@@ -279,25 +281,24 @@ tx_commands = pd.DataFrame(columns=['command_name', 'id_or_address', 'payload_he
 tx_command_fields = pd.DataFrame(columns=['command_name', 'signal_name', 'data_type', 'byte_order', 'scale', 'offset', 'unit', 'min_value', 'max_value', 'default'])
 polling_schedule = pd.DataFrame(columns=['id_or_address', 'interval_ms', 'timeout_ms', 'enabled'])
 
-def generate_config(output_file: str = "Ather_v1_0_1.xlsx") -> Path:
-    out_path = Path(output_file).resolve()
-    with pd.ExcelWriter(out_path) as writer:
-        protocol.to_excel(writer, sheet_name='protocol', index=False)
-        frames.to_excel(writer, sheet_name='frames', index=False)
-        variables.to_excel(writer, sheet_name='variables', index=False)
-        calc_groups.to_excel(writer, sheet_name='calc_groups', index=False)
-        bitfields.to_excel(writer, sheet_name='bitfields', index=False)
-        enums.to_excel(writer, sheet_name='enums', index=False)
-        tx_commands.to_excel(writer, sheet_name='tx_commands', index=False)
-        tx_command_fields.to_excel(writer, sheet_name='tx_command_fields', index=False)
-        polling_schedule.to_excel(writer, sheet_name='polling_schedule', index=False)
-        serial_defaults.to_excel(writer, sheet_name='serial_defaults', index=False)
-
-    print(f"Generated {out_path.name} successfully.")
-    cfg = load_config(out_path)
+def generate_excel():
+    excel_path = Path("Ather_v1_0_1.xlsx")
+    with pd.ExcelWriter(excel_path, engine="openpyxl") as writer:
+        protocol.to_excel(writer, sheet_name="protocol", index=False)
+        frames.to_excel(writer, sheet_name="frames", index=False)
+        variables.to_excel(writer, sheet_name="variables", index=False)
+        calc_groups.to_excel(writer, sheet_name="calc_groups", index=False)
+        serial_defaults.to_excel(writer, sheet_name="serial_defaults", index=False)
+        bitfields.to_excel(writer, sheet_name="bitfields", index=False)
+        enums.to_excel(writer, sheet_name="enums", index=False)
+        tx_commands.to_excel(writer, sheet_name="tx_commands", index=False)
+        tx_command_fields.to_excel(writer, sheet_name="tx_command_fields", index=False)
+        polling_schedule.to_excel(writer, sheet_name="polling_schedule", index=False)
+    
+    print(f"Generated {excel_path.name} successfully.")
+    cfg = load_config(excel_path)
     print(f"Validation successful: Loaded {len(cfg.frames)} frames and {len(cfg.all_signals)} clean signals.")
     print(f"Default baud rate: {cfg.serial_defaults.baud_rate}")
-    return out_path
 
 if __name__ == "__main__":
-    generate_config()
+    generate_excel()

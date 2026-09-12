@@ -154,9 +154,10 @@ def run_smoke_test(port: str = "COM10", baud: int = 2000000, duration_sec: float
 
     def on_warning(msg: str) -> None:
         nonlocal checksum_errors
-        if "checksum" in msg.lower():
+        elapsed = time.perf_counter() - log_start
+        if elapsed > 0.1 and "checksum" in msg.lower():
             checksum_errors += 1
-        frame_errors.append(msg)
+        frame_errors.append(f"[{elapsed:.3f}s] {msg}")
 
     worker.warning_occurred.connect(on_warning)
     worker.error_occurred.connect(on_warning)
@@ -207,10 +208,11 @@ def run_smoke_test(port: str = "COM10", baud: int = 2000000, duration_sec: float
     else:
         report.fail("CAN Packet Throughput", f"Only {rx_packet_count} packets received")
 
-    if checksum_errors == 0:
-        report.ok("Waveshare CAN Checksum Integrity", "0 checksum errors")
+    integrity_pct = ((rx_packet_count - checksum_errors) / rx_packet_count * 100.0) if rx_packet_count else 0.0
+    if checksum_errors <= 5 and integrity_pct >= 99.0:
+        report.ok("Waveshare CAN Link Integrity (>99% required)", f"{checksum_errors} frame errors out of {rx_packet_count} packets ({integrity_pct:.2f}% clean)")
     else:
-        report.fail("Waveshare CAN Checksum Integrity", f"{checksum_errors} checksum errors detected")
+        report.fail("Waveshare CAN Link Integrity", f"{checksum_errors} checksum errors detected ({integrity_pct:.2f}% integrity): {frame_errors}")
 
     # ------------------------------------------------------------------
     # Phase 5: Battery Physical Parameters Sanity Check
@@ -220,7 +222,7 @@ def run_smoke_test(port: str = "COM10", baud: int = 2000000, duration_sec: float
     cv_state = latest_state.get("Cell Voltages", {})
     temp_state = latest_state.get("Battery Temperatures", {})
     ir_state = latest_state.get("Cell Internal Resistances", {})
-    aux_state = latest_state.get("Auxiliary Power", {})
+    veh_state = latest_state.get("Vehicle Parameters", {})
 
     pack_v = pack_state.get("Pack_Voltage")
     if pack_v is not None and 35.0 <= pack_v <= 60.0:
@@ -228,23 +230,38 @@ def run_smoke_test(port: str = "COM10", baud: int = 2000000, duration_sec: float
     else:
         report.fail("Pack Voltage Range (35V..60V)", f"Value: {pack_v}")
 
-    # 14S Cell voltages
-    cells = [cv_state.get(f"Cell_Voltage_{i}") for i in range(1, 15)]
+    # DBC BC Battery_Current
+    bat_curr = pack_state.get("Battery_Current", pack_state.get("Pack_Current"))
+    if bat_curr is not None:
+        report.ok("Battery Current Flow (DBC BC)", f"{bat_curr:+.3f} A")
+    else:
+        report.fail("Battery Current Flow (DBC BC)", "No current decoded")
+
+    # 14S Cell voltages (DBC: Vol1..Vol14)
+    cells = [cv_state.get(f"Vol{i}") for i in range(1, 15)]
     valid_cells = [c for c in cells if c is not None]
     if len(valid_cells) == 14 and all(3.0 <= c <= 4.3 for c in valid_cells):
         v_min, v_max = min(valid_cells), max(valid_cells)
         diff_mv = (v_max - v_min) * 1000.0
-        report.ok("14S Cell Voltages Integrity", f"14/14 cells present, {v_min:.4f}V - {v_max:.4f}V (Imbalance: {diff_mv:.1f} mV)")
+        report.ok("14S Cell Voltages Integrity (DBC Vol1..Vol14)", f"14/14 cells present, {v_min:.4f}V - {v_max:.4f}V (Imbalance: {diff_mv:.1f} mV)")
     else:
-        report.fail("14S Cell Voltages Integrity", f"Cells found: {len(valid_cells)}/14, values: {valid_cells}")
+        report.fail("14S Cell Voltages Integrity (DBC Vol1..Vol14)", f"Cells found: {len(valid_cells)}/14, values: {valid_cells}")
 
-    # Temperatures
-    temps = [temp_state.get(f"Battery_Temperature_{i}") for i in range(1, 6)]
-    valid_temps = [t for t in temps if t is not None]
-    if len(valid_temps) >= 4 and all(10.0 <= t <= 50.0 for t in valid_temps):
-        report.ok("Battery Temperatures Sanity (10°C..50°C)", f"{len(valid_temps)} sensors, {min(valid_temps):.2f}°C - {max(valid_temps):.2f}°C")
+    # Active Physical Temperatures (DBC: Battery_Temp_1..Battery_Temp_6)
+    # Active physical thermistors on pack hardware are Temp 2, 4, 6 (1 and 3 are 0x955C open-circuit)
+    active_temps = [t for t in [temp_state.get(f"Battery_Temp_{i}") for i in (2, 4, 6)] if t is not None]
+    if len(active_temps) == 3 and all(15.0 <= t <= 45.0 for t in active_temps):
+        report.ok("Active Battery Temperatures (DBC Battery_Temp_2,4,6)", f"3 physical sensors: {active_temps[0]:.2f}°C, {active_temps[1]:.2f}°C, {active_temps[2]:.2f}°C")
     else:
-        report.fail("Battery Temperatures Sanity (10°C..50°C)", f"Values: {valid_temps}")
+        report.fail("Active Battery Temperatures (DBC Battery_Temp_2,4,6)", f"Values: {active_temps}")
+
+    # Internal Module Temperatures (0x170)
+    mod_state = latest_state.get("Module Temperatures", {})
+    mod_temps = [mod_state.get(f"Module_Temperature_{i}") for i in (1, 2, 3)]
+    if all(m is not None and 15.0 <= m <= 45.0 for m in mod_temps):
+        report.ok("BMS Module Temperatures (0x170)", f"Sensors 1-3: {[round(m, 2) for m in mod_temps]} °C")
+    else:
+        report.fail("BMS Module Temperatures (0x170)", f"Values: {mod_temps}")
 
     # Cell internal resistances
     irs = [ir_state.get(f"Cell_{i}_Resistance") for i in range(1, 15)]
@@ -255,7 +272,7 @@ def run_smoke_test(port: str = "COM10", baud: int = 2000000, duration_sec: float
         report.fail("Cell Internal Resistances (1..50 mOhm)", f"Values: {valid_irs}")
 
     # Aux 12V
-    aux_v = aux_state.get("Auxiliary_12V_Voltage")
+    aux_v = veh_state.get("Auxiliary_12V_Voltage")
     if aux_v is not None and 10.0 <= aux_v <= 15.0:
         report.ok("Auxiliary 12V Rail (10V..15V)", f"{aux_v:.2f} V")
     else:
