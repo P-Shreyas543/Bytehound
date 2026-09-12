@@ -382,17 +382,22 @@ def _payload_warnings(
             )
         )
     expected_from_signals = max((spec.end_byte for spec in specs), default=0)
-    if len(payload) > expected_from_signals:
-        tail = payload[expected_from_signals : expected_from_signals + 32]
+    expected_length = (
+        frame.payload_length
+        if (frame and frame.payload_length is not None)
+        else expected_from_signals
+    )
+    if len(payload) > expected_length:
+        tail = payload[expected_length : expected_length + 32]
         warnings.append(
             DecodeWarning(
                 kind="extra_bytes",
                 frame_id=frame_id,
                 message=(
-                    f"Frame 0x{frame_id:04X} has {len(payload) - expected_from_signals} "
+                    f"Frame 0x{frame_id:04X} has {len(payload) - expected_length} "
                     "extra payload byte(s)"
                 ),
-                offset=expected_from_signals,
+                offset=expected_length,
                 extra_hex=tail.hex(" ").upper(),
             )
         )

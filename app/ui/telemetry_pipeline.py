@@ -355,10 +355,17 @@ class TelemetryPipelineMixin:
 
             raw_text = "-" if signal.raw_value is None else _format_number(signal.raw_value)
             value_text = "-" if signal.scaled_value is None else _format_number(signal.scaled_value)
+            if signal.is_calculated:
+                table_value = value_text
+            else:
+                table_value = signal.display_value or value_text
+                if signal.unit and table_value.endswith(f" {signal.unit}"):
+                    table_value = table_value[: -len(f" {signal.unit}")].strip()
+
             self._table_model.stage_live_cells(
                 key,
                 raw=raw_text,
-                value=signal.display_value or value_text,
+                value=table_value,
                 status=self._status_text(signal),
                 updated=timestamp,
             )

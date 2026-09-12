@@ -459,6 +459,10 @@ class PollingWorker(QThread):
                 write_timeout=0.05,
             )
             try:
+                self._serial.set_buffer_size(rx_size=65536, tx_size=65536)
+            except Exception:
+                pass
+            try:
                 self._serial.reset_input_buffer()
             except Exception:
                 pass
@@ -835,18 +839,23 @@ class PollingWorker(QThread):
                 # are matched promptly before we check for expirations or send new requests.
                 # In serial mode, we also drain any unsolicited/late traffic.
                 if self._serial:
-                    w = self._serial.in_waiting
-                    if w > 0:
-                        data = self._serial.read(w)
-                        self._rx_bytes += len(data)
-                        self._last_rx_time = time.monotonic()
-                        self._watchdog_fired = False
-                        self._parser.feed(data)
-                        extracted = self._parser.extract_all()
-                        if pipelining and self._in_flight and extracted:
-                            self._match_in_flight_responses(extracted)
-                        self._accumulate(extracted)
-                        self._emit_metrics_throttled()
+                    try:
+                        w = self._serial.in_waiting
+                        if w > 0:
+                            data = self._serial.read(w)
+                            self._rx_bytes += len(data)
+                            self._last_rx_time = time.monotonic()
+                            self._watchdog_fired = False
+                            self._parser.feed(data)
+                            extracted = self._parser.extract_all()
+                            if pipelining and self._in_flight and extracted:
+                                self._match_in_flight_responses(extracted)
+                            self._accumulate(extracted)
+                            self._emit_metrics_throttled()
+                    except (TypeError, AttributeError):
+                        if self._stop_event.is_set():
+                            break
+                        raise
 
                 # 4. Handle Polling Engine
                 polled = False
@@ -960,6 +969,8 @@ class PollingWorker(QThread):
                     continue
 
             except Exception as exc:
+                if self._stop_event.is_set():
+                    break
                 # Non-serial exception (parse error, ValueError in build_packet,
                 # etc.). Report it, log a short cool-down, and keep running.
                 _LOG.exception("Worker recovered from unexpected error")
