@@ -533,40 +533,75 @@ class WaveshareCanParser(ParserProtocol):
                         return None, pos
                     return None, 0
 
-            if len(self._buf) < 20:
+            if len(self._buf) < 19:
                 return None, 0
 
-            # Verify checksum: (sum of first 19 bytes + 1) & 0xFF
-            expected_chk = (sum(self._buf[:19]) + 1) & 0xFF
-            received_chk = self._buf[19]
-            if expected_chk != received_chk:
+            # 1. Check for 19-byte frame (Waveshare firmware sometimes omits the 0x00 pad byte):
+            chk_19 = (sum(self._buf[:18]) + 1) & 0xFF
+            is_19 = False
+            if self._buf[18] == chk_19:
+                # If followed immediately by next AA 55 header or buffer boundary
+                if (
+                    len(self._buf) == 19
+                    or (len(self._buf) >= 21 and self._buf[19] == 0xAA and self._buf[20] == 0x55)
+                    or (len(self._buf) == 20 and self._buf[19] == 0xAA)
+                ):
+                    is_19 = True
+
+            if is_19:
+                raw = bytes(self._buf[:19])
+                dlc = min(self._buf[9], 8)
+                frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
+                payload = bytes(self._buf[10 : 10 + dlc])
                 pkt = ParsedPacket(
-                    raw=bytes(self._buf[:20]),
+                    raw=raw,
+                    frame_id=frame_id,
+                    payload=payload,
+                    ok=True,
+                    error=None,
+                )
+                return pkt, 19
+
+            # 2. Check if the next header is already at index 19 (meaning 1 byte was dropped on the wire)
+            if len(self._buf) >= 21 and self._buf[19] == 0xAA and self._buf[20] == 0x55:
+                pkt = ParsedPacket(
+                    raw=bytes(self._buf[:19]),
                     frame_id=0,
                     payload=b"",
                     ok=False,
-                    error=f"Waveshare CAN checksum mismatch: expected 0x{expected_chk:02X}, got 0x{received_chk:02X}",
+                    error="Waveshare CAN framing slip: 19 bytes before next packet header",
                 )
+                return pkt, 19
+
+            # If exactly 20 bytes and byte 19 is 0xAA, wait for byte 20 to check if it's 0x55 (next packet header)
+            if len(self._buf) == 20 and self._buf[19] == 0xAA:
+                return None, 0
+
+            if len(self._buf) < 20:
+                return None, 0
+
+            # 3. Verify standard 20-byte checksum: (sum of first 19 bytes + 1) & 0xFF
+            expected_chk = (sum(self._buf[:19]) + 1) & 0xFF
+            received_chk = self._buf[19]
+            if expected_chk != received_chk:
                 # Resynchronize: check if another 0xAA 0x55 header is present starting at index 1
                 next_header = -1
                 for k in range(1, len(self._buf) - 1):
                     if self._buf[k] == 0xAA and self._buf[k + 1] == 0x55:
                         next_header = k
                         break
-                if next_header != -1:
-                    advance_bytes = next_header
-                elif len(self._buf) > 0 and self._buf[-1] == 0xAA:
-                    advance_bytes = len(self._buf) - 1
-                else:
-                    advance_bytes = 1
+                advance_bytes = next_header if next_header != -1 else 1
+                pkt = ParsedPacket(
+                    raw=bytes(self._buf[:advance_bytes if next_header != -1 else 20]),
+                    frame_id=0,
+                    payload=b"",
+                    ok=False,
+                    error=f"Waveshare CAN checksum mismatch: expected 0x{expected_chk:02X}, got 0x{received_chk:02X}",
+                )
                 return pkt, advance_bytes
 
             raw = bytes(self._buf[:20])
-            dlc = self._buf[9]
-            if dlc > 8:
-                dlc = 8
-
-            # Frame ID is 4 bytes at index 5, little-endian
+            dlc = min(self._buf[9], 8)
             frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
             payload = bytes(self._buf[10 : 10 + dlc])
 

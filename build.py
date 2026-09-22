@@ -219,6 +219,22 @@ def copy_branding() -> int:
     return len(files)
 
 
+def copy_presets() -> int:
+    """Copy key workbook configs and DBC files next to the exe for user convenience."""
+    files_to_copy = [
+        ROOT / "Ather_v1_0_1.xlsx",
+        ROOT / "Ather_v1_0_1.dbc",
+    ]
+    copied = 0
+    for src in files_to_copy:
+        if src.exists():
+            dst = DIST_DIR / src.name
+            shutil.copy2(src, dst)
+            print(f"[build] copied preset config {src.name} -> {dst}")
+            copied += 1
+    return copied
+
+
 def make_zip() -> Path:
     """Zip dist/Bytehound/ into dist/Bytehound_<version>.zip."""
     if not DIST_DIR.exists():
@@ -388,6 +404,7 @@ def main() -> int:
     print(f"\n[build] done. exe at: {exe}")
 
     copy_branding()
+    copy_presets()
 
     if signing_enabled():
         rc = sign_exe(exe)

@@ -49,6 +49,9 @@ BO_ 1537 BC: 8 Vector__XXX
 BO_ 396 VS: 8 Vector__XXX
  SG_ Vehicle_Speed : 8|12@1- (0.1,0) [0|0] "Kmph" Vector__XXX
 
+BO_ 397 MR: 8 Vector__XXX
+ SG_ Motor_RPM : 23|16@0- (1,0) [0|10000] "RPM" Vector__XXX
+
 BO_ 652 VT: 8 Vector__XXX
  SG_ Throttle_2 : 24|16@1+ (0.006,0) [0|0] "" Vector__XXX
 
@@ -75,29 +78,26 @@ BO_ 309 Series_Vol_13_14: 8 Vector__XXX
  SG_ Vol14 : 16|16@1+ (0.0001,0) [0|0] "V" Vector__XXX
 
 BO_ 310 BT1_3: 8 Vector__XXX
- SG_ Battery_Temp_1 : 0|16@1+ (0.01,0) [0|0] " deg C" Vector__XXX
- SG_ Battery_Temp_2 : 16|16@1+ (0.01,0) [0|0] " deg C" Vector__XXX
- SG_ Battery_Temp_3 : 32|16@1+ (0.01,0) [0|0] " deg C" Vector__XXX
+ SG_ Battery_Temp_1 : 16|16@1+ (0.01,0) [0|0] " deg C" Vector__XXX
+ SG_ Battery_Temp_2 : 48|16@1+ (0.01,0) [0|0] " deg C" Vector__XXX
 
 BO_ 311 BT4_6: 8 Vector__XXX
- SG_ Battery_Temp_4 : 16|16@1+ (0.01,0) [0|0] " deg C" Vector__XXX
- SG_ Battery_Temp_5 : 32|16@1+ (0.01,0) [0|0] " deg C" Vector__XXX
- SG_ Battery_Temp_6 : 48|16@1+ (0.01,0) [0|0] " deg C" Vector__XXX
-
-BO_ 517 KS: 8 Vector__XXX
- SG_ Key_Switch : 4|1@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ Battery_Temp_3 : 16|16@1+ (0.01,0) [0|0] " deg C" Vector__XXX
+ SG_ Battery_Temp_4 : 48|16@1+ (0.01,0) [0|0] " deg C" Vector__XXX
 
 BO_ 257 DM: 8 Vector__XXX
  SG_ Drive_Mode : 0|1@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ Key_Switch : 1|1@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 258 CS: 8 Vector__XXX
+ SG_ Charger_Status : 8|8@1+ (1,0) [0|0] "" Vector__XXX
+ SG_ Side_Stand : 32|1@1+ (1,0) [0|0] "" Vector__XXX
+
+BO_ 328 PCL: 8 Vector__XXX
+ SG_ Charge_Power_Limit : 48|16@1+ (1,0) [0|0] "W" Vector__XXX
 
 BO_ 521 SOC: 8 Vector__XXX
  SG_ Battery_SOC : 32|8@1+ (1,0) [0|0] "%" Vector__XXX
-
-BO_ 2 CS: 8 Vector__XXX
- SG_ Charger_Status : 0|8@1+ (1,0) [0|0] "" Vector__XXX
-
-BO_ 3 CC: 8 Vector__XXX
- SG_ Charger_Current : 32|16@1+ (0.001,0) [0|0] "A" Vector__XXX
 
 
 

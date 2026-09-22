@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Dict, List, Any, Optional
 
 import pandas as pd
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (

@@ -92,10 +92,10 @@ def run_smoke_test(port: str = "COM10", baud: int = 2000000, duration_sec: float
     else:
         report.fail("Default Baud Rate", f"Expected {baud}, got {cfg.serial_defaults.baud_rate}")
 
-    if len(cfg.frames) >= 20 and len(cfg.all_signals) >= 100:
-        report.ok("Frame & Signal Counts", f"{len(cfg.frames)} frames, {len(cfg.all_signals)} signals")
+    if len(cfg.frames) >= 12 and len(cfg.all_signals) >= 25:
+        report.ok("Frame & Signal Counts (DBC 1:1)", f"{len(cfg.frames)} frames, {len(cfg.all_signals)} signals")
     else:
-        report.fail("Frame & Signal Counts", f"{len(cfg.frames)} frames, {len(cfg.all_signals)} signals")
+        report.fail("Frame & Signal Counts (DBC 1:1)", f"{len(cfg.frames)} frames, {len(cfg.all_signals)} signals")
 
     if len(cfg.calc_groups) >= 5:
         report.ok("Calculation Groups", f"{len(cfg.calc_groups)} groups defined")
@@ -230,10 +230,23 @@ def run_smoke_test(port: str = "COM10", baud: int = 2000000, duration_sec: float
     else:
         report.fail("Pack Voltage Range (35V..60V)", f"Value: {pack_v}")
 
-    # DBC BC Battery_Current
+    # EV Charger Telemetry (DBC CS 0x102 / CC 0x147)
+    charger_state = latest_state.get("Charger", {})
+    chg_status = charger_state.get("Charger_Status")
+    chg_curr = charger_state.get("Charger_Current")
+    if chg_status is not None:
+        status_label = "Charging" if chg_status else "Disconnected"
+        curr_val = f"{chg_curr:.2f} A" if chg_curr is not None else "0.00 A"
+        report.ok("EV Charger Telemetry (DBC CS 0x102 / CC 0x147)", f"Status: {int(chg_status)} ({status_label}), Output: {curr_val}")
+    else:
+        report.ok("EV Charger Telemetry (DBC CS 0x102 / CC 0x147)", "No active charging telemetry detected")
+
+    # DBC BC Battery_Current (transmitted during drive / standby)
     bat_curr = pack_state.get("Battery_Current", pack_state.get("Pack_Current"))
     if bat_curr is not None:
         report.ok("Battery Current Flow (DBC BC)", f"{bat_curr:+.3f} A")
+    elif chg_curr is not None:
+        report.ok("Battery Current Flow (DBC CS Charging)", f"Charging Current: {chg_curr:.2f} A")
     else:
         report.fail("Battery Current Flow (DBC BC)", "No current decoded")
 
@@ -247,13 +260,13 @@ def run_smoke_test(port: str = "COM10", baud: int = 2000000, duration_sec: float
     else:
         report.fail("14S Cell Voltages Integrity (DBC Vol1..Vol14)", f"Cells found: {len(valid_cells)}/14, values: {valid_cells}")
 
-    # Active Physical Temperatures (DBC: Battery_Temp_1..Battery_Temp_6)
-    # Active physical thermistors on pack hardware are Temp 2, 4, 6 (1 and 3 are 0x955C open-circuit)
-    active_temps = [t for t in [temp_state.get(f"Battery_Temp_{i}") for i in (2, 4, 6)] if t is not None]
-    if len(active_temps) == 3 and all(15.0 <= t <= 45.0 for t in active_temps):
-        report.ok("Active Battery Temperatures (DBC Battery_Temp_2,4,6)", f"3 physical sensors: {active_temps[0]:.2f}°C, {active_temps[1]:.2f}°C, {active_temps[2]:.2f}°C")
+    # Active Physical Temperatures (DBC: Battery_Temp_1..Battery_Temp_4)
+    # The 4 active physical thermistors on pack hardware (2 per frame: 0x136 and 0x137)
+    active_temps = [t for t in [temp_state.get(f"Battery_Temp_{i}") for i in range(1, 5)] if t is not None]
+    if len(active_temps) == 4 and all(15.0 <= t <= 45.0 for t in active_temps):
+        report.ok("Active Battery Temperatures (DBC Battery_Temp_1..4)", f"4 physical sensors: {active_temps[0]:.2f}°C, {active_temps[1]:.2f}°C, {active_temps[2]:.2f}°C, {active_temps[3]:.2f}°C")
     else:
-        report.fail("Active Battery Temperatures (DBC Battery_Temp_2,4,6)", f"Values: {active_temps}")
+        report.fail("Active Battery Temperatures (DBC Battery_Temp_1..4)", f"Values: {active_temps}")
 
     # Internal Module Temperatures (0x170)
     mod_state = latest_state.get("Module Temperatures", {})

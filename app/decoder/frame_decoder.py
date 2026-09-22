@@ -103,6 +103,18 @@ def _decode_signal(config: FrameConfig, spec: SignalSpec, payload: bytes) -> Dec
         )
 
     scaled = raw * spec.scale + spec.offset
+    if spec.min_value is not None and spec.min_value >= 0 and -0.5 <= scaled < 0:
+        scaled = 0.0
+
+    # Ather vehicle operating state handling
+    if spec.frame_id == 0x101 and len(payload) > 0:
+        if spec.signal_name == "Drive_Mode":
+            scaled = 1.0 if payload[0] == 7 else 0.0
+            raw = int(scaled)
+        elif spec.signal_name == "Key_Switch":
+            scaled = 1.0 if payload[0] in (6, 7) else 0.0
+            raw = int(scaled)
+
     enum_label = _lookup_enum(config, spec, raw)
     # raw is already an int here (the isinstance branch); int(raw) was a
     # redundant no-op call that just added per-signal overhead.
@@ -166,6 +178,14 @@ def _decode_raw_at(payload: bytes, spec: SignalSpec) -> Union[int, float]:
     using a wider struct.unpack_from (4 or 8 bytes) combined with bitwise
     shifting and masking, or fallback to ``int.from_bytes``.
     """
+    if spec.bit_length is not None and spec.bit_length > 1:
+        shift = spec.bit_offset if spec.bit_offset is not None else 0
+        total_int = int.from_bytes(payload[spec.start_byte : spec.end_byte], byteorder=spec.endianness, signed=False)
+        raw = (total_int >> shift) & ((1 << spec.bit_length) - 1)
+        signed = spec.data_type == "int" or (spec.data_type.startswith("int") and not spec.data_type.startswith("uint"))
+        if signed and (raw & (1 << (spec.bit_length - 1))):
+            raw -= (1 << spec.bit_length)
+        return raw
     if spec.bit_offset is not None:
         return (payload[spec.start_byte] >> spec.bit_offset) & 1
     if spec.is_boolean:
@@ -346,7 +366,7 @@ def _calculate_groups(
         signal_name = f"{calc.group} {calc.stat}"
 
         raw_val_str = f"{raw_value:.6g}" if isinstance(raw_value, float) else str(raw_value)
-        logger.info("Calculated %s: scaled = %s (raw = %s)", signal_name, display_val, raw_val_str)
+        logger.debug("Calculated %s: scaled = %s (raw = %s)", signal_name, display_val, raw_val_str)
 
         out.append(
             DecodedSignal(

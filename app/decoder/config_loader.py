@@ -914,7 +914,12 @@ def _parse_variables(
                     sig_bit_off = bit_in_byte
             else:
                 sig_start = start + idx * byte_length
-                sig_bit_off = None
+                bit_len_raw = str(row.get("bit_length") or row.get("bits") or row.get("bit_count") or "").strip()
+                sig_bit_len = _to_int(bit_len_raw, field_name="bit_length") if bit_len_raw else None
+                if sig_bit_len is not None:
+                    sig_bit_off = _to_int(explicit_bit_raw.strip(), field_name="bit_index") if explicit_bit_raw.strip() else 0
+                else:
+                    sig_bit_off = None
 
             signals.append(
                 SignalSpec(
@@ -937,6 +942,7 @@ def _parse_variables(
                     min_value=_to_optional_float(row.get("min_value", ""), "variables.min_value"),
                     max_value=_to_optional_float(row.get("max_value", ""), "variables.max_value"),
                     bit_offset=sig_bit_off,
+                    bit_length=sig_bit_len if not is_bool else None,
                 )
             )
         if not is_bool:

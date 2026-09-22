@@ -26,6 +26,7 @@ import logging
 import queue
 import select
 import socket
+import sys
 import threading
 import time
 from dataclasses import dataclass, replace as dataclass_replace
@@ -418,6 +419,7 @@ class PollingWorker(QThread):
         # Frame error reporting throttle
         self._last_frame_error_emit: float = 0.0
         self._last_frame_error_msg: str = ""
+        self._consecutive_frame_errors: int = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -430,6 +432,12 @@ class PollingWorker(QThread):
     def open(self) -> None:
         if self.is_open:
             return
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.winmm.timeBeginPeriod(1)
+            except Exception:
+                pass
         if self.settings.connection_type == "tcp":
             self._serial = TcpSocketWrapper(
                 host=self.settings.host,
@@ -492,6 +500,12 @@ class PollingWorker(QThread):
             self.terminate()
             self.wait(500)
         self._serial = None
+        if sys.platform == "win32":
+            try:
+                import ctypes
+                ctypes.windll.winmm.timeEndPeriod(1)
+            except Exception:
+                pass
 
     def enqueue_priority_tx(self, data: bytes) -> None:
         try:
@@ -664,10 +678,12 @@ class PollingWorker(QThread):
             self.wire_recorded.emit("RX", p.raw, datetime.now())
             if not p.ok:
                 self._crc_errors += 1
+                self._consecutive_frame_errors += 1
                 self._batch.append((p, None))
                 if p.error:
                     self._emit_frame_error_throttled(p.error)
                 continue
+            self._consecutive_frame_errors = 0
             # Any valid response counts as a "the device is alive" signal —
             # reset the counter even if the in-flight entry already expired.
             self._record_poll_success(p.frame_id)
@@ -712,14 +728,23 @@ class PollingWorker(QThread):
             self._last_metrics_emit = now
 
     def _emit_frame_error_throttled(self, msg: str) -> None:
-        """Emit a frame error warning, throttling identical messages to 1Hz."""
+        """Emit a frame error warning, throttling to avoid UI spam on streaming links.
+
+        Isolated single-packet wire glitches (<0.1% rate on USB-UART adapters like CH340
+        at 2,000,000 baud) are counted in self._crc_errors and displayed in the status bar.
+        Warnings in the Activity Log are reserved for sustained failures (>= 5 consecutive
+        errors without any valid frames, indicating wrong baud rate or cable fault),
+        throttled to at most once per 10 seconds.
+        """
         now = time.monotonic()
-        # Extract base message (e.g., "Waveshare CAN checksum mismatch") to group varying got/expected bytes
-        base_msg = msg.split(':')[0]
-        if base_msg != self._last_frame_error_msg or (now - self._last_frame_error_emit) >= 1.0:
-            self.warning_occurred.emit(f"Frame Error: {msg}")
-            self._last_frame_error_emit = now
-            self._last_frame_error_msg = base_msg
+        _LOG.debug("Frame Error: %s (consecutive=%d)", msg, self._consecutive_frame_errors)
+
+        if self._consecutive_frame_errors >= 5:
+            base_msg = msg.split(':')[0]
+            if (now - self._last_frame_error_emit) >= 10.0:
+                self.warning_occurred.emit(f"Frame Error: {msg} (persistent frame errors; check baud rate or wiring)")
+                self._last_frame_error_emit = now
+                self._last_frame_error_msg = base_msg
 
     def _effective_tx_gap_ms(self, min_gap_ms: int = 0) -> int:
         return max(
@@ -807,6 +832,12 @@ class PollingWorker(QThread):
                 except Exception:
                     pass
                 self._serial = None
+            if sys.platform == "win32":
+                try:
+                    import ctypes
+                    ctypes.windll.winmm.timeEndPeriod(1)
+                except Exception:
+                    pass
 
     def _run_loop(self) -> None:
         while not self._stop_event.is_set():
@@ -916,30 +947,27 @@ class PollingWorker(QThread):
                 if self._should_flush():
                     self._flush_batch()
 
-                # Adaptive idle sleep. The default 5 ms keeps continuous-stream
-                # byte draining responsive. When we did no poll this iteration
-                # AND the next schedule deadline is more than 20 ms away, doze
-                # longer to cut idle wakeups by ~4x. 20 ms is well below the
-                # kernel RX buffer fill time even at 115 200 baud (~230 bytes
-                # of RX in that window vs. multi-KB buffers), so byte-drain
-                # latency is not at risk.
-                sleep_s = 0.005
-                if not polled and self._schedules:
-                    # In pipelined mode, an in-flight request means a reply
-                    # may land at any moment — keep the wakeup tight so RX
-                    # drains promptly. Only doze if both nothing is in flight
-                    # AND the next schedule deadline is comfortably away.
-                    can_doze = not (pipelining and self._in_flight)
-                    if can_doze:
-                        with QMutexLocker(self._mutex):
-                            next_due_iter = (
-                                s["next_run"] for s in self._schedules if s["enabled"]
-                            )
-                            next_due = min(next_due_iter, default=None)
-                        if next_due is not None:
-                            until_due = next_due - time.monotonic()
-                            if until_due > 0.02:
-                                sleep_s = 0.02
+                # Adaptive idle sleep.
+                # When data was just read, yield/sleep minimally (0.1ms) to drain
+                # OS buffers immediately and prevent overflows at 2,000,000 baud.
+                # When idle, sleep 2ms (with 1ms Windows timer resolution enabled).
+                had_rx = (self._serial is not None and w > 0)
+                if had_rx:
+                    sleep_s = 0.0001
+                else:
+                    sleep_s = 0.002
+                    if not polled and self._schedules:
+                        can_doze = not (pipelining and self._in_flight)
+                        if can_doze:
+                            with QMutexLocker(self._mutex):
+                                next_due_iter = (
+                                    s["next_run"] for s in self._schedules if s["enabled"]
+                                )
+                                next_due = min(next_due_iter, default=None)
+                            if next_due is not None:
+                                until_due = next_due - time.monotonic()
+                                if until_due > 0.02:
+                                    sleep_s = 0.02
                 time.sleep(sleep_s)
 
             except (serial.SerialException, OSError) as exc:

@@ -313,9 +313,12 @@ class SignalSpec:
     min_value: Optional[float] = None
     max_value: Optional[float] = None
     bit_offset: Optional[int] = None
+    bit_length: Optional[int] = None
 
     @property
     def is_boolean(self) -> bool:
+        if self.bit_length is not None and self.bit_length > 1:
+            return False
         return self.data_type in ("bool", "boolean") or self.bit_offset is not None
 
     @property
