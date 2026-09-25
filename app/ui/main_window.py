@@ -1283,6 +1283,10 @@ class MainWindow(
         """
         if not hasattr(self, "_counts_label"):
             return
+        dropped_str = ""
+        dropped = getattr(self, "_backpressure_dropped_count", 0)
+        if dropped > 0:
+            dropped_str = f"  |  Dropped: {dropped:>4d}"
         self._counts_label.setText(
             f"Frames: {self._packet_count:>6d}"
             f"  |  Errors: {self._error_count:>4d}"
@@ -1290,6 +1294,7 @@ class MainWindow(
             f"  |  RX: {self._fmt_bytes(self._rx_bytes)}"
             f"  |  TX: {self._fmt_bytes(self._tx_bytes)}"
             f"  |  Lat: {self._delta_t_ms:>6.1f} ms"
+            f"{dropped_str}"
         )
 
     def _on_metrics_updated(self, timeouts: int, crc: int, rx_bytes: int) -> None:
