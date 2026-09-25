@@ -440,14 +440,22 @@ class AnalysisSuiteWindow(QMainWindow):
             self._log_activity(f"    {line}")
 
     def _popup_information(self, title: str, message: str) -> None:
+        """Report routine feedback without interrupting the user's workflow."""
         self._log_popup("INFO", title, message)
         _log.info("[%s] %s", title, message.replace("\n", " · "))
-        QMessageBox.information(self, title, message)
+        self._status.showMessage(f"{title}: {message.replace(chr(10), ' · ')}", 8000)
 
     def _popup_warning(self, title: str, message: str) -> None:
+        """Report recoverable errors non-modally.
+
+        Analysis actions are often used while comparing several large logs.
+        A modal QMessageBox steals focus and can result in a stack of dialogs
+        when multiple files finish loading together, so status/activity log
+        feedback is used instead.
+        """
         self._log_popup("WARN", title, message)
         _log.warning("[%s] %s", title, message.replace("\n", " · "))
-        QMessageBox.warning(self, title, message)
+        self._status.showMessage(f"{title}: {message.replace(chr(10), ' · ')}", 12000)
 
     # ──────────────────────────────────────────────────────────────────
     # UI construction

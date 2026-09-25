@@ -41,23 +41,26 @@ class WelcomeDashboardWidget(QWidget):
         scroll.setFrameShape(QFrame.Shape.NoFrame)
         scroll.setStyleSheet("QScrollArea { border: none; background: transparent; }")
 
-        container = QWidget()
+        # Parent every widget immediately.  A parentless QWidget briefly owns
+        # a native Windows window before a layout reparents it, which can flash
+        # as a blank top-level Bytehound window during startup.
+        container = QWidget(scroll)
         container.setObjectName("welcomeContainer")
         main_layout = QVBoxLayout(container)
         main_layout.setContentsMargins(24, 24, 24, 24)
         main_layout.setSpacing(20)
 
         # Header Banner
-        header = QFrame()
+        header = QFrame(container)
         header.setObjectName("welcomeHeader")
         header.setFrameShape(QFrame.Shape.StyledPanel)
         header_layout = QHBoxLayout(header)
 
         title_v = QVBoxLayout()
-        app_title = QLabel("🐾 Bytehound Telemetry & Control Suite")
+        app_title = QLabel("🐾 Bytehound Telemetry & Control Suite", header)
         app_title.setObjectName("welcomeTitle")
         
-        app_subtitle = QLabel("Framed Serial Telemetry Logger, Command Controller & Multi-Grid Oscilloscope")
+        app_subtitle = QLabel("Framed Serial Telemetry Logger, Command Controller & Multi-Grid Oscilloscope", header)
         app_subtitle.setObjectName("welcomeSubtitle")
 
         title_v.addWidget(app_title)
@@ -65,7 +68,7 @@ class WelcomeDashboardWidget(QWidget):
         header_layout.addLayout(title_v)
         header_layout.addStretch()
 
-        help_btn = QPushButton("📚 Open User Guide")
+        help_btn = QPushButton("📚 Open User Guide", header)
         help_btn.setAccessibleName("Open User Guide")
         help_btn.setAccessibleDescription("Opens the documentation for Bytehound in your default browser.")
         help_btn.clicked.connect(self.open_manual_requested.emit)
@@ -78,14 +81,14 @@ class WelcomeDashboardWidget(QWidget):
         grid_layout.setSpacing(16)
 
         # Step 1: Hardware Connection Card
-        step1_box = QGroupBox("1. Hardware Connection")
+        step1_box = QGroupBox("1. Hardware Connection", container)
         s1_layout = QVBoxLayout(step1_box)
 
-        self.port_combo = QComboBox()
+        self.port_combo = QComboBox(step1_box)
         self.port_combo.setAccessibleName("Serial Port Selection")
         self.port_combo.setAccessibleDescription("Select the COM port of the connected hardware.")
         
-        self.baud_combo = QComboBox()
+        self.baud_combo = QComboBox(step1_box)
         self.baud_combo.setAccessibleName("Baud Rate Selection")
         self.baud_combo.setAccessibleDescription("Select the baud rate for the serial connection.")
         self.baud_combo.addItems(["9600", "19200", "38400", "57600", "115200", "230400", "460800", "921600", "1000000", "2000000"])
@@ -95,19 +98,19 @@ class WelcomeDashboardWidget(QWidget):
             self.baud_combo.addItem(saved_baud)
         self.baud_combo.setCurrentText(saved_baud)
 
-        self.refresh_ports_btn = QPushButton("🔄 Refresh Ports")
+        self.refresh_ports_btn = QPushButton("🔄 Refresh Ports", step1_box)
         self.refresh_ports_btn.setAccessibleName("Refresh Ports Button")
 
         port_h = QHBoxLayout()
-        port_h.addWidget(QLabel("COM Port:"))
+        port_h.addWidget(QLabel("COM Port:", step1_box))
         port_h.addWidget(self.port_combo, 1)
         port_h.addWidget(self.refresh_ports_btn)
 
         baud_h = QHBoxLayout()
-        baud_h.addWidget(QLabel("Baud Rate:"))
+        baud_h.addWidget(QLabel("Baud Rate:", step1_box))
         baud_h.addWidget(self.baud_combo, 1)
 
-        self.connect_btn = QPushButton("⚡ Connect Serial Device")
+        self.connect_btn = QPushButton("⚡ Connect Serial Device", step1_box)
         self.connect_btn.setAccessibleName("Connect Serial Device Button")
         self.connect_btn.setAccessibleDescription("Initiates the serial connection using the selected port and baud rate.")
         self.connect_btn.clicked.connect(self._on_connect_clicked)
@@ -118,24 +121,24 @@ class WelcomeDashboardWidget(QWidget):
         s1_layout.addWidget(self.connect_btn)
 
         # Step 2: Protocol Selection Card
-        step2_box = QGroupBox("2. Protocol Configuration")
+        step2_box = QGroupBox("2. Protocol Configuration", container)
         s2_layout = QVBoxLayout(step2_box)
 
-        s2_desc = QLabel("Select a preset protocol template or load your custom configuration file:")
+        s2_desc = QLabel("Select a preset protocol template or load your custom configuration file:", step2_box)
 
-        self.preset_combo = QComboBox()
+        self.preset_combo = QComboBox(step2_box)
         for p_name in BUILTIN_PRESETS.keys():
             self.preset_combo.addItem(f"Preset: {p_name}", p_name)
 
-        apply_preset_btn = QPushButton("✓ Use Selected Preset")
+        apply_preset_btn = QPushButton("✓ Use Selected Preset", step2_box)
         apply_preset_btn.setAccessibleName("Apply Preset Button")
         apply_preset_btn.clicked.connect(self._on_preset_applied)
 
-        load_file_btn = QPushButton("📂 Load Config (.xlsx / CSV)")
+        load_file_btn = QPushButton("📂 Load Config (.xlsx / CSV)", step2_box)
         load_file_btn.setAccessibleName("Load Configuration File Button")
         load_file_btn.clicked.connect(self.load_config_requested.emit)
 
-        wizard_btn = QPushButton("🪄 Open Visual Protocol Wizard")
+        wizard_btn = QPushButton("🪄 Open Visual Protocol Wizard", step2_box)
         wizard_btn.setAccessibleName("Open Protocol Wizard Button")
         wizard_btn.clicked.connect(self.open_wizard_requested.emit)
 
@@ -150,10 +153,10 @@ class WelcomeDashboardWidget(QWidget):
         s2_layout.addWidget(wizard_btn)
 
         # Step 3: Recent Configurations & Quick Launch Card
-        step3_box = QGroupBox("3. Recent Profiles")
+        step3_box = QGroupBox("3. Recent Profiles", container)
         s3_layout = QVBoxLayout(step3_box)
 
-        self.recent_list = QListWidget()
+        self.recent_list = QListWidget(step3_box)
         self.recent_list.setMinimumHeight(120)
         self.recent_list.setAccessibleName("Recent Profiles List")
         self.recent_list.setAccessibleDescription("Double click a recent profile to instantly connect and load its configuration.")

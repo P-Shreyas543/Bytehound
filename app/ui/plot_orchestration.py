@@ -561,19 +561,19 @@ class PlotOrchestrationMixin:
         squash the plot underneath. Each menu row carries a colour
         swatch, the signal name, and a remove (✕) button.
         """
-        strip = QWidget()
+        strip = QWidget(self._panel_strip_container)
         strip.setObjectName(f"panelStrip_{panel_idx}")
         strip.setMaximumHeight(36)
         hl = QHBoxLayout(strip)
         hl.setContentsMargins(2, 2, 2, 2)
         hl.setSpacing(4)
-        lbl = QLabel(f"P{panel_idx + 1}:")
+        lbl = QLabel(f"P{panel_idx + 1}:", strip)
         lbl.setStyleSheet("font-weight:bold; font-size:9pt;")
         hl.addWidget(lbl)
 
         panel = self._plot_panels[panel_idx] if panel_idx < len(self._plot_panels) else None
         sig_count = len(panel.assigned_keys) if panel else 0
-        signals_btn = QToolButton()
+        signals_btn = QToolButton(strip)
         signals_btn.setText(self._panel_signals_button_label(sig_count))
         signals_btn.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         signals_btn.setFixedHeight(24)
@@ -588,7 +588,7 @@ class PlotOrchestrationMixin:
         signals_btn.setEnabled(sig_count > 0)
         hl.addWidget(signals_btn)
 
-        add_btn = QPushButton("+ Add")
+        add_btn = QPushButton("+ Add", strip)
         add_btn.setFixedHeight(24)
         add_btn.setStyleSheet("font-size:9pt; padding: 0 6px;")
         add_btn.clicked.connect(lambda _, i=panel_idx: self._on_panel_add_signal(i))
@@ -596,7 +596,7 @@ class PlotOrchestrationMixin:
         # Per-panel Y-scale mode. Fit/Loose/Expand/Manual — see _Y_SCALE_MODES.
         # Expand mode is the noise-killer: axis only grows, so jittery signals
         # don't make it breathe on every redraw.
-        y_scale_cb = QComboBox()
+        y_scale_cb = QComboBox(strip)
         y_scale_cb.setFixedHeight(24)
         y_scale_cb.setStyleSheet("QComboBox { font-size: 9pt; padding: 0 4px; }")
         current_mode = panel.y_scale_mode if panel else "fit"

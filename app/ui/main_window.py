@@ -59,7 +59,12 @@ APP_DISPLAY_NAME = "Bytehound"
 # state from a different schema produces stranded docks at the edges of
 # the window. On mismatch we drop the stored state and fall back to the
 # default layout — users see one layout reset, not a broken window.
-_WINDOW_STATE_VERSION = 1
+# Bump this when dock topology or floating-window restoration changes.  The
+# previous version could restore a QDockWidget as a tiny independent
+# top-level "Bytehound" window during startup.
+# v3: force-discard state that had ActivityDock stored with floating
+#     coordinates (402, 349), causing the startup ghost popup.
+_WINDOW_STATE_VERSION = 3
 
 # Bumped when default QSettings values change so users get migrated to
 # the new defaults without losing values they explicitly customised. The
@@ -373,7 +378,11 @@ class MainWindow(
         self._build_ui()
         if hasattr(self, "_console_dock") and self._console_dock is not None:
             self._console_dock.visibilityChanged.connect(self._on_console_dock_visibility_changed)
-        self._load_default_config()
+        # Let Qt paint the shell before reading Excel/CSV configuration and
+        # rebuilding all signal/table/editor widgets.  This keeps startup
+        # responsive and prevents the first window paint from appearing frozen
+        # on slower machines or network-backed Documents folders.
+        QTimer.singleShot(0, self._load_default_config)
         self._refresh_action_state()
         # Rebuild icon tints after all widgets exist so secondary menu/toolbar
         # icons get the correct colour even without a manual theme switch.
@@ -901,6 +910,25 @@ class MainWindow(
                 self.setGeometry(new_x, new_y, new_w, new_h)
         if state:
             self.restoreState(state)
+            # Ensure any dock restored as floating is physically re-docked into the main window
+            _dock_meta = (
+                ("_plot_dock", Qt.DockWidgetArea.BottomDockWidgetArea),
+                ("_bitfields_dock", Qt.DockWidgetArea.RightDockWidgetArea),
+                ("_enums_dock", Qt.DockWidgetArea.RightDockWidgetArea),
+                ("_tx_dock", Qt.DockWidgetArea.RightDockWidgetArea),
+                ("_editor_dock", Qt.DockWidgetArea.RightDockWidgetArea),
+                ("_console_dock", Qt.DockWidgetArea.RightDockWidgetArea),
+                ("_activity_dock", Qt.DockWidgetArea.RightDockWidgetArea),
+            )
+            for name, area in _dock_meta:
+                d = getattr(self, name, None)
+                if d is not None and d.isFloating():
+                    d.setFloating(False)
+                    self.addDockWidget(area, d)
+
+            self._settings.setValue("window/state", self.saveState())
+
+
 
     # ------------------------------------------------------------------
     # Grid management

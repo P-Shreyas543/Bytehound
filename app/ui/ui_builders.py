@@ -298,7 +298,7 @@ class UIBuildersMixin:
 
         toolbar.addSeparator()
 
-        spacer = QWidget()
+        spacer = QWidget(toolbar)
         spacer.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         toolbar.addWidget(spacer)
 
@@ -381,11 +381,11 @@ class UIBuildersMixin:
         # Config/logging status labels — kept as hidden attributes so
         # _refresh_config_status / logging helpers can still update their text.
         # Visible via View → Config Info...
-        self._config_label = QLabel("No config loaded")
-        self._protocol_label = QLabel("-")
-        self._frames_label = QLabel("-")
-        self._logging_label = QLabel("Logging: stopped")
-        self._open_log_btn = QPushButton("\U0001f4c2")
+        self._config_label = QLabel("No config loaded", self)
+        self._protocol_label = QLabel("-", self)
+        self._frames_label = QLabel("-", self)
+        self._logging_label = QLabel("Logging: stopped", self)
+        self._open_log_btn = QPushButton("\U0001f4c2", self)
         self._open_log_btn.setToolTip("Open Log Folder")
         self._open_log_btn.clicked.connect(self._on_open_log_folder)
 
@@ -483,7 +483,10 @@ class UIBuildersMixin:
         self._console = QPlainTextEdit(self)
         self._console.setReadOnly(True)
         self._console.setPlaceholderText("Raw RX/TX frames will appear here...")
-        self._console.setMaximumBlockCount(10000)
+        # Keep the live console bounded.  At high frame rates an unbounded
+        # document becomes increasingly expensive for Qt to relayout and is
+        # a common source of gradual UI lag during long sessions.
+        self._console.setMaximumBlockCount(2500)
         self._console.setFont(QFont("Consolas", 10))
 
         self._console_dock = QDockWidget("Raw Console", self)
@@ -495,7 +498,7 @@ class UIBuildersMixin:
         self._activity_log = QPlainTextEdit(self)
         self._activity_log.setReadOnly(True)
         self._activity_log.setPlaceholderText("Application activity will appear here...")
-        self._activity_log.setMaximumBlockCount(5000)
+        self._activity_log.setMaximumBlockCount(2500)
         self._activity_log.setFont(QFont("Consolas", 10))
 
         self._activity_dock = QDockWidget("Activity Log", self)
@@ -630,13 +633,13 @@ class UIBuildersMixin:
         """Initialise sidebar-only widgets (not visible anywhere in the UI).
         These attributes are read by _on_load_recent_config, _populate_polling_list, etc.
         """
-        self._recent_config_combo = QComboBox()
+        self._recent_config_combo = QComboBox(self)
         self._recent_config_combo.setMinimumWidth(120)
 
-        self._poll_status_label = QLabel("No targets loaded")
+        self._poll_status_label = QLabel("No targets loaded", self)
         self._poll_status_label.setWordWrap(True)
 
-        self._polling_list = QListWidget()
+        self._polling_list = QListWidget(self)
         self._polling_list.setMaximumHeight(130)
         self._polling_list.setEnabled(False)
 
