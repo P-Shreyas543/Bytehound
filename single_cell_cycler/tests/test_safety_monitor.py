@@ -2,9 +2,12 @@
 
 from single_cell_cycler.comm.packet_codec import CellDataTelemetry, FaultSoCTelemetry
 from single_cell_cycler.comm.protocol_defs import (
+    ALL_CONTROL_FRAMES,
     BMSFaultFlags,
     FRAME_CHARGE_CTRL,
+    FRAME_CHARGE_SEL,
     FRAME_DISCHARGE_CTRL,
+    FRAME_DISCHARGE_SEL,
     FRAME_RELAY_CTRL,
 )
 from single_cell_cycler.core.safety_monitor import SafetyLimits, SafetyMonitor
@@ -37,11 +40,14 @@ def test_bms_fault_detection():
     assert monitor.is_tripped is True
     assert "Cell Over Temperature" in monitor.trip_reason
 
-    # Verify that emergency commands (Priority 0) were dispatched immediately:
-    # 0x6002 = 0, 0x6003 = 0, 0x6000 = 0
+    # Verify that all 5 emergency commands (Priority 0) were dispatched immediately:
+    # 0x6002 = 0, 0x6003 = 0, 0x6001 = 0, 0x6004 = 0, 0x6000 = 0
     assert (FRAME_CHARGE_CTRL, 0x00, 0) in dispatched_commands
     assert (FRAME_DISCHARGE_CTRL, 0x00, 0) in dispatched_commands
+    assert (FRAME_CHARGE_SEL, 0x00, 0) in dispatched_commands
+    assert (FRAME_DISCHARGE_SEL, 0x00, 0) in dispatched_commands
     assert (FRAME_RELAY_CTRL, 0x00, 0) in dispatched_commands
+    assert len(dispatched_commands) == 5
 
 
 def test_software_overvoltage_guardrail():
@@ -55,7 +61,9 @@ def test_software_overvoltage_guardrail():
     assert monitor.check_telemetry(CellDataTelemetry(4.280, 1.0, 25.0, 25.0)) is False
     assert monitor.is_tripped is True
     assert "exceeded safety limit" in monitor.trip_reason
-    assert len(dispatched_commands) == 3
+    assert len(dispatched_commands) == 5
+    for frame_id in ALL_CONTROL_FRAMES:
+        assert (frame_id, 0x00, 0) in dispatched_commands
 
 
 def test_manual_emergency_stop():
@@ -66,4 +74,6 @@ def test_manual_emergency_stop():
     monitor.emergency_stop()
     assert monitor.is_tripped is True
     assert "MANUAL EMERGENCY STOP" in monitor.trip_reason
-    assert len(dispatched_commands) == 3
+    assert len(dispatched_commands) == 5
+    for frame_id in ALL_CONTROL_FRAMES:
+        assert (frame_id, 0x00, 0) in dispatched_commands

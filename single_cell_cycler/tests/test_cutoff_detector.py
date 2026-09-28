@@ -52,14 +52,13 @@ def test_current_taper_cutoff_arming_delay():
         cutoffs=[CutoffCondition(CutoffType.CURRENT_MIN, 0.050, True)],
     )
 
-    # At t=1.0s, current is 0.02A (ramp-up transient): should NOT trigger due to arming delay
+    # At t=1.0s, current is 0.02A (ramp-up transient): should NOT trigger
     res = detector.evaluate(step, CellDataTelemetry(4.200, 0.020, 25.0, 25.0), 1.0, 1.0)
     assert not res.is_triggered
 
-    # At t=5.0s, current has tapered to 0.040A: should trigger!
+    # Current taper detection is commented out per user request: should NOT trigger even when current tapered
     res = detector.evaluate(step, CellDataTelemetry(4.200, 0.040, 25.0, 25.0), 5.0, 100.0)
-    assert res.is_triggered
-    assert "Current tapered to 0.040" in res.trigger_reason
+    assert not res.is_triggered
 
 
 def test_duration_and_capacity_cutoffs():

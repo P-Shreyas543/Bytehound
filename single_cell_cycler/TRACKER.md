@@ -57,6 +57,7 @@ Key Objectives:
   - Bit 5: Cell Under Temperature (CUT)
 
 ### Hardware Commands (Host -> BMS, 1 byte each)
+> For detailed firmware upgrade recommendations, autonomous safety watchdog, and automated comparator reset implementation, see [FirmwareUpdate_required.md](../FirmwareUpdate_required.md).
 
 #### 0x6000: Cell Relay Control
 | Bit | Parameter | Value | Function |

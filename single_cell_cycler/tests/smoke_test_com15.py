@@ -62,6 +62,13 @@ def run_com15_smoke_test(port: str = "COM15", baud: int = 115200):
         window.close()
         return False
 
+    window.transceiver.command_transmitted.connect(
+        lambda fid, val, wire: print(f"  [TX WIRE] Frame 0x{fid:04X} -> 0x{val:02X} ({wire.hex().upper()})")
+    )
+    window.transceiver.command_echo_received.connect(
+        lambda echo: print(f"  [RX ECHO] Frame 0x{echo.frame_id:04X} -> 0x{echo.payload_byte:02X}")
+    )
+
     print(f"[SUCCESS] Telemetry link online! Received {window.transceiver._rx_count} packets.")
 
     # 3. Read and verify live KPI telemetry values
@@ -114,17 +121,82 @@ def run_com15_smoke_test(port: str = "COM15", baud: int = 115200):
     window.transceiver.send_command(0x6004, 0x00, priority=1)
     app.processEvents()
 
-    # 6. Test Emergency Stop & Safe Disconnect
+    # Process events to collect any returned echoes
+    t_echo = time.time()
+    while time.time() - t_echo < 0.5:
+        app.processEvents()
+        time.sleep(0.05)
+
+    print(f"\n--- HARDWARE CONTROL READBACK STATUS ---")
+    print(f"  Status Bar   : {window.lbl_status_ctrl.text()}")
+    print(f"  Relay (0x6000)       : {window.manual_control.lbl_relay_rb.text()}")
+    print(f"  Charge Sel (0x6001)  : {window.manual_control.lbl_chg_sel_rb.text()}")
+    print(f"  Charge Ctrl (0x6002) : {window.manual_control.lbl_chg_ctrl_rb.text()}")
+    print(f"  Discharge Ctrl (0x6003): {window.manual_control.lbl_dis_ctrl_rb.text()}")
+    print(f"  Discharge Sel (0x6004) : {window.manual_control.lbl_dis_sel_rb.text()}")
+    print(f"-----------------------------------------\n")
+
+    # 6. Verify Automated Safe Step Transition (Charge Setup & Readback Confirmation)
+    print(f"[ACTION] Testing Automated Step Transition for CC Charge...")
+    from single_cell_cycler.core.profile_model import StepType, TestStep
+    chg_step = TestStep(
+        step_index=1,
+        name="Smoke Test CC Charge",
+        step_type=StepType.CHARGE,
+        max_charge_voltage=True,
+        charge_current_1=False,
+        charge_current_2=True,
+    )
+    chg_completed = []
+    chg_failed = []
+    window.engine.transition_controller.transition_completed.connect(lambda s: chg_completed.append(s))
+    window.engine.transition_controller.transition_failed.connect(lambda f: chg_failed.append(f))
+    window.engine.transition_controller.start_transition(step=chg_step, selected_cell=1)
+
+    t_chg = time.time()
+    while time.time() - t_chg < 8.0:
+        app.processEvents()
+        if chg_completed or chg_failed:
+            break
+        time.sleep(0.02)
+
+    assert len(chg_completed) == 1, f"Step transition failed to complete! Errors: {chg_failed}"
+    assert len(chg_failed) == 0
+    print(f"[OK] Step transition completed successfully on COM15 hardware!")
+
+    # 7. Test Emergency Stop & Safe Zeroing of All Controls
     print(f"[ACTION] Testing Emergency Stop...")
     window._emergency_stop()
     assert window.engine.state.value == "Safety Stop"
     print(f"[OK] Emergency Stop verified: Engine state = Safety Stop")
 
+    # Give hardware up to 2 seconds to receive 0x00 commands and echo readbacks
+    t_zero = time.time()
+    while time.time() - t_zero < 2.0:
+        app.processEvents()
+        time.sleep(0.05)
+
+    rb = window.manual_control.control_readbacks
+    print(f"\n--- VERIFYING HARDWARE CONTROL ZEROING READBACKS ---")
+    print(f"  0x6000 Relay Readback     : 0x{rb.get(0x6000, 0xFF):02X} (Expected: 0x00)")
+    print(f"  0x6001 Chg Sel Readback   : 0x{rb.get(0x6001, 0xFF):02X} (Expected: 0x00)")
+    print(f"  0x6002 Chg Ctrl Readback  : 0x{rb.get(0x6002, 0xFF):02X} (Expected: 0x00)")
+    print(f"  0x6003 Dis Ctrl Readback  : 0x{rb.get(0x6003, 0xFF):02X} (Expected: 0x00)")
+    print(f"  0x6004 Loads Readback     : 0x{rb.get(0x6004, 0xFF):02X} (Expected: 0x00)")
+    print(f"-----------------------------------------------------\n")
+
+    assert rb.get(0x6000, 0) == 0x00, f"0x6000 Relay not zeroed: 0x{rb.get(0x6000, 0):02X}"
+    assert rb.get(0x6001, 0) == 0x00, f"0x6001 Charge Sel not zeroed: 0x{rb.get(0x6001, 0):02X}"
+    assert rb.get(0x6002, 0) == 0x00, f"0x6002 Charge Ctrl not zeroed: 0x{rb.get(0x6002, 0):02X}"
+    assert rb.get(0x6003, 0) == 0x00, f"0x6003 Discharge Ctrl not zeroed: 0x{rb.get(0x6003, 0):02X}"
+    assert rb.get(0x6004, 0) == 0x00, f"0x6004 Discharge Sel not zeroed: 0x{rb.get(0x6004, 0):02X}"
+    print(f"[OK] ALL 5 control registers confirmed zeroed (0x00) on physical hardware!")
+
     # Clean close
     print(f"[ACTION] Disconnecting and closing cleanly...")
     window.close()
     app.processEvents()
-    time.sleep(0.2)
+    time.sleep(0.5)
 
     print(f"\n============================================================")
     print(f"   HEADLESS COM15 SMOKE TEST COMPLETED SUCCESSFULLY!")

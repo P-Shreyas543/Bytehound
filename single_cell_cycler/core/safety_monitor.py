@@ -9,8 +9,11 @@ from typing import Callable, Optional
 
 from ..comm.packet_codec import CellDataTelemetry, FaultSoCTelemetry
 from ..comm.protocol_defs import (
+    ALL_CONTROL_FRAMES,
     FRAME_CHARGE_CTRL,
+    FRAME_CHARGE_SEL,
     FRAME_DISCHARGE_CTRL,
+    FRAME_DISCHARGE_SEL,
     FRAME_RELAY_CTRL,
     BMSFaultFlags,
     FAULT_LABELS,
@@ -146,11 +149,8 @@ class SafetyMonitor:
         logger.critical(f"Executing Emergency Safety Shutdown: {reason}")
 
         try:
-            # 1. Disable Charge (0x6002 = 0)
-            self._command_sender(FRAME_CHARGE_CTRL, 0x00, 0)
-            # 2. Disable Discharge (0x6003 = 0)
-            self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 0)
-            # 3. Open Cell Relays (0x6000 = 0)
-            self._command_sender(FRAME_RELAY_CTRL, 0x00, 0)
+            # Safely de-energize all 5 control registers (0x6000 - 0x6004) with Priority 0
+            for frame_id in ALL_CONTROL_FRAMES:
+                self._command_sender(frame_id, 0x00, 0)
         except Exception as exc:
             logger.error(f"Error during emergency shutdown commands: {exc}")

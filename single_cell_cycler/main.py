@@ -36,6 +36,7 @@ def main():
     app.setOrganizationName("Bytehound")
 
     window = MainWindow()
+    app.aboutToQuit.connect(window.close)
     window.show()
 
     sys.exit(app.exec())

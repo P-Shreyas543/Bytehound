@@ -5,6 +5,7 @@ from .cutoff_detector import CutoffDetector, CutoffResult
 from .metrics_tracker import CycleSummary, MetricsTracker, StepMetrics
 from .safety_monitor import SafetyLimits, SafetyMonitor
 from .cycler_engine import CyclerEngine, EngineState
+from .step_transition_controller import StepTransitionController, TransitionPhase
 
 __all__ = [
     "CutoffCondition",
@@ -21,4 +22,6 @@ __all__ = [
     "SafetyMonitor",
     "CyclerEngine",
     "EngineState",
+    "StepTransitionController",
+    "TransitionPhase",
 ]

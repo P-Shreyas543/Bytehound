@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 from ..comm.packet_codec import (
     BoardParamsTelemetry,
     CellDataTelemetry,
+    CommandEchoTelemetry,
     FaultSoCTelemetry,
 )
 from ..comm.protocol_defs import (
@@ -30,6 +31,7 @@ from .cutoff_detector import CutoffDetector
 from .metrics_tracker import CycleSummary, MetricsTracker, StepMetrics
 from .profile_model import StepType, TestRecipe, TestStep
 from .safety_monitor import SafetyMonitor
+from .step_transition_controller import StepTransitionController
 
 logger = logging.getLogger("SingleCellCycler.Engine")
 
@@ -68,6 +70,13 @@ class CyclerEngine(QObject):
         self.metrics_tracker = MetricsTracker()
         self.cutoff_detector = CutoffDetector()
         self.safety_monitor = SafetyMonitor(command_sender)
+        self.transition_controller = StepTransitionController(
+            command_sender=command_sender,
+            parent=self,
+        )
+        self.transition_controller.transition_completed.connect(self._on_transition_completed)
+        self.transition_controller.transition_status.connect(self._on_transition_status)
+        self.transition_controller.transition_failed.connect(self._on_transition_failed)
 
         # Execution tracking
         self.selected_cell: int = 1  # 1 = Cell 1 (bit 1 = 0), 2 = Cell 2 (bit 1 = 1)
@@ -99,30 +108,32 @@ class CyclerEngine(QObject):
         self.safety_monitor.last_telemetry_time = time.time()
         self.metrics_tracker.reset_all()
         self._reset_execution_state()
-        self._set_state(EngineState.RUNNING, "Starting Test Profile")
+        self._set_state(EngineState.STEP_TRANSITION, "Starting Test Profile: initializing hardware...")
         self._execute_next_step()
 
     def pause_test(self) -> None:
-        if self.state == EngineState.RUNNING:
+        if self.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION):
+            self.transition_controller.abort()
+            self._safe_idle_hardware()
             self._set_state(EngineState.PAUSED, "Test Paused by Operator")
-            # Set hardware to safe holding state (disable charge & discharge)
-            self._command_sender(FRAME_CHARGE_CTRL, 0x00, 1)
-            self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 1)
 
     def resume_test(self) -> None:
         if self.state == EngineState.PAUSED:
-            self._set_state(EngineState.RUNNING, "Resuming Test Profile")
             if self.active_step:
                 self._apply_hardware_for_step(self.active_step)
+            else:
+                self._set_state(EngineState.RUNNING, "Resuming Test Profile")
 
     def stop_test(self) -> None:
         """Gracefully stop test and disconnect cell."""
+        self.transition_controller.abort()
         self._safe_idle_hardware()
         self._set_state(EngineState.ABORTED, "Test Aborted by Operator")
 
     def skip_step(self) -> None:
         """Skip current step and advance to the next step immediately."""
-        if self.state in (EngineState.RUNNING, EngineState.PAUSED) and self.active_step:
+        if self.state in (EngineState.RUNNING, EngineState.PAUSED, EngineState.STEP_TRANSITION) and self.active_step:
+            self.transition_controller.abort()
             logger.info(f"Skipping active step: {self.active_step.name}")
             finished_step = self.metrics_tracker.complete_step("Skipped by Operator")
             self.step_completed.emit(finished_step)
@@ -131,10 +142,16 @@ class CyclerEngine(QObject):
 
     def emergency_stop(self) -> None:
         """Instant emergency shutdown."""
+        self.transition_controller.abort()
+        self._safe_idle_hardware()
         if self.state != EngineState.SAFETY_STOP:
             self.safety_monitor.emergency_stop()
             self._set_state(EngineState.SAFETY_STOP, "EMERGENCY STOP EXECUTED")
             self.safety_tripped.emit("Manual Emergency Stop")
+
+    def on_command_echo(self, echo: CommandEchoTelemetry) -> None:
+        """Process incoming 0x6000-0x6004 readback frame."""
+        self.transition_controller.on_command_echo(echo)
 
     def on_cell_telemetry(self, telemetry: CellDataTelemetry) -> None:
         """Main real-time update loop driven by incoming 0x1000 frames."""
@@ -143,6 +160,8 @@ class CyclerEngine(QObject):
         # 1. Safety check
         if not self.safety_monitor.check_telemetry(telemetry):
             if self.state != EngineState.SAFETY_STOP:
+                self.transition_controller.abort()
+                self._safe_idle_hardware()
                 self._set_state(EngineState.SAFETY_STOP, self.safety_monitor.trip_reason)
                 self.safety_tripped.emit(self.safety_monitor.trip_reason)
             return
@@ -174,6 +193,8 @@ class CyclerEngine(QObject):
         """Driven by incoming 0x3000 frames."""
         if not self.safety_monitor.check_bms_faults(fault_soc):
             if self.state != EngineState.SAFETY_STOP:
+                self.transition_controller.abort()
+                self._safe_idle_hardware()
                 self._set_state(EngineState.SAFETY_STOP, self.safety_monitor.trip_reason)
                 self.safety_tripped.emit(self.safety_monitor.trip_reason)
 
@@ -215,7 +236,17 @@ class CyclerEngine(QObject):
 
         # Regular step (Charge, Discharge, Rest)
         self.active_step = step
-        self._apply_hardware_for_step(step)
+        self._set_state(EngineState.STEP_TRANSITION, f"Configuring hardware for {step.name}...")
+        self.transition_controller.start_transition(step=step, selected_cell=self.selected_cell)
+
+    def _on_transition_status(self, msg: str) -> None:
+        logger.info(f"Transition Status: {msg}")
+        self.state_changed.emit(self.state.value, msg)
+
+    def _on_transition_completed(self, step: TestStep) -> None:
+        if self.state != EngineState.STEP_TRANSITION:
+            return
+        self._set_state(EngineState.RUNNING, f"Executing: {step.name}")
         self.metrics_tracker.start_step(
             cycle_index=self.current_cycle,
             step_index=self.current_step_idx + 1,
@@ -225,66 +256,27 @@ class CyclerEngine(QObject):
         )
         self.step_started.emit(self.current_cycle, self.current_step_idx + 1, step.name, step.step_type.value)
 
+    def _on_transition_failed(self, error_msg: str) -> None:
+        self._safe_idle_hardware()
+        self._set_state(EngineState.SAFETY_STOP, f"Step Transition Error: {error_msg}")
+        self.safety_tripped.emit(f"Hardware misaligned: {error_msg}")
+
     def _apply_hardware_for_step(self, step: TestStep) -> None:
-        """Translate step configuration into exact 0x6000 - 0x6004 TX commands."""
-        # 1. Ensure Cell Relay is enabled and correct cell selected
-        # Bit 0: Cell Enable (1 = enabled)
-        # Bit 1: Cell Select (0 = Cell 1, 1 = Cell 2)
-        relay_payload = RelayControlBits.CELL_ENABLE
-        cell_num = self.selected_cell
-        if cell_num == 2:
-            relay_payload |= RelayControlBits.CELL_SELECT
-        self._command_sender(FRAME_RELAY_CTRL, int(relay_payload), 1)
-
-        if step.step_type == StepType.CHARGE:
-            # Turn off discharge first & clear loads
-            self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 1)
-            self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 1)
-
-            # Build Charge Select payload (0x6001)
-            # Bit 0: Max Charge Voltage (0 = 3.6V, 1 = 4.2V)
-            # Bit 1: Charge Current 1 (+0.5A)
-            # Bit 2: Charge Current 2 (+1.0A)
-            chg_sel = 0
-            if step.max_charge_voltage:
-                chg_sel |= ChargeSelectBits.MAX_CHARGE_VOLTAGE
-            if step.charge_current_1:
-                chg_sel |= ChargeSelectBits.MAX_CHARGE_CURRENT_1
-            if step.charge_current_2:
-                chg_sel |= ChargeSelectBits.MAX_CHARGE_CURRENT_2
-            self._command_sender(FRAME_CHARGE_SEL, chg_sel, 1)
-
-            # Reset comparator pulse (bit 1 high then low)
-            self._command_sender(FRAME_CHARGE_CTRL, int(ChargeControlBits.CHARGE_COMPARATOR_RESET), 1)
-            # Enable Charge (0x6002 bit 0)
-            self._command_sender(FRAME_CHARGE_CTRL, int(ChargeControlBits.CHARGE_ENABLE), 1)
-
-        elif step.step_type == StepType.DISCHARGE:
-            # Turn off charge first
-            self._command_sender(FRAME_CHARGE_CTRL, 0x00, 1)
-
-            # Build Discharge Load Select payload (0x6004)
-            # L1=0.2A, L2=0.4A, L3=0.8A, L4=1.6A (0..15 -> 0.0..3.0A)
-            dis_sel = step.discharge_load_decimal
-            self._command_sender(FRAME_DISCHARGE_SEL, dis_sel, 1)
-
-            # Reset discharge comparator pulse
-            self._command_sender(FRAME_DISCHARGE_CTRL, int(DischargeControlBits.DISCHARGE_COMPARATOR_RESET), 1)
-            # Enable Discharge (0x6003 bit 0)
-            self._command_sender(FRAME_DISCHARGE_CTRL, int(DischargeControlBits.DISCHARGE_ENABLE), 1)
-
-        elif step.step_type == StepType.REST:
-            # Disable both charge and discharge, clear loads
-            self._command_sender(FRAME_CHARGE_CTRL, 0x00, 1)
-            self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 1)
-            self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 1)
+        """Translate step configuration into exact 0x6000 - 0x6004 TX commands via StepTransitionController."""
+        self._set_state(EngineState.STEP_TRANSITION, f"Reconfiguring hardware for {step.name}...")
+        self.transition_controller.start_transition(step=step, selected_cell=self.selected_cell)
 
     def _safe_idle_hardware(self) -> None:
-        """Place hardware in safe non-energized state."""
-        self._command_sender(FRAME_CHARGE_CTRL, 0x00, 1)
-        self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 1)
-        self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 1)
-        self._command_sender(FRAME_RELAY_CTRL, 0x00, 1)
+        """Place hardware in safe non-energized state (all 5 control registers to zero)."""
+        logger.info("[Engine] Setting all hardware control registers (0x6000 - 0x6004) to 0x00 (Safe Idle)")
+        # 1. Disable active drives (Charge & Discharge Enable)
+        self._command_sender(FRAME_CHARGE_CTRL, 0x00, 0)
+        self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 0)
+        # 2. De-select parameters and load bank
+        self._command_sender(FRAME_CHARGE_SEL, 0x00, 0)
+        self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 0)
+        # 3. Disconnect cell relay (open circuit)
+        self._command_sender(FRAME_RELAY_CTRL, 0x00, 0)
 
     def _reset_execution_state(self) -> None:
         self.current_cycle = 1
@@ -307,5 +299,7 @@ class CyclerEngine(QObject):
         if self.state == EngineState.RUNNING:
             if not self.safety_monitor.check_watchdog():
                 if self.state != EngineState.SAFETY_STOP:
+                    self.transition_controller.abort()
+                    self._safe_idle_hardware()
                     self._set_state(EngineState.SAFETY_STOP, self.safety_monitor.trip_reason)
                     self.safety_tripped.emit(self.safety_monitor.trip_reason)

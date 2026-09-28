@@ -14,12 +14,13 @@ from PySide6.QtCore import QObject, QThread, Signal
 from .packet_codec import (
     BoardParamsTelemetry,
     CellDataTelemetry,
+    CommandEchoTelemetry,
     DecodedPacket,
     FaultSoCTelemetry,
     decode_stream,
     encode_command_packet,
 )
-from .protocol_defs import DEFAULT_BAUD_RATE, DEFAULT_TIMEOUT_S
+from .protocol_defs import ALL_CONTROL_FRAMES, DEFAULT_BAUD_RATE, DEFAULT_TIMEOUT_S
 
 logger = logging.getLogger("SingleCellCycler.Transceiver")
 
@@ -39,6 +40,7 @@ class SerialTransceiver(QThread):
     cell_data_received = Signal(object)               # CellDataTelemetry
     board_params_received = Signal(object)           # BoardParamsTelemetry
     fault_soc_received = Signal(object)              # FaultSoCTelemetry
+    command_echo_received = Signal(object)           # CommandEchoTelemetry (0x6000-0x6004 readbacks)
     raw_packet_received = Signal(object)             # DecodedPacket
     command_transmitted = Signal(int, int, bytes)    # frame_id, payload_byte, full_wire_bytes
     error_occurred = Signal(str)                     # error message
@@ -70,9 +72,37 @@ class SerialTransceiver(QThread):
         if not self.isRunning():
             self.start()
 
-    def disconnect_serial(self) -> None:
-        """Disconnect and stop worker thread."""
+    def send_safe_zero_commands(self, priority: int = 0) -> None:
+        """Enqueue priority commands to safely reset all 5 control registers (0x6000 - 0x6004) to zero."""
+        for frame_id in ALL_CONTROL_FRAMES:
+            self.send_command(frame_id, 0x00, priority)
+
+    def disconnect_serial(self, send_safe_zero: bool = True, timeout_s: float = 1.5) -> None:
+        """Disconnect and stop worker thread, ensuring all control registers are zeroed and flushed.
+        
+        Parameters
+        ----------
+        send_safe_zero: bool
+            If True and connection is active, dispatches 0x00 to all 5 control registers (0x6000-0x6004).
+        timeout_s: float
+            Maximum seconds to wait for outgoing queue to drain before closing physical port.
+        """
+        if self._serial_conn and self._serial_conn.is_open:
+            if send_safe_zero and self._tx_queue.empty():
+                logger.info("Transceiver disconnect: resetting all hardware controls (0x6000 - 0x6004) to 0...")
+                self.send_safe_zero_commands(priority=0)
+
+            # Wait for TX queue to be completely written out by background thread
+            start = time.time()
+            while not self._tx_queue.empty() and (time.time() - start) < timeout_s:
+                time.sleep(0.02)
+            # Give short settling time for final frame to clear hardware UART FIFO
+            time.sleep(0.06)
+
         self._is_running = False
+        if self.isRunning():
+            self.wait(1000)
+
         if self._serial_conn and self._serial_conn.is_open:
             try:
                 self._serial_conn.close()
@@ -120,7 +150,7 @@ class SerialTransceiver(QThread):
                     if self._serial_conn and self._serial_conn.is_open:
                         self._serial_conn.write(wire_bytes)
                         self._serial_conn.flush()
-                        time.sleep(0.015)  # Enforce 15ms inter-frame delay per protocol spec
+                        time.sleep(0.050)  # Enforce 50ms inter-frame delay to prevent MCU UART drops
 
                     self._tx_count += 1
                     self.command_transmitted.emit(frame_id, payload_byte, wire_bytes)
@@ -170,3 +200,5 @@ class SerialTransceiver(QThread):
             self.board_params_received.emit(packet)
         elif isinstance(packet, FaultSoCTelemetry):
             self.fault_soc_received.emit(packet)
+        elif isinstance(packet, CommandEchoTelemetry):
+            self.command_echo_received.emit(packet)

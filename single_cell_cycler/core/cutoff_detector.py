@@ -60,33 +60,29 @@ class CutoffDetector:
                     )
 
             # 3. Current Taper / Cutoff (e.g. <= 0.05 A during CV phase)
+            # NOTE: Taper detection is commented out / disabled for now per user request.
             elif cond.cutoff_type == CutoffType.CURRENT_MIN:
-                # If step also has an upper voltage cutoff (CC-CV profile), the current taper
-                # cutoff is strictly armed ONLY once cell voltage has reached the CV saturation zone
-                has_v_max = any(c.cutoff_type == CutoffType.VOLTAGE_MAX and c.enabled for c in step.cutoffs)
-                v_max_thresh = next(
-                    (c.threshold for c in step.cutoffs if c.cutoff_type == CutoffType.VOLTAGE_MAX and c.enabled),
-                    None,
-                )
-
-                is_armed = False
-                if has_v_max and v_max_thresh is not None:
-                    # Armed only when cell voltage is within 50mV of max target or above, and past arming delay
-                    if telemetry.voltage >= (v_max_thresh - 0.05) and step_elapsed_time_s >= self.arming_delay_s:
-                        is_armed = True
-                else:
-                    # Standalone taper cutoff: armed after arming delay
-                    if step_elapsed_time_s >= self.arming_delay_s:
-                        is_armed = True
-
-                if is_armed:
-                    current_mag = abs(telemetry.current)
-                    if current_mag <= cond.threshold:
-                        return CutoffResult(
-                            is_triggered=True,
-                            trigger_reason=f"Current tapered to {telemetry.current:.3f} A <= target {cond.threshold:.3f} A",
-                            condition=cond,
-                        )
+                pass
+                # has_v_max = any(c.cutoff_type == CutoffType.VOLTAGE_MAX and c.enabled for c in step.cutoffs)
+                # v_max_thresh = next(
+                #     (c.threshold for c in step.cutoffs if c.cutoff_type == CutoffType.VOLTAGE_MAX and c.enabled),
+                #     None,
+                # )
+                # is_armed = False
+                # if has_v_max and v_max_thresh is not None:
+                #     if telemetry.voltage >= (v_max_thresh - 0.05) and step_elapsed_time_s >= self.arming_delay_s:
+                #         is_armed = True
+                # else:
+                #     if step_elapsed_time_s >= self.arming_delay_s:
+                #         is_armed = True
+                # if is_armed:
+                #     current_mag = abs(telemetry.current)
+                #     if current_mag <= cond.threshold:
+                #         return CutoffResult(
+                #             is_triggered=True,
+                #             trigger_reason=f"Current tapered to {telemetry.current:.3f} A <= target {cond.threshold:.3f} A",
+                #             condition=cond,
+                #         )
 
             # 4. Overcurrent Cutoff
             elif cond.cutoff_type == CutoffType.CURRENT_MAX:

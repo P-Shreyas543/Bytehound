@@ -20,6 +20,18 @@ FRAME_CHARGE_CTRL = 0x6002     # Cell Charge Control (1 byte tx/rx)
 FRAME_DISCHARGE_CTRL = 0x6003  # Cell Discharge Control (1 byte tx/rx)
 FRAME_DISCHARGE_SEL = 0x6004   # Cell Discharge Select (1 byte tx/rx)
 
+# All 5 Hardware Actuation & Control Registers in recommended de-energize order:
+# 1. Disable active drives (0x6002, 0x6003)
+# 2. Clear config & loads (0x6001, 0x6004)
+# 3. Disconnect relay (0x6000)
+ALL_CONTROL_FRAMES = (
+    FRAME_CHARGE_CTRL,
+    FRAME_DISCHARGE_CTRL,
+    FRAME_CHARGE_SEL,
+    FRAME_DISCHARGE_SEL,
+    FRAME_RELAY_CTRL,
+)
+
 # Payload Lengths
 PAYLOAD_LEN_CELL_DATA = 8
 PAYLOAD_LEN_BOARD_PARAMS = 6

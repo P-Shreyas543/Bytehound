@@ -1,13 +1,14 @@
-"""Manual hardware control and switch override panel widget."""
+"""Manual hardware control and switch override panel widget with live readback telemetry."""
 
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, Dict
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
+    QFrame,
     QGridLayout,
     QGroupBox,
     QHBoxLayout,
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from ...comm.packet_codec import CommandEchoTelemetry
 from ...comm.protocol_defs import (
     DISCHARGE_TABLE,
     ChargeControlBits,
@@ -34,23 +36,90 @@ from ...comm.protocol_defs import (
 
 
 class ManualControlWidget(QWidget):
-    """Direct interactive overrides for 0x6000 - 0x6004 TX commands according to hardware spec."""
+    """Direct interactive overrides and live readback monitoring for 0x6000 - 0x6004 registers."""
 
     def __init__(self, command_sender: Callable[[int, int, int], None], parent: QWidget | None = None):
         super().__init__(parent)
         self._command_sender = command_sender
         self._syncing_loads = False
 
+        # Cache of latest hardware read-back bytes
+        self.control_readbacks: Dict[int, int] = {
+            FRAME_RELAY_CTRL: 0x00,
+            FRAME_CHARGE_SEL: 0x00,
+            FRAME_CHARGE_CTRL: 0x00,
+            FRAME_DISCHARGE_CTRL: 0x00,
+            FRAME_DISCHARGE_SEL: 0x00,
+        }
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
+        # ----------------------------------------------------------------------
+        # Top Card: Live Hardware Control Registers Overview
+        # ----------------------------------------------------------------------
+        top_frame = QFrame()
+        top_frame.setStyleSheet("""
+            QFrame {
+                background-color: #1a2035;
+                border: 1px solid #2d3748;
+                border-radius: 8px;
+                padding: 10px;
+            }
+        """)
+        top_layout = QVBoxLayout(top_frame)
+        top_layout.setContentsMargins(12, 8, 12, 8)
+        top_layout.setSpacing(6)
+
+        hdr_row = QHBoxLayout()
+        lbl_hdr = QLabel("LIVE HARDWARE CONTROL REGISTERS READBACK (0x6000 - 0x6004)")
+        lbl_hdr.setStyleSheet("color: #64ffda; font-weight: 800; font-size: 12px; letter-spacing: 0.5px;")
+        hdr_row.addWidget(lbl_hdr)
+        hdr_row.addStretch()
+
+        btn_clear_unwanted = QPushButton("🧹 All Controls to Zero (Safe Idle)")
+        btn_clear_unwanted.setToolTip("Sets all 5 control registers (0x6000 - 0x6004) to zero, clears loads, and disconnects cell relay")
+        btn_clear_unwanted.setStyleSheet("background-color: #3b82f6; color: white; font-weight: bold; padding: 4px 10px;")
+        btn_clear_unwanted.clicked.connect(self._clear_unwanted_flags)
+        hdr_row.addWidget(btn_clear_unwanted)
+        top_layout.addLayout(hdr_row)
+
+        # 5 register indicator badges
+        badges_layout = QHBoxLayout()
+        badges_layout.setSpacing(8)
+
+        self.badge_relay = QLabel("0x6000 Relay: --")
+        self.badge_chg_sel = QLabel("0x6001 Chg Sel: --")
+        self.badge_chg_ctrl = QLabel("0x6002 Chg Ctrl: --")
+        self.badge_dis_ctrl = QLabel("0x6003 Dis Ctrl: --")
+        self.badge_dis_sel = QLabel("0x6004 Loads: --")
+
+        badge_style = """
+            QLabel {
+                background-color: #0f172a;
+                border: 1px solid #334155;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-family: 'Consolas', monospace;
+                font-size: 11px;
+                color: #e2e8f0;
+            }
+        """
+        for badge in (self.badge_relay, self.badge_chg_sel, self.badge_chg_ctrl, self.badge_dis_ctrl, self.badge_dis_sel):
+            badge.setStyleSheet(badge_style)
+            badges_layout.addWidget(badge)
+
+        top_layout.addLayout(badges_layout)
+        layout.addWidget(top_frame)
+
+        # ----------------------------------------------------------------------
+        # Control Grid (0x6000 - 0x6004)
+        # ----------------------------------------------------------------------
         grid = QGridLayout()
         grid.setSpacing(12)
 
-        # ----------------------------------------------------------------------
         # 1. 0x6000 Cell Relay Control
-        # ----------------------------------------------------------------------
         box_relay = QGroupBox("Cell Relay Control (0x6000)")
         l_relay = QVBoxLayout(box_relay)
         self.chk_relay_en = QCheckBox("Cell Enable (Bit 0: Connect Cell)")
@@ -69,6 +138,10 @@ class ManualControlWidget(QWidget):
         self.lbl_relay_summary.setStyleSheet("color: #8892b0; font-size: 11px;")
         l_relay.addWidget(self.lbl_relay_summary)
 
+        self.lbl_relay_rb = QLabel("Readback: [Not received]")
+        self.lbl_relay_rb.setStyleSheet("color: #f59e0b; font-size: 11px; font-weight: bold;")
+        l_relay.addWidget(self.lbl_relay_rb)
+
         btn_send_relay = QPushButton("Send Relay (0x6000)")
         btn_send_relay.clicked.connect(self._send_relay)
         l_relay.addWidget(btn_send_relay)
@@ -77,9 +150,7 @@ class ManualControlWidget(QWidget):
         self.chk_relay_en.stateChanged.connect(self._update_relay_summary)
         self.combo_cell_sel.currentIndexChanged.connect(self._update_relay_summary)
 
-        # ----------------------------------------------------------------------
         # 2. 0x6001 Cell Charge Select
-        # ----------------------------------------------------------------------
         box_chg_sel = QGroupBox("Charge Select (0x6001)")
         l_chg_sel = QVBoxLayout(box_chg_sel)
 
@@ -100,6 +171,10 @@ class ManualControlWidget(QWidget):
         self.lbl_chg_sel_summary.setStyleSheet("color: #00d2ff; font-weight: bold; font-size: 11px;")
         l_chg_sel.addWidget(self.lbl_chg_sel_summary)
 
+        self.lbl_chg_sel_rb = QLabel("Readback: [Not received]")
+        self.lbl_chg_sel_rb.setStyleSheet("color: #f59e0b; font-size: 11px; font-weight: bold;")
+        l_chg_sel.addWidget(self.lbl_chg_sel_rb)
+
         btn_send_chg_sel = QPushButton("Send Charge Sel (0x6001)")
         btn_send_chg_sel.clicked.connect(self._send_chg_sel)
         l_chg_sel.addWidget(btn_send_chg_sel)
@@ -109,9 +184,7 @@ class ManualControlWidget(QWidget):
         self.chk_curr_1.stateChanged.connect(self._update_chg_sel_summary)
         self.chk_curr_2.stateChanged.connect(self._update_chg_sel_summary)
 
-        # ----------------------------------------------------------------------
         # 3. 0x6002 Cell Charge Control
-        # ----------------------------------------------------------------------
         box_chg_ctrl = QGroupBox("Charge Control (0x6002)")
         l_chg_ctrl = QVBoxLayout(box_chg_ctrl)
         self.chk_chg_en = QCheckBox("Charge Enable (Bit 0)")
@@ -121,12 +194,15 @@ class ManualControlWidget(QWidget):
         btn_send_chg_ctrl.clicked.connect(self._send_chg_ctrl)
         l_chg_ctrl.addWidget(self.chk_chg_en)
         l_chg_ctrl.addWidget(btn_reset_chg_comp)
+
+        self.lbl_chg_ctrl_rb = QLabel("Readback: [Not received]")
+        self.lbl_chg_ctrl_rb.setStyleSheet("color: #f59e0b; font-size: 11px; font-weight: bold;")
+        l_chg_ctrl.addWidget(self.lbl_chg_ctrl_rb)
+
         l_chg_ctrl.addWidget(btn_send_chg_ctrl)
         grid.addWidget(box_chg_ctrl, 0, 2)
 
-        # ----------------------------------------------------------------------
         # 4. 0x6003 Cell Discharge Control
-        # ----------------------------------------------------------------------
         box_dis_ctrl = QGroupBox("Discharge Control (0x6003)")
         l_dis_ctrl = QVBoxLayout(box_dis_ctrl)
         self.chk_dis_en = QCheckBox("Discharge Enable (Bit 0)")
@@ -136,12 +212,15 @@ class ManualControlWidget(QWidget):
         btn_send_dis_ctrl.clicked.connect(self._send_dis_ctrl)
         l_dis_ctrl.addWidget(self.chk_dis_en)
         l_dis_ctrl.addWidget(btn_reset_dis_comp)
+
+        self.lbl_dis_ctrl_rb = QLabel("Readback: [Not received]")
+        self.lbl_dis_ctrl_rb.setStyleSheet("color: #f59e0b; font-size: 11px; font-weight: bold;")
+        l_dis_ctrl.addWidget(self.lbl_dis_ctrl_rb)
+
         l_dis_ctrl.addWidget(btn_send_dis_ctrl)
         grid.addWidget(box_dis_ctrl, 1, 0)
 
-        # ----------------------------------------------------------------------
         # 5. 0x6004 Cell Discharge Select (16 Discrete Binary States)
-        # ----------------------------------------------------------------------
         box_dis_sel = QGroupBox("Discharge Load Bank Select (0x6004)")
         l_dis_sel = QVBoxLayout(box_dis_sel)
 
@@ -176,6 +255,10 @@ class ManualControlWidget(QWidget):
         self.lbl_dis_sel_summary.setStyleSheet("color: #ff9800; font-weight: bold; font-size: 11px;")
         l_dis_sel.addWidget(self.lbl_dis_sel_summary)
 
+        self.lbl_dis_sel_rb = QLabel("Readback: [Not received]")
+        self.lbl_dis_sel_rb.setStyleSheet("color: #f59e0b; font-size: 11px; font-weight: bold;")
+        l_dis_sel.addWidget(self.lbl_dis_sel_rb)
+
         btn_send_dis_sel = QPushButton("Send Load Select (0x6004)")
         btn_send_dis_sel.clicked.connect(self._send_dis_sel)
         l_dis_sel.addWidget(btn_send_dis_sel)
@@ -193,6 +276,86 @@ class ManualControlWidget(QWidget):
         # Initial summaries
         self._update_relay_summary()
         self._update_chg_sel_summary()
+
+    # --------------------------------------------------------------------------
+    # Live Readback Handler (CommandEchoTelemetry)
+    # --------------------------------------------------------------------------
+    def on_command_echo(self, echo: CommandEchoTelemetry) -> None:
+        """Handle incoming 0x6000 - 0x6004 readback from hardware."""
+        self.control_readbacks[echo.frame_id] = echo.payload_byte
+        val = echo.payload_byte
+
+        if echo.frame_id == FRAME_RELAY_CTRL:
+            cell_str = "Cell 2" if (val & RelayControlBits.CELL_SELECT) else "Cell 1"
+            en_str = "CONNECTED" if (val & RelayControlBits.CELL_ENABLE) else "DISCONNECTED"
+            color = "#10b981" if (val & RelayControlBits.CELL_ENABLE) else "#94a3b8"
+            self.lbl_relay_rb.setText(f"Readback: 0x{val:02X} [{cell_str}, {en_str}]")
+            self.lbl_relay_rb.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold;")
+            self.badge_relay.setText(f"0x6000 Relay: 0x{val:02X} ({cell_str} {en_str})")
+            self.badge_relay.setStyleSheet(f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
+
+        elif echo.frame_id == FRAME_CHARGE_SEL:
+            v_val = 4.2 if (val & ChargeSelectBits.MAX_CHARGE_VOLTAGE) else 3.6
+            c_val = 0.0
+            if val & ChargeSelectBits.MAX_CHARGE_CURRENT_1: c_val += 0.5
+            if val & ChargeSelectBits.MAX_CHARGE_CURRENT_2: c_val += 1.0
+            self.lbl_chg_sel_rb.setText(f"Readback: 0x{val:02X} [{v_val:.1f}V, {c_val:.1f}A]")
+            self.lbl_chg_sel_rb.setStyleSheet("color: #00d2ff; font-size: 11px; font-weight: bold;")
+            self.badge_chg_sel.setText(f"0x6001 Chg Sel: 0x{val:02X} ({v_val:.1f}V, {c_val:.1f}A)")
+
+        elif echo.frame_id == FRAME_CHARGE_CTRL:
+            en = bool(val & ChargeControlBits.CHARGE_ENABLE)
+            rst = bool(val & ChargeControlBits.CHARGE_COMPARATOR_RESET)
+            en_txt = "ON" if en else "OFF"
+            color = "#10b981" if en else "#94a3b8"
+            self.lbl_chg_ctrl_rb.setText(f"Readback: 0x{val:02X} [EN={en_txt}, Reset={int(rst)}]")
+            self.lbl_chg_ctrl_rb.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold;")
+            self.badge_chg_ctrl.setText(f"0x6002 Chg: 0x{val:02X} (EN={en_txt}, Rst={int(rst)})")
+            self.badge_chg_ctrl.setStyleSheet(f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
+
+        elif echo.frame_id == FRAME_DISCHARGE_CTRL:
+            en = bool(val & DischargeControlBits.DISCHARGE_ENABLE)
+            rst = bool(val & DischargeControlBits.DISCHARGE_COMPARATOR_RESET)
+            en_txt = "ON" if en else "OFF"
+            color = "#f97316" if en else "#94a3b8"
+            self.lbl_dis_ctrl_rb.setText(f"Readback: 0x{val:02X} [EN={en_txt}, Reset={int(rst)}]")
+            self.lbl_dis_ctrl_rb.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold;")
+            self.badge_dis_ctrl.setText(f"0x6003 Dis: 0x{val:02X} (EN={en_txt}, Rst={int(rst)})")
+            self.badge_dis_ctrl.setStyleSheet(f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
+
+        elif echo.frame_id == FRAME_DISCHARGE_SEL:
+            dec = val & 0x0F
+            current_a = discharge_decimal_to_current(dec)
+            switches = []
+            if dec & 1: switches.append("L1")
+            if dec & 2: switches.append("L2")
+            if dec & 4: switches.append("L3")
+            if dec & 8: switches.append("L4")
+            sw_str = "+".join(switches) if switches else "None"
+            color = "#f97316" if dec > 0 else "#94a3b8"
+            self.lbl_dis_sel_rb.setText(f"Readback: 0x{dec:02X} [{sw_str} -> {current_a:.1f}A]")
+            self.lbl_dis_sel_rb.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold;")
+            self.badge_dis_sel.setText(f"0x6004 Loads: 0x{dec:02X} ({current_a:.1f}A)")
+            self.badge_dis_sel.setStyleSheet(f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
+
+    def _clear_unwanted_flags(self) -> None:
+        """Immediately clear all 5 control registers to zero (Safe Idle)."""
+        # 1. Disable active drives
+        self._command_sender(FRAME_CHARGE_CTRL, 0x00, 0)
+        self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 0)
+        # 2. De-select parameters & load switches
+        self._command_sender(FRAME_CHARGE_SEL, 0x00, 0)
+        self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 0)
+        # 3. Disconnect cell relay
+        self._command_sender(FRAME_RELAY_CTRL, 0x00, 0)
+
+        # Synchronize UI widgets
+        self.chk_chg_en.setChecked(False)
+        self.chk_dis_en.setChecked(False)
+        self.chk_relay_en.setChecked(False)
+        self.combo_dis_preset.setCurrentIndex(0)
+        self.chk_curr_1.setChecked(False)
+        self.chk_curr_2.setChecked(False)
 
     # --- Relay Helpers ---
     def _update_relay_summary(self) -> None:
@@ -248,25 +411,27 @@ class ManualControlWidget(QWidget):
         self._command_sender(FRAME_CHARGE_CTRL, val, 1)
 
     def _pulse_chg_comp(self) -> None:
-        val = ChargeControlBits.CHARGE_COMPARATOR_RESET
+        """Pulse charge comparator reset high, then low (0 -> 1 -> 0)."""
+        val_high = ChargeControlBits.CHARGE_COMPARATOR_RESET
         if self.chk_chg_en.isChecked():
-            val |= ChargeControlBits.CHARGE_ENABLE
-        self._command_sender(FRAME_CHARGE_CTRL, val, 0)
-        # Pulse low
-        val_norm = ChargeControlBits.CHARGE_ENABLE if self.chk_chg_en.isChecked() else 0
-        self._command_sender(FRAME_CHARGE_CTRL, val_norm, 1)
+            val_high |= ChargeControlBits.CHARGE_ENABLE
+        self._command_sender(FRAME_CHARGE_CTRL, val_high, 0)
+        # 50ms pulse duration before returning low
+        val_low = ChargeControlBits.CHARGE_ENABLE if self.chk_chg_en.isChecked() else 0
+        QTimer.singleShot(50, lambda: self._command_sender(FRAME_CHARGE_CTRL, val_low, 1))
 
     def _send_dis_ctrl(self) -> None:
         val = DischargeControlBits.DISCHARGE_ENABLE if self.chk_dis_en.isChecked() else 0
         self._command_sender(FRAME_DISCHARGE_CTRL, val, 1)
 
     def _pulse_dis_comp(self) -> None:
-        val = DischargeControlBits.DISCHARGE_COMPARATOR_RESET
+        """Pulse discharge comparator reset high, then low (0 -> 1 -> 0)."""
+        val_high = DischargeControlBits.DISCHARGE_COMPARATOR_RESET
         if self.chk_dis_en.isChecked():
-            val |= DischargeControlBits.DISCHARGE_ENABLE
-        self._command_sender(FRAME_DISCHARGE_CTRL, val, 0)
-        val_norm = DischargeControlBits.DISCHARGE_ENABLE if self.chk_dis_en.isChecked() else 0
-        self._command_sender(FRAME_DISCHARGE_CTRL, val_norm, 1)
+            val_high |= DischargeControlBits.DISCHARGE_ENABLE
+        self._command_sender(FRAME_DISCHARGE_CTRL, val_high, 0)
+        val_low = DischargeControlBits.DISCHARGE_ENABLE if self.chk_dis_en.isChecked() else 0
+        QTimer.singleShot(50, lambda: self._command_sender(FRAME_DISCHARGE_CTRL, val_low, 1))
 
     # --- Discharge Load Bank Helpers ---
     def _on_dis_preset_changed(self, index: int) -> None:

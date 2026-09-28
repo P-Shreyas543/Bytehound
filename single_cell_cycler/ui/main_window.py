@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 from ..comm.packet_codec import (
     BoardParamsTelemetry,
     CellDataTelemetry,
+    CommandEchoTelemetry,
     FaultSoCTelemetry,
 )
 from ..comm.protocol_defs import DEFAULT_BAUD_RATE
@@ -191,10 +192,11 @@ class MainWindow(QMainWindow):
         self.lbl_status_comm = QLabel("Comm: Disconnected")
         self.lbl_status_engine = QLabel("Engine: Idle")
         self.lbl_status_stats = QLabel("RX: 0 | TX: 0")
+        self.lbl_status_ctrl = QLabel("Ctrl: Relay Disconn | Chg: OFF | Dis: OFF")
         self.lbl_status_log = QLabel("Log: Idle")
-
         self.statusBar.addPermanentWidget(self.lbl_status_comm)
         self.statusBar.addPermanentWidget(self.lbl_status_engine)
+        self.statusBar.addPermanentWidget(self.lbl_status_ctrl)
         self.statusBar.addPermanentWidget(self.lbl_status_stats)
         self.statusBar.addPermanentWidget(self.lbl_status_log)
 
@@ -204,6 +206,7 @@ class MainWindow(QMainWindow):
         self.transceiver.cell_data_received.connect(self._on_cell_data)
         self.transceiver.board_params_received.connect(self._on_board_params)
         self.transceiver.fault_soc_received.connect(self._on_fault_soc)
+        self.transceiver.command_echo_received.connect(self._on_command_echo)
         self.transceiver.command_transmitted.connect(self._on_command_transmitted)
         self.transceiver.stats_updated.connect(self._on_stats_updated)
 
@@ -230,7 +233,12 @@ class MainWindow(QMainWindow):
 
     def _toggle_connection(self) -> None:
         if self.transceiver.isRunning():
-            self.transceiver.disconnect_serial()
+            if self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION, EngineState.PAUSED):
+                self._stop_test()
+            else:
+                self.engine._safe_idle_hardware()
+            self.transceiver.disconnect_serial(send_safe_zero=True, timeout_s=1.5)
+            self.engine.transition_controller.auto_ack = True
             self.btn_connect.setText("Connect")
         else:
             port = self.combo_port.currentData()
@@ -238,6 +246,7 @@ class MainWindow(QMainWindow):
                 QMessageBox.warning(self, "No Port", "Please select a valid COM port")
                 return
             baud = self.combo_baud.currentData()
+            self.engine.transition_controller.auto_ack = False
             self.transceiver.connect_serial(port, baud)
             self.btn_connect.setText("Disconnect")
 
@@ -247,6 +256,31 @@ class MainWindow(QMainWindow):
 
     def _on_command_dispatch(self, frame_id: int, payload_byte: int, priority: int = 1) -> None:
         self.transceiver.send_command(frame_id, payload_byte, priority)
+
+    def _on_command_echo(self, echo: CommandEchoTelemetry) -> None:
+        """Propagate readback frame to cycler engine, manual controls, and status bar."""
+        self.engine.on_command_echo(echo)
+        self.manual_control.on_command_echo(echo)
+        self._update_ctrl_status_bar()
+
+    def _update_ctrl_status_bar(self) -> None:
+        rb = self.engine.transition_controller.control_readbacks
+        rel_byte = rb.get(0x6000, 0)
+        cell_str = "Cell 2" if (rel_byte & 0x02) else "Cell 1"
+        rel_str = f"{cell_str} Conn" if (rel_byte & 0x01) else "Disconn"
+
+        chg_byte = rb.get(0x6002, 0)
+        chg_str = "ON" if (chg_byte & 0x01) else "OFF"
+
+        dis_byte = rb.get(0x6003, 0)
+        dis_str = "ON" if (dis_byte & 0x01) else "OFF"
+
+        loads_byte = rb.get(0x6004, 0) & 0x0F
+        load_a = round(loads_byte * 0.2, 1)
+
+        self.lbl_status_ctrl.setText(
+            f"Ctrl: Relay {rel_str} | Chg: {chg_str} | Dis: {dis_str} ({load_a:.1f}A)"
+        )
 
     def _on_cell_data(self, data: CellDataTelemetry) -> None:
         self.dashboard.update_cell_data(data)
@@ -433,7 +467,11 @@ class MainWindow(QMainWindow):
         self.btn_stop.setEnabled(False)
 
     def closeEvent(self, event) -> None:
-        self.engine.emergency_stop()
-        self.transceiver.disconnect_serial()
+        logger.info("Application closing: resetting all hardware controls (0x6000 - 0x6004) to 0...")
+        if self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION, EngineState.PAUSED):
+            self.engine.stop_test()
+        else:
+            self.engine._safe_idle_hardware()
+        self.transceiver.disconnect_serial(send_safe_zero=True, timeout_s=1.5)
         self.logger.stop_session()
         event.accept()
