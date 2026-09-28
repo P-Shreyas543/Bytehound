@@ -2,14 +2,31 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from dataclasses import dataclass
 
-CONFIG_DIR = Path(__file__).resolve().parent
+if getattr(sys, "frozen", False):
+    # Running inside a PyInstaller frozen bundle (.exe)
+    _BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
+    CONFIG_DIR = _BUNDLE_ROOT / "single_cell_cycler" / "config"
+    # Store test telemetry logs in a writable directory next to the executable
+    DEFAULT_LOG_DIR = Path(sys.executable).parent / "logs"
+else:
+    # Running directly from Python source code
+    CONFIG_DIR = Path(__file__).resolve().parent
+    DEFAULT_LOG_DIR = CONFIG_DIR.parent / "logs"
+
 RECIPES_DIR = CONFIG_DIR / "recipes"
-RECIPES_DIR.mkdir(parents=True, exist_ok=True)
-DEFAULT_LOG_DIR = CONFIG_DIR.parent / "logs"
-DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+try:
+    RECIPES_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
+
+try:
+    DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
+except Exception:
+    pass
 
 
 @dataclass

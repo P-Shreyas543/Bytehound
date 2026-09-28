@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -71,11 +72,21 @@ class MainWindow(QMainWindow):
         self.logger = AsyncTelemetryLogger(log_dir=DEFAULT_LOG_DIR)
         self._last_board_params: Optional[BoardParamsTelemetry] = None
         self._last_fault_soc: Optional[FaultSoCTelemetry] = None
+        self._last_cell_data: Optional[CellDataTelemetry] = None
+        self._last_step_mah: float = 0.0
+        self._test_start_epoch: float = 0.0  # epoch when START was pressed
+        self._tick_elapsed_s: float = 0.0    # deterministic elapsed counter
 
         # 2. UI Layout
         self._setup_ui()
         self._wire_signals()
         self._refresh_com_ports()
+
+        # 3. Deterministic 10 Hz UI + logging tick
+        self._ui_tick_timer = QTimer(self)
+        self._ui_tick_timer.setInterval(100)  # 100 ms = 10 Hz
+        self._ui_tick_timer.timeout.connect(self._on_ui_tick)
+        self._ui_tick_timer.start()
 
     def _setup_ui(self) -> None:
         # Toolbar
@@ -283,12 +294,22 @@ class MainWindow(QMainWindow):
         )
 
     def _on_cell_data(self, data: CellDataTelemetry) -> None:
+        """Cache latest cell telemetry; forward to dashboard and engine.
+
+        Actual plotting and logging are handled by the 10 Hz ``_on_ui_tick``.
+        """
+        self._last_cell_data = data
         self.dashboard.update_cell_data(data)
         self.engine.on_cell_telemetry(data)
 
         step_m = self.engine.metrics_tracker.current_step_metrics
-        step_mah = step_m.capacity_mah if step_m else 0.0
-        self.live_plots.add_telemetry(data, step_mah)
+        self._last_step_mah = step_m.capacity_mah if step_m else 0.0
+
+        # Pass raw telemetry to plot buffer (relay + engine-state gating inside)
+        # Only feed the buffer when actually running; this is a belt-and-suspenders
+        # guard in addition to the relay gate in the 10 Hz tick.
+        if self.engine.state == EngineState.RUNNING:
+            self.live_plots.add_telemetry(data, self._last_step_mah)
 
         if self.engine.state == EngineState.RUNNING:
             mt = self.engine.metrics_tracker
@@ -302,33 +323,6 @@ class MainWindow(QMainWindow):
                 cycle_idx=self.engine.current_cycle,
                 step_name=self.engine.active_step.name if self.engine.active_step else "Idle",
             )
-
-            # Log record with merged board params & faults
-            bp = self._last_board_params
-            fs = self._last_fault_soc
-            self.logger.log_record({
-                "timestamp_iso": "",
-                "epoch_s": data.timestamp,
-                "cycle_index": self.engine.current_cycle,
-                "step_index": self.engine.current_step_idx + 1,
-                "step_name": self.engine.active_step.name if self.engine.active_step else "",
-                "step_type": self.engine.active_step.step_type.value if self.engine.active_step else "",
-                "voltage_v": data.voltage,
-                "current_a": data.current,
-                "power_w": round(data.voltage * data.current, 3),
-                "terminal_temp_c": data.terminal_temp,
-                "body_temp_c": data.body_temp,
-                "ambient_temp_c": bp.ambient_temp if bp else 0.0,
-                "charge_bus_v": bp.charge_voltage if bp else 0.0,
-                "load_bus_v": bp.load_voltage if bp else 0.0,
-                "soc_ocv_pct": fs.soc_ocv if fs else 0.0,
-                "soc_cc_pct": fs.soc_cc if fs else 0.0,
-                "fault_byte": fs.fault_byte if fs else 0,
-                "step_capacity_mah": round(step_mah, 2),
-                "step_energy_mwh": round(step_m.energy_mwh if step_m else 0.0, 2),
-                "total_charge_mah": round(mt.cumulative_charge_mah, 2),
-                "total_discharge_mah": round(mt.cumulative_discharge_mah, 2),
-            })
 
     def _on_cell_selection_changed(self, index: int) -> None:
         cell_num = self.combo_active_cell.currentData()
@@ -353,6 +347,65 @@ class MainWindow(QMainWindow):
         self.safety_panel.update_faults(fault_soc)
         self.engine.on_fault_soc_telemetry(fault_soc)
 
+    def _on_ui_tick(self) -> None:
+        """Deterministic 10 Hz tick: update relay state, redraw plots, log if running.
+
+        Plotting requires BOTH:
+          1. engine.state == RUNNING  (primary: immediate, no HW round-trip delay)
+          2. relay readback bit-0 == 1  (secondary: confirms HW cell connection)
+        This prevents stale post-test data from polluting the graph.
+        """
+        # Read relay hardware echo
+        rb = self.engine.transition_controller.control_readbacks
+        relay_byte = rb.get(0x6000, 0)
+        hw_relay_on = bool(relay_byte & 0x01)
+        cell_num = 2 if (relay_byte & 0x02) else 1
+
+        # Only allow plotting when engine is actively RUNNING.
+        # Completed / stopped / paused states immediately cut the graph line.
+        engine_running = self.engine.state == EngineState.RUNNING
+        effective_relay_on = engine_running and hw_relay_on
+
+        # Notify live plots (inserts NaN gap on any falling edge)
+        self.live_plots.set_relay_state(effective_relay_on, cell_num)
+
+        # Drive the plot redraw at 10 Hz
+        self.live_plots.tick_update()
+
+        # Log one record per tick only when RUNNING + relay confirmed ON
+        if engine_running and hw_relay_on and self._last_cell_data is not None:
+            data = self._last_cell_data
+            bp = self._last_board_params
+            fs = self._last_fault_soc
+            mt = self.engine.metrics_tracker
+            step_m = mt.current_step_metrics
+
+            self._tick_elapsed_s += 0.1  # deterministic elapsed counter
+
+            self.logger.log_record({
+                "timestamp_iso": "",
+                "epoch_s": round(self._tick_elapsed_s, 2),
+                "cycle_index": self.engine.current_cycle,
+                "step_index": self.engine.current_step_idx + 1,
+                "step_name": self.engine.active_step.name if self.engine.active_step else "",
+                "step_type": self.engine.active_step.step_type.value if self.engine.active_step else "",
+                "voltage_v": data.voltage,
+                "current_a": data.current,
+                "power_w": round(data.voltage * data.current, 3),
+                "terminal_temp_c": data.terminal_temp,
+                "body_temp_c": data.body_temp,
+                "ambient_temp_c": bp.ambient_temp if bp else 0.0,
+                "charge_bus_v": bp.charge_voltage if bp else 0.0,
+                "load_bus_v": bp.load_voltage if bp else 0.0,
+                "soc_ocv_pct": fs.soc_ocv if fs else 0.0,
+                "soc_cc_pct": fs.soc_cc if fs else 0.0,
+                "fault_byte": fs.fault_byte if fs else 0,
+                "step_capacity_mah": round(self._last_step_mah, 2),
+                "step_energy_mwh": round(step_m.energy_mwh if step_m else 0.0, 2),
+                "total_charge_mah": round(mt.cumulative_charge_mah, 2),
+                "total_discharge_mah": round(mt.cumulative_discharge_mah, 2),
+            })
+
     def _on_stats_updated(self, rx: int, tx: int, err: int) -> None:
         self.lbl_status_stats.setText(f"RX: {rx} | TX: {tx} | Err: {err}")
 
@@ -360,7 +413,6 @@ class MainWindow(QMainWindow):
         self.engine.load_recipe(recipe)
 
     def _start_test(self) -> None:
-        import time
         now = time.time()
         time_since_telemetry = now - self.engine.safety_monitor.last_telemetry_time
 
@@ -389,6 +441,8 @@ class MainWindow(QMainWindow):
             log_path = self.logger.start_session(session_prefix=rec_name)
             self.lbl_status_log.setText(f"Logging: {log_path.name}")
 
+            self._tick_elapsed_s = 0.0   # reset deterministic tick counter
+            self._last_cell_data = None
             self.live_plots.reset_all()
             self.tracker_table.reset_all()
             self.engine.start_test()
@@ -429,6 +483,10 @@ class MainWindow(QMainWindow):
 
     def _on_step_started(self, cycle_idx: int, step_idx: int, name: str, stype: str) -> None:
         self.tracker_table.set_active_step(cycle_idx, step_idx, name, stype)
+        # On the first step of the test, flush any pre-step artefact data that
+        # may have been buffered during STEP_TRANSITION (relay briefly echoes ON).
+        if step_idx == 1 and cycle_idx == 1:
+            self.live_plots.reset_all()
         self.live_plots.reset_step_vq()
 
     def _on_step_completed(self, metrics: StepMetrics) -> None:

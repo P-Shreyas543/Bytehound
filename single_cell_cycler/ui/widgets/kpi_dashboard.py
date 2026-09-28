@@ -119,8 +119,8 @@ class KPIDashboard(QWidget):
         self.card_tot_cap = KPICard("Total Capacity", "0.000", "Ah", "Total Energy: 0.00 Wh", "#ec4899")
         layout.addWidget(self.card_tot_cap, 1, 1)
 
-        # Card 7: Board Bus Voltages
-        self.card_bus = KPICard("Bus Voltages", "0.00", "V", "Chg Bus: 0.0V | Load Bus: 0.0V", "#64748b")
+        # Card 7: Board Bus Voltages (primary = Load Bus, which the cell sees during discharge)
+        self.card_bus = KPICard("Bus Voltages", "0.00", "V", "Load Bus: 0.0V | Chg Bus: 0.0V", "#64748b")
         layout.addWidget(self.card_bus, 1, 2)
 
         # Card 8: Cycle & Step Status
@@ -160,15 +160,19 @@ class KPIDashboard(QWidget):
         )
 
     def update_board_params(self, params: BoardParamsTelemetry) -> None:
+        # Primary = Load Bus V (cell-side voltage measured on discharge path)
+        # Subtitle = Charge Bus V (charger supply voltage)
         self.card_bus.set_value(
-            f"{params.charge_voltage:.2f}",
-            f"Chg Bus: {params.charge_voltage:.2f} V | Load: {params.load_voltage:.2f} V",
+            f"{params.load_voltage:.2f}",
+            f"Load Bus: {params.load_voltage:.2f} V | Chg Bus: {params.charge_voltage:.2f} V",
         )
 
     def update_fault_soc(self, fault_soc: FaultSoCTelemetry) -> None:
+        # Primary = OCV SoC (open-circuit estimation, more stable at rest)
+        # Subtitle = CC SoC (coulomb-counted, accurate during cycling)
         self.card_soc.set_value(
-            f"{fault_soc.soc_cc:.1f}",
-            f"OCV SoC: {fault_soc.soc_ocv:.1f}% | CC: {fault_soc.soc_cc:.1f}%",
+            f"{fault_soc.soc_ocv:.1f}",
+            f"OCV: {fault_soc.soc_ocv:.1f}% | CC: {fault_soc.soc_cc:.1f}%",
         )
 
     def update_metrics(
