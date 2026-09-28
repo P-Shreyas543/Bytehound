@@ -1,0 +1,79 @@
+{
+  "recipe_name": "DCIR Pulse Characterization",
+  "description": "DC Internal Resistance characterization via 10-second discharge pulse followed by rest.",
+  "cell_nominal_capacity_mah": 3000.0,
+  "steps": [
+    {
+      "step_index": 1,
+      "name": "1. Baseline OCV Rest",
+      "step_type": "Rest",
+      "max_charge_voltage": false,
+      "charge_current_1": false,
+      "charge_current_2": false,
+      "discharge_load_1": false,
+      "discharge_load_2": false,
+      "discharge_load_3": false,
+      "discharge_load_4": false,
+      "cutoffs": [
+        {
+          "cutoff_type": "Step Duration >=",
+          "threshold": 60.0,
+          "enabled": true,
+          "description": "60s OCV baseline"
+        }
+      ],
+      "loop_target_step": 1,
+      "loop_count": 1
+    },
+    {
+      "step_index": 2,
+      "name": "2. High Load Discharge Pulse (2.0A, 10s)",
+      "step_type": "Discharge",
+      "max_charge_voltage": false,
+      "charge_current_1": false,
+      "charge_current_2": false,
+      "discharge_load_1": false,
+      "discharge_load_2": true,
+      "discharge_load_3": false,
+      "discharge_load_4": true,
+      "cutoffs": [
+        {
+          "cutoff_type": "Step Duration >=",
+          "threshold": 10.0,
+          "enabled": true,
+          "description": "10-second pulse duration"
+        },
+        {
+          "cutoff_type": "Voltage <= Target",
+          "threshold": 2.70,
+          "enabled": true,
+          "description": "Emergency low voltage guard"
+        }
+      ],
+      "loop_target_step": 1,
+      "loop_count": 1
+    },
+    {
+      "step_index": 3,
+      "name": "3. Post-Pulse Recovery Rest",
+      "step_type": "Rest",
+      "max_charge_voltage": false,
+      "charge_current_1": false,
+      "charge_current_2": false,
+      "discharge_load_1": false,
+      "discharge_load_2": false,
+      "discharge_load_3": false,
+      "discharge_load_4": false,
+      "cutoffs": [
+        {
+          "cutoff_type": "Step Duration >=",
+          "threshold": 120.0,
+          "enabled": true,
+          "description": "120s recovery rest"
+        }
+      ],
+      "loop_target_step": 1,
+      "loop_count": 1
+    }
+  ]
+}

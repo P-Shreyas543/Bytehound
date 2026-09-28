@@ -1,0 +1,128 @@
+{
+  "recipe_name": "CCCV Cycling (5 Cycles)",
+  "description": "5 full Charge-Rest-Discharge-Rest cycles with CV current taper cut-off.",
+  "cell_nominal_capacity_mah": 3000.0,
+  "steps": [
+    {
+      "step_index": 1,
+      "name": "1. CC/CV Charge (1.5A to 4.2V)",
+      "step_type": "Charge",
+      "max_charge_voltage": true,
+      "charge_current_1": true,
+      "charge_current_2": true,
+      "discharge_load_1": false,
+      "discharge_load_2": false,
+      "discharge_load_3": false,
+      "discharge_load_4": false,
+      "cutoffs": [
+        {
+          "cutoff_type": "Voltage >= Target",
+          "threshold": 4.20,
+          "enabled": true,
+          "description": "Upper voltage cut-off limit"
+        },
+        {
+          "cutoff_type": "Current <= Target (Taper)",
+          "threshold": 0.05,
+          "enabled": true,
+          "description": "CV current taper cut-off (50mA)"
+        },
+        {
+          "cutoff_type": "Step Duration >=",
+          "threshold": 7200.0,
+          "enabled": true,
+          "description": "Maximum charge time timeout (2 hours)"
+        }
+      ],
+      "loop_target_step": 1,
+      "loop_count": 1
+    },
+    {
+      "step_index": 2,
+      "name": "2. Post-Charge Rest (10 min)",
+      "step_type": "Rest",
+      "max_charge_voltage": false,
+      "charge_current_1": false,
+      "charge_current_2": false,
+      "discharge_load_1": false,
+      "discharge_load_2": false,
+      "discharge_load_3": false,
+      "discharge_load_4": false,
+      "cutoffs": [
+        {
+          "cutoff_type": "Step Duration >=",
+          "threshold": 600.0,
+          "enabled": true,
+          "description": "Rest duration (10 min)"
+        }
+      ],
+      "loop_target_step": 1,
+      "loop_count": 1
+    },
+    {
+      "step_index": 3,
+      "name": "3. CC Discharge (1.2A to 2.8V)",
+      "step_type": "Discharge",
+      "max_charge_voltage": false,
+      "charge_current_1": false,
+      "charge_current_2": false,
+      "discharge_load_1": false,
+      "discharge_load_2": true,
+      "discharge_load_3": true,
+      "discharge_load_4": false,
+      "cutoffs": [
+        {
+          "cutoff_type": "Voltage <= Target",
+          "threshold": 2.80,
+          "enabled": true,
+          "description": "Lower discharge voltage cut-off limit"
+        },
+        {
+          "cutoff_type": "Step Duration >=",
+          "threshold": 10800.0,
+          "enabled": true,
+          "description": "Maximum discharge timeout (3 hours)"
+        }
+      ],
+      "loop_target_step": 1,
+      "loop_count": 1
+    },
+    {
+      "step_index": 4,
+      "name": "4. Post-Discharge Rest (10 min)",
+      "step_type": "Rest",
+      "max_charge_voltage": false,
+      "charge_current_1": false,
+      "charge_current_2": false,
+      "discharge_load_1": false,
+      "discharge_load_2": false,
+      "discharge_load_3": false,
+      "discharge_load_4": false,
+      "cutoffs": [
+        {
+          "cutoff_type": "Step Duration >=",
+          "threshold": 600.0,
+          "enabled": true,
+          "description": "Rest duration (10 min)"
+        }
+      ],
+      "loop_target_step": 1,
+      "loop_count": 1
+    },
+    {
+      "step_index": 5,
+      "name": "5. Loop 5 Cycles",
+      "step_type": "Loop",
+      "max_charge_voltage": false,
+      "charge_current_1": false,
+      "charge_current_2": false,
+      "discharge_load_1": false,
+      "discharge_load_2": false,
+      "discharge_load_3": false,
+      "discharge_load_4": false,
+      "cutoffs": [],
+      "loop_target_step": 1,
+      "loop_count": 5
+    }
+  ]
+}
