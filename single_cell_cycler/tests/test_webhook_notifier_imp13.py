@@ -66,6 +66,7 @@ def test_webhook_settings_persistence(tmp_path):
         notify_test_paused_resumed=True,
         notify_emergency_stop=True,
         operator_tag="Metrologist Alice",
+        bms_serial_number="BMS-TEST-0042",
     )
     settings.save(cfg_file)
     assert cfg_file.exists()
@@ -77,6 +78,31 @@ def test_webhook_settings_persistence(tmp_path):
     assert loaded.notify_cycle_completed is True
     assert loaded.notify_test_completed is False
     assert loaded.operator_tag == "Metrologist Alice"
+    assert loaded.bms_serial_number == "BMS-TEST-0042"
+
+
+def test_webhook_payload_includes_bms_identity():
+    settings = WebhookSettings(
+        url="https://discord.com/api/webhooks/mock",
+        enabled=True,
+        bms_serial_number="BMS-TEST-0042",
+    )
+    notifier = WebhookNotifier(settings=settings)
+    payload = build_universal_payload(
+        event=NotificationEvent.SAFETY_TRIP,
+        title="Safety Trip",
+        description="Trip",
+        fields=[],
+        color=0xEF4444,
+    )
+    notifier._add_bms_identity(payload)
+    assert payload["embeds"][0]["fields"][0] == {
+        "name": "BMS Serial / Device ID",
+        "value": "BMS-TEST-0042",
+        "inline": True,
+    }
+    assert "BMS-TEST-0042" in payload["content"]
+    notifier.close()
 
 
 def test_webhook_notifier_dispatch_success():
@@ -169,16 +195,19 @@ def test_webhook_dialog_interaction():
     assert hasattr(dlg, "chk_cycle")
     assert hasattr(dlg, "chk_pause")
     assert hasattr(dlg, "chk_estop")
+    assert hasattr(dlg, "edit_bms_serial")
 
     # Simulate user enabling and changing operator tag
     dlg.chk_enable.setChecked(True)
     dlg.chk_step.setChecked(True)
     dlg.chk_cycle.setChecked(True)
     dlg.edit_operator.setText("Lead Engineer Bob")
+    dlg.edit_bms_serial.setText("BMS-LAB-001")
     dlg._on_save()
 
     assert settings.enabled is True
     assert settings.notify_step_completed is True
     assert settings.notify_cycle_completed is True
     assert settings.operator_tag == "Lead Engineer Bob"
+    assert settings.bms_serial_number == "BMS-LAB-001"
     notifier.close()

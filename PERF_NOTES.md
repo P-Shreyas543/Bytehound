@@ -482,3 +482,7 @@ Tests: 432 green throughout (396 unit tests + 36 smoke tests).
 ### 2. Fast Bit-Packed Boolean TX Command Encoding
 - **Optimization**: Sequentially groups `bool`/`boolean` TX command fields into 8-bit byte flags. Uses single-pass byte array bit shifting (`val |= (1 << bit_idx)`) to eliminate dynamic allocation overhead during outbound packet serialization.
 
+## Long-Run Single-Cell Cycler Safeguards
+
+The current single-cell build keeps serial I/O and webhook delivery off the UI thread, retries serial reconnects and failed webhooks, and rotates asynchronous telemetry CSV files at 256 MB. New records are paused with a critical diagnostic when free disk space drops below 1 GB.
+

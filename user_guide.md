@@ -186,3 +186,9 @@ The app contains an embedded auto-updater (`app/updater.py`).
 4. The downloaded installer is launched silently (`/SILENT`) and the app exits.
 
 To publish a new version: bump `version.json`, rebuild with PyInstaller + Inno Setup, and host the new installer + manifest at the URLs configured in `version.json`.
+
+## Single-Cell BMS Cycler Deployment Note
+
+For the dedicated single-cell cycler workflow, use the `single_cell_cycler` application and its Windows installer. Configure the actual BMS serial number in **Webhook → BMS Serial / ID** so remote alerts identify the correct unit. The current protocol does not transmit that identifier directly; if the field is blank, alerts use the USB adapter serial number or COM port as a connection fallback.
+
+The cycler is designed for long runs with automatic serial reconnect, webhook retry, asynchronous rotating CSV logs, and logs stored in a writable per-user directory in frozen builds. Perform a real-device soak test before unattended production operation.

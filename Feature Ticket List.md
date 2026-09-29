@@ -95,3 +95,7 @@ This document lists future development tasks for Bytehound. Each ticket represen
 * **Status**: Completed (v1.2.0)
 * **Target Components**: 
   * `app/serial_logging/decoded_logger.py`
+
+## Current Single-Cell Cycler Release Note
+
+The dedicated `single_cell_cycler` release extends the completed feature set with BMS serial/device identity on webhook alerts, serial reconnect watchdog behavior, webhook retry, rotating long-run CSV logs, and a PyInstaller/Inno Setup Windows package. See [`single_cell_cycler/TRACKER.md`](single_cell_cycler/TRACKER.md) for verification status.

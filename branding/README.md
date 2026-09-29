@@ -13,3 +13,5 @@ runtime picks them up via `_find_logo()` in `app/ui/main_window.py`.
 The runtime searches `branding/` first, then the project/exe root.
 If no logo is found, the app falls back to the default Qt icon — the build
 does not fail.
+
+The same branding assets are used by the SingleCellCycler Inno Setup package. The installer icon is `branding/logo.ico`, and the frozen application is packaged as `SingleCellCycler.exe`.

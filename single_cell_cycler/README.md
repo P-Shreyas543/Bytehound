@@ -110,8 +110,20 @@ python -m single_cell_cycler.main
 5. Click **▶  START TEST** to begin automated cycling.
 
 ### 3. Running Automated Tests
-Run the complete automated test suite (85 tests):
+Run the automated test suite:
 ```powershell
 pytest single_cell_cycler/tests/ -v
 ```
+
+### 4. Production Build and Reliability Notes
+
+Build the Windows package from the `single_cell_cycler` directory:
+
+```powershell
+python build.py --no-clean
+```
+
+The build creates the frozen onedir application, Inno Setup installer, and release ZIP under the repository `dist/` directory. The application includes serial reconnect handling, webhook retry with exponential backoff, asynchronous CSV logging with 256 MB file rotation, and a low-disk safety threshold of 1 GB.
+
+Webhook alerts include `BMS Serial / Device ID`. Enter the real BMS serial number in **Webhook → BMS Serial / ID**. The telemetry protocol does not currently transmit a BMS serial frame, so a blank field falls back to the USB adapter serial number or COM port (for example, COM15).
 

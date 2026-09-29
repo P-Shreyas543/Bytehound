@@ -330,7 +330,17 @@ We will implement and verify these enhancements **pillar by pillar**.
   2. Asynchronous dispatch succeeds with HTTP 200/204 via mock test. (PASS)
   3. Network failures / timeouts fail gracefully without raising uncaught exceptions or blocking engine. (PASS)
   4. Webhook settings persist cleanly to JSON and load seamlessly on launch. (PASS)
-  5. Fully verified via automated test suite `tests/test_webhook_notifier_imp13.py` (5/5 passed). (PASS)
+  5. BMS serial/device identity is included in every alert; the webhook dialog supports a persistent BMS ID, with USB serial/COM fallback. (PASS)
+  6. Fully verified via automated test suite `tests/test_webhook_notifier_imp13.py` (6/6 passed). (PASS)
+
+### Reliability Hardening — Current Release
+
+The current implementation also includes the following long-run safeguards:
+
+- Serial transport retries after unavailable-port and I/O failures without stopping the worker thread.
+- Webhook delivery retries up to three times with exponential backoff on the background worker.
+- Asynchronous CSV logs rotate at 256 MB and stop accepting new records when free disk space falls below 1 GB, while emitting a critical warning.
+- Frozen builds store logs in the per-user `%LOCALAPPDATA%\Bytehound\SingleCellCycler\logs` directory instead of the protected Program Files directory.
 
 ---
 

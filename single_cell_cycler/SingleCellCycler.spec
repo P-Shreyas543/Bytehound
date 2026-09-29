@@ -4,7 +4,6 @@
 import os
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
@@ -12,9 +11,10 @@ repo_root = Path(r'C:\Users\Shreyas\Documents\Python\Bytehound')
 cycler_root = repo_root / 'single_cell_cycler'
 
 # Core Data Files & Standard Recipes
-datas = [
-    (str(cycler_root / 'config' / 'recipes'), 'single_cell_cycler/config/recipes'),
-]
+datas = []
+recipes_path = cycler_root / 'config' / 'recipes'
+if recipes_path.exists():
+    datas.append((str(recipes_path), 'single_cell_cycler/config/recipes'))
 
 # Include branding if present
 branding_path = repo_root / 'branding'
@@ -37,11 +37,9 @@ hiddenimports = [
     'PySide6.QtWidgets',
 ]
 
-# Collect PySide6 & shiboken6 runtime bindings
-raw_datas, raw_binaries, raw_hidden = collect_all('PySide6')
-datas += raw_datas
-binaries += raw_binaries
-hiddenimports += raw_hidden
+# PyInstaller's PySide6 hook collects the runtime libraries required by the
+# imported Qt modules. Avoid collect_all('PySide6'), which also bundles unused
+# Qt/QML development modules and makes the installer unnecessarily enormous.
 
 # Massive unused modules to exclude to keep build fast, lean and clean (< 70 MB)
 excluded_modules = [
@@ -79,8 +77,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    [],
-    exclude_binaries=True,
+    a.binaries, a.zipfiles, a.datas,
+    exclude_binaries=False,
     name='SingleCellCycler',
     debug=False,
     bootloader_ignore_signals=False,
@@ -95,13 +93,4 @@ exe = EXE(
     icon=r'C:\Users\Shreyas\Documents\Python\Bytehound\branding\logo.ico',
 )
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name='SingleCellCycler',
-)
+# Onefile build completes at EXE

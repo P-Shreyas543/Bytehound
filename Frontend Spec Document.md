@@ -131,3 +131,7 @@ Using `QSettings` pointing to `HKCU\Software\Bytehound\Bytehound`, the applicati
 When a user detaches a dock widget from the main window, the application intercepts the change (`topLevelChanged` signal):
 * It updates the widget flags to `Qt.Window` and adds standard minimize, maximize, and close buttons.
 * When the widget is docked back, it restores the default toolbar chrome. This allows users to place the Live Plot or Raw Console on secondary monitors.
+
+## Single-Cell Cycler Release UI Additions
+
+The single-cell cycler UI includes dedicated Live Charts, dQ/dV, aging, recipe preview, pre-flight, manual hardware, safety, export/report, and webhook settings surfaces. The webhook dialog includes a persistent **BMS Serial / ID** field so remote alerts can identify the originating unit.

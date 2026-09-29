@@ -73,7 +73,6 @@ def generate_spec_file(onefile: bool = False, console: bool = False) -> Path:
 import os
 import sys
 from pathlib import Path
-from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 
@@ -81,9 +80,10 @@ repo_root = Path(r'{REPO_ROOT.resolve()}')
 cycler_root = repo_root / 'single_cell_cycler'
 
 # Core Data Files & Standard Recipes
-datas = [
-    (str(cycler_root / 'config' / 'recipes'), 'single_cell_cycler/config/recipes'),
-]
+datas = []
+recipes_path = cycler_root / 'config' / 'recipes'
+if recipes_path.exists():
+    datas.append((str(recipes_path), 'single_cell_cycler/config/recipes'))
 
 # Include branding if present
 branding_path = repo_root / 'branding'
@@ -106,11 +106,9 @@ hiddenimports = [
     'PySide6.QtWidgets',
 ]
 
-# Collect PySide6 & shiboken6 runtime bindings
-raw_datas, raw_binaries, raw_hidden = collect_all('PySide6')
-datas += raw_datas
-binaries += raw_binaries
-hiddenimports += raw_hidden
+# PyInstaller's PySide6 hook collects the runtime libraries required by the
+# imported Qt modules. Avoid collect_all('PySide6'), which also bundles unused
+# Qt/QML development modules and makes the installer unnecessarily enormous.
 
 # Massive unused modules to exclude to keep build fast, lean and clean (< 70 MB)
 excluded_modules = [
@@ -202,6 +200,35 @@ def run_build(spec_path: Path) -> int:
     return res
 
 
+def build_installer(version: str) -> bool:
+    """Build the onedir output into a Windows installer with Inno Setup."""
+    compiler = shutil.which("iscc") or shutil.which("iscc.exe")
+    if compiler is None:
+        for candidate in (
+            Path(r"C:\Program Files (x86)\Inno Setup 6\iscc.exe"),
+            Path(r"C:\Program Files\Inno Setup 6\iscc.exe"),
+        ):
+            if candidate.exists():
+                compiler = str(candidate)
+                break
+
+    if compiler is None:
+        print("[build] [ERROR] Inno Setup compiler (iscc.exe) was not found.")
+        return False
+
+    installer_script = REPO_ROOT / "installer.iss"
+    command = [compiler, f"/DMyAppVersion={version}", str(installer_script)]
+    print(f"[build] Building installer with Inno Setup: {' '.join(command)}")
+    result = subprocess.call(command, cwd=REPO_ROOT)
+    if result == 0:
+        installer_path = REPO_ROOT / "dist" / "installer" / "SingleCellCycler.exe"
+        print(f"[build] Inno Setup installer created successfully: {installer_path}")
+        return True
+
+    print(f"[build] [ERROR] Inno Setup installer build failed with code {result}.")
+    return False
+
+
 def create_distribution_zip(version: str, onefile: bool) -> Path:
     """Zip the output bundle for distribution."""
     zip_name = f"{APP_NAME}_v{version}_win64.zip"
@@ -270,6 +297,9 @@ def main() -> int:
     target_exe = (DIST_DIR / f"{APP_NAME}.exe") if args.onefile else (OUTPUT_DIR / f"{APP_NAME}.exe")
     if not target_exe.exists():
         print(f"[build] [ERROR] Expected executable {target_exe} was not produced!")
+        return 1
+
+    if not args.onefile and not build_installer(version):
         return 1
 
     print("\n" + "=" * 65)

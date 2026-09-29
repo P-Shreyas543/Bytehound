@@ -122,66 +122,74 @@ class SerialTransceiver(QThread):
     def run(self) -> None:
         """Background thread execution loop for physical serial I/O."""
         self._is_running = True
-
-        try:
-            self.connection_changed.emit(TransceiverState.CONNECTING.value, f"Opening {self.port}...")
-            self._serial_conn = serial.Serial(
-                port=self.port,
-                baudrate=self.baud_rate,
-                timeout=DEFAULT_TIMEOUT_S,
-                write_timeout=0.2,
-            )
-            self.connection_changed.emit(TransceiverState.CONNECTED.value, f"Connected to {self.port} @ {self.baud_rate}")
-        except Exception as exc:
-            self._is_running = False
-            self._err_count += 1
-            self.connection_changed.emit(TransceiverState.ERROR.value, f"Failed to open {self.port}: {exc}")
-            self.error_occurred.emit(str(exc))
-            return
-
         rx_buffer = bytearray()
         last_stats_time = time.time()
 
         while self._is_running:
-            # 1. Process outbound priority TX queue
-            while not self._tx_queue.empty():
+            # Reopen the port after startup or I/O failures without requiring a restart.
+            if not self._serial_conn or not self._serial_conn.is_open:
                 try:
-                    prio, ts, frame_id, payload_byte, wire_bytes = self._tx_queue.get_nowait()
-                    if self._serial_conn and self._serial_conn.is_open:
-                        self._serial_conn.write(wire_bytes)
-                        self._serial_conn.flush()
-                        time.sleep(0.050)  # Enforce 50ms inter-frame delay to prevent MCU UART drops
+                    self.connection_changed.emit(TransceiverState.CONNECTING.value, f"Opening {self.port}...")
+                    self._serial_conn = serial.Serial(
+                        port=self.port,
+                        baudrate=self.baud_rate,
+                        timeout=DEFAULT_TIMEOUT_S,
+                        write_timeout=0.2,
+                    )
+                    rx_buffer.clear()
+                    self.connection_changed.emit(
+                        TransceiverState.CONNECTED.value,
+                        f"Connected to {self.port} @ {self.baud_rate}",
+                    )
+                except Exception as exc:
+                    self._err_count += 1
+                    self.connection_changed.emit(TransceiverState.ERROR.value, f"Serial unavailable; retrying: {exc}")
+                    self.error_occurred.emit(str(exc))
+                    self._serial_conn = None
+                    for _ in range(50):
+                        if not self._is_running:
+                            break
+                        time.sleep(0.1)
+                    continue
 
+            try:
+                # 1. Process outbound priority TX queue
+                while not self._tx_queue.empty():
+                    prio, ts, frame_id, payload_byte, wire_bytes = self._tx_queue.get_nowait()
+                    self._serial_conn.write(wire_bytes)
+                    self._serial_conn.flush()
+                    time.sleep(0.050)  # Enforce 50ms inter-frame delay to prevent MCU UART drops
                     self._tx_count += 1
                     self.command_transmitted.emit(frame_id, payload_byte, wire_bytes)
-                except Exception as exc:
-                    self._err_count += 1
-                    self.error_occurred.emit(f"TX Error: {exc}")
 
-            # 2. Read inbound RX bytes from physical serial
-            if self._serial_conn and self._serial_conn.is_open:
+                # 2. Read inbound RX bytes from physical serial
+                bytes_waiting = self._serial_conn.in_waiting
+                if bytes_waiting > 0:
+                    chunk = self._serial_conn.read(min(bytes_waiting, 1024))
+                    if chunk:
+                        rx_buffer.extend(chunk)
+                        packets, rx_buffer = decode_stream(rx_buffer)
+                        for pkt in packets:
+                            self._rx_count += 1
+                            self._dispatch_packet(pkt)
+                else:
+                    time.sleep(0.005)
+
+                # 3. Emit stats periodically (every 500ms)
+                now = time.time()
+                if now - last_stats_time >= 0.5:
+                    self.stats_updated.emit(self._rx_count, self._tx_count, self._err_count)
+                    last_stats_time = now
+            except Exception as exc:
+                self._err_count += 1
+                self.error_occurred.emit(f"Serial I/O error; reconnecting: {exc}")
                 try:
-                    bytes_waiting = self._serial_conn.in_waiting
-                    if bytes_waiting > 0:
-                        chunk = self._serial_conn.read(min(bytes_waiting, 1024))
-                        if chunk:
-                            rx_buffer.extend(chunk)
-                            packets, rx_buffer = decode_stream(rx_buffer)
-                            for pkt in packets:
-                                self._rx_count += 1
-                                self._dispatch_packet(pkt)
-                    else:
-                        time.sleep(0.005)
-                except Exception as exc:
-                    self._err_count += 1
-                    self.error_occurred.emit(f"RX Error: {exc}")
-                    time.sleep(0.05)
-
-            # 3. Emit stats periodically (every 500ms)
-            now = time.time()
-            if now - last_stats_time >= 0.5:
-                self.stats_updated.emit(self._rx_count, self._tx_count, self._err_count)
-                last_stats_time = now
+                    if self._serial_conn and self._serial_conn.is_open:
+                        self._serial_conn.close()
+                except Exception:
+                    pass
+                self._serial_conn = None
+                time.sleep(0.5)
 
         # Cleanup
         if self._serial_conn and self._serial_conn.is_open:

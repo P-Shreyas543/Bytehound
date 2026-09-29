@@ -33,7 +33,7 @@ class WebhookSettingsDialog(QDialog):
         self.settings = notifier.settings
 
         self.setWindowTitle("Remote Lab Notifications (Webhook)")
-        self.resize(560, 360)
+        self.resize(560, 400)
         self.setModal(True)
         self.setStyleSheet("""
             QDialog {
@@ -110,6 +110,13 @@ class WebhookSettingsDialog(QDialog):
         self.edit_operator.setPlaceholderText("e.g. Lead Metrologist / Station A")
         form.addRow("Operator Tag:", self.edit_operator)
 
+        self.edit_bms_serial = QLineEdit()
+        self.edit_bms_serial.setPlaceholderText("e.g. BMS-ACME-00042 (leave blank for USB/COM fallback)")
+        self.edit_bms_serial.setToolTip(
+            "Identifier included in every alert. The current telemetry protocol does not expose a BMS serial frame."
+        )
+        form.addRow("BMS Serial / ID:", self.edit_bms_serial)
+
         layout.addLayout(form)
 
         # Event checkboxes
@@ -170,6 +177,7 @@ class WebhookSettingsDialog(QDialog):
         self.chk_enable.setChecked(s.enabled)
         self.edit_url.setText(s.url)
         self.edit_operator.setText(s.operator_tag)
+        self.edit_bms_serial.setText(s.bms_serial_number)
         self.chk_start.setChecked(s.notify_test_started)
         self.chk_step.setChecked(s.notify_step_completed)
         self.chk_cycle.setChecked(s.notify_cycle_completed)
@@ -206,6 +214,7 @@ class WebhookSettingsDialog(QDialog):
         self.settings.enabled = self.chk_enable.isChecked()
         self.settings.url = self.edit_url.text().strip()
         self.settings.operator_tag = self.edit_operator.text().strip()
+        self.settings.bms_serial_number = self.edit_bms_serial.text().strip()
         self.settings.notify_test_started = self.chk_start.isChecked()
         self.settings.notify_step_completed = self.chk_step.isChecked()
         self.settings.notify_cycle_completed = self.chk_cycle.isChecked()

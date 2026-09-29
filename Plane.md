@@ -275,3 +275,7 @@ Each feature moves only after a testable core API exists.
 - Use feature flags during beta so users can fall back to the Python build if a protocol/configuration edge case is found.
 - Convert existing profiles to JSON outside the C++ application before beta deployment, then compare protocol/decoder output against the original profiles during validation.
 - Store every new raw and decoded session as CSV only; the C++ application has no XLSX logging dependency.
+
+## Current Python Production Baseline
+
+The `single_cell_cycler` Python application remains the validated production baseline while migration planning continues. Its release package includes the serial reconnect watchdog, rotating asynchronous logs, webhook retries, BMS alert identity, and tested PySide6 plot/metrology surfaces.

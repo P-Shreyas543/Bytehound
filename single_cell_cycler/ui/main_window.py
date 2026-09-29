@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -97,8 +97,9 @@ class MainWindow(QMainWindow):
         self._last_fault_soc: Optional[FaultSoCTelemetry] = None
         self._last_cell_data: Optional[CellDataTelemetry] = None
         self._last_step_mah: float = 0.0
-        self._test_start_epoch: float = 0.0  # epoch when START was pressed
-        self._tick_elapsed_s: float = 0.0    # deterministic elapsed counter
+        self._test_start_epoch: float = 0.0  # Unix epoch when START was pressed
+        self._test_start_monotonic: float = 0.0  # monotonic clock for durations
+        self._tick_elapsed_s: float = 0.0  # cached wall-clock elapsed duration
         self.preflight_checker = PreflightSanityChecker()
         self._last_preflight_report: Optional[PreflightReport] = None
         self.webhook_notifier = WebhookNotifier()
@@ -262,12 +263,12 @@ class MainWindow(QMainWindow):
         self.btn_report.clicked.connect(lambda: self.generate_test_report())
         self.toolbar.addWidget(self.btn_report)
 
-        # Remote Webhook Alerts (IMP-13)
-        self.btn_webhook = QPushButton("🔔 Webhook")
+        # Remote Webhook Alerts (IMP-13) — Initialized Active by default
+        self.btn_webhook = QPushButton("🔔 Webhook (Active)")
         self.btn_webhook.setObjectName("btn_webhook")
-        self.btn_webhook.setToolTip("Configure Discord / Slack / Teams remote lab notifications")
+        self.btn_webhook.setToolTip("Remote Lab Webhook Active (Discord: Shreyas P) — Armed & Ready")
         self.btn_webhook.setStyleSheet(
-            "background-color: #1e293b; color: #f59e0b; border: 1px solid #d97706; "
+            "background-color: #064e3b; color: #34d399; border: 1px solid #059669; "
             "font-weight: 700; border-radius: 6px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
         )
         self.btn_webhook.clicked.connect(lambda: self.show_webhook_settings())
@@ -396,11 +397,25 @@ class MainWindow(QMainWindow):
                     QMessageBox.warning(self, "No Port", "Please select a valid COM port")
                 return
             baud = self.combo_baud.currentData()
+            self._set_bms_identity_from_port(port)
             self.engine.transition_controller.auto_ack = False
             self.transceiver.connect_serial(port, baud)
             self.btn_connect.setText("Disconnect")
             # Auto-run pre-flight sanity check once initial telemetry packets arrive (1.5s)
             QTimer.singleShot(1500, self.run_preflight_check)
+
+    def _set_bms_identity_from_port(self, port: str) -> None:
+        """Use configured BMS ID, otherwise identify the connected USB/serial endpoint."""
+        configured = self.webhook_notifier.settings.bms_serial_number.strip()
+        if configured:
+            self.webhook_notifier.set_bms_serial_number(configured)
+            return
+
+        port_info = next((item for item in serial.tools.list_ports.comports() if item.device == port), None)
+        fallback = ""
+        if port_info is not None:
+            fallback = str(getattr(port_info, "serial_number", "") or "").strip()
+        self.webhook_notifier.set_bms_serial_number(fallback or port or "Unknown / not configured")
 
     def _on_connection_changed(self, state: str, msg: str) -> None:
         self.lbl_status_comm.setText(f"Comm: {state}")
@@ -522,11 +537,12 @@ class MainWindow(QMainWindow):
             mt = self.engine.metrics_tracker
             step_m = mt.current_step_metrics
 
-            self._tick_elapsed_s += 0.1  # deterministic elapsed counter
+            self._tick_elapsed_s = self._current_test_elapsed_s()
 
             self.logger.log_record({
-                "timestamp_iso": datetime.now().isoformat(),
-                "epoch_s": round(self._tick_elapsed_s, 2),
+                "timestamp_iso": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+                "timestamp_epoch_s": round(time.time(), 3),
+                "elapsed_s": round(self._tick_elapsed_s, 2),
                 "cycle_index": self.engine.current_cycle,
                 "step_index": self.engine.current_step_idx + 1,
                 "step_name": self.engine.active_step.name if self.engine.active_step else "Transition",
@@ -602,7 +618,9 @@ class MainWindow(QMainWindow):
             self.engine.csv_log_file = str(log_path)
             self.lbl_status_log.setText(f"Logging: {log_path.name}")
 
-            self._tick_elapsed_s = 0.0   # reset deterministic tick counter
+            self._test_start_epoch = time.time()
+            self._test_start_monotonic = time.monotonic()
+            self._tick_elapsed_s = 0.0
             self._last_cell_data = None
             self.live_plots.reset_all()
             self.tracker_table.reset_all()
@@ -791,7 +809,7 @@ class MainWindow(QMainWindow):
         cycles = len(self.engine.metrics_tracker.cycle_summaries)
         final_cap = self.engine.metrics_tracker.cycle_summaries[-1].discharge_capacity_mah if self.engine.metrics_tracker.cycle_summaries else 0.0
         tot_wh = self.engine.metrics_tracker.cumulative_discharge_mwh / 1000.0
-        dur_s = self._tick_elapsed_s
+        dur_s = self._current_test_elapsed_s()
         self.webhook_notifier.notify_test_completed(
             cell_id=cell_id,
             recipe_name=rec_name,
@@ -807,6 +825,12 @@ class MainWindow(QMainWindow):
     def _on_engine_state_changed(self, state: str, msg: str) -> None:
         self.lbl_status_engine.setText(f"Engine: {state}")
         self.statusBar.showMessage(msg, 3000)
+
+    def _current_test_elapsed_s(self) -> float:
+        """Return elapsed test time from a monotonic clock, avoiding UI-timer drift."""
+        if self._test_start_monotonic <= 0.0:
+            return self._tick_elapsed_s
+        return max(0.0, time.monotonic() - self._test_start_monotonic)
 
     def _finish_ui_session(self, status: str) -> None:
         self.logger.stop_session()
@@ -1109,4 +1133,24 @@ class MainWindow(QMainWindow):
     def show_webhook_settings(self, *args, **kwargs) -> None:
         """Open configuration modal for remote webhook notifications (IMP-13)."""
         dlg = WebhookSettingsDialog(self.webhook_notifier, parent=self)
-        dlg.exec()
+        if dlg.exec():
+            self._update_webhook_button_ui()
+
+    def _update_webhook_button_ui(self) -> None:
+        """Update toolbar Webhook button pill state based on settings."""
+        if hasattr(self, "btn_webhook") and hasattr(self, "webhook_notifier"):
+            s = self.webhook_notifier.settings
+            if s.enabled and s.url:
+                self.btn_webhook.setText("🔔 Webhook (Active)")
+                self.btn_webhook.setToolTip(f"Remote Lab Webhook Active ({s.operator_tag}) — Armed & Ready")
+                self.btn_webhook.setStyleSheet(
+                    "background-color: #064e3b; color: #34d399; border: 1px solid #059669; "
+                    "font-weight: 700; border-radius: 6px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
+                )
+            else:
+                self.btn_webhook.setText("🔔 Webhook (Disabled)")
+                self.btn_webhook.setToolTip("Remote Lab Webhook is disabled. Click to configure.")
+                self.btn_webhook.setStyleSheet(
+                    "background-color: #1e293b; color: #94a3b8; border: 1px solid #475569; "
+                    "font-weight: 700; border-radius: 6px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
+                )

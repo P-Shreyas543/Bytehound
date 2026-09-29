@@ -14,7 +14,7 @@ import time
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -36,10 +36,17 @@ class NotificationEvent(Enum):
     PING = "PING"
 
 
+DEFAULT_WEBHOOK_URL = (
+    "https://discord.com/api/webhooks/1554409170881478696/"
+    "8mKrBjLtwhXwXpRdP-N_0nx7WguT2Xvbwa_En8A-ADMI7j_cAEGDS7YlcQzsBVZRwCBN"
+)
+DEFAULT_OPERATOR_TAG = "Shreyas P"
+
+
 @dataclass
 class WebhookSettings:
-    url: str = ""
-    enabled: bool = False
+    url: str = DEFAULT_WEBHOOK_URL
+    enabled: bool = True
     notify_test_started: bool = True
     notify_step_completed: bool = True
     notify_cycle_completed: bool = True
@@ -47,7 +54,10 @@ class WebhookSettings:
     notify_test_completed: bool = True
     notify_test_paused_resumed: bool = True
     notify_emergency_stop: bool = True
-    operator_tag: str = "Shreyas P"
+    operator_tag: str = DEFAULT_OPERATOR_TAG
+    # The protocol currently does not carry a BMS serial-number frame. This is
+    # therefore user-configurable, with MainWindow supplying a USB/COM fallback.
+    bms_serial_number: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -61,13 +71,15 @@ class WebhookSettings:
             "notify_test_paused_resumed": self.notify_test_paused_resumed,
             "notify_emergency_stop": self.notify_emergency_stop,
             "operator_tag": self.operator_tag,
+            "bms_serial_number": self.bms_serial_number,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> WebhookSettings:
+        raw_url = data.get("url", "")
         return cls(
-            url=data.get("url", ""),
-            enabled=data.get("enabled", False),
+            url=raw_url if raw_url else DEFAULT_WEBHOOK_URL,
+            enabled=data.get("enabled", True),
             notify_test_started=data.get("notify_test_started", True),
             notify_step_completed=data.get("notify_step_completed", True),
             notify_cycle_completed=data.get("notify_cycle_completed", True),
@@ -75,7 +87,8 @@ class WebhookSettings:
             notify_test_completed=data.get("notify_test_completed", True),
             notify_test_paused_resumed=data.get("notify_test_paused_resumed", True),
             notify_emergency_stop=data.get("notify_emergency_stop", True),
-            operator_tag=data.get("operator_tag", "Shreyas P"),
+            operator_tag=data.get("operator_tag") or DEFAULT_OPERATOR_TAG,
+            bms_serial_number=str(data.get("bms_serial_number") or "").strip(),
         )
 
     def save(self, path: Path = CONFIG_PATH) -> None:
@@ -91,6 +104,10 @@ class WebhookSettings:
             if path.exists():
                 data = json.loads(path.read_text(encoding="utf-8"))
                 return cls.from_dict(data)
+            else:
+                default_settings = cls()
+                default_settings.save(path)
+                return default_settings
         except Exception as exc:
             logger.warning(f"Could not load webhook config: {exc}")
         return cls()
@@ -108,6 +125,16 @@ def _format_duration(seconds: float) -> str:
         return f"{seconds:.1f}s"
 
 
+def _utc_timestamp() -> str:
+    """Return an unambiguous UTC ISO-8601 timestamp for webhook consumers."""
+    return datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def _local_timestamp() -> str:
+    """Return a human-readable local timestamp including the timezone."""
+    return datetime.now().astimezone().strftime("%Y-%m-%d %H:%M:%S %Z")
+
+
 def build_universal_payload(
     event: NotificationEvent,
     title: str,
@@ -123,7 +150,7 @@ def build_universal_payload(
         "color": color,
         "fields": [{"name": f["name"], "value": f["value"], "inline": True} for f in fields],
         "footer": {"text": "Bytehound Single-Cell BMS Cycler"},
-        "timestamp": datetime.now().isoformat(),
+        "timestamp": _utc_timestamp(),
     }
 
     # Slack format (attachments/blocks)
@@ -164,12 +191,25 @@ class WebhookNotifier:
         while self._is_running:
             try:
                 url, payload = self._queue.get(timeout=0.5)
-                self._post_http(url, payload)
+                self._post_with_retry(url, payload)
                 self._queue.task_done()
             except queue.Empty:
                 continue
             except Exception as exc:
                 logger.error(f"Unexpected worker error: {exc}")
+
+    def _post_with_retry(self, url: str, payload: Dict[str, Any], attempts: int = 3) -> None:
+        """Retry transient webhook failures without blocking the application thread."""
+        delay_s = 1.0
+        for attempt in range(1, attempts + 1):
+            success, message = self._post_http(url, payload)
+            if success:
+                return
+            if attempt < attempts and self._is_running:
+                logger.warning(f"Webhook attempt {attempt}/{attempts} failed; retrying in {delay_s:.1f}s: {message}")
+                time.sleep(delay_s)
+                delay_s *= 2.0
+        logger.error(f"Webhook notification abandoned after {attempts} attempts: {message}")
 
     def _post_http(self, url: str, payload: Dict[str, Any], timeout_s: float = 4.0) -> Tuple[bool, str]:
         """Synchronously dispatch HTTP POST request with short timeout."""
@@ -220,12 +260,31 @@ class WebhookNotifier:
             fields=[
                 {"name": "Status", "value": "✅ Online"},
                 {"name": "Operator", "value": operator},
-                {"name": "Time", "value": datetime.now().strftime("%H:%M:%S")},
+                {"name": "Time", "value": _local_timestamp()},
                 {"name": "Workstation", "value": "Bytehound BMS Lab"},
             ],
             color=0x38BDF8,  # Sky blue
         )
+        self._add_bms_identity(payload)
         return self._post_http(self.settings.url, payload, timeout_s=4.0)
+
+    def set_bms_serial_number(self, serial_number: str) -> None:
+        """Set the identifier shown on subsequent alerts without forcing persistence."""
+        self.settings.bms_serial_number = str(serial_number or "").strip()
+
+    def _bms_identity(self) -> str:
+        return self.settings.bms_serial_number.strip() or "Unknown / not configured"
+
+    def _add_bms_identity(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Add the BMS identifier consistently to all platform payloads."""
+        identity = self._bms_identity()
+        embed = payload.get("embeds", [{}])[0]
+        fields = embed.setdefault("fields", [])
+        if not any(field.get("name") == "BMS Serial / Device ID" for field in fields):
+            fields.insert(0, {"name": "BMS Serial / Device ID", "value": identity, "inline": True})
+        payload["content"] = f"{payload.get('content', '')} [BMS: {identity}]"
+        payload["text"] = f"{payload.get('text', '')} [BMS: {identity}]"
+        return payload
 
     def notify_test_started(
         self,
@@ -412,7 +471,7 @@ class WebhookNotifier:
                 {"name": "Active Step", "value": step_name},
                 {"name": "Voltage", "value": f"{voltage_v:.3f} V"},
                 {"name": "Current", "value": f"{current_a:+.3f} A"},
-                {"name": "Timestamp", "value": datetime.now().strftime("%H:%M:%S")},
+                {"name": "Timestamp", "value": _local_timestamp()},
             ],
             color=0xF97316,  # Orange
         )
@@ -436,7 +495,7 @@ class WebhookNotifier:
                 {"name": "Active Step", "value": step_name},
                 {"name": "Voltage", "value": f"{voltage_v:.3f} V"},
                 {"name": "Current", "value": f"{current_a:+.3f} A"},
-                {"name": "Timestamp", "value": datetime.now().strftime("%H:%M:%S")},
+                {"name": "Timestamp", "value": _local_timestamp()},
             ],
             color=0x10B981,  # Emerald
         )
@@ -461,7 +520,7 @@ class WebhookNotifier:
                 {"name": "Last Active Step", "value": step_name},
                 {"name": "Cell Voltage", "value": f"{voltage_v:.3f} V"},
                 {"name": "Current", "value": f"{current_a:+.3f} A"},
-                {"name": "Timestamp", "value": datetime.now().strftime("%H:%M:%S")},
+                {"name": "Timestamp", "value": _local_timestamp()},
             ],
             color=0xDC2626,  # Red
         )
@@ -469,6 +528,7 @@ class WebhookNotifier:
 
     def _enqueue(self, payload: Dict[str, Any]) -> None:
         try:
+            self._add_bms_identity(payload)
             self._queue.put_nowait((self.settings.url, payload))
         except queue.Full:
             logger.warning("Webhook dispatch queue full; dropping notification.")

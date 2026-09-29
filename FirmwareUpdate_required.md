@@ -406,3 +406,7 @@ void Process_Incoming_Packet(uint16_t frame_id, uint8_t len, uint8_t *payload) {
 The Python host application `single_cell_cycler` is already designed to support both:
 1. **Current Firmware**: Supported via 50 ms paced TX queue and retry tolerance.
 2. **Upgraded Firmware**: When the firmware implements immediate echoes and internal auto-reset, the Python application will automatically transition steps at maximum hardware speed with zero delay!
+
+## Host Release Compatibility Note
+
+The current host release does not receive a BMS serial-number field in the telemetry frames. Webhook alerts therefore accept a configured BMS Serial / Device ID and fall back to the connected USB adapter serial number or COM port. A future firmware serial-number frame can be added without changing the alert field name.

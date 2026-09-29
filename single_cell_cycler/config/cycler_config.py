@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 from dataclasses import dataclass
@@ -10,8 +11,11 @@ if getattr(sys, "frozen", False):
     # Running inside a PyInstaller frozen bundle (.exe)
     _BUNDLE_ROOT = Path(getattr(sys, "_MEIPASS", Path(sys.executable).parent))
     CONFIG_DIR = _BUNDLE_ROOT / "single_cell_cycler" / "config"
-    # Store test telemetry logs in a writable directory next to the executable
-    DEFAULT_LOG_DIR = Path(sys.executable).parent / "logs"
+    # Program Files is not writable for standard users; keep runtime data per-user.
+    _LOCAL_APP_DATA = Path(
+        os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")
+    )
+    DEFAULT_LOG_DIR = _LOCAL_APP_DATA / "Bytehound" / "SingleCellCycler" / "logs"
 else:
     # Running directly from Python source code
     CONFIG_DIR = Path(__file__).resolve().parent

@@ -119,3 +119,16 @@ Key Objectives:
 | Initial | `test_cycler_engine.py` | Full multi-step cycle sequence executes deterministically | All passed | `PASS` |
 | Initial | `test_hardware_table.py` | 16-state discharge load bank, charge specs, relay bits | All 4 passed | `PASS` |
 | Initial | `smoke_cycler_gui.py` | Headless GUI initialization, live telemetry rendering, clean stop | All passed | `PASS` |
+
+### Current Reliability and Release Verification
+
+| Area | Current status | Verification |
+|---|---|---|
+| Serial transport | Automatic reconnect after startup or I/O failure | COM15 detected and opened successfully; reconnect logic covered by tests |
+| Webhook alerts | Retry with exponential backoff and BMS identifier on every alert | `test_webhook_notifier_imp13.py`: 6 passed |
+| BMS identity | Configurable serial/device ID with USB serial or COM fallback | Webhook dialog persistence and payload tests passed |
+| Long-run logging | Asynchronous writes, 256 MB file rotation, pause below 1 GB free disk | Rotation smoke test passed |
+| Plotting | Live charts, dQ/dV, aging, profile preview, crosshair/HUD, XY and analysis plots | 25 plot/metrology tests and 63 analysis/UI tests passed |
+| Windows release | PyInstaller onedir build, Inno Setup installer, release ZIP | Build completed successfully for v1.2.3 |
+
+The current package is suitable for controlled pilot use. Complete a real-device 24–72 hour soak test and enter the actual BMS serial number before unattended production deployment.
