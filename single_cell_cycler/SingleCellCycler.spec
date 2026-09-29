@@ -35,6 +35,19 @@ hiddenimports = [
     'PySide6.QtCore',
     'PySide6.QtGui',
     'PySide6.QtWidgets',
+    # Discord Bot (IMP-14) — discord.py and its async dependencies
+    'discord',
+    'discord.app_commands',
+    'discord.ext',
+    'discord.ext.commands',
+    'discord.ui',
+    'discord.types',
+    'discord.http',
+    'discord.gateway',
+    'aiohttp',
+    'aiohttp.client',
+    'aiohttp.connector',
+    'aiohttp.web',
 ]
 
 # Collect PySide6 & shiboken6 runtime bindings
@@ -79,8 +92,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries, a.zipfiles, a.datas,
-    exclude_binaries=False,
+    [],
+    exclude_binaries=True,
     name='SingleCellCycler',
     debug=False,
     bootloader_ignore_signals=False,
@@ -95,4 +108,13 @@ exe = EXE(
     icon=r'C:\Users\Shreyas\Documents\Python\Bytehound\branding\logo.ico',
 )
 
-# Onefile build completes at EXE
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='SingleCellCycler',
+)

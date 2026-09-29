@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("SingleCellCycler.WebhookNotifier")
 
-CONFIG_PATH = Path("single_cell_cycler/config/webhook_settings.json")
+CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "webhook_settings.json"
 
 
 class NotificationEvent(Enum):

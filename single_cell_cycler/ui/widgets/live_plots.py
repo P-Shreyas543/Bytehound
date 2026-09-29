@@ -16,7 +16,7 @@ from __future__ import annotations
 import collections
 from enum import Enum, auto
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pyqtgraph as pg
