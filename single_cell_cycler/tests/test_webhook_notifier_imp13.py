@@ -59,8 +59,12 @@ def test_webhook_settings_persistence(tmp_path):
         url="https://discord.com/api/webhooks/test/123",
         enabled=True,
         notify_test_started=True,
+        notify_step_completed=True,
+        notify_cycle_completed=True,
         notify_safety_trip=True,
         notify_test_completed=False,
+        notify_test_paused_resumed=True,
+        notify_emergency_stop=True,
         operator_tag="Metrologist Alice",
     )
     settings.save(cfg_file)
@@ -69,6 +73,8 @@ def test_webhook_settings_persistence(tmp_path):
     loaded = WebhookSettings.load(cfg_file)
     assert loaded.url == settings.url
     assert loaded.enabled is True
+    assert loaded.notify_step_completed is True
+    assert loaded.notify_cycle_completed is True
     assert loaded.notify_test_completed is False
     assert loaded.operator_tag == "Metrologist Alice"
 
@@ -106,9 +112,39 @@ def test_webhook_notifier_network_failure_graceful():
         assert success is False
         assert "DNS Resolution Failed" in msg
 
-    # Notification queue dispatch should not throw
+    # Notification queue dispatch should not throw for all event types
     with patch("urllib.request.urlopen", side_effect=urllib.error.URLError("Offline")):
         notifier.notify_test_started(1, "RecipeA", "NMC", 4)
+        notifier.notify_step_completed(
+            cell_id=1,
+            cycle_idx=1,
+            step_idx=1,
+            step_name="CC Charge",
+            step_type="charge",
+            next_step_desc="Step 2: Rest (15m)",
+            capacity_mah=1250.4,
+            energy_mwh=4850.0,
+            duration_s=3600.0,
+            end_voltage_v=4.20,
+            peak_current_a=1.5,
+            peak_temp_c=28.5,
+            cutoff_reason="Voltage >= 4.20V",
+            dcir_mohm=22.4,
+        )
+        notifier.notify_cycle_completed(
+            cell_id=1,
+            cycle_idx=1,
+            total_cycles=5,
+            charge_cap_mah=2500.0,
+            discharge_cap_mah=2480.0,
+            coulombic_eff_pct=99.2,
+            energy_eff_pct=93.5,
+            duration_s=7200.0,
+            dcir_mohm=23.1,
+        )
+        notifier.notify_test_paused(1, "CC Charge", 4.10, 1.5)
+        notifier.notify_test_resumed(1, "CC Charge", 4.10, 1.5)
+        notifier.notify_emergency_stop(1, "CC Charge", 4.10, 1.5)
         notifier.notify_safety_trip(1, "Voltage OOR", 4.35, 1.0, 25.0)
         notifier.notify_test_completed(1, "RecipeA", 5, 2450.0, 9.1, 3600.0)
 
@@ -129,12 +165,20 @@ def test_webhook_dialog_interaction():
     dlg = WebhookSettingsDialog(notifier=notifier)
     assert dlg.edit_url.text() == "https://hooks.slack.com/services/XYZ"
     assert dlg.chk_enable.isChecked() is False
+    assert hasattr(dlg, "chk_step")
+    assert hasattr(dlg, "chk_cycle")
+    assert hasattr(dlg, "chk_pause")
+    assert hasattr(dlg, "chk_estop")
 
     # Simulate user enabling and changing operator tag
     dlg.chk_enable.setChecked(True)
+    dlg.chk_step.setChecked(True)
+    dlg.chk_cycle.setChecked(True)
     dlg.edit_operator.setText("Lead Engineer Bob")
     dlg._on_save()
 
     assert settings.enabled is True
+    assert settings.notify_step_completed is True
+    assert settings.notify_cycle_completed is True
     assert settings.operator_tag == "Lead Engineer Bob"
     notifier.close()

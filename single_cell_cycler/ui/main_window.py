@@ -658,20 +658,31 @@ class MainWindow(QMainWindow):
         self.btn_start_stop.style().polish(self.btn_start_stop)
 
     def _toggle_pause(self) -> None:
+        cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+        st_name = self.engine.active_step.name if self.engine.active_step else "Rest"
+        last_v = self._last_cell_data.voltage if self._last_cell_data else 0.0
+        last_i = self._last_cell_data.current if self._last_cell_data else 0.0
         if self.engine.state == EngineState.RUNNING:
             self.engine.pause_test()
             self.btn_pause.setText("▶ Resume")
+            self.webhook_notifier.notify_test_paused(cell_id, st_name, last_v, last_i)
         elif self.engine.state == EngineState.PAUSED:
             self.engine.resume_test()
             self.btn_pause.setText("⏸ Pause")
+            self.webhook_notifier.notify_test_resumed(cell_id, st_name, last_v, last_i)
 
     def _stop_test(self) -> None:
         self.engine.stop_test()
         self._finish_ui_session("Test Stopped")
 
     def _emergency_stop(self) -> None:
+        cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+        st_name = self.engine.active_step.name if self.engine.active_step else "—"
+        last_v = self._last_cell_data.voltage if self._last_cell_data else 0.0
+        last_i = self._last_cell_data.current if self._last_cell_data else 0.0
         self.engine.emergency_stop()
         self._finish_ui_session("EMERGENCY STOP")
+        self.webhook_notifier.notify_emergency_stop(cell_id, st_name, last_v, last_i)
 
     def _on_reset_safety(self) -> None:
         self.engine.safety_monitor.reset_safety()
@@ -711,6 +722,39 @@ class MainWindow(QMainWindow):
     def _on_step_completed(self, metrics: StepMetrics) -> None:
         self.tracker_table.add_completed_step(metrics)
 
+        # Dispatch step transition card to remote webhook (IMP-13)
+        cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+        next_step_str = "Test End"
+        if self.engine.recipe:
+            rec = self.engine.recipe
+            next_idx = metrics.step_index
+            if next_idx < len(rec.steps):
+                ns = rec.steps[next_idx]
+                next_step_str = f"Step {next_idx + 1}: {ns.name} ({ns.step_type.value.upper()})"
+            elif metrics.cycle_index < rec.cycles:
+                first_s = rec.steps[0]
+                next_step_str = f"Cycle {metrics.cycle_index + 1}, Step 1: {first_s.name} ({first_s.step_type.value.upper()})"
+
+        stype_str = metrics.step_type.value if hasattr(metrics.step_type, "value") else str(metrics.step_type)
+        dcir_val = metrics.dcir_10s_mohm if metrics.dcir_10s_mohm is not None else metrics.dcir_mohm
+
+        self.webhook_notifier.notify_step_completed(
+            cell_id=cell_id,
+            cycle_idx=metrics.cycle_index,
+            step_idx=metrics.step_index,
+            step_name=metrics.step_name,
+            step_type=stype_str,
+            next_step_desc=next_step_str,
+            capacity_mah=metrics.capacity_mah,
+            energy_mwh=metrics.energy_mwh,
+            duration_s=metrics.duration_s,
+            end_voltage_v=metrics.end_voltage,
+            peak_current_a=metrics.peak_current,
+            peak_temp_c=metrics.peak_temp,
+            cutoff_reason=metrics.cutoff_reason,
+            dcir_mohm=dcir_val,
+        )
+
     def _on_cycle_completed(self, summary: CycleSummary) -> None:
         self.live_plots.add_cycle_summary(
             summary.cycle_index,
@@ -719,6 +763,22 @@ class MainWindow(QMainWindow):
             charge_mah=summary.charge_capacity_mah,
             energy_eff=summary.energy_efficiency_pct,
             dcir_mohm=summary.dcir_10s_mohm if summary.dcir_10s_mohm is not None else summary.dcir_mohm,
+        )
+
+        # Dispatch cycle summary card to remote webhook (IMP-13)
+        cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+        tot_cycles = self.engine.recipe.cycles if self.engine.recipe else summary.cycle_index
+        dcir_val = summary.dcir_10s_mohm if summary.dcir_10s_mohm is not None else summary.dcir_mohm
+        self.webhook_notifier.notify_cycle_completed(
+            cell_id=cell_id,
+            cycle_idx=summary.cycle_index,
+            total_cycles=tot_cycles,
+            charge_cap_mah=summary.charge_capacity_mah,
+            discharge_cap_mah=summary.discharge_capacity_mah,
+            coulombic_eff_pct=summary.coulombic_efficiency_pct,
+            energy_eff_pct=summary.energy_efficiency_pct,
+            duration_s=summary.duration_s,
+            dcir_mohm=dcir_val,
         )
 
     def _on_recipe_completed(self, msg: str) -> None:

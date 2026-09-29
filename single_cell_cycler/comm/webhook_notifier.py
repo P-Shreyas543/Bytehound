@@ -26,6 +26,11 @@ CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "webhook_setti
 
 class NotificationEvent(Enum):
     TEST_STARTED = "TEST_STARTED"
+    STEP_COMPLETED = "STEP_COMPLETED"
+    CYCLE_COMPLETED = "CYCLE_COMPLETED"
+    TEST_PAUSED = "TEST_PAUSED"
+    TEST_RESUMED = "TEST_RESUMED"
+    EMERGENCY_STOP = "EMERGENCY_STOP"
     SAFETY_TRIP = "SAFETY_TRIP"
     TEST_COMPLETED = "TEST_COMPLETED"
     PING = "PING"
@@ -36,8 +41,12 @@ class WebhookSettings:
     url: str = ""
     enabled: bool = False
     notify_test_started: bool = True
+    notify_step_completed: bool = True
+    notify_cycle_completed: bool = True
     notify_safety_trip: bool = True
     notify_test_completed: bool = True
+    notify_test_paused_resumed: bool = True
+    notify_emergency_stop: bool = True
     operator_tag: str = "Shreyas P"
 
     def to_dict(self) -> Dict[str, Any]:
@@ -45,8 +54,12 @@ class WebhookSettings:
             "url": self.url,
             "enabled": self.enabled,
             "notify_test_started": self.notify_test_started,
+            "notify_step_completed": self.notify_step_completed,
+            "notify_cycle_completed": self.notify_cycle_completed,
             "notify_safety_trip": self.notify_safety_trip,
             "notify_test_completed": self.notify_test_completed,
+            "notify_test_paused_resumed": self.notify_test_paused_resumed,
+            "notify_emergency_stop": self.notify_emergency_stop,
             "operator_tag": self.operator_tag,
         }
 
@@ -56,8 +69,12 @@ class WebhookSettings:
             url=data.get("url", ""),
             enabled=data.get("enabled", False),
             notify_test_started=data.get("notify_test_started", True),
+            notify_step_completed=data.get("notify_step_completed", True),
+            notify_cycle_completed=data.get("notify_cycle_completed", True),
             notify_safety_trip=data.get("notify_safety_trip", True),
             notify_test_completed=data.get("notify_test_completed", True),
+            notify_test_paused_resumed=data.get("notify_test_paused_resumed", True),
+            notify_emergency_stop=data.get("notify_emergency_stop", True),
             operator_tag=data.get("operator_tag", "Shreyas P"),
         )
 
@@ -77,6 +94,18 @@ class WebhookSettings:
         except Exception as exc:
             logger.warning(f"Could not load webhook config: {exc}")
         return cls()
+
+
+def _format_duration(seconds: float) -> str:
+    s = int(max(0.0, seconds))
+    h, rem = divmod(s, 3600)
+    m, sec = divmod(rem, 60)
+    if h > 0:
+        return f"{h}h {m:02d}m {sec:02d}s"
+    elif m > 0:
+        return f"{m}m {sec:02d}s"
+    else:
+        return f"{seconds:.1f}s"
 
 
 def build_universal_payload(
@@ -269,6 +298,172 @@ class WebhookNotifier:
                 {"name": "Duration", "value": f"{hours:.2f} hours"},
             ],
             color=0x38BDF8,  # Sky blue
+        )
+        self._enqueue(payload)
+
+    def notify_step_completed(
+        self,
+        cell_id: int,
+        cycle_idx: int,
+        step_idx: int,
+        step_name: str,
+        step_type: str,
+        next_step_desc: str,
+        capacity_mah: float,
+        energy_mwh: float,
+        duration_s: float,
+        end_voltage_v: float,
+        peak_current_a: float,
+        peak_temp_c: float,
+        cutoff_reason: str = "",
+        dcir_mohm: Optional[float] = None,
+    ) -> None:
+        """Dispatch detailed step transition notification with capacity, energy, and next step."""
+        if not self.settings.enabled or not self.settings.notify_step_completed or not self.settings.url:
+            return
+
+        st_lower = str(step_type).lower()
+        if "charge" in st_lower:
+            color = 0x6366F1  # Indigo
+            type_icon = "⚡"
+            cap_sign = "+"
+        elif "discharge" in st_lower:
+            color = 0x06B6D4  # Cyan
+            type_icon = "🔋"
+            cap_sign = "-"
+        else:
+            color = 0x64748B  # Slate
+            type_icon = "⏸"
+            cap_sign = ""
+
+        fields = [
+            {"name": "Next Step", "value": next_step_desc or "Advancing..."},
+            {"name": "Step Capacity", "value": f"{cap_sign}{abs(capacity_mah):.1f} mAh"},
+            {"name": "Step Energy", "value": f"{abs(energy_mwh) / 1000.0:.3f} Wh"},
+            {"name": "Duration", "value": _format_duration(duration_s)},
+            {"name": "End Voltage", "value": f"{end_voltage_v:.3f} V"},
+            {"name": "Peak Current", "value": f"{peak_current_a:+.3f} A"},
+            {"name": "Peak Temp", "value": f"{peak_temp_c:.1f} °C"},
+            {"name": "Cutoff Trigger", "value": cutoff_reason or "Target Met"},
+        ]
+        if dcir_mohm is not None and dcir_mohm > 0.0:
+            fields.append({"name": "DCIR Pulse", "value": f"{dcir_mohm:.2f} mΩ"})
+
+        payload = build_universal_payload(
+            event=NotificationEvent.STEP_COMPLETED,
+            title=f"{type_icon} Step {step_idx} Completed: Cell {cell_id}",
+            description=f"Cycle {cycle_idx} • Completed **{step_name}** ({step_type.upper()}).",
+            fields=fields,
+            color=color,
+        )
+        self._enqueue(payload)
+
+    def notify_cycle_completed(
+        self,
+        cell_id: int,
+        cycle_idx: int,
+        total_cycles: int,
+        charge_cap_mah: float,
+        discharge_cap_mah: float,
+        coulombic_eff_pct: float,
+        energy_eff_pct: float,
+        duration_s: float,
+        dcir_mohm: Optional[float] = None,
+    ) -> None:
+        """Dispatch cycle qualification summary card."""
+        if not self.settings.enabled or not self.settings.notify_cycle_completed or not self.settings.url:
+            return
+
+        fields = [
+            {"name": "Cycle Progress", "value": f"Cycle {cycle_idx} of {total_cycles}"},
+            {"name": "Charge Capacity", "value": f"{charge_cap_mah:.1f} mAh"},
+            {"name": "Discharge Capacity", "value": f"{discharge_cap_mah:.1f} mAh"},
+            {"name": "Coulombic Eff. (CE)", "value": f"{coulombic_eff_pct:.2f}%"},
+            {"name": "Energy Eff. (EE)", "value": f"{energy_eff_pct:.2f}%"},
+            {"name": "Cycle Duration", "value": _format_duration(duration_s)},
+        ]
+        if dcir_mohm is not None and dcir_mohm > 0.0:
+            fields.append({"name": "Cycle DCIR", "value": f"{dcir_mohm:.2f} mΩ"})
+
+        payload = build_universal_payload(
+            event=NotificationEvent.CYCLE_COMPLETED,
+            title=f"🔁 Cycle {cycle_idx} Summary: Cell {cell_id}",
+            description=f"Completed Cycle {cycle_idx} on **Cell {cell_id}** with CE = **{coulombic_eff_pct:.2f}%**.",
+            fields=fields,
+            color=0xF59E0B,  # Amber Gold
+        )
+        self._enqueue(payload)
+
+    def notify_test_paused(
+        self,
+        cell_id: int,
+        step_name: str,
+        voltage_v: float,
+        current_a: float,
+    ) -> None:
+        """Dispatch notification when test is paused."""
+        if not self.settings.enabled or not self.settings.notify_test_paused_resumed or not self.settings.url:
+            return
+        payload = build_universal_payload(
+            event=NotificationEvent.TEST_PAUSED,
+            title=f"⏸ Test Paused: Cell {cell_id}",
+            description=f"Cycling test on **Cell {cell_id}** was **paused** by `{self.settings.operator_tag or 'Operator'}`.",
+            fields=[
+                {"name": "Active Step", "value": step_name},
+                {"name": "Voltage", "value": f"{voltage_v:.3f} V"},
+                {"name": "Current", "value": f"{current_a:+.3f} A"},
+                {"name": "Timestamp", "value": datetime.now().strftime("%H:%M:%S")},
+            ],
+            color=0xF97316,  # Orange
+        )
+        self._enqueue(payload)
+
+    def notify_test_resumed(
+        self,
+        cell_id: int,
+        step_name: str,
+        voltage_v: float,
+        current_a: float,
+    ) -> None:
+        """Dispatch notification when test is resumed."""
+        if not self.settings.enabled or not self.settings.notify_test_paused_resumed or not self.settings.url:
+            return
+        payload = build_universal_payload(
+            event=NotificationEvent.TEST_RESUMED,
+            title=f"▶ Test Resumed: Cell {cell_id}",
+            description=f"Cycling test on **Cell {cell_id}** was **resumed** by `{self.settings.operator_tag or 'Operator'}`.",
+            fields=[
+                {"name": "Active Step", "value": step_name},
+                {"name": "Voltage", "value": f"{voltage_v:.3f} V"},
+                {"name": "Current", "value": f"{current_a:+.3f} A"},
+                {"name": "Timestamp", "value": datetime.now().strftime("%H:%M:%S")},
+            ],
+            color=0x10B981,  # Emerald
+        )
+        self._enqueue(payload)
+
+    def notify_emergency_stop(
+        self,
+        cell_id: int,
+        step_name: str,
+        voltage_v: float,
+        current_a: float,
+    ) -> None:
+        """Dispatch critical notification when emergency stop is pushed."""
+        if not self.settings.enabled or not self.settings.notify_emergency_stop or not self.settings.url:
+            return
+        payload = build_universal_payload(
+            event=NotificationEvent.EMERGENCY_STOP,
+            title=f"🛑 EMERGENCY STOP: Cell {cell_id}",
+            description=f"CRITICAL: Manual Emergency Stop dispatched by `{self.settings.operator_tag or 'Operator'}`! Relays isolated.",
+            fields=[
+                {"name": "Cell", "value": f"Cell {cell_id}"},
+                {"name": "Last Active Step", "value": step_name},
+                {"name": "Cell Voltage", "value": f"{voltage_v:.3f} V"},
+                {"name": "Current", "value": f"{current_a:+.3f} A"},
+                {"name": "Timestamp", "value": datetime.now().strftime("%H:%M:%S")},
+            ],
+            color=0xDC2626,  # Red
         )
         self._enqueue(payload)
 

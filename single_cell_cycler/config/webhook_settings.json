@@ -2,7 +2,11 @@
   "url": "https://hooks.slack.com/services/XYZ",
   "enabled": true,
   "notify_test_started": true,
+  "notify_step_completed": true,
+  "notify_cycle_completed": true,
   "notify_safety_trip": true,
   "notify_test_completed": true,
+  "notify_test_paused_resumed": true,
+  "notify_emergency_stop": true,
   "operator_tag": "Lead Engineer Bob"
 }
