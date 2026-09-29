@@ -72,9 +72,7 @@ from .widgets.profile_editor import ProfileEditorWidget
 from .widgets.safety_panel import SafetyPanelWidget
 from .widgets.step_tracker_table import StepTrackerTableWidget
 from .widgets.webhook_dialog import WebhookSettingsDialog
-from .widgets.discord_bot_dialog import DiscordBotDialog
 from ..comm.webhook_notifier import WebhookNotifier
-from ..comm.discord_bot import BotCommandCallbacks, DiscordBotRunner, TelemetrySnapshot
 from ..core.preflight_checker import PreflightReport, PreflightSanityChecker
 
 logger = logging.getLogger("SingleCellCycler.MainWindow")
@@ -104,10 +102,6 @@ class MainWindow(QMainWindow):
         self.preflight_checker = PreflightSanityChecker()
         self._last_preflight_report: Optional[PreflightReport] = None
         self.webhook_notifier = WebhookNotifier()
-
-        # Discord Bot — Remote Command & Control (IMP-14)
-        self._discord_bot = DiscordBotRunner(callbacks=self._build_bot_callbacks())
-        self._discord_bot.start()  # Only starts if enabled + token set
 
         # 2. UI Layout
         self._setup_ui()
@@ -278,17 +272,6 @@ class MainWindow(QMainWindow):
         )
         self.btn_webhook.clicked.connect(lambda: self.show_webhook_settings())
         self.toolbar.addWidget(self.btn_webhook)
-
-        # Discord Bot Command & Control (IMP-14)
-        self.btn_discord_bot = QPushButton("🤖 Discord Bot")
-        self.btn_discord_bot.setObjectName("btn_discord_bot")
-        self.btn_discord_bot.setToolTip("Configure Discord Bot for remote command & control via slash commands")
-        self.btn_discord_bot.setStyleSheet(
-            "background-color: #1e293b; color: #818cf8; border: 1px solid #5865F2; "
-            "font-weight: 700; border-radius: 6px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
-        )
-        self.btn_discord_bot.clicked.connect(lambda: self.show_discord_bot_settings())
-        self.toolbar.addWidget(self.btn_discord_bot)
 
         # Spacer and Emergency Stop
         spacer = QWidget()
@@ -1067,93 +1050,3 @@ class MainWindow(QMainWindow):
         """Open configuration modal for remote webhook notifications (IMP-13)."""
         dlg = WebhookSettingsDialog(self.webhook_notifier, parent=self)
         dlg.exec()
-
-    def show_discord_bot_settings(self, *args, **kwargs) -> None:
-        """Open Discord Bot remote command & control configuration dialog (IMP-14)."""
-        dlg = DiscordBotDialog(self._discord_bot, parent=self)
-        dlg.exec()
-
-    def _build_bot_callbacks(self) -> BotCommandCallbacks:
-        """Wire thread-safe BotCommandCallbacks to live engine/UI state (IMP-14).
-
-        All callbacks are called from the Discord bot asyncio thread and must
-        only access thread-safe primitives (no Qt UI calls).
-        """
-        def _get_telemetry() -> TelemetrySnapshot:
-            cd = self._last_cell_data
-            bp = self._last_board_params
-            rec = self.engine.recipe
-            return TelemetrySnapshot(
-                voltage_v=cd.voltage if cd else 0.0,
-                current_a=cd.current if cd else 0.0,
-                temperature_c=max(cd.terminal_temp, cd.body_temp) if cd else 0.0,
-                soc_pct=cd.soc_pct if cd else 0.0,
-                engine_state=self.engine.state.name,
-                active_cell=self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1,
-                active_recipe=rec.recipe_name if rec else "—",
-                active_step_index=self.engine.metrics_tracker.current_step_index,
-                total_steps=len(rec.steps) if rec else 0,
-                elapsed_s=self._tick_elapsed_s,
-                cycle_count=len(self.engine.metrics_tracker.cycle_summaries),
-                is_safety_tripped=self.engine.safety_monitor.is_tripped,
-                trip_reason=self.engine.safety_monitor.trip_reason if self.engine.safety_monitor.is_tripped else "",
-                timestamp=datetime.now(),
-            )
-
-        def _do_pause() -> bool:
-            if self.engine.state == EngineState.RUNNING:
-                self.engine.pause_test()
-                logger.info("[DiscordBot] Pause command received via Discord.")
-                return True
-            return False
-
-        def _do_resume() -> bool:
-            if self.engine.state == EngineState.PAUSED:
-                self.engine.resume_test()
-                logger.info("[DiscordBot] Resume command received via Discord.")
-                return True
-            return False
-
-        def _do_stop() -> bool:
-            if self.engine.state in (EngineState.RUNNING, EngineState.PAUSED, EngineState.STEP_TRANSITION):
-                self.engine.emergency_stop()
-                logger.warning("[DiscordBot] Emergency STOP command received via Discord.")
-                return True
-            return False
-
-        def _do_export():
-            try:
-                return self.export_run_bundle(target_zip=None)
-            except Exception as exc:
-                logger.error(f"[DiscordBot] Export failed: {exc}")
-                return None
-
-        def _do_report():
-            try:
-                return self.generate_test_report(target_html=None, auto_open=False)
-            except Exception as exc:
-                logger.error(f"[DiscordBot] Report failed: {exc}")
-                return None
-
-        def _do_preflight() -> str:
-            try:
-                report = self._last_preflight_report
-                if report is None:
-                    return "⚠️ Pre-flight not yet run. Connect to hardware first."
-                lines = [f"**Pre-Flight Report — {'✅ PASS' if report.all_passed else '❌ FAIL'}**\n"]
-                for check in report.checks:
-                    icon = "✅" if check.passed else "❌"
-                    lines.append(f"{icon} **{check.name}**: {check.message}")
-                return "\n".join(lines)
-            except Exception as exc:
-                return f"⚠️ Preflight error: {exc}"
-
-        return BotCommandCallbacks(
-            get_telemetry=_get_telemetry,
-            do_pause=_do_pause,
-            do_resume=_do_resume,
-            do_stop=_do_stop,
-            do_export=_do_export,
-            do_report=_do_report,
-            do_preflight=_do_preflight,
-        )

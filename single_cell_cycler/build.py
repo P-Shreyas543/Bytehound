@@ -104,19 +104,6 @@ hiddenimports = [
     'PySide6.QtCore',
     'PySide6.QtGui',
     'PySide6.QtWidgets',
-    # Discord Bot (IMP-14) — discord.py and its async dependencies
-    'discord',
-    'discord.app_commands',
-    'discord.ext',
-    'discord.ext.commands',
-    'discord.ui',
-    'discord.types',
-    'discord.http',
-    'discord.gateway',
-    'aiohttp',
-    'aiohttp.client',
-    'aiohttp.connector',
-    'aiohttp.web',
 ]
 
 # Collect PySide6 & shiboken6 runtime bindings
