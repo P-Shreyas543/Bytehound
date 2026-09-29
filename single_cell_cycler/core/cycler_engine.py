@@ -31,6 +31,14 @@ from .cutoff_detector import CutoffDetector
 from .metrics_tracker import CycleSummary, MetricsTracker, StepMetrics
 from .profile_model import StepType, TestRecipe, TestStep
 from .safety_monitor import SafetyMonitor
+from .state_journal import (
+    StateJournalManager,
+    TestJournalData,
+    cycle_summary_from_dict,
+    cycle_summary_to_dict,
+    step_metrics_from_dict,
+    step_metrics_to_dict,
+)
 from .step_transition_controller import StepTransitionController
 
 logger = logging.getLogger("SingleCellCycler.Engine")
@@ -87,6 +95,10 @@ class CyclerEngine(QObject):
         self._last_telemetry: Optional[CellDataTelemetry] = None
         self._step_activated_time: float = 0.0
 
+        # Atomic State Journaling for Crash Recovery (IMP-08)
+        self.journal_manager = StateJournalManager()
+        self.csv_log_file: Optional[str] = None
+
     @property
     def selected_cell(self) -> int:
         return self._selected_cell
@@ -119,6 +131,7 @@ class CyclerEngine(QObject):
         self.metrics_tracker.reset_all()
         self._reset_execution_state()
         self._set_state(EngineState.STEP_TRANSITION, "Starting Test Profile: initializing hardware...")
+        self._sync_journal()
         self._execute_next_step()
 
     def pause_test(self) -> None:
@@ -138,6 +151,7 @@ class CyclerEngine(QObject):
         """Gracefully stop test and disconnect cell."""
         self.transition_controller.abort()
         self._safe_idle_hardware()
+        self.journal_manager.clear_journal()
         self._set_state(EngineState.ABORTED, "Test Aborted by Operator")
 
     def skip_step(self) -> None:
@@ -207,6 +221,7 @@ class CyclerEngine(QObject):
                 finished_step = self.metrics_tracker.complete_step(result.trigger_reason)
                 self.step_completed.emit(finished_step)
                 self.current_step_idx += 1
+                self._sync_journal()
                 self._execute_next_step()
 
     def on_fault_soc_telemetry(self, fault_soc: FaultSoCTelemetry) -> None:
@@ -269,6 +284,7 @@ class CyclerEngine(QObject):
             # Finished all steps in recipe!
             cycle_sum = self.metrics_tracker.compute_cycle_summary(self.current_cycle)
             self.cycle_completed.emit(cycle_sum)
+            self.journal_manager.clear_journal()
             self._safe_idle_hardware()
             self._set_state(EngineState.COMPLETED, f"Test Completed Successfully ({self.current_cycle} cycles)")
             self.recipe_completed.emit(f"Test finished across {self.current_cycle} cycles")
@@ -371,3 +387,62 @@ class CyclerEngine(QObject):
                     self._safe_idle_hardware()
                     self._set_state(EngineState.SAFETY_STOP, self.safety_monitor.trip_reason)
                     self.safety_tripped.emit(self.safety_monitor.trip_reason)
+
+    def _sync_journal(self) -> None:
+        """Persist active engine and metrology snapshot to atomic journal (IMP-08)."""
+        if not self.recipe:
+            return
+        step = self.recipe.steps[self.current_step_idx] if self.current_step_idx < len(self.recipe.steps) else None
+        journal = TestJournalData(
+            version="1.0",
+            active=True,
+            recipe_name=self.recipe.recipe_name,
+            recipe_dict=self.recipe.to_dict(),
+            selected_cell=self.selected_cell,
+            current_cycle=self.current_cycle,
+            current_step_idx=self.current_step_idx,
+            step_name=step.name if step else "",
+            step_type=step.step_type.value if step else "",
+            loop_counters={str(k): v for k, v in self._loop_counters.items()},
+            cumulative_charge_mah=self.metrics_tracker.cumulative_charge_mah,
+            cumulative_discharge_mah=self.metrics_tracker.cumulative_discharge_mah,
+            cumulative_charge_mwh=self.metrics_tracker.cumulative_charge_mwh,
+            cumulative_discharge_mwh=self.metrics_tracker.cumulative_discharge_mwh,
+            total_test_start_time=self.metrics_tracker.total_test_start_time,
+            step_history=[step_metrics_to_dict(s) for s in self.metrics_tracker.step_history],
+            cycle_summaries=[cycle_summary_to_dict(c) for c in self.metrics_tracker.cycle_summaries],
+            csv_log_file=self.csv_log_file,
+        )
+        self.journal_manager.write_journal(journal)
+
+    def resume_from_journal(self, journal: TestJournalData) -> None:
+        """Seamlessly restore test execution from crash recovery journal (IMP-08)."""
+        if not journal.recipe_dict:
+            raise ValueError("Corrupt or empty recipe in recovery journal")
+
+        self.recipe = TestRecipe.from_dict(journal.recipe_dict)
+        self.selected_cell = journal.selected_cell
+        self.current_cycle = journal.current_cycle
+        self.current_step_idx = journal.current_step_idx
+        self._loop_counters = {int(k): v for k, v in journal.loop_counters.items()}
+        self.csv_log_file = journal.csv_log_file
+
+        # Restore cumulative metrology and history
+        steps = [step_metrics_from_dict(d) for d in journal.step_history]
+        cycles = [cycle_summary_from_dict(d) for d in journal.cycle_summaries]
+        self.metrics_tracker.restore_state(
+            total_test_start_time=journal.total_test_start_time if journal.total_test_start_time > 0 else time.time(),
+            cumulative_charge_mah=journal.cumulative_charge_mah,
+            cumulative_discharge_mah=journal.cumulative_discharge_mah,
+            cumulative_charge_mwh=journal.cumulative_charge_mwh,
+            cumulative_discharge_mwh=journal.cumulative_discharge_mwh,
+            current_cycle_index=journal.current_cycle,
+            step_history=steps,
+            cycle_summaries=cycles,
+        )
+
+        self.safety_monitor.last_telemetry_time = time.time()
+        self.safety_monitor.reset_safety()
+        self._set_state(EngineState.STEP_TRANSITION, f"Resuming Test Profile from Step {self.current_step_idx + 1}...")
+        self._sync_journal()
+        self._execute_next_step()

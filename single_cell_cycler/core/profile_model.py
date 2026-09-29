@@ -178,12 +178,80 @@ class TestStep:
         )
 
 
+@dataclass(frozen=True)
+class ChemistryDef:
+    """Cell chemistry electrical and safety bounds."""
+    code: str
+    name: str
+    nominal_voltage: float
+    min_voltage: float
+    max_voltage: float
+    max_charge_current: float
+    max_discharge_current: float
+    description: str
+
+
+CHEMISTRY_PRESETS: Dict[str, ChemistryDef] = {
+    "NMC": ChemistryDef(
+        code="NMC",
+        name="NMC / NCA (3.7V / 4.2V)",
+        nominal_voltage=3.70,
+        min_voltage=2.80,
+        max_voltage=4.25,
+        max_charge_current=2.5,
+        max_discharge_current=3.0,
+        description="Standard Li-ion (3.7V nom, 2.80V – 4.25V safe window)",
+    ),
+    "LFP": ChemistryDef(
+        code="LFP",
+        name="LFP / LiFePO4 (3.2V / 3.65V)",
+        nominal_voltage=3.20,
+        min_voltage=2.50,
+        max_voltage=3.65,
+        max_charge_current=2.5,
+        max_discharge_current=3.0,
+        description="High-safety LFP (3.2V nom, 2.50V – 3.65V safe window)",
+    ),
+    "LTO": ChemistryDef(
+        code="LTO",
+        name="LTO / Titanate (2.3V / 2.85V)",
+        nominal_voltage=2.30,
+        min_voltage=1.50,
+        max_voltage=2.85,
+        max_charge_current=3.0,
+        max_discharge_current=3.0,
+        description="Ultra-long life LTO (2.3V nom, 1.50V – 2.85V safe window)",
+    ),
+    "NA_ION": ChemistryDef(
+        code="NA_ION",
+        name="Sodium-ion / Na-ion (3.1V / 4.0V)",
+        nominal_voltage=3.10,
+        min_voltage=1.50,
+        max_voltage=4.00,
+        max_charge_current=2.0,
+        max_discharge_current=3.0,
+        description="Sodium-ion cell (3.1V nom, 1.50V – 4.00V safe window)",
+    ),
+    "CUSTOM": ChemistryDef(
+        code="CUSTOM",
+        name="Custom / Laboratory Unconstrained",
+        nominal_voltage=3.60,
+        min_voltage=0.50,
+        max_voltage=5.00,
+        max_charge_current=3.0,
+        max_discharge_current=3.0,
+        description="Laboratory custom profile (0.50V – 5.00V hardware limits)",
+    ),
+}
+
+
 @dataclass
 class TestRecipe:
     __test__ = False
     recipe_name: str
     description: str = ""
     cell_nominal_capacity_mah: float = 3000.0
+    chemistry: str = "NMC"
     steps: List[TestStep] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -191,6 +259,7 @@ class TestRecipe:
             "recipe_name": self.recipe_name,
             "description": self.description,
             "cell_nominal_capacity_mah": self.cell_nominal_capacity_mah,
+            "chemistry": self.chemistry,
             "steps": [s.to_dict() for s in self.steps],
         }
 
@@ -200,8 +269,54 @@ class TestRecipe:
             recipe_name=str(data.get("recipe_name", "New Recipe")),
             description=str(data.get("description", "")),
             cell_nominal_capacity_mah=float(data.get("cell_nominal_capacity_mah", 3000.0)),
+            chemistry=str(data.get("chemistry", "NMC")),
             steps=[TestStep.from_dict(s) for s in data.get("steps", [])],
         )
+
+    def validate_chemistry_limits(self) -> List[str]:
+        """Validate all step cutoffs and setpoints against selected cell chemistry boundaries.
+        Returns a list of violation error strings (empty if all safe).
+        """
+        chem = CHEMISTRY_PRESETS.get(self.chemistry, CHEMISTRY_PRESETS["CUSTOM"])
+        errors: List[str] = []
+        for s in self.steps:
+            # Check charge voltage hardware setpoint
+            if s.step_type == StepType.CHARGE:
+                if s.charge_voltage_target > chem.max_voltage:
+                    errors.append(
+                        f"Step {s.step_index} ('{s.name}'): Charge setpoint {s.charge_voltage_target:.2f}V "
+                        f"exceeds {chem.code} safe max ({chem.max_voltage:.2f}V)"
+                    )
+                if s.charge_current_target > chem.max_charge_current:
+                    errors.append(
+                        f"Step {s.step_index} ('{s.name}'): Charge current {s.charge_current_target:.1f}A "
+                        f"exceeds {chem.code} safe max ({chem.max_charge_current:.1f}A)"
+                    )
+
+            # Check discharge current hardware setpoint
+            elif s.step_type == StepType.DISCHARGE:
+                if s.discharge_current_target > chem.max_discharge_current:
+                    errors.append(
+                        f"Step {s.step_index} ('{s.name}'): Discharge current {s.discharge_current_target:.1f}A "
+                        f"exceeds {chem.code} safe max ({chem.max_discharge_current:.1f}A)"
+                    )
+
+            # Check Cut-off Conditions
+            for c in s.cutoffs:
+                if not c.enabled:
+                    continue
+                if c.cutoff_type == CutoffType.VOLTAGE_MAX and c.threshold > chem.max_voltage:
+                    errors.append(
+                        f"Step {s.step_index} ('{s.name}'): Upper cutoff {c.threshold:.2f}V "
+                        f"exceeds {chem.code} safe max ({chem.max_voltage:.2f}V)"
+                    )
+                elif c.cutoff_type == CutoffType.VOLTAGE_MIN and c.threshold < chem.min_voltage:
+                    errors.append(
+                        f"Step {s.step_index} ('{s.name}'): Lower cutoff {c.threshold:.2f}V "
+                        f"is below {chem.code} safe min ({chem.min_voltage:.2f}V)"
+                    )
+
+        return errors
 
     def save_json(self, file_path: str | Path) -> None:
         path = Path(file_path)

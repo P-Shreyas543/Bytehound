@@ -5,7 +5,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Optional
 
+import numpy as np
+import pyqtgraph as pg
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -29,7 +32,15 @@ from PySide6.QtWidgets import (
 
 from ...comm.protocol_defs import DISCHARGE_TABLE, discharge_decimal_to_current
 from ...config.cycler_config import RECIPES_DIR
-from ...core.profile_model import CutoffCondition, CutoffType, StepType, TestRecipe, TestStep
+from ...core.profile_model import (
+    CHEMISTRY_PRESETS,
+    ChemistryDef,
+    CutoffCondition,
+    CutoffType,
+    StepType,
+    TestRecipe,
+    TestStep,
+)
 from ..theme import BG_CARD, BORDER_COLOR, COLOR_ACCENT
 
 
@@ -289,10 +300,190 @@ class StepHardwareDialog(QDialog):
         self.accept()
 
 
+class RecipeTimelinePreview(QWidget):
+    """Miniature visual timeline preview showing planned voltage & current schedules."""
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(2)
+
+        # Header bar with title and inline color-coded legends
+        hdr = QHBoxLayout()
+        hdr.setContentsMargins(4, 2, 4, 2)
+        lbl_title = QLabel("📊 Planned Profile Schedule Preview")
+        lbl_title.setStyleSheet("font-weight: 700; color: #38bdf8; font-size: 11px;")
+        hdr.addWidget(lbl_title)
+
+        hdr.addSpacing(16)
+        lbl_v = QLabel("■ Planned Voltage V(t)")
+        lbl_v.setStyleSheet("color: #38bdf8; font-weight: 600; font-size: 11px;")
+        hdr.addWidget(lbl_v)
+
+        lbl_i = QLabel("■ Planned Current I(t)")
+        lbl_i.setStyleSheet("color: #10b981; font-weight: 600; font-size: 11px;")
+        hdr.addWidget(lbl_i)
+
+        lbl_note = QLabel("(Simulated Progression)")
+        lbl_note.setStyleSheet("color: #64748b; font-size: 10px; font-style: italic;")
+        hdr.addWidget(lbl_note)
+
+        hdr.addStretch()
+        layout.addLayout(hdr)
+
+        # Main PyQtGraph PlotWidget
+        self.plot = pg.PlotWidget()
+        self.plot.showGrid(x=True, y=True, alpha=0.15)
+        self.plot.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600; font-size:10px;'>Simulated Time (s)</span>")
+        self.plot.setLabel("left", "<span style='color:#38bdf8; font-weight:bold; font-size:10px;'>Voltage (V)</span>")
+        self.plot.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
+        self.plot.plotItem.getAxis("left").setTickPen(pg.mkPen("#334155", width=1))
+
+        # Right axis for current
+        self.view_i = pg.ViewBox()
+        self.plot.plotItem.scene().addItem(self.view_i)
+        ax_r = self.plot.plotItem.getAxis("right")
+        ax_r.linkToView(self.view_i)
+        self.plot.plotItem.showAxis("right")
+        self.view_i.setXLink(self.plot.plotItem)
+        ax_r.setLabel("<span style='color:#10b981; font-weight:bold; font-size:10px;'>Current (A)</span>")
+        ax_r.setTickPen(pg.mkPen("#334155", width=1))
+        self.view_i.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
+        self.view_i.setYRange(-3.5, 3.5, padding=0.0)
+
+        # Plot curves
+        self.curve_v = self.plot.plot(pen=pg.mkPen("#38bdf8", width=2.0))
+        self.curve_i = pg.PlotDataItem(pen=pg.mkPen("#10b981", width=1.8))
+        self.view_i.addItem(self.curve_i)
+
+        self.step_lines: list[pg.InfiniteLine] = []
+        self.step_labels: list[pg.TextItem] = []
+
+        self.plot.plotItem.getViewBox().sigResized.connect(self._sync_view)
+        layout.addWidget(self.plot)
+        self.setMinimumHeight(140)
+        self.setMaximumHeight(200)
+
+    def _sync_view(self) -> None:
+        self.view_i.setGeometry(self.plot.plotItem.getViewBox().sceneBoundingRect())
+        self.view_i.linkedViewChanged(self.plot.plotItem.getViewBox(), self.view_i.XAxis)
+
+    def update_preview(self, recipe: TestRecipe | None) -> None:
+        """Simulate and plot the expected voltage and current trajectories for the recipe."""
+        for line in self.step_lines:
+            self.plot.removeItem(line)
+        for label in self.step_labels:
+            self.plot.removeItem(label)
+        self.step_lines.clear()
+        self.step_labels.clear()
+
+        if not recipe or not recipe.steps:
+            self.curve_v.setData([], [])
+            self.curve_i.setData([], [])
+            return
+
+        chem = CHEMISTRY_PRESETS.get(recipe.chemistry, CHEMISTRY_PRESETS["CUSTOM"])
+
+        all_t = [0.0]
+        all_v = [chem.nominal_voltage]
+        all_i = [0.0]
+
+        cur_t = 0.0
+        cur_v = chem.nominal_voltage
+
+        # Expand loop steps up to max 2 iterations for preview
+        expanded_steps: list[tuple[int, TestStep]] = []
+        i = 0
+        loop_counts: dict[int, int] = {}
+        while i < len(recipe.steps) and len(expanded_steps) < 25:
+            step = recipe.steps[i]
+            if step.step_type == StepType.LOOP:
+                rem = loop_counts.get(i, min(step.loop_count, 2))
+                if rem > 1:
+                    loop_counts[i] = rem - 1
+                    target_idx = max(0, min(len(recipe.steps) - 1, step.loop_target_step - 1))
+                    i = target_idx
+                    continue
+                else:
+                    loop_counts[i] = min(step.loop_count, 2)
+                    i += 1
+                    continue
+            expanded_steps.append((i + 1, step))
+            i += 1
+
+        for step_num, step in expanded_steps:
+            step_start_t = cur_t
+
+            # Step duration (seconds)
+            duration = 180.0
+            for c in step.cutoffs:
+                if c.enabled and c.cutoff_type == CutoffType.DURATION_MAX and c.threshold > 0:
+                    duration = min(c.threshold, 1800.0)
+                    break
+
+            if step.step_type == StepType.CHARGE:
+                target_i = step.charge_current_target
+                target_v = min(chem.max_voltage, step.charge_voltage_target)
+                for c in step.cutoffs:
+                    if c.enabled and c.cutoff_type == CutoffType.VOLTAGE_MAX:
+                        target_v = c.threshold
+                        break
+            elif step.step_type == StepType.DISCHARGE:
+                target_i = -step.discharge_current_target
+                target_v = chem.min_voltage
+                for c in step.cutoffs:
+                    if c.enabled and c.cutoff_type == CutoffType.VOLTAGE_MIN:
+                        target_v = c.threshold
+                        break
+            else:  # REST
+                target_i = 0.0
+                target_v = cur_v
+
+            pts = 20
+            t_seg = np.linspace(cur_t, cur_t + duration, pts)
+            v_seg = np.linspace(cur_v, target_v, pts)
+            i_seg = np.full(pts, target_i)
+
+            all_t.extend(t_seg[1:])
+            all_v.extend(v_seg[1:])
+            all_i.extend(i_seg[1:])
+
+            cur_t += duration
+            cur_v = target_v
+
+            # Step vertical boundary marker
+            if step_start_t > 0:
+                line = pg.InfiniteLine(
+                    pos=step_start_t,
+                    angle=90,
+                    pen=pg.mkPen("#475569", width=1.0, style=Qt.PenStyle.DashLine),
+                )
+                self.plot.addItem(line)
+                self.step_lines.append(line)
+
+            txt = pg.TextItem(f"S{step_num}", color="#94a3b8", anchor=(0.0, 1.0))
+            txt.setPos(step_start_t + 2.0, chem.max_voltage)
+            self.plot.addItem(txt)
+            self.step_labels.append(txt)
+
+        self.curve_v.setData(all_t, all_v)
+        self.curve_i.setData(all_t, all_i)
+
+        max_t = max(10.0, cur_t)
+        self.plot.setXRange(0.0, max_t, padding=0.02)
+        y_min = max(0.0, chem.min_voltage - 0.5)
+        y_max = chem.max_voltage + 0.4
+        self.plot.setYRange(y_min, y_max, padding=0.0)
+        self.view_i.setYRange(-3.5, 3.5, padding=0.0)
+        self._sync_view()
+
+
 class ProfileEditorWidget(QWidget):
     """Interactive recipe step table and profile management widget."""
 
     recipe_loaded = Signal(object)  # TestRecipe
+    validation_changed = Signal(bool, list)  # is_valid, list of error messages
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -300,13 +491,13 @@ class ProfileEditorWidget(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
-        # 1. Top bar: Presets, Load, Save, New
+        # 1. Top bar: Recipe controls & Cell Chemistry Selector (IMP-03)
         top_bar = QHBoxLayout()
-        top_bar.addWidget(QLabel("Test Recipe:"))
+        top_bar.addWidget(QLabel("Recipe:"))
         self.combo_presets = QComboBox()
-        self.combo_presets.setMinimumWidth(220)
+        self.combo_presets.setMinimumWidth(180)
         top_bar.addWidget(self.combo_presets)
 
         self.btn_load_file = QPushButton("Browse...")
@@ -317,9 +508,30 @@ class ProfileEditorWidget(QWidget):
         self.btn_save_file.clicked.connect(self._save_recipe)
         top_bar.addWidget(self.btn_save_file)
 
-        self.btn_new = QPushButton("New Recipe")
+        self.btn_new = QPushButton("New")
         self.btn_new.clicked.connect(self._new_recipe)
         top_bar.addWidget(self.btn_new)
+
+        top_bar.addSpacing(12)
+
+        # Cell Chemistry Selector & Safety Guardrail Badge (IMP-03)
+        lbl_chem = QLabel("Cell Chemistry:")
+        lbl_chem.setStyleSheet("font-weight: 600; color: #f8fafc;")
+        top_bar.addWidget(lbl_chem)
+
+        self.combo_chemistry = QComboBox()
+        self.combo_chemistry.setMinimumWidth(190)
+        for code, chem in CHEMISTRY_PRESETS.items():
+            self.combo_chemistry.addItem(chem.name, code)
+        self.combo_chemistry.currentIndexChanged.connect(self._on_chemistry_changed)
+        top_bar.addWidget(self.combo_chemistry)
+
+        self.lbl_chem_info = QLabel()
+        self.lbl_chem_info.setStyleSheet(
+            "background-color: #0f172a; border: 1px solid #0284c7; color: #38bdf8; "
+            "border-radius: 4px; padding: 2px 7px; font-weight: 600; font-size: 11px;"
+        )
+        top_bar.addWidget(self.lbl_chem_info)
 
         top_bar.addStretch()
         layout.addLayout(top_bar)
@@ -340,7 +552,17 @@ class ProfileEditorWidget(QWidget):
         self.table_steps.cellDoubleClicked.connect(self._on_cell_double_clicked)
         layout.addWidget(self.table_steps)
 
-        # 3. Step control buttons
+        # 3. Chemistry Validation Warning Banner (IMP-03)
+        self.lbl_validation_banner = QLabel()
+        self.lbl_validation_banner.setWordWrap(True)
+        self.lbl_validation_banner.setStyleSheet(
+            "background-color: #451a03; border: 1px solid #f97316; color: #fed7aa; "
+            "border-radius: 5px; padding: 6px 10px; font-size: 11px; font-weight: 600;"
+        )
+        self.lbl_validation_banner.setVisible(False)
+        layout.addWidget(self.lbl_validation_banner)
+
+        # 4. Step control buttons
         btn_bar = QHBoxLayout()
         self.btn_add_step = QPushButton("+ Add Step")
         self.btn_add_step.clicked.connect(self._add_step)
@@ -369,6 +591,10 @@ class ProfileEditorWidget(QWidget):
         btn_bar.addStretch()
         layout.addLayout(btn_bar)
 
+        # 5. Recipe Timeline Schedule Preview (IMP-04)
+        self.preview_widget = RecipeTimelinePreview()
+        layout.addWidget(self.preview_widget)
+
         # Populate built-in presets
         self._refresh_presets()
         self.combo_presets.currentIndexChanged.connect(self._on_preset_selected)
@@ -381,6 +607,42 @@ class ProfileEditorWidget(QWidget):
         self.combo_presets.setCurrentIndex(default_idx)
         if self.combo_presets.count() > 0:
             self._on_preset_selected(default_idx)
+        else:
+            self._on_chemistry_changed(self.combo_chemistry.currentIndex())
+
+    @property
+    def active_chemistry(self) -> ChemistryDef:
+        code = self.combo_chemistry.currentData() if hasattr(self, "combo_chemistry") else "NMC"
+        return CHEMISTRY_PRESETS.get(code, CHEMISTRY_PRESETS["CUSTOM"])
+
+    def _on_chemistry_changed(self, index: int) -> None:
+        code = self.combo_chemistry.currentData()
+        chem = CHEMISTRY_PRESETS.get(code, CHEMISTRY_PRESETS["CUSTOM"])
+        self.lbl_chem_info.setText(
+            f"Nominal: {chem.nominal_voltage:.1f}V | Safe Range: [{chem.min_voltage:.2f}V – {chem.max_voltage:.2f}V] | Max I: {chem.max_charge_current:.1f}A"
+        )
+        if self.current_recipe:
+            self.current_recipe.chemistry = code
+            self._render_table()
+            self.recipe_loaded.emit(self.current_recipe)
+
+    def get_validation_errors(self) -> List[str]:
+        if not self.current_recipe:
+            return []
+        return self.current_recipe.validate_chemistry_limits()
+
+    def _validate_and_render_status(self) -> List[str]:
+        errors = self.get_validation_errors()
+        if errors:
+            err_html = "<br>• ".join(errors)
+            self.lbl_validation_banner.setText(
+                f"⚠️ <b>Chemistry Safety Guardrail Violations ({self.active_chemistry.code}):</b><br>• {err_html}"
+            )
+            self.lbl_validation_banner.setVisible(True)
+        else:
+            self.lbl_validation_banner.setVisible(False)
+        self.validation_changed.emit(len(errors) == 0, errors)
+        return errors
 
     def _refresh_presets(self) -> None:
         self.combo_presets.blockSignals(True)
@@ -401,6 +663,16 @@ class ProfileEditorWidget(QWidget):
 
     def set_recipe(self, recipe: TestRecipe) -> None:
         self.current_recipe = recipe
+        chem_code = getattr(recipe, "chemistry", "NMC")
+        idx = self.combo_chemistry.findData(chem_code)
+        if idx >= 0 and idx != self.combo_chemistry.currentIndex():
+            self.combo_chemistry.blockSignals(True)
+            self.combo_chemistry.setCurrentIndex(idx)
+            self.combo_chemistry.blockSignals(False)
+        chem = CHEMISTRY_PRESETS.get(chem_code, CHEMISTRY_PRESETS["CUSTOM"])
+        self.lbl_chem_info.setText(
+            f"Nominal: {chem.nominal_voltage:.1f}V | Safe Range: [{chem.min_voltage:.2f}V – {chem.max_voltage:.2f}V] | Max I: {chem.max_charge_current:.1f}A"
+        )
         self._render_table()
         self.recipe_loaded.emit(recipe)
 
@@ -408,6 +680,8 @@ class ProfileEditorWidget(QWidget):
         self.table_steps.setRowCount(0)
         if not self.current_recipe:
             return
+
+        chem = self.active_chemistry
 
         for i, s in enumerate(self.current_recipe.steps):
             s.step_index = i + 1
@@ -451,6 +725,32 @@ class ProfileEditorWidget(QWidget):
             spin_count.setValue(s.loop_count)
             spin_count.valueChanged.connect(lambda val, stp=s: setattr(stp, "loop_count", val))
             self.table_steps.setCellWidget(row, 6, spin_count)
+
+            # Check if this step violates active chemistry guardrails
+            has_error = False
+            if s.step_type == StepType.CHARGE:
+                if s.charge_voltage_target > chem.max_voltage or s.charge_current_target > chem.max_charge_current:
+                    has_error = True
+            elif s.step_type == StepType.DISCHARGE:
+                if s.discharge_current_target > chem.max_discharge_current:
+                    has_error = True
+            for c in s.cutoffs:
+                if c.enabled:
+                    if c.cutoff_type == CutoffType.VOLTAGE_MAX and c.threshold > chem.max_voltage:
+                        has_error = True
+                    elif c.cutoff_type == CutoffType.VOLTAGE_MIN and c.threshold < chem.min_voltage:
+                        has_error = True
+
+            if has_error:
+                for col in [0, 1, 3, 4]:
+                    item = self.table_steps.item(row, col)
+                    if item:
+                        item.setBackground(QColor("#450a0a"))
+                        item.setForeground(QColor("#fca5a5"))
+
+        self._validate_and_render_status()
+        if hasattr(self, "preview_widget"):
+            self.preview_widget.update_preview(self.current_recipe)
 
     def _format_hw_summary(self, step: TestStep) -> str:
         cell_str = f"Cell {getattr(step, 'cell_select', 1)}"
@@ -543,14 +843,19 @@ class ProfileEditorWidget(QWidget):
             self.recipe_loaded.emit(self.current_recipe)
 
     def _new_recipe(self) -> None:
+        chem_code = self.active_chemistry.code
+        chem = self.active_chemistry
+        cutoff_v = round(min(4.20, chem.max_voltage), 2)
         self.current_recipe = TestRecipe(
             recipe_name="Custom Test Recipe",
+            chemistry=chem_code,
             steps=[
                 TestStep(
                     step_index=1,
                     name="CC Charge",
                     step_type=StepType.CHARGE,
-                    cutoffs=[CutoffCondition(CutoffType.VOLTAGE_MAX, 4.20, True, "4.20V Cut-off")],
+                    max_charge_voltage=(cutoff_v >= 4.0),
+                    cutoffs=[CutoffCondition(CutoffType.VOLTAGE_MAX, cutoff_v, True, f"{cutoff_v:.2f}V Cut-off")],
                 ),
                 TestStep(
                     step_index=2,

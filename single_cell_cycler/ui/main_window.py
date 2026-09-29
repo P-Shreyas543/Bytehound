@@ -10,8 +10,8 @@ from pathlib import Path
 from typing import Optional
 
 import serial.tools.list_ports
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import Qt, QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QFont, QIcon
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -45,7 +45,15 @@ from ..comm.transceiver import SerialTransceiver, TransceiverState
 from ..config.cycler_config import DEFAULT_LOG_DIR
 from ..core.cycler_engine import CyclerEngine, EngineState
 from ..core.metrics_tracker import CycleSummary, StepMetrics
+from ..core.profile_model import TestRecipe
+from ..core.state_journal import (
+    TestJournalData,
+    cycle_summary_from_dict,
+    step_metrics_from_dict,
+)
 from ..data.async_logger import AsyncTelemetryLogger
+from ..data.report_generator import generate_html_report
+from ..data.run_exporter import export_run_package
 from ..data.summary_writer import write_cycle_summary_csv, write_step_summary_csv
 from .theme import (
     BG_CARD,
@@ -58,9 +66,13 @@ from .theme import (
 from .widgets.kpi_dashboard import KPIDashboard
 from .widgets.live_plots import LivePlotWidget
 from .widgets.manual_control import ManualControlWidget
+from .widgets.preflight_dialog import PreflightDialog
 from .widgets.profile_editor import ProfileEditorWidget
 from .widgets.safety_panel import SafetyPanelWidget
 from .widgets.step_tracker_table import StepTrackerTableWidget
+from .widgets.webhook_dialog import WebhookSettingsDialog
+from ..comm.webhook_notifier import WebhookNotifier
+from ..core.preflight_checker import PreflightReport, PreflightSanityChecker
 
 logger = logging.getLogger("SingleCellCycler.MainWindow")
 
@@ -86,6 +98,9 @@ class MainWindow(QMainWindow):
         self._last_step_mah: float = 0.0
         self._test_start_epoch: float = 0.0  # epoch when START was pressed
         self._tick_elapsed_s: float = 0.0    # deterministic elapsed counter
+        self.preflight_checker = PreflightSanityChecker()
+        self._last_preflight_report: Optional[PreflightReport] = None
+        self.webhook_notifier = WebhookNotifier()
 
         # 2. UI Layout
         self._setup_ui()
@@ -98,6 +113,9 @@ class MainWindow(QMainWindow):
         self._ui_tick_timer.setInterval(100)  # 100 ms = 10 Hz
         self._ui_tick_timer.timeout.connect(self._on_ui_tick)
         self._ui_tick_timer.start()
+
+        # Check for crash recovery journal (IMP-08)
+        QTimer.singleShot(250, self.check_and_prompt_crash_recovery)
 
     @property
     def btn_start(self) -> QPushButton:
@@ -210,6 +228,50 @@ class MainWindow(QMainWindow):
         self.combo_font.currentIndexChanged.connect(self._on_font_size_changed)
         self.toolbar.addWidget(self.combo_font)
 
+        # Pre-Flight Sanity Indicator (IMP-10)
+        self.btn_preflight = QPushButton("● Pre-Flight: Not Checked")
+        self.btn_preflight.setObjectName("btn_preflight")
+        self.btn_preflight.setToolTip("Click to view hardware sanity diagnostic report")
+        self.btn_preflight.setStyleSheet(
+            "background-color: #1e293b; color: #94a3b8; border: 1px solid #475569; "
+            "font-weight: 700; border-radius: 12px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
+        )
+        self.btn_preflight.clicked.connect(lambda: self.show_preflight_dialog())
+        self.toolbar.addWidget(self.btn_preflight)
+
+        # Export Run Package (IMP-11)
+        self.btn_export_run = QPushButton("📦 Export Run")
+        self.btn_export_run.setObjectName("btn_export_run")
+        self.btn_export_run.setToolTip("Export complete diagnostic package (.zip) including CSVs, recipe, logs, and manifest")
+        self.btn_export_run.setStyleSheet(
+            "background-color: #1e293b; color: #38bdf8; border: 1px solid #0284c7; "
+            "font-weight: 700; border-radius: 6px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
+        )
+        self.btn_export_run.clicked.connect(lambda: self.export_run_bundle())
+        self.toolbar.addWidget(self.btn_export_run)
+
+        # Generate Test Report (IMP-12)
+        self.btn_report = QPushButton("📄 Test Report")
+        self.btn_report.setObjectName("btn_report")
+        self.btn_report.setToolTip("Generate formal battery test qualification certificate (HTML / PDF print)")
+        self.btn_report.setStyleSheet(
+            "background-color: #1e293b; color: #c084fc; border: 1px solid #9333ea; "
+            "font-weight: 700; border-radius: 6px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
+        )
+        self.btn_report.clicked.connect(lambda: self.generate_test_report())
+        self.toolbar.addWidget(self.btn_report)
+
+        # Remote Webhook Alerts (IMP-13)
+        self.btn_webhook = QPushButton("🔔 Webhook")
+        self.btn_webhook.setObjectName("btn_webhook")
+        self.btn_webhook.setToolTip("Configure Discord / Slack / Teams remote lab notifications")
+        self.btn_webhook.setStyleSheet(
+            "background-color: #1e293b; color: #f59e0b; border: 1px solid #d97706; "
+            "font-weight: 700; border-radius: 6px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
+        )
+        self.btn_webhook.clicked.connect(lambda: self.show_webhook_settings())
+        self.toolbar.addWidget(self.btn_webhook)
+
         # Spacer and Emergency Stop
         spacer = QWidget()
         spacer.setSizePolicy(
@@ -320,6 +382,12 @@ class MainWindow(QMainWindow):
             self.transceiver.disconnect_serial(send_safe_zero=True, timeout_s=1.5)
             self.engine.transition_controller.auto_ack = True
             self.btn_connect.setText("Connect")
+            self.btn_preflight.setText("● Pre-Flight: Offline")
+            self.btn_preflight.setStyleSheet(
+                "background-color: #1e293b; color: #94a3b8; border: 1px solid #475569; "
+                "font-weight: 700; border-radius: 12px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
+            )
+            self._last_preflight_report = None
         else:
             port = self.combo_port.currentData()
             if not port:
@@ -330,6 +398,8 @@ class MainWindow(QMainWindow):
             self.engine.transition_controller.auto_ack = False
             self.transceiver.connect_serial(port, baud)
             self.btn_connect.setText("Disconnect")
+            # Auto-run pre-flight sanity check once initial telemetry packets arrive (1.5s)
+            QTimer.singleShot(1500, self.run_preflight_check)
 
     def _on_connection_changed(self, state: str, msg: str) -> None:
         self.lbl_status_comm.setText(f"Comm: {state}")
@@ -484,38 +554,51 @@ class MainWindow(QMainWindow):
         self.engine.load_recipe(recipe)
 
     def _start_test(self) -> None:
-        now = time.time()
-        time_since_telemetry = now - self.engine.safety_monitor.last_telemetry_time
-
-        # Pre-flight check: Ensure communication link is active
-        if not self.transceiver.isRunning():
-            logger.warning("[Pre-Flight Check Failed] Cannot start test: Serial transceiver is not connected.")
+        # Pre-flight check: Cell Chemistry Safety Guardrails (IMP-03)
+        chem_errors = self.profile_editor.get_validation_errors()
+        if chem_errors:
+            err_bullet = "\n• " + "\n• ".join(chem_errors)
+            logger.critical(f"[Pre-Flight Guardrail Blocked] Recipe violates chemistry limits:\n{err_bullet}")
             if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
-                QMessageBox.warning(
+                QMessageBox.critical(
                     self,
-                    "Not Connected",
-                    "Cannot start test: No active serial connection.\n\n"
-                    "Please select your BMS hardware COM port and click 'Connect' before starting the test.",
+                    "Chemistry Safety Guardrail Blocked",
+                    f"Cannot start test: The configured recipe violates safety guardrails for "
+                    f"the selected chemistry ({self.profile_editor.active_chemistry.name}):\n{err_bullet}\n\n"
+                    f"Please adjust step voltages or select a compatible chemistry preset before starting.",
                 )
             return
 
-        if time_since_telemetry > 3.0:
-            logger.warning(
-                f"[Pre-Flight Check Failed] Cannot start test: No telemetry received for {time_since_telemetry:.1f}s."
-            )
+        # Pre-flight check: Automated Hardware Sanity Handshake (IMP-10)
+        preflight = self.run_preflight_check()
+        if not preflight.passed:
+            logger.critical(f"[Pre-Flight Blocked] Critical hardware failure:\n{preflight.to_formatted_text()}")
             if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
-                QMessageBox.warning(
-                    self,
-                    "Telemetry Link Offline",
-                    f"Cannot start test: No telemetry received for {time_since_telemetry:.1f} seconds.\n\n"
-                    "Please verify that your single-cell BMS board is powered, connected, and transmitting.",
-                )
+                self.show_preflight_dialog()
             return
+
+        if preflight.has_warnings:
+            logger.warning(f"[Pre-Flight Warning] Proceeding with hardware warnings:\n{preflight.to_formatted_text()}")
+            if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                confirmed = self.show_preflight_dialog()
+                if not confirmed:
+                    return
+        logger.info(f"[Pre-Flight Handshake] {preflight.summary_text} - Verification OK.")
 
         try:
+            # Apply chemistry safety envelope to real-time SafetyMonitor (IMP-03)
+            chem = self.profile_editor.active_chemistry
+            self.engine.safety_monitor.limits.max_voltage_v = round(chem.max_voltage + 0.05, 3)
+            self.engine.safety_monitor.limits.min_voltage_v = round(max(0.5, chem.min_voltage - 0.05), 3)
+            logger.info(
+                f"[Safety Limits] Chemistry {chem.code} applied: V_min={self.engine.safety_monitor.limits.min_voltage_v:.3f}V, "
+                f"V_max={self.engine.safety_monitor.limits.max_voltage_v:.3f}V"
+            )
+
             # Start background logger
             rec_name = self.engine.recipe.recipe_name.lower().replace(" ", "_") if self.engine.recipe else "test"
             log_path = self.logger.start_session(session_prefix=rec_name)
+            self.engine.csv_log_file = str(log_path)
             self.lbl_status_log.setText(f"Logging: {log_path.name}")
 
             self._tick_elapsed_s = 0.0   # reset deterministic tick counter
@@ -523,6 +606,17 @@ class MainWindow(QMainWindow):
             self.live_plots.reset_all()
             self.tracker_table.reset_all()
             self.engine.start_test()
+
+            # Notify remote lab via Webhook (IMP-13)
+            cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+            chem_name = self.profile_editor.active_chemistry.name
+            steps_cnt = len(self.engine.recipe.steps) if self.engine.recipe else 0
+            self.webhook_notifier.notify_test_started(
+                cell_id=cell_id,
+                recipe_name=self.engine.recipe.recipe_name if self.engine.recipe else "Test",
+                chemistry=chem_name,
+                steps_count=steps_cnt,
+            )
 
             self._set_test_running_ui(True)
         except Exception as exc:
@@ -587,6 +681,20 @@ class MainWindow(QMainWindow):
         logger.critical(f"[SAFETY INTERLOCK TRIPPED] Reason: {reason}")
         self.safety_panel.set_tripped(reason)
         self._finish_ui_session(f"SAFETY TRIP: {reason}")
+
+        # Dispatch immediate critical alert to remote webhook (IMP-13)
+        cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+        last_v = self._last_cell_data.voltage if self._last_cell_data else 0.0
+        last_i = self._last_cell_data.current if self._last_cell_data else 0.0
+        last_t = max(self._last_cell_data.terminal_temp, self._last_cell_data.body_temp) if self._last_cell_data else 0.0
+        self.webhook_notifier.notify_safety_trip(
+            cell_id=cell_id,
+            trip_reason=reason,
+            voltage_v=last_v,
+            current_a=last_i,
+            temp_c=last_t,
+        )
+
         if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
             QMessageBox.critical(self, "Safety Interlock Tripped", reason)
 
@@ -596,17 +704,42 @@ class MainWindow(QMainWindow):
         # may have been buffered during STEP_TRANSITION (relay briefly echoes ON).
         if step_idx == 1 and cycle_idx == 1:
             self.live_plots.reset_all()
+        self.live_plots.notify_step_started(cycle_idx, step_idx, stype)
         self.live_plots.reset_step_vq()
 
     def _on_step_completed(self, metrics: StepMetrics) -> None:
         self.tracker_table.add_completed_step(metrics)
 
     def _on_cycle_completed(self, summary: CycleSummary) -> None:
-        self.live_plots.add_cycle_summary(summary.cycle_index, summary.discharge_capacity_mah, summary.coulombic_efficiency_pct)
+        self.live_plots.add_cycle_summary(
+            summary.cycle_index,
+            summary.discharge_capacity_mah,
+            summary.coulombic_efficiency_pct,
+            charge_mah=summary.charge_capacity_mah,
+            energy_eff=summary.energy_efficiency_pct,
+            dcir_mohm=summary.dcir_10s_mohm if summary.dcir_10s_mohm is not None else summary.dcir_mohm,
+        )
 
     def _on_recipe_completed(self, msg: str) -> None:
         import os
         self._finish_ui_session("Completed")
+
+        # Dispatch test completed card to remote webhook (IMP-13)
+        cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+        rec_name = self.engine.recipe.recipe_name if self.engine.recipe else "Test"
+        cycles = len(self.engine.metrics_tracker.cycle_summaries)
+        final_cap = self.engine.metrics_tracker.cycle_summaries[-1].discharge_capacity_mah if self.engine.metrics_tracker.cycle_summaries else 0.0
+        tot_wh = self.engine.metrics_tracker.cumulative_discharge_mwh / 1000.0
+        dur_s = self._tick_elapsed_s
+        self.webhook_notifier.notify_test_completed(
+            cell_id=cell_id,
+            recipe_name=rec_name,
+            cycles_count=cycles,
+            final_cap_mah=final_cap,
+            energy_wh=tot_wh,
+            duration_s=dur_s,
+        )
+
         if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
             QMessageBox.information(self, "Test Completed", msg)
 
@@ -652,4 +785,267 @@ class MainWindow(QMainWindow):
             self.engine._safe_idle_hardware()
         self.transceiver.disconnect_serial(send_safe_zero=True, timeout_s=1.5)
         self.logger.stop_session()
+        self.webhook_notifier.close()
         event.accept()
+
+    def check_and_prompt_crash_recovery(self) -> bool:
+        """Check for active crash recovery journal and prompt operator (IMP-08)."""
+        if not self.engine.journal_manager.is_recovery_available():
+            return False
+
+        journal = self.engine.journal_manager.read_journal()
+        if not journal:
+            return False
+
+        if not self.isVisible() or os.getenv("QT_QPA_PLATFORM") == "offscreen":
+            logger.info(
+                f"[Crash Recovery Detected] Interrupted run on Cell {journal.selected_cell} "
+                f"at Cycle {journal.current_cycle}, Step {journal.current_step_idx + 1}"
+            )
+            return True
+
+        msg = (
+            f"An interrupted test was detected from a previous session:\n\n"
+            f"• Recipe: {journal.recipe_name}\n"
+            f"• Target Cell: Cell {journal.selected_cell}\n"
+            f"• Progress: Cycle {journal.current_cycle}, Step {journal.current_step_idx + 1} ('{journal.step_name}')\n"
+            f"• Completed Steps: {len(journal.step_history)}\n\n"
+            f"Would you like to resume testing from where it was interrupted?"
+        )
+        reply = QMessageBox.question(
+            self,
+            "Interrupted Test Recovery",
+            msg,
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+
+        if reply == QMessageBox.StandardButton.Yes:
+            return self.restore_from_crash_journal(journal)
+        else:
+            self.engine.journal_manager.clear_journal()
+            logger.info("Operator opted to discard recovery journal")
+            return False
+
+    def restore_from_crash_journal(self, journal: TestJournalData) -> bool:
+        """Execute state restoration and resume interrupted test (IMP-08)."""
+        try:
+            logger.info(
+                f"Restoring interrupted test from journal (Cell {journal.selected_cell}, "
+                f"Cycle {journal.current_cycle}, Step {journal.current_step_idx + 1})"
+            )
+            # 1. Restore cell selector in UI
+            idx = self.combo_active_cell.findData(journal.selected_cell)
+            if idx >= 0:
+                self.combo_active_cell.setCurrentIndex(idx)
+            self.engine.selected_cell = journal.selected_cell
+
+            # 2. Restore recipe in profile editor
+            rec = TestRecipe.from_dict(journal.recipe_dict)
+            self.profile_editor.set_recipe(rec)
+
+            # 3. Resume CSV logger if file was specified
+            if journal.csv_log_file and Path(journal.csv_log_file).exists():
+                self.logger.resume_session(journal.csv_log_file)
+                self.lbl_status_log.setText(f"Logging: {Path(journal.csv_log_file).name}")
+            else:
+                rec_name = journal.recipe_name.lower().replace(" ", "_")
+                log_path = self.logger.start_session(session_prefix=f"{rec_name}_resumed")
+                self.lbl_status_log.setText(f"Logging: {log_path.name}")
+                journal.csv_log_file = str(log_path)
+
+            # 4. Replay completed steps into step tracker table
+            self.tracker_table.reset_all()
+            for s_dict in journal.step_history:
+                sm = step_metrics_from_dict(s_dict)
+                self.tracker_table.add_completed_step(sm)
+
+            # 5. Replay completed cycles into live plots aging tab
+            self.live_plots.reset_all()
+            for c_dict in journal.cycle_summaries:
+                cs = cycle_summary_from_dict(c_dict)
+                self.live_plots.add_cycle_summary(
+                    cs.cycle_index,
+                    cs.discharge_capacity_mah,
+                    cs.coulombic_efficiency_pct,
+                    charge_mah=cs.charge_capacity_mah,
+                    energy_eff=cs.energy_efficiency_pct,
+                    dcir_mohm=cs.dcir_10s_mohm if cs.dcir_10s_mohm is not None else cs.dcir_mohm,
+                )
+
+            # 6. Resume engine execution
+            self.engine.resume_from_journal(journal)
+            self._set_test_running_ui(True)
+            self.statusBar.showMessage(
+                f"Resumed test '{journal.recipe_name}' on Cell {journal.selected_cell} at Cycle {journal.current_cycle}, Step {journal.current_step_idx + 1}",
+                5000,
+            )
+            return True
+        except Exception as exc:
+            logger.error(f"Failed to restore from crash journal: {exc}", exc_info=True)
+            if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                QMessageBox.critical(self, "Recovery Error", f"Failed to restore test state:\n{exc}")
+            return False
+
+    def run_preflight_check(self) -> PreflightReport:
+        """Execute automated pre-flight sanity diagnostic and update UI pill (IMP-10)."""
+        is_conn = self.transceiver.isRunning() if hasattr(self, "transceiver") else False
+        now = time.time()
+        last_rx = self.engine.safety_monitor.last_telemetry_time if is_conn else 0.0
+        age = (now - last_rx) if (is_conn and last_rx > 0) else None
+        cell_data = self._last_cell_data if is_conn else None
+        board_params = self._last_board_params if is_conn else None
+        active_chem = self.profile_editor.active_chemistry
+        cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+
+        report = self.preflight_checker.evaluate(
+            cell_data=cell_data,
+            board_params=board_params,
+            readbacks=self.engine.transition_controller.control_readbacks,
+            last_telemetry_age_s=age,
+            cell_id=cell_id,
+            chemistry_name=active_chem.name,
+            chemistry_min_v=active_chem.min_voltage,
+            chemistry_max_v=active_chem.max_voltage,
+        )
+        self._last_preflight_report = report
+        self._update_preflight_ui()
+        return report
+
+    def _update_preflight_ui(self) -> None:
+        """Update toolbar status pill based on latest diagnostic report."""
+        if hasattr(self, "btn_preflight") and self._last_preflight_report is not None:
+            rep = self._last_preflight_report
+            self.btn_preflight.setText(rep.summary_text)
+            self.btn_preflight.setStyleSheet(rep.summary_badge_style)
+
+    def show_preflight_dialog(self, *args, **kwargs) -> bool:
+        """Open modal diagnostic window for Pre-Flight Hardware Sanity Handshake."""
+        if self._last_preflight_report is None or not self.transceiver.isRunning():
+            self.run_preflight_check()
+
+        report = self._last_preflight_report
+        if report is None:
+            return False
+
+        dlg = PreflightDialog(
+            report=report,
+            rerun_callback=self.run_preflight_check,
+            parent=self,
+        )
+        dlg.exec()
+        return dlg.proceed_confirmed
+
+    def export_run_bundle(self, target_zip: Optional[str | Path] = None) -> Optional[Path]:
+        """Export active or completed test session into a diagnostic zip bundle (IMP-11)."""
+        if isinstance(target_zip, bool):
+            target_zip = None
+
+        cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+        ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"Run_Cell{cell_id}_{ts_str}.zip"
+        default_dest = Path("single_cell_cycler/exports") / default_filename
+
+        if target_zip is None:
+            if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                chosen, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Export Diagnostic Run Package (.zip)",
+                    str(default_dest),
+                    "Zip Archives (*.zip);;All Files (*)",
+                )
+                if not chosen:
+                    return None
+                target_zip = Path(chosen)
+            else:
+                target_zip = default_dest
+
+        try:
+            recipe = self.engine.recipe if self.engine.recipe else self.profile_editor.current_recipe
+            raw_csv = self.logger.current_log_path
+
+            # Derive status
+            status_str = "RUNNING" if self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION) else "IDLE"
+            if self.engine.safety_monitor.is_tripped:
+                status_str = "SAFETY_TRIP"
+
+            zip_path = export_run_package(
+                output_zip_path=target_zip,
+                cell_id=cell_id,
+                recipe=recipe,
+                raw_csv_path=raw_csv,
+                step_history=self.engine.metrics_tracker.step_history,
+                cycle_summaries=self.engine.metrics_tracker.cycle_summaries,
+                metrics_tracker=self.engine.metrics_tracker,
+                test_status=status_str,
+            )
+
+            msg = f"Exported diagnostic package: {zip_path.name}"
+            self.statusBar.showMessage(msg, 5000)
+            logger.info(f"[Run Exporter] Package saved to {zip_path}")
+
+            if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                QMessageBox.information(
+                    self,
+                    "Run Package Exported",
+                    f"Successfully created diagnostic package:\n\n{zip_path}\n\n"
+                    f"Includes raw telemetry CSV, summaries, recipe JSON, application logs, and manifest.",
+                )
+            return zip_path
+        except Exception as exc:
+            logger.error(f"Failed to export run bundle: {exc}", exc_info=True)
+            if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                QMessageBox.critical(self, "Export Error", f"Failed to export run package:\n{exc}")
+            return None
+
+    def generate_test_report(self, target_html: Optional[str | Path] = None, auto_open: bool = True) -> Optional[Path]:
+        """Build and open publication-grade test certification report (IMP-12)."""
+        if isinstance(target_html, bool):
+            target_html = None
+
+        cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+        ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
+        default_filename = f"Certificate_Cell{cell_id}_{ts_str}.html"
+        default_dest = Path("single_cell_cycler/reports") / default_filename
+
+        if target_html is None:
+            if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                chosen, _ = QFileDialog.getSaveFileName(
+                    self,
+                    "Save Test Certification Report",
+                    str(default_dest),
+                    "HTML Documents (*.html);;All Files (*)",
+                )
+                if not chosen:
+                    return None
+                target_html = Path(chosen)
+            else:
+                target_html = default_dest
+
+        try:
+            recipe = self.engine.recipe if self.engine.recipe else self.profile_editor.current_recipe
+            rep_path = generate_html_report(
+                output_html_path=target_html,
+                cell_id=cell_id,
+                recipe=recipe,
+                cycles=self.engine.metrics_tracker.cycle_summaries,
+                metrics_tracker=self.engine.metrics_tracker,
+                operator="Lab Operator",
+            )
+
+            self.statusBar.showMessage(f"Test report generated: {rep_path.name}", 5000)
+            logger.info(f"[Report Generator] Generated certificate at {rep_path}")
+
+            if auto_open and self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                QDesktopServices.openUrl(QUrl.fromLocalFile(str(rep_path.resolve())))
+            return rep_path
+        except Exception as exc:
+            logger.error(f"Failed to generate test report: {exc}", exc_info=True)
+            if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                QMessageBox.critical(self, "Report Error", f"Failed to generate test certificate:\n{exc}")
+            return None
+
+    def show_webhook_settings(self, *args, **kwargs) -> None:
+        """Open configuration modal for remote webhook notifications (IMP-13)."""
+        dlg = WebhookSettingsDialog(self.webhook_notifier, parent=self)
+        dlg.exec()

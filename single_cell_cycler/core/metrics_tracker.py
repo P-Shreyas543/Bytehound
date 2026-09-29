@@ -25,7 +25,10 @@ class StepMetrics:
     peak_temp: float = 0.0
     capacity_mah: float = 0.0       # Net charge/discharge capacity in this step
     energy_mwh: float = 0.0         # Net energy in this step
-    dcir_mohm: Optional[float] = None
+    dcir_1s_mohm: Optional[float] = None    # 1s pulse resistance (mOhm)
+    dcir_10s_mohm: Optional[float] = None   # Standard 10s pulse resistance (mOhm, IEC 62660-1 / USABC)
+    dcir_30s_mohm: Optional[float] = None   # 30s pulse resistance (mOhm)
+    dcir_mohm: Optional[float] = None       # Primary/representative pulse resistance (mOhm)
     cutoff_reason: str = ""
 
 
@@ -39,7 +42,26 @@ class CycleSummary:
     coulombic_efficiency_pct: float = 0.0
     energy_efficiency_pct: float = 0.0
     duration_s: float = 0.0
+    dcir_1s_mohm: Optional[float] = None
+    dcir_10s_mohm: Optional[float] = None
     dcir_mohm: Optional[float] = None
+
+
+@dataclass
+class DCIRMeasurement:
+    """Standardized pulse resistance measurement record (IEC 62660-1 / USABC)."""
+    timestamp: float
+    cycle_index: int
+    step_index: int
+    step_name: str
+    step_type: StepType
+    baseline_voltage: float
+    baseline_current: float
+    pulse_current: float
+    delta_current: float
+    r_1s_mohm: Optional[float] = None
+    r_10s_mohm: Optional[float] = None
+    r_30s_mohm: Optional[float] = None
 
 
 class MetricsTracker:
@@ -59,6 +81,7 @@ class MetricsTracker:
         self.current_step_metrics: Optional[StepMetrics] = None
         self.step_history: List[StepMetrics] = []
         self.cycle_summaries: List[CycleSummary] = []
+        self.dcir_measurements: List[DCIRMeasurement] = []
 
         # Numerical integration state
         self._last_telemetry: Optional[CellDataTelemetry] = None
@@ -68,6 +91,30 @@ class MetricsTracker:
         self._dcir_v0: Optional[float] = None
         self._dcir_i0: Optional[float] = None
         self._dcir_captured_time: Optional[float] = None
+
+    def restore_state(
+        self,
+        total_test_start_time: float,
+        cumulative_charge_mah: float,
+        cumulative_discharge_mah: float,
+        cumulative_charge_mwh: float,
+        cumulative_discharge_mwh: float,
+        current_cycle_index: int,
+        step_history: List[StepMetrics],
+        cycle_summaries: List[CycleSummary],
+    ) -> None:
+        """Restore integrated test metrics from crash journal (IMP-08)."""
+        self.total_test_start_time = total_test_start_time
+        self.cumulative_charge_mah = cumulative_charge_mah
+        self.cumulative_discharge_mah = cumulative_discharge_mah
+        self.cumulative_charge_mwh = cumulative_charge_mwh
+        self.cumulative_discharge_mwh = cumulative_discharge_mwh
+        self.current_cycle_index = current_cycle_index
+        self.step_history = list(step_history)
+        self.cycle_summaries = list(cycle_summaries)
+        self.current_step_metrics = None
+        self._last_telemetry = None
+        self._last_time = None
 
     def start_step(self, cycle_index: int, step_index: int, step_name: str, step_type: StepType, initial_telemetry: Optional[CellDataTelemetry] = None) -> None:
         now = initial_telemetry.timestamp if (initial_telemetry and initial_telemetry.timestamp > 0) else time.time()
@@ -136,20 +183,33 @@ class MetricsTracker:
                 telemetry.terminal_temp,
             )
 
-            # DCIR check at ~0.5s - 1.0s after step onset
+            # Standardized Pulse DCIR measurement (IEC 62660-1 / USABC)
             if (
                 self._dcir_v0 is not None
                 and self._dcir_i0 is not None
                 and self._dcir_captured_time is not None
-                and self.current_step_metrics.dcir_mohm is None
             ):
                 elapsed_dcir = now - self._dcir_captured_time
-                if 0.5 <= elapsed_dcir <= 1.5:
-                    delta_i = abs(telemetry.current - self._dcir_i0)
-                    delta_v = abs(telemetry.voltage - self._dcir_v0)
-                    if delta_i >= 0.2:  # Minimum 200mA delta required for valid DCIR
-                        r_ohms = delta_v / delta_i
-                        self.current_step_metrics.dcir_mohm = round(r_ohms * 1000.0, 2)
+                delta_i = abs(telemetry.current - self._dcir_i0)
+                delta_v = abs(telemetry.voltage - self._dcir_v0)
+                if delta_i >= 0.1:  # Minimum 100mA delta required for valid DCIR
+                    r_ohms = delta_v / delta_i
+                    r_mohm = round(r_ohms * 1000.0, 2)
+
+                    # 1s pulse resistance (0.7s - 1.3s)
+                    if 0.7 <= elapsed_dcir <= 1.3 and self.current_step_metrics.dcir_1s_mohm is None:
+                        self.current_step_metrics.dcir_1s_mohm = r_mohm
+                        if self.current_step_metrics.dcir_mohm is None:
+                            self.current_step_metrics.dcir_mohm = r_mohm
+
+                    # Standard 10s pulse resistance (9.5s - 10.5s, IEC 62660-1 / USABC)
+                    if 9.5 <= elapsed_dcir <= 10.5 and self.current_step_metrics.dcir_10s_mohm is None:
+                        self.current_step_metrics.dcir_10s_mohm = r_mohm
+                        self.current_step_metrics.dcir_mohm = r_mohm  # Standard 10s replaces 1s as primary metric
+
+                    # 30s pulse resistance (29.0s - 31.0s)
+                    if 29.0 <= elapsed_dcir <= 31.0 and self.current_step_metrics.dcir_30s_mohm is None:
+                        self.current_step_metrics.dcir_30s_mohm = r_mohm
 
         self._last_time = now
         self._last_telemetry = telemetry
@@ -161,6 +221,29 @@ class MetricsTracker:
             self.current_step_metrics.end_time = now
             self.current_step_metrics.duration_s = max(0.0, now - self.current_step_metrics.start_time)
             self.current_step_metrics.cutoff_reason = cutoff_reason
+
+            # Record DCIR measurement if captured during this step
+            if (
+                self.current_step_metrics.dcir_1s_mohm is not None
+                or self.current_step_metrics.dcir_10s_mohm is not None
+                or self.current_step_metrics.dcir_mohm is not None
+            ):
+                meas = DCIRMeasurement(
+                    timestamp=now,
+                    cycle_index=self.current_step_metrics.cycle_index,
+                    step_index=self.current_step_metrics.step_index,
+                    step_name=self.current_step_metrics.step_name,
+                    step_type=self.current_step_metrics.step_type,
+                    baseline_voltage=self._dcir_v0 or 0.0,
+                    baseline_current=self._dcir_i0 or 0.0,
+                    pulse_current=self.current_step_metrics.peak_current,
+                    delta_current=abs(self.current_step_metrics.peak_current - (self._dcir_i0 or 0.0)),
+                    r_1s_mohm=self.current_step_metrics.dcir_1s_mohm,
+                    r_10s_mohm=self.current_step_metrics.dcir_10s_mohm,
+                    r_30s_mohm=self.current_step_metrics.dcir_30s_mohm,
+                )
+                self.dcir_measurements.append(meas)
+
             self.step_history.append(self.current_step_metrics)
             finished_step = self.current_step_metrics
             self.current_step_metrics = None
@@ -188,8 +271,11 @@ class MetricsTracker:
         coulombic_eff = (q_dis / q_chg * 100.0) if q_chg > 0 else 0.0
         energy_eff = (e_dis / e_chg * 100.0) if e_chg > 0 else 0.0
 
-        # Grab DCIR if measured in any discharge step
-        dcir_val = next((s.dcir_mohm for s in cycle_steps if s.dcir_mohm is not None), None)
+        # Grab standard DCIR if measured in any step of this cycle
+        dcir_10s = next((s.dcir_10s_mohm for s in cycle_steps if s.dcir_10s_mohm is not None), None)
+        dcir_1s = next((s.dcir_1s_mohm for s in cycle_steps if s.dcir_1s_mohm is not None), None)
+        dcir_fallback = next((s.dcir_mohm for s in cycle_steps if s.dcir_mohm is not None), None)
+        dcir_val = dcir_10s if dcir_10s is not None else (dcir_1s if dcir_1s is not None else dcir_fallback)
 
         summary = CycleSummary(
             cycle_index=cycle_index,
@@ -200,6 +286,8 @@ class MetricsTracker:
             coulombic_efficiency_pct=round(coulombic_eff, 2),
             energy_efficiency_pct=round(energy_eff, 2),
             duration_s=round(duration, 1),
+            dcir_1s_mohm=dcir_1s,
+            dcir_10s_mohm=dcir_10s,
             dcir_mohm=dcir_val,
         )
         self.cycle_summaries.append(summary)

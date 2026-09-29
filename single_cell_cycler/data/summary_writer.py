@@ -28,6 +28,9 @@ def write_step_summary_csv(file_path: str | Path, steps: List[StepMetrics]) -> N
         "peak_temp_c",
         "capacity_mah",
         "energy_mwh",
+        "dcir_1s_mohm",
+        "dcir_10s_mohm",
+        "dcir_30s_mohm",
         "dcir_mohm",
         "cutoff_reason",
     ]
@@ -48,6 +51,9 @@ def write_step_summary_csv(file_path: str | Path, steps: List[StepMetrics]) -> N
                 "peak_temp_c": round(s.peak_temp, 1),
                 "capacity_mah": round(s.capacity_mah, 2),
                 "energy_mwh": round(s.energy_mwh, 2),
+                "dcir_1s_mohm": s.dcir_1s_mohm if s.dcir_1s_mohm is not None else "",
+                "dcir_10s_mohm": s.dcir_10s_mohm if s.dcir_10s_mohm is not None else "",
+                "dcir_30s_mohm": s.dcir_30s_mohm if s.dcir_30s_mohm is not None else "",
                 "dcir_mohm": s.dcir_mohm if s.dcir_mohm is not None else "",
                 "cutoff_reason": s.cutoff_reason,
             })
@@ -67,6 +73,8 @@ def write_cycle_summary_csv(file_path: str | Path, cycles: List[CycleSummary]) -
         "coulombic_efficiency_pct",
         "energy_efficiency_pct",
         "duration_s",
+        "dcir_1s_mohm",
+        "dcir_10s_mohm",
         "dcir_mohm",
     ]
 
@@ -83,6 +91,8 @@ def write_cycle_summary_csv(file_path: str | Path, cycles: List[CycleSummary]) -
                 "coulombic_efficiency_pct": c.coulombic_efficiency_pct,
                 "energy_efficiency_pct": c.energy_efficiency_pct,
                 "duration_s": c.duration_s,
+                "dcir_1s_mohm": c.dcir_1s_mohm if c.dcir_1s_mohm is not None else "",
+                "dcir_10s_mohm": c.dcir_10s_mohm if c.dcir_10s_mohm is not None else "",
                 "dcir_mohm": c.dcir_mohm if c.dcir_mohm is not None else "",
             })
     logger.info(f"Saved cycle summary to {path}")

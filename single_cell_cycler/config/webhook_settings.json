@@ -1,0 +1,8 @@
+{
+  "url": "https://discord.com/api/webhooks/1554409170881478696/8mKrBjLtwhXwXpRdP-N_0nx7WguT2Xvbwa_En8A-ADMI7j_cAEGDS7YlcQzsBVZRwCBN",
+  "enabled": true,
+  "notify_test_started": true,
+  "notify_safety_trip": true,
+  "notify_test_completed": true,
+  "operator_tag": "Lead Engineer Bob"
+}

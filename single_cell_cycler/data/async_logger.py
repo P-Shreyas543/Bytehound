@@ -75,6 +75,47 @@ class AsyncTelemetryLogger:
         logger.info(f"Started logging to {self.current_log_path}")
         return self.current_log_path
 
+    def resume_session(self, log_path: str | Path) -> Path:
+        """Resume recording into an existing CSV session file (IMP-08)."""
+        self.stop_session()
+        p = Path(log_path)
+        self.current_log_path = p
+        file_exists = p.exists() and p.stat().st_size > 0
+        self._file = open(self.current_log_path, "a", newline="", encoding="utf-8")
+        fieldnames = [
+            "timestamp_iso",
+            "epoch_s",
+            "cycle_index",
+            "step_index",
+            "step_name",
+            "step_type",
+            "voltage_v",
+            "current_a",
+            "power_w",
+            "terminal_temp_c",
+            "body_temp_c",
+            "ambient_temp_c",
+            "charge_bus_v",
+            "load_bus_v",
+            "soc_ocv_pct",
+            "soc_cc_pct",
+            "fault_byte",
+            "step_capacity_mah",
+            "step_energy_mwh",
+            "total_charge_mah",
+            "total_discharge_mah",
+        ]
+        self._csv_writer = csv.DictWriter(self._file, fieldnames=fieldnames)
+        if not file_exists:
+            self._csv_writer.writeheader()
+            self._file.flush()
+
+        self._is_running = True
+        self._thread = threading.Thread(target=self._worker_loop, daemon=True)
+        self._thread.start()
+        logger.info(f"Resumed logging to {self.current_log_path}")
+        return self.current_log_path
+
     def log_record(self, record: dict) -> None:
         """Enqueue record for background write."""
         if not self._is_running:

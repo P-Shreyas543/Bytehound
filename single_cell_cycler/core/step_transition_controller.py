@@ -14,6 +14,7 @@ Enforces deterministic, safe hardware transition sequences with readback verific
 from __future__ import annotations
 
 import logging
+import os
 import time
 from enum import Enum, auto
 from typing import Callable, Dict, Optional
@@ -85,10 +86,10 @@ class StepTransitionController(QObject):
         super().__init__(parent)
         self._command_sender = command_sender
 
-        # In headless test mode (no QApplication running), disable physical delays and auto-ack
-        has_app = QApplication.instance() is not None
-        self.delays_enabled = delays_enabled if delays_enabled is not None else has_app
-        self.auto_ack = auto_ack if auto_ack is not None else (not has_app)
+        # In headless test mode (no QApplication running or offscreen platform), disable physical delays and auto-ack
+        is_real_gui = (QApplication.instance() is not None) and (os.getenv("QT_QPA_PLATFORM") != "offscreen")
+        self.delays_enabled = delays_enabled if delays_enabled is not None else is_real_gui
+        self.auto_ack = auto_ack if auto_ack is not None else (not is_real_gui)
 
         # Live control registers read-back cache (0x6000 - 0x6004)
         self.control_readbacks: Dict[int, int] = {

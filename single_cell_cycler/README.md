@@ -6,54 +6,41 @@ An industrial-grade battery cell cycler and characterization workstation tailore
 
 ## Key Capabilities & Features
 
-### 1. Unified Operator UX & Modern Industrial Theme
-- **Unified Action Control:** Replaced confusing dual buttons with a single dynamic action button:
-  - `▶ START TEST` (Emerald `#10b981`) when idle.
-  - `⏹ STOP TEST` (Crimson `#ef4444`) when active/paused.
-  - Fully synchronized with `⏸ Pause / ▶ Resume` and `⏭ Skip Step` controls.
-- **Dynamic Title Bar & Branding:**
-  - Native Windows 10/11 DWM Immersive Dark Mode integration.
-  - Context-aware title bar: `Bytehound | Single-Cell BMS Cycler — [COM15 • Cell 2]`.
-  - Multi-resolution brand icons embedded into window headers, taskbars, and standalone executables.
-- **Dynamic Typography Scaling:** Live runtime font scaling ($10\text{ pt}$ to $16\text{ pt}$) across the entire application, dynamically adapting plot tick fonts, table headers, cards, and status indicators.
-- **Flexible Section Splitters:** User-resizable splitters between KPI dashboards, chart suites, and sequencer tabs with automatic layout coordinate preservation.
+### 1. Unified Operator UX & Workflow (Pillar 1)
+- **Unified Action Control:** Dynamic action button switching between `▶ START TEST` (Emerald `#10b981`) and `⏹ STOP TEST` (Crimson `#ef4444`), synchronized with `⏸ Pause / ▶ Resume` and `⏭ Skip Step`.
+- **Dynamic Immersive Dark Theme:** Native Windows 10/11 DWM dark title bar and context-aware title: `Bytehound | Single-Cell BMS Cycler — [COM15 • Cell 2]`.
+- **Dynamic Typography Scaling:** Live runtime font scaling ($10\text{ pt}$ to $16\text{ pt}$) dynamically scaling all HUD chips, tables, and plots without text clipping.
+- **Interactive Tracking Crosshairs & Monospace HUD:** Hover inspection across all plots displaying exact time, voltage, current, capacity, and temperature coordinates.
+- **Quick-Zoom Toolbar Controls:** 1-click `[⤢ Fit All]` and `[⏱ Current Step]` auto-framing.
+- **Cell Chemistry Safety Guardrails (`IMP-03`):** Built-in presets for NMC, LFP, LTO, and Sodium-ion (Na-ion) with pre-test envelope validation.
+- **Visual Recipe Timeline Profile Preview (`IMP-04`):** Interactive synthetic profile renderer visualizing voltage/current setpoints, cut-off checkpoints, and multi-cycle loops before running.
 
 ---
 
-### 2. High-Precision Metrology & Visualization Suite
-- **Synchronized Coincident Dual Y-Axis Grids:**
-  - **Left Y-Axis (Cell Voltage):** $0.0\text{ V} - 6.0\text{ V}$ (Span = $6.0\text{ V}$, ticks every $1.0\text{ V}$ with $0.5\text{ V}$ sub-ticks).
-  - **Right Y-Axis (Current):** $-3.0\text{ A} - +3.0\text{ A}$ (Span = $6.0\text{ A}$, ticks every $1.0\text{ A}$ with $0.5\text{ A}$ sub-ticks).
-  - **Coincident Grid Lines:** Both Left and Right grids are **100% active** and mathematically aligned onto the exact same pixel heights in dark slate (`#334155`), ensuring clean readability with zero grid suppression.
-- **Dynamic Auto-Wrapping & Non-Clipping:** Live X-axis auto-ranging extends from $0.0\text{ s}$ to elapsed time with safety margin ($\max(10.0\text{ s}, t_{\text{latest}}) + 1\%$), ensuring all data points remain visible without negative time offset.
-- **Linked Multi-Tab Analysis:**
-  - **Live Strip Charts:** Cell Voltage & Current vs Elapsed Time.
-  - **Thermal Analysis:** Terminal Temperature, Cell Body Temperature, and Ambient Temperature vs Time (linked to primary X-axis).
-  - **V-Q Electrochemistry Curves:** Charge and Discharge Voltage vs Capacity ($Q$) overlaid by cycle.
-  - **Cycle Degradation Tracker:** Discharge Capacity ($Q_{\text{dis}}$) and Coulombic Efficiency ($\eta_C$) degradation across cycle loops.
+### 2. Advanced Electrochemical Metrology (Pillar 2)
+- **Coincident Dual Y-Axis Grids:** Left ($0-6\text{ V}$) and Right ($-3\text{ A} - +3\text{ A}$) grids mathematically aligned with zero grid suppression.
+- **Differential Capacity Analysis ($dQ/dV$ vs $V$, `IMP-05`):** Dedicated interactive tab with pure-NumPy Savitzky-Golay numerical smoothing, local phase transition peak detection (◆), dual-lobe `[± Butterfly]` and `[|dQ/dV|]` absolute overlays.
+- **Standardized Pulse DCIR Mapping (`IMP-06`):** Standard IEC 62660-1 / USABC pulse resistance evaluation across $R_{1\text{s}}$ (ohmic), $R_{10\text{s}}$ (standard), and $R_{30\text{s}}$ (diffusion polarization) windows.
+- **Aging Degradation Modeling & 80% EOL Forecasting (`IMP-07`):** Pure-NumPy linear and exponential decay regression projecting cycle number to 80% nominal cutoff with $R^2$ goodness-of-fit, Coulombic Efficiency ($\eta_{\text{CE}}\%$), Energy Efficiency ($\eta_{\text{EE}}\%$), and linked DCIR tracking.
 
 ---
 
-### 3. Asynchronous Safe Hardware State Machine
-- **Cell Multiplexing (Cell 1 vs Cell 2):**
-  - Fully supports dual-cell test benches.
-  - Selection of **Cell 2** asserts `Bit 1 (CELL_SELECT)` in `0x6000` while preserving safe relay sequencing.
-  - During **OCV Relaxation (Rest)**: `Bit 0 (CELL_ENABLE)` is cleared to disconnect power paths while preserving `Bit 1 (CELL_SELECT)`.
-- **4-Phase Step Transition Controller (`StepTransitionController`):**
-  1. *Clear Unwanted:* Ensures opposing power paths (Charge vs Discharge) are turned off before reconfiguring.
-  2. *Relay Sequencing:* Selects target cell with settling verification delay.
-  3. *Comparator Hysteresis Reset:* Toggles comparator reset bits ($0 \to 1 \to 0$) to eliminate latching faults.
-  4. *Setpoints & Readback Verification:* Applies DAC voltage/current or 4-bit load banks ($0.0\text{ A} - 3.0\text{ A}$ in $0.2\text{ A}$ increments) with auto-retry on readback mismatch.
-- **Fail-Safe Zeroing:** Instantaneous emergency zeroing on Stop, BMS Trip, or Communication Watchdog timeout.
+### 3. Mission-Critical Test Integrity & Lab Safeguards (Pillar 3)
+- **Power Loss / Crash Recovery (`IMP-08`):** Atomic state journaling (`logs/.active_test_journal.json`) using atomic rename (`os.replace`) to survive sudden workstation reboots. On startup, prompts operator to resume testing exactly from interrupted cycle/step without losing historical data.
+- **Rate-of-Rise Thermal Trigger Early Warning ($dT/dt$, `IMP-09`):** Moving thermal rate evaluation triggering emergency de-energization if $dT/dt \ge 1.5^\circ\text{C}/\text{min}$ sustained for $\ge 2.5\text{ s}$ to prevent thermal runaway before dangerous absolute limits are reached.
+- **Automated Pre-Flight Hardware Sanity Handshake (`IMP-10`):** Automated 4-dimension diagnostic check evaluating:
+  1. *Telemetry Link & Latency:* Confirms active high-speed streaming ($< 1.0\text{ s}$).
+  2. *Cell Sense Lead Voltage:* Detects detached/floating Kelvin sense leads ($0.00\text{ V}$).
+  3. *Thermistor Parity & Health:* Confirms probes match within $\pm 4.0^\circ\text{C}$ of ambient, flagging open-circuit thermistors.
+  4. *Idle MOSFET De-energization:* Confirms zero quiescent leakage ($|I| \le 0.050\text{ A}$) and de-energized load stages.
+  Interactive `PreflightDialog` provides clear diagnostics and actionable recovery advice.
 
 ---
 
-### 4. Telemetry Decoding & 10 Hz Logging
-- **Binary Frame Ingestion:**
-  - **`0x1000` (Cell Data):** Voltage ($1\text{ mV}$ resolution), Current (Signed, $1\text{ mA}$ resolution), Terminal Temp ($0.1^\circ\text{C}$), Body Temp ($0.1^\circ\text{C}$).
-  - **`0x2000` (Board Parameters):** Ambient Temp ($0.1^\circ\text{C}$), Charge Bus Voltage ($10\text{ mV}$), Load Bus Voltage ($10\text{ mV}$).
-  - **`0x3000` (Fault & SoC):** Hardware BMS fault flags (COV, CUV, OCC, OCD, COT, CUT), SoC OCV ($0.5\%$), SoC CC ($0.5\%$).
-- **Continuous 10 Hz Telemetry Recording:** High-speed CSV logging with ISO-8601 millisecond timestamps (`YYYY-MM-DDTHH:MM:SS.ffffff`), cycle indexes, step names, and power bus states.
+### 4. Automation, Reporting & Remote Telemetry (Pillar 4)
+- **One-Click Diagnostic Run Exporter (`IMP-11`):** `📦 Export Run` bundles raw 10 Hz telemetry CSV, step and cycle summary CSVs, recipe JSON, application logs, and a cryptographic `manifest.json` with SHA-256 digests into a single `.zip` archive.
+- **One-Click HTML / PDF Test Certification Report (`IMP-12`):** `📄 Test Report` generates an executive, self-contained HTML5 certificate with embedded pure-SVG electrochemical degradation plots, cycle breakdown audit tables, and print-to-PDF styles compliant with IEC 62660-1 / USABC.
+- **Remote Lab Notifications (`IMP-13`):** Non-blocking background `WebhookNotifier` dispatches rich embed cards to Discord, Slack, and Microsoft Teams on Test Start, Safety Trips, and Test Completion. Configured via the `🔔 Webhook` toolbar dialog.
 
 ---
 
@@ -62,49 +49,48 @@ An industrial-grade battery cell cycler and characterization workstation tailore
 ```text
 single_cell_cycler/
 ├── README.md                      # Complete system documentation
-├── TRACKER.md                     # Verification checklists and roadmap
+├── improvements.md                # Strategic enhancement register & product roadmap (100% completed)
 ├── main.py                        # GUI entry point (DWM dark title bar & app setup)
 ├── build.py                       # PyInstaller production build automation script
 ├── SingleCellCycler.spec          # PyInstaller packaging configuration
 ├── config/
 │   ├── cycler_config.py           # Configuration loader & system defaults
+│   ├── webhook_settings.json      # Remote notification settings
 │   └── recipes/                   # Standard test recipes (JSON format)
-│       ├── standard_capacity_test.json
-│       ├── cccv_cycling_5x.json
-│       ├── cccv_cycling_15x.json
-│       └── dcir_pulse_characterization.json
 ├── comm/
 │   ├── protocol_defs.py           # Frame IDs, bitmasks, and engineering unit scalers
 │   ├── packet_codec.py            # High-speed struct binary packing/unpacking
-│   └── transceiver.py             # QThread serial transport worker with ring buffering
+│   ├── transceiver.py             # QThread serial transport worker with priority TX queue
+│   └── webhook_notifier.py        # Asynchronous Discord/Slack/Teams webhook dispatcher
 ├── core/
-│   ├── profile_model.py           # Recipe, step, and cutoff data models
+│   ├── profile_model.py           # Recipe, step, cutoff, and chemistry data models
+│   ├── aging_analysis.py          # Pure-NumPy linear & exponential degradation fitting
+│   ├── dqv_analysis.py            # Savitzky-Golay dQ/dV numerical differentiation
+│   ├── preflight_checker.py       # 4-dimension hardware sanity handshake
+│   ├── state_journal.py           # Atomic crash recovery journaling
 │   ├── cutoff_detector.py         # Deterministic cut-off criteria evaluation
-│   ├── metrics_tracker.py         # Coulomb counting, energy, efficiency, and DCIR
-│   ├── safety_monitor.py          # BMS fault monitor & emergency guardrails
+│   ├── metrics_tracker.py         # Coulomb counting, energy, efficiency, and pulse DCIR
+│   ├── safety_monitor.py          # BMS fault monitor, dT/dt rate-of-rise thermal trigger
 │   ├── step_transition_controller.py # 4-phase relay & setpoint state machine
 │   └── cycler_engine.py           # Central test execution state machine
 ├── data/
 │   ├── async_logger.py            # Asynchronous threaded 10 Hz CSV recorder
+│   ├── run_exporter.py            # Zip run packaging with SHA-256 manifest
+│   ├── report_generator.py        # Publication-grade HTML/PDF test certificate generator
 │   └── summary_writer.py          # Cycle and step summary CSV generator
 ├── ui/
-│   ├── main_window.py             # Main cycler docking window, menus, & toolbar
+│   ├── main_window.py             # Main cycler docking window, toolbar, and menus
 │   ├── theme.py                   # Industrial dark theme styling & typography
 │   └── widgets/
 │       ├── kpi_dashboard.py       # Live digital KPI cards (V, I, T, SoC, Bus)
-│       ├── profile_editor.py      # Interactive recipe step table & cutoff builder
-│       ├── live_plots.py          # PyQtGraph charts (V-I-t, T-t, V-Q, Degradation)
+│       ├── profile_editor.py      # Interactive recipe step table, cutoffs & chemistry
+│       ├── live_plots.py          # 5-tab live plotting suite (Strip, Temp, V-Q, dQ/dV, Aging)
+│       ├── preflight_dialog.py    # Hardware sanity handshake diagnostic modal
+│       ├── webhook_dialog.py      # Webhook notification settings modal
 │       ├── manual_control.py      # Direct hardware switches (Relay, Loads, Charge)
 │       ├── safety_panel.py        # BMS fault LED status indicators
 │       └── step_tracker_table.py  # Real-time sequence execution table
-└── tests/                         # Pytest automated test suite
-    ├── test_cutoff_detector.py
-    ├── test_cycler_engine.py
-    ├── test_hardware_table.py
-    ├── test_metrics_tracker.py
-    ├── test_packet_codec.py
-    ├── test_safety_monitor.py
-    └── test_step_transition.py
+└── tests/                         # Pytest automated test suite (85 tests, 100% pass)
 ```
 
 ---
@@ -112,47 +98,20 @@ single_cell_cycler/
 ## Operating Instructions
 
 ### 1. Launching the Application
-
-Run directly with Python:
-```powershell
-python single_cell_cycler\main.py
-```
-
-Or via module execution from the project root:
 ```powershell
 python -m single_cell_cycler.main
 ```
 
-### 2. Live Hardware Connection (e.g., COM15)
-
-1. Connect the BMS test bench via USB (e.g., Silicon Labs CP210x UART bridge).
-2. Launch the application.
-3. Select the target COM Port (e.g., `COM15`) and Baud Rate (`115200`).
-4. Click **Connect**. Live telemetry frames will stream in immediately at 10 Hz.
-5. In the **Target Cell** selector, choose **Cell 1** or **Cell 2** (window title updates dynamically).
-6. Load or configure a test profile in the **Test Recipe Sequencer** tab.
-7. Click the green **▶  START TEST** button.
-   - The button switches to crimson **⏹  STOP TEST**.
-   - Step execution, cut-off evaluation, and CSV data logging begin automatically.
+### 2. Live Hardware Connection
+1. Connect BMS test bench via USB.
+2. Select target COM Port (e.g., `COM15`) and Baud Rate (`115200`), then click **Connect**.
+3. Observe automated pre-flight sanity badge: `● Pre-Flight: 4/4 Passed`. Click for diagnostics.
+4. Select active cell (`Cell 1` or `Cell 2`) and load a recipe in the **Test Recipe Sequencer**.
+5. Click **▶  START TEST** to begin automated cycling.
 
 ### 3. Running Automated Tests
-
-Run the full pytest suite:
+Run the complete automated test suite (85 tests):
 ```powershell
 pytest single_cell_cycler/tests/ -v
-```
-
-Run comprehensive MNC-grade verification (covers font scaling, splitter resizing, graph auto-wrapping, coincident grids, transition retry, and physical COM15 DUT verification):
-```powershell
-python scratch/mnc_qa_comprehensive_test.py
-```
-
----
-
-## Building Standalone Executable
-
-To compile a standalone Windows executable (`dist/SingleCellCycler.exe`) with embedded icons and recipes:
-```powershell
-python single_cell_cycler/build.py
 ```
 

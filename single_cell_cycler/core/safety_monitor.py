@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import collections
 import logging
 import time
 from dataclasses import dataclass
@@ -31,6 +32,11 @@ class SafetyLimits:
     max_discharge_current_a: float = 25.0 # Max discharge current limit
     max_temp_c: float = 60.0              # Max safe temperature limit
 
+    # Rate-of-Rise Thermal Trigger (IMP-09)
+    max_temp_rate_of_rise_c_per_min: float = 1.5  # Max safe rate of rise (dT/dt in °C/min)
+    temp_rate_window_s: float = 15.0              # Moving window duration for slope calculation (s)
+    temp_rate_sustain_s: float = 2.5              # Duration condition must be sustained before trip (s)
+
     # Watchdog timeout: how long with no telemetry before triggering safety stop.
     # Set conservatively to 8 s to account for:
     #   - Windows CP210x USB driver frame-drop gaps (can be 1-3 s)
@@ -57,6 +63,11 @@ class SafetyMonitor:
         self.last_telemetry_time = time.time()
         self.active_faults: list[str] = []
         self.selected_cell: int = 1
+
+        # Rate-of-rise thermal runaway detection (IMP-09)
+        self._temp_history: collections.deque = collections.deque(maxlen=300)
+        self._rate_trip_start_time: Optional[float] = None
+        self.last_rate_of_rise_c_per_min: float = 0.0
 
     def check_telemetry(self, cell_data: CellDataTelemetry) -> bool:
         """Verify cell data against software safety guardrails.
@@ -96,13 +107,42 @@ class SafetyMonitor:
             )
             return False
 
-        # 4. Temperature limit
+        # 4. Temperature absolute limit
         max_temp = max(cell_data.body_temp, cell_data.terminal_temp)
         if max_temp > self.limits.max_temp_c:
             self._trigger_shutdown(
                 f"SAFETY TRIP: Cell temperature {max_temp:.1f} °C exceeded limit {self.limits.max_temp_c:.1f} °C"
             )
             return False
+
+        # 5. Temperature rate-of-rise limit (dT/dt) early runaway trigger (IMP-09)
+        t_sample = cell_data.timestamp if cell_data.timestamp > 0 else now
+        self._temp_history.append((t_sample, max_temp))
+
+        # Purge samples older than temp_rate_window_s * 1.5
+        min_cutoff = t_sample - (self.limits.temp_rate_window_s * 1.5)
+        while len(self._temp_history) > 1 and self._temp_history[0][0] < min_cutoff:
+            self._temp_history.popleft()
+
+        # Evaluate slope if we have at least 5.0 seconds of history in the window
+        earliest_t, earliest_temp = self._temp_history[0]
+        dt = t_sample - earliest_t
+        if dt >= 5.0:
+            dT = max_temp - earliest_temp
+            rate_c_per_min = (dT / dt) * 60.0
+            self.last_rate_of_rise_c_per_min = rate_c_per_min
+
+            if rate_c_per_min >= self.limits.max_temp_rate_of_rise_c_per_min:
+                if self._rate_trip_start_time is None:
+                    self._rate_trip_start_time = t_sample
+                elif (t_sample - self._rate_trip_start_time) >= self.limits.temp_rate_sustain_s:
+                    self._trigger_shutdown(
+                        f"SAFETY TRIP: Rate of temperature rise exceeded limit: {rate_c_per_min:.2f} °C/min "
+                        f"(limit: {self.limits.max_temp_rate_of_rise_c_per_min:.2f} °C/min sustained for {self.limits.temp_rate_sustain_s:.1f}s)"
+                    )
+                    return False
+            else:
+                self._rate_trip_start_time = None
 
         return True
 
@@ -176,6 +216,9 @@ class SafetyMonitor:
         self.trip_reason = ""
         self.active_faults.clear()
         self.last_telemetry_time = time.time()
+        self._temp_history.clear()
+        self._rate_trip_start_time = None
+        self.last_rate_of_rise_c_per_min = 0.0
 
     def _trigger_shutdown(self, reason: str) -> None:
         """Execute hardware safe-state shutdown with priority 0."""
