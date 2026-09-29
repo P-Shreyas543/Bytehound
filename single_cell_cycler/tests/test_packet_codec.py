@@ -70,9 +70,8 @@ def test_decode_cell_data():
 
 def test_decode_board_params():
     # Ambient Temp: 245 (24.5 °C)
-    # Charge Bus V: 5200 mV (5.200 V)
-    # Load Bus V: 3700 mV (3.700 V)
-    payload = struct.pack("<HHH", 245, 5200, 3700)
+    # Hardware word order: ambient, load_bus (3700 mV = 3.700 V), charge_bus (5200 mV = 5.200 V)
+    payload = struct.pack("<HHH", 245, 3700, 5200)
     wire_frame = b"\xAA\x55\x00\x20\x06" + payload
 
     packets, rem = decode_stream(bytearray(wire_frame))

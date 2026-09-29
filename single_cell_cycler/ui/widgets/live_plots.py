@@ -36,7 +36,7 @@ from ..theme import (
 # --------------------------------------------------------------------------- #
 pg.setConfigOption("background", BG_PANEL)
 pg.setConfigOption("foreground", TEXT_SECONDARY)
-pg.setConfigOption("antialias", True)
+pg.setConfigOption("antialias", False)  # Fast rasterization for high-rate data
 
 # Segment colours per cell
 _C1_V = COLOR_ACCENT    # cyan  – Cell 1 voltage
@@ -65,15 +65,75 @@ def _legend_bar(*items) -> QHBoxLayout:
     return row
 
 
-class LivePlotWidget(QWidget):
-    """Multi-tab real-time telemetry chart suite."""
+class VoltageAxisItem(pg.AxisItem):
+    """Left Y-Axis explicitly formatted for Cell Voltage (0.0 to 6.0 V)."""
 
-    def __init__(self, max_buffer_points: int = 10_000, parent: QWidget | None = None):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setPen(pg.mkPen(_C1_V, width=1.8))
+        self.setTextPen(pg.mkPen(_C1_V))
+        self.setTickPen(pg.mkPen("#334155", width=1))
+        self.setStyle(tickFont=pg.QtGui.QFont("Segoe UI", 9, pg.QtGui.QFont.Weight.Bold))
+        self.sync_ticks()
+
+    def sync_ticks(self) -> None:
+        """Establish synchronized ticks aligned 1:1 with Current axis across 6.0 units span."""
+        major = [(float(v), f"{v}.0 V") for v in range(7)]
+        minor = [(float(v) + 0.5, f"{v}.5 V") for v in range(6)]
+        self.setTicks([major, minor])
+
+    def tickStrings(self, values, scale, spacing):
+        return [f"{v:.1f} V" for v in values]
+
+
+class CurrentAxisItem(pg.AxisItem):
+    """Right Y-Axis explicitly formatted for Cell Current (-3.0 to +3.0 A).
+
+    Both Left and Right axes share the exact same 6.0 units span and identical
+    fractional tick heights, ensuring that both active grids align onto the exact
+    same horizontal lines across the canvas without any conflicting dual lines.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setPen(pg.mkPen(_C1_I, width=1.8))
+        self.setTextPen(pg.mkPen(_C1_I))
+        self.setTickPen(pg.mkPen("#334155", width=1))
+        self.setStyle(tickFont=pg.QtGui.QFont("Segoe UI", 9, pg.QtGui.QFont.Weight.Bold))
+        self.sync_ticks()
+
+    def sync_ticks(self) -> None:
+        """Establish synchronized ticks aligned 1:1 with Voltage axis across 6.0 units span."""
+        major = [(float(i - 3), f"{i - 3:+.1f} A" if (i - 3) != 0 else "0.0 A") for i in range(7)]
+        minor = [(float(i - 3) + 0.5, f"{i - 3 + 0.5:+.1f} A") for i in range(6)]
+        self.setTicks([major, minor])
+
+    def tickStrings(self, values, scale, spacing):
+        return [f"{v:+.1f} A" if abs(v) > 0.01 else "0.0 A" for v in values]
+
+
+class TemperatureAxisItem(pg.AxisItem):
+    """Left Y-Axis explicitly formatted for Temperature (0 to 70 °C)."""
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.setPen(pg.mkPen("#fb923c", width=1.8))
+        self.setTextPen(pg.mkPen("#fb923c"))
+        self.setStyle(tickFont=pg.QtGui.QFont("Segoe UI", 9, pg.QtGui.QFont.Weight.Bold))
+
+    def tickStrings(self, values, scale, spacing):
+        return [f"{v:.0f} °C" for v in values]
+
+
+class LivePlotWidget(QWidget):
+    """Multi-tab real-time telemetry chart suite optimized for high performance."""
+
+    def __init__(self, max_buffer_points: int = 1_000_000, parent: QWidget | None = None):
         super().__init__(parent)
         self.max_points = max_buffer_points
 
         # ------------------------------------------------------------------ #
-        # Time-series buffers                                                  #
+        # Time-series buffers (1,000,000 samples = >27 hours at 10 Hz)        #
         # ------------------------------------------------------------------ #
         self._t: collections.deque = collections.deque(maxlen=self.max_points)
         self._v: collections.deque = collections.deque(maxlen=self.max_points)
@@ -82,12 +142,8 @@ class LivePlotWidget(QWidget):
         self._t_body: collections.deque = collections.deque(maxlen=self.max_points)
 
         # V-Q
-        self._vq_cap: collections.deque = collections.deque(maxlen=3000)
-        self._vq_volt: collections.deque = collections.deque(maxlen=3000)
-
-        # Cycle aging
-        self._cycle_idx: List[int] = []
-        self._cycle_cap: List[float] = []
+        self._vq_cap: collections.deque = collections.deque(maxlen=100_000)
+        self._vq_volt: collections.deque = collections.deque(maxlen=100_000)
 
         self.start_epoch: float = time.time()
 
@@ -95,6 +151,7 @@ class LivePlotWidget(QWidget):
         self._relay_on: bool = False
         self._cell_num: int = 1
         self._dirty: bool = False
+        self._last_pen_cell: int | None = None
 
         self._setup_ui()
 
@@ -103,21 +160,24 @@ class LivePlotWidget(QWidget):
     # ----------------------------------------------------------------------- #
 
     def set_relay_state(self, relay_on: bool, cell_num: int) -> None:
-        """Called by MainWindow whenever the relay readback changes.
+        """Called by MainWindow during 10 Hz tick.
 
-        relay_on=False → NaN gap is inserted so the live chart shows a break.
+        A NaN break is inserted ONLY when the cell selection physically switches
+        (Cell 1 <-> Cell 2), preventing artificial cutting of the graph during
+        normal cycling, transitions, or rest periods.
         """
-        was_on = self._relay_on
+        cell_switched = (self._cell_num != cell_num) and (len(self._t) > 0)
         self._relay_on = relay_on
         self._cell_num = cell_num
 
-        if was_on and not relay_on:
+        if cell_switched:
             self._insert_nan_break()
+
         if relay_on:
             self._dirty = True
 
     def add_telemetry(self, data: CellDataTelemetry, step_mah: float = 0.0) -> None:
-        """Buffer a new sample.  Points are only pushed when the relay is ON."""
+        """Buffer a new sample. Points are only pushed when the relay is ON."""
         if not self._relay_on:
             return
 
@@ -138,43 +198,70 @@ class LivePlotWidget(QWidget):
         self._dirty = True
 
     def tick_update(self) -> None:
-        """Redraw the visible tab.  Called at a fixed 10 Hz rate by MainWindow."""
+        """Redraw only the active visible tab. Called at 10 Hz by MainWindow."""
         if not self._dirty or not self._t:
             return
         self._dirty = False
+        self._render_tab(self.tabs.currentIndex(), force=False)
 
-        t = np.array(self._t)
-        v = np.array(self._v)
-        i_arr = np.array(self._i)
-        t_term = np.array(self._t_term)
-        t_body = np.array(self._t_body)
+    def _on_tab_changed(self, index: int) -> None:
+        """Instantly render the newly selected tab using buffered data."""
+        self._sync_current_view()
+        self._dirty = True
+        self._render_tab(index, force=True)
 
-        v_col = _C1_V if self._cell_num == 1 else _C2_V
-        i_col = _C1_I if self._cell_num == 1 else _C2_I
-        cur_tab = self.tabs.currentIndex()
+    def _render_tab(self, tab_idx: int, force: bool = False) -> None:
+        """Render a specific tab with minimal conversions and GPU/paint overhead."""
+        if not self._t:
+            return
 
-        if cur_tab == 0:
+        # Cache pen updates so mkPen is called only when the cell changes
+        cell_changed = (self._cell_num != self._last_pen_cell)
+        if cell_changed or force:
+            v_col = _C1_V if self._cell_num == 1 else _C2_V
+            i_col = _C1_I if self._cell_num == 1 else _C2_I
             self.curve_voltage.setPen(pg.mkPen(v_col, width=2.0))
             self.curve_current.setPen(pg.mkPen(i_col, width=1.8))
+            self.curve_vq_current.setPen(pg.mkPen(v_col, width=2.2))
+            self._update_axis_styling(v_col, i_col)
+            self._last_pen_cell = self._cell_num
+
+        if tab_idx == 0:
+            # Tab 0 – Voltage & Current (convert only what is needed)
+            t = np.array(self._t)
+            v = np.array(self._v)
+            i_arr = np.array(self._i)
             self.curve_voltage.setData(t, v)
             self.curve_current.setData(t, i_arr)
-            fi = i_arr[np.isfinite(i_arr)]
-            if len(fi) > 0:
-                lo, hi = float(fi.min()), float(fi.max())
-                pad = max(0.3, (hi - lo) * 0.12)
-                self.view_current.setYRange(lo - pad, hi + pad, padding=0)
+            # Fixed Y-ranges: 0-6V for voltage, -3 to 3A for current (aligned 6.0 unit spans)
+            self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
+            self.view_current.setYRange(-3.0, 3.0, padding=0.0)
+            # Auto-wrap / auto-expand X range smoothly to fit complete test dataset
+            if len(t) > 0 and not np.isnan(t[-1]):
+                max_t = max(10.0, float(t[-1]))
+                self.plot_vi.setXRange(0.0, max_t, padding=0.01)
 
-        elif cur_tab == 1:
-            self.curve_term_temp.setData(t, t_term)
-            self.curve_body_temp.setData(t, t_body)
+        elif tab_idx == 1:
+            # Tab 1 – Temperature (convert only temperature buffers)
+            t = np.array(self._t)
+            self.curve_term_temp.setData(t, np.array(self._t_term))
+            self.curve_body_temp.setData(t, np.array(self._t_body))
+            # Fixed Y-range: 0-70°C for temperature
+            self.plot_temp.setYRange(0.0, 70.0, padding=0.0)
+            if len(t) > 0 and not np.isnan(t[-1]):
+                max_t = max(10.0, float(t[-1]))
+                self.plot_temp.setXRange(0.0, max_t, padding=0.01)
 
-        elif cur_tab == 2:
+        elif tab_idx == 2:
+            # Tab 2 – V-Q Curve
             if self._vq_cap:
-                v_col_vq = _C1_V if self._cell_num == 1 else _C2_V
-                self.curve_vq_current.setPen(pg.mkPen(v_col_vq, width=2.2))
-                self.curve_vq_current.setData(
-                    np.array(self._vq_cap), np.array(self._vq_volt)
-                )
+                caps = np.array(self._vq_cap)
+                volts = np.array(self._vq_volt)
+                self.curve_vq_current.setData(caps, volts)
+                self.plot_vq.setYRange(0.0, 6.0, padding=0.0)
+                if len(caps) > 0:
+                    max_cap = max(100.0, float(np.nanmax(caps)))
+                    self.plot_vq.setXRange(0.0, max_cap, padding=0.02)
 
     # ----------------------------------------------------------------------- #
     # Step / Cycle Events                                                      #
@@ -186,39 +273,42 @@ class LivePlotWidget(QWidget):
             caps = np.array(self._vq_cap)
             volts = np.array(self._vq_volt)
             color = _C1_V if self._cell_num == 1 else _C2_V
-            self.plot_vq.plot(
+            p_hist = self.plot_vq.plot(
                 caps,
                 volts,
                 pen=pg.mkPen(color, width=1.0, style=pg.QtCore.Qt.PenStyle.DashLine),
             )
+            p_hist.setClipToView(True)
         self._vq_cap.clear()
         self._vq_volt.clear()
 
     def add_cycle_summary(
         self, cycle_idx: int, discharge_mah: float, coulombic_eff: float
     ) -> None:
-        self._cycle_idx.append(cycle_idx)
-        self._cycle_cap.append(discharge_mah)
-        self.curve_aging_cap.setData(self._cycle_idx, self._cycle_cap)
+        """No-op: Cycle Aging tab has been removed."""
+        pass
 
     def reset_all(self) -> None:
         """Full reset for a new test run."""
         self._t.clear(); self._v.clear(); self._i.clear()
         self._t_term.clear(); self._t_body.clear()
         self._vq_cap.clear(); self._vq_volt.clear()
-        self._cycle_idx.clear(); self._cycle_cap.clear()
         self.plot_vq.clear()
         self.curve_vq_current = self.plot_vq.plot(
             pen=pg.mkPen(_C1_V, width=2.2)
         )
+        self.curve_vq_current.setClipToView(True)
         self.start_epoch = time.time()
         self._relay_on = False
         self._dirty = False
+        self._last_pen_cell = None
         self.curve_voltage.setData([], [])
         self.curve_current.setData([], [])
         self.curve_term_temp.setData([], [])
         self.curve_body_temp.setData([], [])
-        self.curve_aging_cap.setData([], [])
+        self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
+        self.view_current.setYRange(-3.0, 3.0, padding=0.0)
+        self.plot_temp.setYRange(0.0, 70.0, padding=0.0)
 
     # ----------------------------------------------------------------------- #
     # Internal helpers                                                         #
@@ -250,11 +340,11 @@ class LivePlotWidget(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self.tabs = QTabWidget()
+        self.tabs.currentChanged.connect(self._on_tab_changed)
         layout.addWidget(self.tabs)
         self._build_vi_tab()
         self._build_temp_tab()
         self._build_vq_tab()
-        self._build_aging_tab()
 
     def _build_vi_tab(self) -> None:
         tab = QWidget()
@@ -276,28 +366,45 @@ class LivePlotWidget(QWidget):
             )
         )
 
-        self.plot_vi = pg.PlotWidget()
+        self.ax_voltage = VoltageAxisItem(orientation="left")
+        self.ax_current = CurrentAxisItem(orientation="right")
+        self.plot_vi = pg.PlotWidget(axisItems={"left": self.ax_voltage, "right": self.ax_current})
         self.plot_vi.showGrid(x=True, y=True, alpha=0.20)
-        self.plot_vi.setLabel("left", "Cell Voltage", units="V", color=_C1_V)
-        self.plot_vi.setLabel("bottom", "Elapsed Time", units="s")
+        self.plot_vi.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
+        self.ax_voltage.setTickPen(pg.mkPen("#334155", width=1))
+        self.ax_current.setTickPen(pg.mkPen("#334155", width=1))
+        self.plot_vi.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Elapsed Time (s)</span>")
+
+        # Fixed Y-axis: 0.0 to 6.0 V (aligned 1:1 with Current -3 to +3 A over 6.0 units)
+        self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
+        self.plot_vi.plotItem.getViewBox().enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
+        self.plot_vi.plotItem.getViewBox().enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
+        self.plot_vi.plotItem.getViewBox().setLimits(xMin=0.0, yMin=0.0, yMax=6.0)
 
         self.curve_voltage = self.plot_vi.plot(
             pen=pg.mkPen(_C1_V, width=2.0), connect="finite"
         )
+        self.curve_voltage.setClipToView(True)
 
         self.view_current = pg.ViewBox()
         self.plot_vi.plotItem.scene().addItem(self.view_current)
         ax_r = self.plot_vi.plotItem.getAxis("right")
         ax_r.linkToView(self.view_current)
         self.plot_vi.plotItem.showAxis("right")
-        ax_r.setLabel("Cell Current", units="A", color=_C1_I)
         self.view_current.setXLink(self.plot_vi.plotItem)
 
-        self.curve_current = pg.PlotCurveItem(
+        # Fixed Y-axis: -3.0 to +3.0 A (current range -3 to 3 A)
+        self.view_current.enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
+        self.view_current.setYRange(-3.0, 3.0, padding=0.0)
+        self.view_current.setLimits(yMin=-3.0, yMax=3.0)
+
+        self.curve_current = pg.PlotDataItem(
             pen=pg.mkPen(_C1_I, width=1.8), connect="finite"
         )
+        self.curve_current.setClipToView(True)
         self.view_current.addItem(self.curve_current)
         self.plot_vi.plotItem.getViewBox().sigResized.connect(self._sync_current_view)
+        self._update_axis_styling(_C1_V, _C1_I)
 
         vlay.addWidget(self.plot_vi)
         self.tabs.addTab(tab, "⚡ Voltage & Current")
@@ -313,16 +420,33 @@ class LivePlotWidget(QWidget):
                 _legend_label(_BODY_COLOR, "Body Temp (°C)"),
             )
         )
-        self.plot_temp = pg.PlotWidget()
-        self.plot_temp.showGrid(x=True, y=True, alpha=0.20)
-        self.plot_temp.setLabel("left", "Temperature", units="°C")
-        self.plot_temp.setLabel("bottom", "Elapsed Time", units="s")
+        self.ax_temp = TemperatureAxisItem(orientation="left")
+        self.plot_temp = pg.PlotWidget(axisItems={"left": self.ax_temp})
+        self.plot_temp.showGrid(x=True, y=True, alpha=0.18)
+        self.ax_temp.setTickPen(pg.mkPen("#334155", width=1))
+        self.plot_temp.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
+        self.plot_temp.setLabel("left", "<span style='color:#fb923c; font-weight:bold; font-size:12px;'>🌡 Temperature (0 – 70 °C)</span>")
+        self.plot_temp.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Elapsed Time (s)</span>")
+
+        # Share the exact same X-axis with the Voltage/Current plot
+        self.plot_temp.setXLink(self.plot_vi)
+
+        # Fixed Y-axis: 0.0 to 70.0 °C
+        self.plot_temp.setYRange(0.0, 70.0, padding=0.0)
+        self.plot_temp.plotItem.getViewBox().enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
+        self.plot_temp.plotItem.getViewBox().enableAutoRange(axis=pg.ViewBox.XAxis, enable=True)
+        self.plot_temp.plotItem.getViewBox().setLimits(xMin=0.0, yMin=0.0, yMax=70.0)
+
         self.curve_term_temp = self.plot_temp.plot(
             pen=pg.mkPen(_TERM_COLOR, width=2.0), connect="finite"
         )
+        self.curve_term_temp.setClipToView(True)
+
         self.curve_body_temp = self.plot_temp.plot(
             pen=pg.mkPen(_BODY_COLOR, width=2.0), connect="finite"
         )
+        self.curve_body_temp.setClipToView(True)
+
         vlay.addWidget(self.plot_temp)
         self.tabs.addTab(tab, "🌡 Temperature")
 
@@ -338,32 +462,56 @@ class LivePlotWidget(QWidget):
                 _legend_label("#475569", "Historical Steps (dashed)"),
             )
         )
-        self.plot_vq = pg.PlotWidget()
-        self.plot_vq.showGrid(x=True, y=True, alpha=0.20)
-        self.plot_vq.setLabel("left", "Voltage", units="V")
-        self.plot_vq.setLabel("bottom", "Step Capacity", units="mAh")
+        self.ax_vq = VoltageAxisItem(orientation="left")
+        self.plot_vq = pg.PlotWidget(axisItems={"left": self.ax_vq})
+        self.plot_vq.showGrid(x=True, y=True, alpha=0.18)
+        self.ax_vq.setTickPen(pg.mkPen("#334155", width=1))
+        self.plot_vq.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
+        self.plot_vq.setLabel("left", "<span style='color:#38bdf8; font-weight:bold; font-size:12px;'>⚡ Cell Voltage (0 – 5 V)</span>")
+        self.plot_vq.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Step Capacity (mAh)</span>")
         self.curve_vq_current = self.plot_vq.plot(pen=pg.mkPen(_C1_V, width=2.2))
+        self.curve_vq_current.setClipToView(True)
         vlay.addWidget(self.plot_vq)
         self.tabs.addTab(tab, "📈 V-Q Curve")
 
-    def _build_aging_tab(self) -> None:
-        tab = QWidget()
-        vlay = QVBoxLayout(tab)
-        vlay.setContentsMargins(4, 4, 4, 2)
-        vlay.setSpacing(2)
-        vlay.addLayout(
-            _legend_bar(_legend_label("#a855f7", "Discharge Capacity per Cycle (mAh)"))
-        )
-        self.plot_aging = pg.PlotWidget()
-        self.plot_aging.showGrid(x=True, y=True, alpha=0.20)
-        self.plot_aging.setLabel("left", "Discharge Capacity", units="mAh", color="#a855f7")
-        self.plot_aging.setLabel("bottom", "Cycle Number")
-        self.curve_aging_cap = self.plot_aging.plot(
-            pen=pg.mkPen("#a855f7", width=2.0),
-            symbol="o",
-            symbolSize=6,
-            symbolBrush="#a855f7",
-            symbolPen=pg.mkPen("#c084fc", width=1),
-        )
-        vlay.addWidget(self.plot_aging)
-        self.tabs.addTab(tab, "🔋 Cycle Aging")
+    def _update_axis_styling(self, v_col: str, i_col: str) -> None:
+        """Dynamically style axes lines, text, and titles to match active cell curve colors."""
+        if hasattr(self, "ax_voltage"):
+            self.ax_voltage.setPen(pg.mkPen(v_col, width=1.8))
+            self.ax_voltage.setTextPen(pg.mkPen(v_col))
+            self.ax_voltage.setTickPen(pg.mkPen("#334155", width=1))
+            self.ax_voltage.sync_ticks()
+            self.plot_vi.setLabel(
+                "left",
+                f"<span style='color:{v_col}; font-weight:bold; font-size:12px;'>⚡ Cell {self._cell_num} Voltage (0 – 6 V)</span>",
+            )
+        if hasattr(self, "ax_current"):
+            self.ax_current.setPen(pg.mkPen(i_col, width=1.8))
+            self.ax_current.setTextPen(pg.mkPen(i_col))
+            self.ax_current.setTickPen(pg.mkPen("#334155", width=1))
+            self.ax_current.sync_ticks()
+            self.plot_vi.plotItem.getAxis("right").setLabel(
+                f"<span style='color:{i_col}; font-weight:bold; font-size:12px;'>⚡ Cell {self._cell_num} Current (-3 – +3 A)</span>",
+            )
+
+    def update_font_size(self, pt: int) -> None:
+        """Scale plot axis fonts dynamically when application font size changes."""
+        tick_pt = max(8, pt - 2)
+        font = pg.QtGui.QFont("Segoe UI", tick_pt, pg.QtGui.QFont.Weight.Bold)
+        axes_to_scale = [
+            getattr(self, "ax_voltage", None),
+            getattr(self, "ax_current", None),
+            getattr(self, "ax_temp", None),
+            getattr(self, "ax_vq", None),
+        ]
+        for plot in [getattr(self, "plot_vi", None), getattr(self, "plot_temp", None), getattr(self, "plot_vq", None)]:
+            if plot and hasattr(plot, "plotItem"):
+                b_ax = plot.plotItem.getAxis("bottom")
+                if b_ax:
+                    axes_to_scale.append(b_ax)
+        for ax in axes_to_scale:
+            if ax is not None:
+                ax.setStyle(tickFont=font)
+                if hasattr(ax, "sync_ticks"):
+                    ax.sync_ticks()
+

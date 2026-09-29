@@ -15,6 +15,7 @@ from ..comm.protocol_defs import (
     FRAME_DISCHARGE_CTRL,
     FRAME_DISCHARGE_SEL,
     FRAME_RELAY_CTRL,
+    RelayControlBits,
     BMSFaultFlags,
     FAULT_LABELS,
 )
@@ -24,12 +25,19 @@ logger = logging.getLogger("SingleCellCycler.SafetyMonitor")
 
 @dataclass
 class SafetyLimits:
-    max_voltage_v: float = 4.250       # Absolute upper cell voltage limit
-    min_voltage_v: float = 2.400       # Absolute lower cell voltage limit
-    max_charge_current_a: float = 6.0  # Max charge current limit
+    max_voltage_v: float = 4.250          # Absolute upper cell voltage limit
+    min_voltage_v: float = 2.400          # Absolute lower cell voltage limit
+    max_charge_current_a: float = 6.0     # Max charge current limit
     max_discharge_current_a: float = 25.0 # Max discharge current limit
-    max_temp_c: float = 60.0           # Max safe temperature limit
-    watchdog_timeout_s: float = 3.0    # Comm timeout before safety stop
+    max_temp_c: float = 60.0              # Max safe temperature limit
+
+    # Watchdog timeout: how long with no telemetry before triggering safety stop.
+    # Set conservatively to 8 s to account for:
+    #   - Windows CP210x USB driver frame-drop gaps (can be 1-3 s)
+    #   - MCU comparator reset latency (~200-500 ms per reset)
+    #   - CC→CV transition firmware pause (up to ~1 s)
+    # The start-test pre-flight check already enforces < 3 s before allowing START.
+    watchdog_timeout_s: float = 8.0
 
 
 class SafetyMonitor:
@@ -48,6 +56,7 @@ class SafetyMonitor:
         self.trip_reason = ""
         self.last_telemetry_time = time.time()
         self.active_faults: list[str] = []
+        self.selected_cell: int = 1
 
     def check_telemetry(self, cell_data: CellDataTelemetry) -> bool:
         """Verify cell data against software safety guardrails.
@@ -97,16 +106,36 @@ class SafetyMonitor:
 
         return True
 
-    def check_bms_faults(self, fault_soc: FaultSoCTelemetry) -> bool:
+    def check_bms_faults(
+        self,
+        fault_soc: FaultSoCTelemetry,
+        active_step_type: Optional[str] = None,
+        cell_voltage: Optional[float] = None,
+    ) -> bool:
         """Scan Frame 0x3000 fault flags.
         
         Returns True if safe, False if tripped.
+        Contextual tolerance:
+        - During Charge or Rest above min_voltage_v (2.4V): CUV (Under Voltage) is expected
+          post-discharge comparator hysteresis and does not trip safety.
+        - During Discharge: COV (Over Voltage) is expected at high initial SoC.
         """
         self.last_telemetry_time = time.time()
         self.active_faults.clear()
 
+        step_type_str = str(active_step_type).lower() if active_step_type else ""
+
         for flag, label in FAULT_LABELS.items():
             if fault_soc.fault_byte & flag:
+                # Handle comparator hysteresis during normal transitions
+                if flag == BMSFaultFlags.CUV:
+                    if "charge" in step_type_str:
+                        continue  # Expected while recovering from low voltage
+                    if "rest" in step_type_str and (cell_voltage is None or cell_voltage >= self.limits.min_voltage_v):
+                        continue  # Expected post-discharge relaxation above 2.4V
+                elif flag == BMSFaultFlags.COV:
+                    if "discharge" in step_type_str:
+                        continue  # Expected at start of discharge from 4.2V
                 self.active_faults.append(label)
 
         if self.active_faults and not self.is_tripped:
@@ -118,15 +147,21 @@ class SafetyMonitor:
 
     def check_watchdog(self) -> bool:
         """Verify communications heartbeat.
-        
-        Returns True if alive, False if watchdog timeout.
+
+        Returns True if alive, False if watchdog timeout expired.
+        The timeout is intentionally generous (8 s) to survive CP210x USB
+        driver gaps and MCU comparator reset pauses without false-tripping.
         """
         if self.is_tripped:
             return False
 
         elapsed = time.time() - self.last_telemetry_time
         if elapsed > self.limits.watchdog_timeout_s:
-            self._trigger_shutdown(f"COMMUNICATION WATCHDOG: No telemetry for {elapsed:.1f} s")
+            self._trigger_shutdown(
+                f"COMMUNICATION WATCHDOG TIMEOUT: No telemetry received for "
+                f"{elapsed:.1f} s (limit: {self.limits.watchdog_timeout_s:.0f} s). "
+                f"Check USB connection and MCU power."
+            )
             return False
 
         return True
@@ -149,8 +184,13 @@ class SafetyMonitor:
         logger.critical(f"Executing Emergency Safety Shutdown: {reason}")
 
         try:
-            # Safely de-energize all 5 control registers (0x6000 - 0x6004) with Priority 0
-            for frame_id in ALL_CONTROL_FRAMES:
-                self._command_sender(frame_id, 0x00, 0)
+            # Safely de-energize active charge/discharge controls with Priority 0
+            self._command_sender(FRAME_CHARGE_CTRL, 0x00, 0)
+            self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 0)
+            self._command_sender(FRAME_CHARGE_SEL, 0x00, 0)
+            self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 0)
+            # De-energize cell enable while preserving selected cell position
+            relay_idle = int(RelayControlBits.CELL_SELECT) if self.selected_cell == 2 else 0x00
+            self._command_sender(FRAME_RELAY_CTRL, relay_idle, 0)
         except Exception as exc:
             logger.error(f"Error during emergency shutdown commands: {exc}")

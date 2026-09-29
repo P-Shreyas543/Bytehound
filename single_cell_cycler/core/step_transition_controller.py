@@ -114,6 +114,11 @@ class StepTransitionController(QObject):
         # Single shot timer for sequencing delays
         self._seq_timer: Optional[QTimer] = None
 
+    @property
+    def is_transitioning(self) -> bool:
+        """Returns True if the controller is actively sequencing a step transition."""
+        return self.current_phase != TransitionPhase.IDLE
+
     def start_transition(self, step: TestStep, selected_cell: int) -> None:
         """Begin safe stepped hardware configuration for the specified profile step."""
         self._aborted = False
@@ -296,21 +301,37 @@ class StepTransitionController(QObject):
     # 2. Cell Select Relay & Cell Enable Settling
     # --------------------------------------------------------------------------
     def _phase_cell_select(self) -> None:
-        self.transition_status.emit(f"Step 2/4: Selecting Cell {self.selected_cell} relay (waiting 100ms)...")
-        # Step 3 requirement: "First Make the changes in cell select realy Wait for 100ms"
-        # Bit 1 = Cell Select (0=Cell 1, 1=Cell 2), Bit 0 = Cell Enable (0)
-        relay_payload = RelayControlBits.CELL_SELECT if self.selected_cell == 2 else 0
-        self._send(FRAME_RELAY_CTRL, int(relay_payload), 1)
+        step = self.active_step
+        cell_sel_bit = RelayControlBits.CELL_SELECT if self.selected_cell == 2 else 0
 
+        # Step requirement: "Kepp the cell select relay s it is only play with cell enable relay plz during the rest and other time"
+        if step and step.step_type == StepType.REST:
+            self.transition_status.emit(f"Step 2/4: Configuring Cell {self.selected_cell} for Rest (Enable=0)...")
+            # For Rest: Bit 0 (CELL_ENABLE) is 0, Bit 1 (CELL_SELECT) is preserved
+            self._send(FRAME_RELAY_CTRL, int(cell_sel_bit), 1)
+            self._schedule_next(self.DEFAULT_RELAY_WAIT_MS, self._after_settling)
+            return
+
+        # Active steps (Charge/Discharge): Cell Select first if needed, then Cell Enable
+        rb_relay = self.control_readbacks.get(FRAME_RELAY_CTRL, 0)
+        cur_sel_match = bool(rb_relay & RelayControlBits.CELL_SELECT) == (self.selected_cell == 2)
+        cur_en = bool(rb_relay & RelayControlBits.CELL_ENABLE)
+
+        if cur_sel_match and cur_en:
+            # Already connected to the correct cell with enable ON: no need to cycle relay
+            self.transition_status.emit(f"Step 2/4: Cell {self.selected_cell} already connected and enabled.")
+            self._schedule_next(50, self._after_settling)
+            return
+
+        self.transition_status.emit(f"Step 2/4: Selecting Cell {self.selected_cell} relay (waiting 100ms)...")
+        self._send(FRAME_RELAY_CTRL, int(cell_sel_bit), 1)
         self._schedule_next(self.DEFAULT_RELAY_WAIT_MS, self._phase_cell_enable)
 
     def _phase_cell_enable(self) -> None:
         if self._aborted:
             return
-        # Step 3 requirement: "...and then, do the cell enable waith for 1 to 2 sec so the analog values can we setteled down"
-        relay_payload = RelayControlBits.CELL_ENABLE
-        if self.selected_cell == 2:
-            relay_payload |= RelayControlBits.CELL_SELECT
+        cell_sel_bit = RelayControlBits.CELL_SELECT if self.selected_cell == 2 else 0
+        relay_payload = cell_sel_bit | RelayControlBits.CELL_ENABLE
         self._send(FRAME_RELAY_CTRL, int(relay_payload), 1)
 
         settle_s = self.DEFAULT_SETTLING_WAIT_MS / 1000.0
@@ -329,14 +350,22 @@ class StepTransitionController(QObject):
         # Verify Cell Relay read-back
         rb_relay = self.control_readbacks.get(FRAME_RELAY_CTRL, 0)
         expected_sel = bool(rb_relay & RelayControlBits.CELL_SELECT) == (self.selected_cell == 2)
-        expected_en = bool(rb_relay & RelayControlBits.CELL_ENABLE)
+        if step.step_type == StepType.REST:
+            # During Rest, cell enable bit is 0, cell select bit is preserved
+            expected_en = not bool(rb_relay & RelayControlBits.CELL_ENABLE)
+            expected_desc = f"Cell {self.selected_cell} Resting (Enable=0)"
+        else:
+            # During Active steps, cell enable bit is 1, cell select bit matches selected cell
+            expected_en = bool(rb_relay & RelayControlBits.CELL_ENABLE)
+            expected_desc = f"Cell {self.selected_cell} Connected (Enable=1)"
+
         if not (expected_sel and expected_en) and not self.auto_ack:
             if self._in_phase_retries < 3:
                 self._in_phase_retries += 1
                 self._schedule_next(100, self._after_settling)
                 return
             self._repeat_step_due_to_misalignment(
-                f"Relay readback 0x{rb_relay:02X} does not match Cell {self.selected_cell} Connected"
+                f"Relay readback 0x{rb_relay:02X} does not match {expected_desc}"
             )
             return
 

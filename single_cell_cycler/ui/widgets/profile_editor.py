@@ -372,8 +372,15 @@ class ProfileEditorWidget(QWidget):
         # Populate built-in presets
         self._refresh_presets()
         self.combo_presets.currentIndexChanged.connect(self._on_preset_selected)
+        # Select 15-cycle CCCV profile by default if present, otherwise first available
+        default_idx = 0
+        for i in range(self.combo_presets.count()):
+            if "15" in self.combo_presets.itemText(i):
+                default_idx = i
+                break
+        self.combo_presets.setCurrentIndex(default_idx)
         if self.combo_presets.count() > 0:
-            self._on_preset_selected(0)
+            self._on_preset_selected(default_idx)
 
     def _refresh_presets(self) -> None:
         self.combo_presets.blockSignals(True)

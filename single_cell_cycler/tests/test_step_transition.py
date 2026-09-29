@@ -173,3 +173,45 @@ def test_misalignment_retry_mechanism():
     # it detects misalignment and retries
     assert ctrl.retry_count >= 1
     assert any("misaligned" in m for m in status_messages)
+
+
+def test_rest_transition_preserves_cell_select_and_zeros_cell_enable():
+    """Verify that during a REST step on Cell 2:
+    1. Bit 1 (CELL_SELECT = 1) is strictly preserved.
+    2. Bit 0 (CELL_ENABLE = 0) is de-energized (0x6000 payload is 0x02).
+    3. Active power drives (charge/discharge) are all 0x00.
+    """
+    commands_sent = []
+
+    def mock_sender(frame_id, payload, priority):
+        commands_sent.append((frame_id, payload))
+
+    ctrl = StepTransitionController(
+        command_sender=mock_sender,
+        delays_enabled=False,
+        auto_ack=True,
+    )
+
+    completed_steps = []
+    ctrl.transition_completed.connect(lambda s: completed_steps.append(s))
+
+    step = TestStep(
+        step_index=2,
+        name="Rest Step Cell 2",
+        step_type=StepType.REST,
+    )
+
+    ctrl.start_transition(step=step, selected_cell=2)
+
+    assert len(completed_steps) == 1
+    assert completed_steps[0].name == "Rest Step Cell 2"
+
+    # Frame 0x6000 must have payload 0x02 (Bit 1 = CELL_SELECT, Bit 0 = CELL_ENABLE 0)
+    assert (FRAME_RELAY_CTRL, int(RelayControlBits.CELL_SELECT)) in commands_sent
+    # Frame 0x6000 must NOT have payload 0x03 (CELL_ENABLE should NOT be enabled during Rest)
+    assert (FRAME_RELAY_CTRL, int(RelayControlBits.CELL_SELECT | RelayControlBits.CELL_ENABLE)) not in commands_sent
+    # Opposing power paths cleared
+    assert (FRAME_CHARGE_CTRL, 0x00) in commands_sent
+    assert (FRAME_DISCHARGE_CTRL, 0x00) in commands_sent
+    assert (FRAME_DISCHARGE_SEL, 0x00) in commands_sent
+

@@ -78,6 +78,9 @@ class KPICard(QFrame):
         self.lbl_sub.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
         layout.addWidget(self.lbl_sub)
 
+    def set_title(self, title: str) -> None:
+        self.lbl_title.setText(title.upper())
+
     def set_value(self, val_str: str, sub_str: str | None = None, color: str | None = None) -> None:
         self.lbl_value.setText(val_str)
         if sub_str is not None:
@@ -95,6 +98,11 @@ class KPIDashboard(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
+        # Internal operational states for dynamic card presentation
+        self._is_charging: bool = False
+        self._is_discharging: bool = False
+        self._last_params: BoardParamsTelemetry | None = None
+
         # Card 1: Cell Voltage
         self.card_voltage = KPICard("Cell Voltage", "0.000", "V", "Limit: 2.80 - 4.20 V", COLOR_ACCENT)
         layout.addWidget(self.card_voltage, 0, 0)
@@ -107,8 +115,8 @@ class KPIDashboard(QWidget):
         self.card_temp = KPICard("Cell Temp", "25.0", "°C", "Term: 25.0 °C | Amb: 25.0 °C", "#f97316")
         layout.addWidget(self.card_temp, 0, 2)
 
-        # Card 4: SoC
-        self.card_soc = KPICard("State of Charge", "50.0", "%", "OCV: 50.0% | CC: 50.0%", "#10b981")
+        # Card 4: SoC (User Requirement: rename OCV to CC and CC to OCV)
+        self.card_soc = KPICard("State of Charge", "50.0", "%", "CC: 50.0% | OCV: 50.0%", "#10b981")
         layout.addWidget(self.card_soc, 0, 3)
 
         # Card 5: Step Capacity
@@ -119,8 +127,8 @@ class KPIDashboard(QWidget):
         self.card_tot_cap = KPICard("Total Capacity", "0.000", "Ah", "Total Energy: 0.00 Wh", "#ec4899")
         layout.addWidget(self.card_tot_cap, 1, 1)
 
-        # Card 7: Board Bus Voltages (primary = Load Bus, which the cell sees during discharge)
-        self.card_bus = KPICard("Bus Voltages", "0.00", "V", "Load Bus: 0.0V | Chg Bus: 0.0V", "#64748b")
+        # Card 7: Board Bus Voltages (User Requirement: Load with Chg and Chg with Load; dynamic primary)
+        self.card_bus = KPICard("Bus Voltages", "0.00", "V", "Chg Bus: 0.00 V | Load Bus: 0.00 V", "#64748b")
         layout.addWidget(self.card_bus, 1, 2)
 
         # Card 8: Cycle & Step Status
@@ -141,12 +149,18 @@ class KPIDashboard(QWidget):
         if data.current > 0.05:
             status_text = f"CHARGING (+{power:.2f} W)"
             c_color = COLOR_CHARGE
+            self._is_charging = True
+            self._is_discharging = False
         elif data.current < -0.05:
             status_text = f"DISCHARGING ({power:.2f} W)"
             c_color = COLOR_DISCHARGE
+            self._is_charging = False
+            self._is_discharging = True
         else:
             status_text = "RESTING (0.00 W)"
             c_color = COLOR_REST
+            self._is_charging = False
+            self._is_discharging = False
 
         self.card_current.set_value(f"{data.current:+.3f}", status_text, color=c_color)
 
@@ -159,20 +173,45 @@ class KPIDashboard(QWidget):
             color=t_color,
         )
 
+        # Refresh bus card with live charging/discharging state
+        if self._last_params:
+            self._refresh_bus_card()
+
     def update_board_params(self, params: BoardParamsTelemetry) -> None:
-        # Primary = Load Bus V (cell-side voltage measured on discharge path)
-        # Subtitle = Charge Bus V (charger supply voltage)
-        self.card_bus.set_value(
-            f"{params.load_voltage:.2f}",
-            f"Load Bus: {params.load_voltage:.2f} V | Chg Bus: {params.charge_voltage:.2f} V",
-        )
+        self._last_params = params
+        self._refresh_bus_card()
+
+    def _refresh_bus_card(self) -> None:
+        if not self._last_params:
+            return
+        params = self._last_params
+
+        # Requirement: "Load with Chg and Chg with load.
+        # And it should show Chg voltage while charging and Load while discharging"
+        if self._is_charging:
+            primary_v = params.charge_voltage
+            bus_color = COLOR_CHARGE
+            self.card_bus.set_title("Bus Voltage (Chg)")
+            sub = f"Chg Bus: {params.charge_voltage:.2f} V | Load Bus: {params.load_voltage:.2f} V"
+        elif self._is_discharging:
+            primary_v = params.load_voltage
+            bus_color = COLOR_DISCHARGE
+            self.card_bus.set_title("Bus Voltage (Load)")
+            sub = f"Load Bus: {params.load_voltage:.2f} V | Chg Bus: {params.charge_voltage:.2f} V"
+        else:
+            primary_v = params.charge_voltage if params.charge_voltage > 0.05 else params.load_voltage
+            bus_color = "#64748b"
+            self.card_bus.set_title("Bus Voltages")
+            sub = f"Chg Bus: {params.charge_voltage:.2f} V | Load Bus: {params.load_voltage:.2f} V"
+
+        self.card_bus.set_value(f"{primary_v:.2f}", sub, color=bus_color)
 
     def update_fault_soc(self, fault_soc: FaultSoCTelemetry) -> None:
-        # Primary = OCV SoC (open-circuit estimation, more stable at rest)
-        # Subtitle = CC SoC (coulomb-counted, accurate during cycling)
+        # Requirement: "the values are correct. Just rename OCV to CC and CC to OCV"
+        # Swapped labels: OCV value is displayed under CC, CC value under OCV
         self.card_soc.set_value(
             f"{fault_soc.soc_ocv:.1f}",
-            f"OCV: {fault_soc.soc_ocv:.1f}% | CC: {fault_soc.soc_cc:.1f}%",
+            f"CC: {fault_soc.soc_ocv:.1f}% | OCV: {fault_soc.soc_cc:.1f}%",
         )
 
     def update_metrics(

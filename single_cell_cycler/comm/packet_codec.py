@@ -66,7 +66,8 @@ class BoardParamsTelemetry:
     def from_payload(cls, payload: bytes, timestamp: float | None = None) -> BoardParamsTelemetry:
         if len(payload) < PAYLOAD_LEN_BOARD_PARAMS:
             raise ValueError(f"Payload too short for Board Params: expected {PAYLOAD_LEN_BOARD_PARAMS}, got {len(payload)}")
-        raw_amb, raw_vchg, raw_vload = struct.unpack("<HHH", payload[:PAYLOAD_LEN_BOARD_PARAMS])
+        # Hardware frame 0x2000 transmits: ambient_temp, load_bus_voltage, charge_bus_voltage
+        raw_amb, raw_vload, raw_vchg = struct.unpack("<HHH", payload[:PAYLOAD_LEN_BOARD_PARAMS])
         return cls(
             ambient_temp=round(raw_amb * SCALE_TEMPERATURE, 1),
             charge_voltage=round(raw_vchg * SCALE_BOARD_VOLTAGE, 4),

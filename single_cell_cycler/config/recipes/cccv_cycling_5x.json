@@ -23,9 +23,9 @@
         },
         {
           "cutoff_type": "Current <= Target (Taper)",
-          "threshold": 0.05,
+          "threshold": 0.18,
           "enabled": true,
-          "description": "CV current taper cut-off (50mA)"
+          "description": "CV current taper cut-off (0.18A / 180mA)"
         },
         {
           "cutoff_type": "Step Duration >=",

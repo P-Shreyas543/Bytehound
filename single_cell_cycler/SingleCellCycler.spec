@@ -13,13 +13,13 @@ cycler_root = repo_root / 'single_cell_cycler'
 
 # Core Data Files & Standard Recipes
 datas = [
-    (str(cycler_root / 'config' / 'recipes' / '*.json'), 'single_cell_cycler/config/recipes'),
+    (str(cycler_root / 'config' / 'recipes'), 'single_cell_cycler/config/recipes'),
 ]
 
 # Include branding if present
 branding_path = repo_root / 'branding'
 if branding_path.exists():
-    datas.append((str(branding_path / '*'), 'branding'))
+    datas.append((str(branding_path), 'branding'))
 
 version_json = repo_root / 'version.json'
 if version_json.exists():
@@ -79,8 +79,8 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    [],
-    exclude_binaries=True,
+    a.binaries, a.zipfiles, a.datas,
+    exclude_binaries=False,
     name='SingleCellCycler',
     debug=False,
     bootloader_ignore_signals=False,
@@ -95,13 +95,4 @@ exe = EXE(
     icon=r'C:\Users\Shreyas\Documents\Python\Bytehound\branding\logo.ico',
 )
 
-coll = COLLECT(
-    exe,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    strip=False,
-    upx=False,
-    upx_exclude=[],
-    name='SingleCellCycler',
-)
+# Onefile build completes at EXE

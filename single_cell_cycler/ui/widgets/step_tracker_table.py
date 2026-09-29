@@ -172,10 +172,10 @@ class StepTrackerTableWidget(QWidget):
         layout.addWidget(self.table)
 
         # ------------------------------------------------------------------ #
-        # Clock update timer                                                   #
+        # Clock update timer (500ms is optimal for 1-second resolution clocks) #
         # ------------------------------------------------------------------ #
         self._timer = QTimer(self)
-        self._timer.setInterval(250)
+        self._timer.setInterval(500)
         self._timer.timeout.connect(self._update_clocks)
         self._timer.start()
 
@@ -242,11 +242,14 @@ class StepTrackerTableWidget(QWidget):
             item.setBackground(QColor(row_bg))
             if col == _COL_TYPE:
                 item.setForeground(QColor(text_col))
-                f = item.font()
-                f.setWeight(QFont.Weight.Bold)
-                item.setFont(f)
+                pt = self.font().pointSize()
+                item.setFont(QFont("Segoe UI", max(9, pt if pt > 0 else 10), QFont.Weight.Bold))
             elif col in (_COL_CAP, _COL_ENERGY):
                 item.setForeground(QColor(text_col))
+            elif col == _COL_CUTOFF and "FAULT" in text:
+                item.setForeground(QColor(COLOR_DANGER))
+                pt = self.font().pointSize()
+                item.setFont(QFont("Segoe UI", max(9, pt if pt > 0 else 10), QFont.Weight.Bold))
             else:
                 item.setForeground(QColor(TEXT_PRIMARY))
             if col in center_cols:
@@ -290,20 +293,18 @@ class StepTrackerTableWidget(QWidget):
         sep_item = QTableWidgetItem(f"  \u2500\u2500  Cycle {next_cycle}  \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500")
         sep_item.setBackground(QColor(_CYCLE_SEP_BG))
         sep_item.setForeground(QColor(COLOR_ACCENT))
-        f = sep_item.font()
-        f.setWeight(QFont.Weight.Bold)
-        sep_item.setFont(f)
+        pt = self.font().pointSize()
+        sep_item.setFont(QFont("Segoe UI", max(9, pt if pt > 0 else 10), QFont.Weight.Bold))
         sep_item.setTextAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
         self.table.setItem(row, 0, sep_item)
         self.table.setSpan(row, 0, 1, _NUM_COLS)
 
     def _update_clocks(self) -> None:
         now = time.time()
-        if self.step_start_time is not None:
-            self.lbl_step_timer.setText(f"Step  {_fmt_duration(now - self.step_start_time)}")
-        else:
-            self.lbl_step_timer.setText("Step  00:00")
-        if self.test_start_time is not None:
-            self.lbl_tot_timer.setText(f"Total  {_fmt_duration(now - self.test_start_time)}")
-        else:
-            self.lbl_tot_timer.setText("Total  00:00")
+        s_text = f"Step  {_fmt_duration(now - self.step_start_time)}" if self.step_start_time is not None else "Step  00:00"
+        if s_text != self.lbl_step_timer.text():
+            self.lbl_step_timer.setText(s_text)
+
+        t_text = f"Total  {_fmt_duration(now - self.test_start_time)}" if self.test_start_time is not None else "Total  00:00"
+        if t_text != self.lbl_tot_timer.text():
+            self.lbl_tot_timer.setText(t_text)

@@ -82,13 +82,13 @@ cycler_root = repo_root / 'single_cell_cycler'
 
 # Core Data Files & Standard Recipes
 datas = [
-    (str(cycler_root / 'config' / 'recipes' / '*.json'), 'single_cell_cycler/config/recipes'),
+    (str(cycler_root / 'config' / 'recipes'), 'single_cell_cycler/config/recipes'),
 ]
 
 # Include branding if present
 branding_path = repo_root / 'branding'
 if branding_path.exists():
-    datas.append((str(branding_path / '*'), 'branding'))
+    datas.append((str(branding_path), 'branding'))
 
 version_json = repo_root / 'version.json'
 if version_json.exists():

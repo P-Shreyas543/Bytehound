@@ -3,14 +3,17 @@
 from __future__ import annotations
 
 import logging
+import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
 import serial.tools.list_ports
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QComboBox,
     QHBoxLayout,
@@ -25,6 +28,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from .theme import get_main_stylesheet
 
 from ..comm.packet_codec import (
     BoardParamsTelemetry,
@@ -32,7 +36,11 @@ from ..comm.packet_codec import (
     CommandEchoTelemetry,
     FaultSoCTelemetry,
 )
-from ..comm.protocol_defs import DEFAULT_BAUD_RATE
+from ..comm.protocol_defs import (
+    DEFAULT_BAUD_RATE,
+    FRAME_RELAY_CTRL,
+    RelayControlBits,
+)
 from ..comm.transceiver import SerialTransceiver, TransceiverState
 from ..config.cycler_config import DEFAULT_LOG_DIR
 from ..core.cycler_engine import CyclerEngine, EngineState
@@ -60,9 +68,11 @@ logger = logging.getLogger("SingleCellCycler.MainWindow")
 class MainWindow(QMainWindow):
     """Master window for Single-Cell BMS Cell Cycler."""
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, parent: QWidget | None = None, app_icon: Optional[QIcon] = None):
         super().__init__(parent)
-        self.setWindowTitle("Bytehound Single-Cell BMS Cycler & Characterization Workstation")
+        self._app_icon = app_icon
+        if self._app_icon and not self._app_icon.isNull():
+            self.setWindowIcon(self._app_icon)
         self.resize(1340, 880)
         self.setStyleSheet(MAIN_STYLESHEET)
 
@@ -81,6 +91,7 @@ class MainWindow(QMainWindow):
         self._setup_ui()
         self._wire_signals()
         self._refresh_com_ports()
+        self._update_window_title()
 
         # 3. Deterministic 10 Hz UI + logging tick
         self._ui_tick_timer = QTimer(self)
@@ -88,11 +99,43 @@ class MainWindow(QMainWindow):
         self._ui_tick_timer.timeout.connect(self._on_ui_tick)
         self._ui_tick_timer.start()
 
+    @property
+    def btn_start(self) -> QPushButton:
+        """Compatibility property for legacy references to Start button."""
+        return self.btn_start_stop
+
+    @property
+    def btn_stop(self) -> QPushButton:
+        """Compatibility property for legacy references to Stop button."""
+        return self.btn_start_stop
+
+    def _update_window_title(self) -> None:
+        port = self.combo_port.currentData() if hasattr(self, "combo_port") else ""
+        is_conn = self.transceiver.isRunning() if hasattr(self, "transceiver") else False
+        cell_num = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+        conn_str = f"{port}" if (is_conn and port) else ("Connected" if is_conn else "Disconnected")
+        self.setWindowTitle(f"Bytehound | Single-Cell BMS Cycler — [{conn_str} • Cell {cell_num}]")
+
     def _setup_ui(self) -> None:
         # Toolbar
         self.toolbar = QToolBar("Controls")
         self.toolbar.setMovable(False)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
+
+        # Brand Identity Badge
+        brand_widget = QWidget()
+        brand_layout = QHBoxLayout(brand_widget)
+        brand_layout.setContentsMargins(4, 0, 10, 0)
+        brand_layout.setSpacing(8)
+        if self._app_icon and not self._app_icon.isNull():
+            lbl_icon = QLabel()
+            lbl_icon.setPixmap(self._app_icon.pixmap(20, 20))
+            brand_layout.addWidget(lbl_icon)
+        lbl_brand = QLabel("BYTEHOUND")
+        lbl_brand.setStyleSheet("color: #38bdf8; font-weight: 800; font-size: 13px; letter-spacing: 1.5px;")
+        brand_layout.addWidget(lbl_brand)
+        self.toolbar.addWidget(brand_widget)
+        self.toolbar.addSeparator()
 
         # Port & Baud controls
         self.toolbar.addWidget(QLabel("Port: "))
@@ -101,6 +144,7 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(self.combo_port)
 
         self.btn_refresh_ports = QPushButton("↻")
+        self.btn_refresh_ports.setObjectName("btn_refresh")
         self.btn_refresh_ports.setToolTip("Refresh COM ports")
         self.btn_refresh_ports.clicked.connect(self._refresh_com_ports)
         self.toolbar.addWidget(self.btn_refresh_ports)
@@ -113,6 +157,7 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(self.combo_baud)
 
         self.btn_connect = QPushButton("Connect")
+        self.btn_connect.setObjectName("btn_connect")
         self.btn_connect.clicked.connect(self._toggle_connection)
         self.toolbar.addWidget(self.btn_connect)
 
@@ -126,12 +171,13 @@ class MainWindow(QMainWindow):
         self.combo_active_cell.currentIndexChanged.connect(self._on_cell_selection_changed)
         self.toolbar.addWidget(self.combo_active_cell)
 
-        # Test Execution Controls
+        # Test Execution Controls (Unified Start / Stop Button)
         self.toolbar.addSeparator()
-        self.btn_start = QPushButton("▶  START TEST")
-        self.btn_start.setObjectName("btn_start")
-        self.btn_start.clicked.connect(self._start_test)
-        self.toolbar.addWidget(self.btn_start)
+        self.btn_start_stop = QPushButton("▶  START TEST")
+        self.btn_start_stop.setObjectName("btn_start")
+        self.btn_start_stop.setToolTip("Start automated battery cycler test profile")
+        self.btn_start_stop.clicked.connect(self._toggle_start_stop)
+        self.toolbar.addWidget(self.btn_start_stop)
 
         self.btn_pause = QPushButton("⏸  Pause")
         self.btn_pause.setObjectName("btn_pause")
@@ -140,14 +186,29 @@ class MainWindow(QMainWindow):
         self.toolbar.addWidget(self.btn_pause)
 
         self.btn_skip = QPushButton("⏭  Skip Step")
+        self.btn_skip.setObjectName("btn_skip")
         self.btn_skip.setEnabled(False)
         self.btn_skip.clicked.connect(self.engine.skip_step)
         self.toolbar.addWidget(self.btn_skip)
 
-        self.btn_stop = QPushButton("⏹  Stop")
-        self.btn_stop.setEnabled(False)
-        self.btn_stop.clicked.connect(self._stop_test)
-        self.toolbar.addWidget(self.btn_stop)
+        # Font size adjustment
+        self.lbl_font = QLabel("🔤 Font:")
+        self.lbl_font.setStyleSheet("color: #94a3b8; font-weight: 600; margin-left: 8px;")
+        self.toolbar.addWidget(self.lbl_font)
+
+        self.combo_font = QComboBox()
+        self.combo_font.setObjectName("combo_font")
+        self.combo_font.addItems([
+            "10 pt (Default)",
+            "11 pt",
+            "12 pt (Large)",
+            "13 pt",
+            "14 pt (Extra Large)",
+            "16 pt (Huge)",
+        ])
+        self.combo_font.setToolTip("Adjust interface text and font size")
+        self.combo_font.currentIndexChanged.connect(self._on_font_size_changed)
+        self.toolbar.addWidget(self.combo_font)
 
         # Spacer and Emergency Stop
         spacer = QWidget()
@@ -162,20 +223,28 @@ class MainWindow(QMainWindow):
         self.btn_estop.clicked.connect(self._emergency_stop)
         self.toolbar.addWidget(self.btn_estop)
 
-        # Central Layout
+        # Central Layout with resizable vertical splitter
         central = QWidget()
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(12, 12, 12, 12)
-        main_layout.setSpacing(10)
+        main_layout.setContentsMargins(10, 8, 10, 8)
+        main_layout.setSpacing(6)
+
+        self.main_splitter = QSplitter(Qt.Orientation.Vertical)
+        self.main_splitter.setChildrenCollapsible(False)
 
         # 1. Top Section: KPI Dashboard
         self.dashboard = KPIDashboard()
-        main_layout.addWidget(self.dashboard)
+        self.main_splitter.addWidget(self.dashboard)
 
         # 2. Bottom Section: Tabs
         self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs, stretch=1)
+        self.main_splitter.addWidget(self.tabs)
+
+        self.main_splitter.setStretchFactor(0, 0)
+        self.main_splitter.setStretchFactor(1, 1)
+        self.main_splitter.setSizes([180, 680])
+        main_layout.addWidget(self.main_splitter)
 
         # Tab 1: Live Plotting Suite
         self.live_plots = LivePlotWidget()
@@ -254,7 +323,8 @@ class MainWindow(QMainWindow):
         else:
             port = self.combo_port.currentData()
             if not port:
-                QMessageBox.warning(self, "No Port", "Please select a valid COM port")
+                if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                    QMessageBox.warning(self, "No Port", "Please select a valid COM port")
                 return
             baud = self.combo_baud.currentData()
             self.engine.transition_controller.auto_ack = False
@@ -264,6 +334,7 @@ class MainWindow(QMainWindow):
     def _on_connection_changed(self, state: str, msg: str) -> None:
         self.lbl_status_comm.setText(f"Comm: {state}")
         self.statusBar.showMessage(msg, 3000)
+        self._update_window_title()
 
     def _on_command_dispatch(self, frame_id: int, payload_byte: int, priority: int = 1) -> None:
         self.transceiver.send_command(frame_id, payload_byte, priority)
@@ -305,13 +376,12 @@ class MainWindow(QMainWindow):
         step_m = self.engine.metrics_tracker.current_step_metrics
         self._last_step_mah = step_m.capacity_mah if step_m else 0.0
 
-        # Pass raw telemetry to plot buffer (relay + engine-state gating inside)
-        # Only feed the buffer when actually running; this is a belt-and-suspenders
-        # guard in addition to the relay gate in the 10 Hz tick.
-        if self.engine.state == EngineState.RUNNING:
+        # Pass raw telemetry to plot buffer
+        # Feed the buffer continuously during active test execution (RUNNING or STEP_TRANSITION)
+        if self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION):
             self.live_plots.add_telemetry(data, self._last_step_mah)
 
-        if self.engine.state == EngineState.RUNNING:
+        if self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION):
             mt = self.engine.metrics_tracker
             self.dashboard.update_metrics(
                 step_mah=mt.current_step_metrics.capacity_mah if mt.current_step_metrics else 0.0,
@@ -328,9 +398,14 @@ class MainWindow(QMainWindow):
         cell_num = self.combo_active_cell.currentData()
         self.engine.selected_cell = cell_num
         logger.info(f"Active test cell set to: Cell {cell_num}")
+        self._update_window_title()
         # If test is actively running, update hardware relay connection immediately
-        if self.engine.state == EngineState.RUNNING and self.engine.active_step:
+        if self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION) and self.engine.active_step:
             self.engine._apply_hardware_for_step(self.engine.active_step)
+        elif self.transceiver.isRunning():
+            # Send immediate relay command so hardware selects cell in idle state (CELL_ENABLE=0)
+            relay_idle = int(RelayControlBits.CELL_SELECT) if cell_num == 2 else 0x00
+            self._on_command_dispatch(FRAME_RELAY_CTRL, relay_idle, 1)
 
     def _on_command_transmitted(self, frame_id: int, payload_byte: int, wire_bytes: bytes) -> None:
         hex_wire = wire_bytes.hex(" ").upper()
@@ -348,32 +423,28 @@ class MainWindow(QMainWindow):
         self.engine.on_fault_soc_telemetry(fault_soc)
 
     def _on_ui_tick(self) -> None:
-        """Deterministic 10 Hz tick: update relay state, redraw plots, log if running.
+        """Deterministic 10 Hz tick: update relay state, redraw plots, log if test active.
 
-        Plotting requires BOTH:
-          1. engine.state == RUNNING  (primary: immediate, no HW round-trip delay)
-          2. relay readback bit-0 == 1  (secondary: confirms HW cell connection)
-        This prevents stale post-test data from polluting the graph.
+        Plotting and logging run continuously during active testing (both RUNNING and
+        STEP_TRANSITION), capturing Charge, Discharge, and Rest (OCV relaxation) smoothly.
         """
         # Read relay hardware echo
         rb = self.engine.transition_controller.control_readbacks
         relay_byte = rb.get(0x6000, 0)
-        hw_relay_on = bool(relay_byte & 0x01)
-        cell_num = 2 if (relay_byte & 0x02) else 1
+        hw_cell_sel = 2 if (relay_byte & 0x02) else 1
+        cell_num = hw_cell_sel if (relay_byte & 0x02) else self.engine.selected_cell
 
-        # Only allow plotting when engine is actively RUNNING.
-        # Completed / stopped / paused states immediately cut the graph line.
-        engine_running = self.engine.state == EngineState.RUNNING
-        effective_relay_on = engine_running and hw_relay_on
+        # Active test state
+        is_test_active = self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION)
 
-        # Notify live plots (inserts NaN gap on any falling edge)
-        self.live_plots.set_relay_state(effective_relay_on, cell_num)
+        # Notify live plots (only inserts NaN gap if cell_num physically switches)
+        self.live_plots.set_relay_state(is_test_active, cell_num)
 
         # Drive the plot redraw at 10 Hz
         self.live_plots.tick_update()
 
-        # Log one record per tick only when RUNNING + relay confirmed ON
-        if engine_running and hw_relay_on and self._last_cell_data is not None:
+        # Log one record per tick whenever test is active (including Rest, Charge, Discharge)
+        if is_test_active and self._last_cell_data is not None:
             data = self._last_cell_data
             bp = self._last_board_params
             fs = self._last_fault_soc
@@ -383,12 +454,12 @@ class MainWindow(QMainWindow):
             self._tick_elapsed_s += 0.1  # deterministic elapsed counter
 
             self.logger.log_record({
-                "timestamp_iso": "",
+                "timestamp_iso": datetime.now().isoformat(),
                 "epoch_s": round(self._tick_elapsed_s, 2),
                 "cycle_index": self.engine.current_cycle,
                 "step_index": self.engine.current_step_idx + 1,
-                "step_name": self.engine.active_step.name if self.engine.active_step else "",
-                "step_type": self.engine.active_step.step_type.value if self.engine.active_step else "",
+                "step_name": self.engine.active_step.name if self.engine.active_step else "Transition",
+                "step_type": self.engine.active_step.step_type.value if self.engine.active_step else "transition",
                 "voltage_v": data.voltage,
                 "current_a": data.current,
                 "power_w": round(data.voltage * data.current, 3),
@@ -418,21 +489,27 @@ class MainWindow(QMainWindow):
 
         # Pre-flight check: Ensure communication link is active
         if not self.transceiver.isRunning():
-            QMessageBox.warning(
-                self,
-                "Not Connected",
-                "Cannot start test: No active serial connection.\n\n"
-                "Please select your BMS hardware COM port and click 'Connect' before starting the test.",
-            )
+            logger.warning("[Pre-Flight Check Failed] Cannot start test: Serial transceiver is not connected.")
+            if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                QMessageBox.warning(
+                    self,
+                    "Not Connected",
+                    "Cannot start test: No active serial connection.\n\n"
+                    "Please select your BMS hardware COM port and click 'Connect' before starting the test.",
+                )
             return
 
         if time_since_telemetry > 3.0:
-            QMessageBox.warning(
-                self,
-                "Telemetry Link Offline",
-                f"Cannot start test: No telemetry received for {time_since_telemetry:.1f} seconds.\n\n"
-                "Please verify that your single-cell BMS board is powered, connected, and transmitting.",
+            logger.warning(
+                f"[Pre-Flight Check Failed] Cannot start test: No telemetry received for {time_since_telemetry:.1f}s."
             )
+            if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                QMessageBox.warning(
+                    self,
+                    "Telemetry Link Offline",
+                    f"Cannot start test: No telemetry received for {time_since_telemetry:.1f} seconds.\n\n"
+                    "Please verify that your single-cell BMS board is powered, connected, and transmitting.",
+                )
             return
 
         try:
@@ -447,12 +524,43 @@ class MainWindow(QMainWindow):
             self.tracker_table.reset_all()
             self.engine.start_test()
 
-            self.btn_start.setEnabled(False)
+            self._set_test_running_ui(True)
+        except Exception as exc:
+            logger.error(f"[Test Start Exception] Failed to start test profile: {exc}", exc_info=True)
+            if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+                QMessageBox.critical(self, "Start Error", str(exc))
+
+    def _toggle_start_stop(self) -> None:
+        """Unified Start/Stop button handler for intuitive single-click test control."""
+        is_running = self.engine.state in (
+            EngineState.RUNNING,
+            EngineState.STEP_TRANSITION,
+            EngineState.PAUSED,
+        )
+        if is_running:
+            self._stop_test()
+        else:
+            self._start_test()
+
+    def _set_test_running_ui(self, running: bool) -> None:
+        """Dynamically toggle Start/Stop button styling and label between Emerald and Crimson."""
+        if running:
+            self.btn_start_stop.setText("⏹  STOP TEST")
+            self.btn_start_stop.setObjectName("btn_stop")
+            self.btn_start_stop.setToolTip("Stop active cycler test and safely rest hardware")
             self.btn_pause.setEnabled(True)
             self.btn_skip.setEnabled(True)
-            self.btn_stop.setEnabled(True)
-        except Exception as exc:
-            QMessageBox.critical(self, "Start Error", str(exc))
+        else:
+            self.btn_start_stop.setText("▶  START TEST")
+            self.btn_start_stop.setObjectName("btn_start")
+            self.btn_start_stop.setToolTip("Start automated battery cycler test profile")
+            self.btn_pause.setEnabled(False)
+            self.btn_pause.setText("⏸ Pause")
+            self.btn_skip.setEnabled(False)
+
+        # Force Qt stylesheet re-evaluation on dynamic objectName change
+        self.btn_start_stop.style().unpolish(self.btn_start_stop)
+        self.btn_start_stop.style().polish(self.btn_start_stop)
 
     def _toggle_pause(self) -> None:
         if self.engine.state == EngineState.RUNNING:
@@ -476,6 +584,7 @@ class MainWindow(QMainWindow):
 
     def _on_safety_tripped(self, reason: str) -> None:
         import os
+        logger.critical(f"[SAFETY INTERLOCK TRIPPED] Reason: {reason}")
         self.safety_panel.set_tripped(reason)
         self._finish_ui_session(f"SAFETY TRIP: {reason}")
         if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
@@ -518,11 +627,22 @@ class MainWindow(QMainWindow):
             csum_path = DEFAULT_LOG_DIR / f"summary_cycles_{int(self.engine.metrics_tracker.total_test_start_time)}.csv"
             write_cycle_summary_csv(csum_path, self.engine.metrics_tracker.cycle_summaries)
 
-        self.btn_start.setEnabled(True)
-        self.btn_pause.setEnabled(False)
-        self.btn_pause.setText("⏸ Pause")
-        self.btn_skip.setEnabled(False)
-        self.btn_stop.setEnabled(False)
+        self._set_test_running_ui(False)
+
+    def _on_font_size_changed(self, index: int) -> None:
+        """Dynamically scale UI typography across all panels, tables, and buttons."""
+        font_sizes_px = [13, 14, 16, 17, 18, 21]
+        font_sizes_pt = [10, 11, 12, 13, 14, 16]
+        if 0 <= index < len(font_sizes_px):
+            px = font_sizes_px[index]
+            pt = font_sizes_pt[index]
+            app = QApplication.instance()
+            if app:
+                font = QFont("Segoe UI", pt)
+                app.setFont(font)
+                app.setStyleSheet(get_main_stylesheet(px))
+                self.live_plots.update_font_size(pt)
+                logger.info(f"Scaled UI Font Size to {pt} pt ({px} px)")
 
     def closeEvent(self, event) -> None:
         logger.info("Application closing: resetting all hardware controls (0x6000 - 0x6004) to 0...")

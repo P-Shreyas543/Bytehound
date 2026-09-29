@@ -47,20 +47,53 @@ def test_gui_headless():
     v_val = float(v_text)
     assert 2.5 <= v_val <= 4.3, f"Voltage out of expected range: {v_val}"
 
-    # Verify live plot has data points
-    assert len(window.live_plots.voltages) > 0, "No voltage points plotted"
+    # Verify initial unified Start/Stop button state
+    assert "START" in window.btn_start_stop.text(), f"Expected START button text, got: {window.btn_start_stop.text()}"
+    assert window.btn_start_stop.objectName() == "btn_start"
+    assert not window.btn_pause.isEnabled()
+    assert not window.btn_skip.isEnabled()
 
     # Start test
     window._start_test()
-    assert window.engine.state.value == "Running"
+    from single_cell_cycler.core.cycler_engine import EngineState
+    assert window.engine.state in (EngineState.STEP_TRANSITION, EngineState.RUNNING)
 
-    # Push a running telemetry packet
+    # Verify button toggles to STOP TEST (crimson style)
+    assert "STOP" in window.btn_start_stop.text(), f"Expected STOP button text, got: {window.btn_start_stop.text()}"
+    assert window.btn_start_stop.objectName() == "btn_stop"
+    assert window.btn_pause.isEnabled()
+    assert window.btn_skip.isEnabled()
+
+    # Push a running telemetry packet and trigger UI tick
+    window._on_ui_tick()
     window.transceiver.cell_data_received.emit(CellDataTelemetry(3.860, 1.250, 26.6, 27.1))
+    window._on_ui_tick()
     app.processEvents()
 
-    # Emergency stop
+    # Verify live plot buffers have received the data
+    assert len(window.live_plots._v) > 0, "No voltage points plotted"
+    assert len(window.live_plots._i) > 0, "No current points plotted"
+
+    # Test toggling Start/Stop button directly to stop
+    window.btn_start_stop.click()
+    app.processEvents()
+    assert "START" in window.btn_start_stop.text()
+    assert window.btn_start_stop.objectName() == "btn_start"
+
+    # Test cell selection update
+    window.combo_active_cell.setCurrentIndex(1)  # Cell 2
+    app.processEvents()
+    assert "Cell 2" in window.windowTitle()
+
+    # Test font scaling
+    window.combo_font.setCurrentIndex(2)  # 12 pt
+    app.processEvents()
+
+    # Emergency stop safety check
+    window._start_test()
     window._emergency_stop()
     assert window.engine.state.value == "Safety Stop"
+    assert "START" in window.btn_start_stop.text()
 
     # Clean close
     window.close()
@@ -70,3 +103,4 @@ def test_gui_headless():
 
 if __name__ == "__main__":
     test_gui_headless()
+

@@ -79,12 +79,22 @@ class CyclerEngine(QObject):
         self.transition_controller.transition_failed.connect(self._on_transition_failed)
 
         # Execution tracking
-        self.selected_cell: int = 1  # 1 = Cell 1 (bit 1 = 0), 2 = Cell 2 (bit 1 = 1)
+        self._selected_cell: int = 1  # 1 = Cell 1 (bit 1 = 0), 2 = Cell 2 (bit 1 = 1)
         self.current_cycle = 1
         self.current_step_idx = 0  # 0-indexed into recipe.steps
         self.active_step: Optional[TestStep] = None
         self._loop_counters: Dict[int, int] = {}  # step_idx -> remaining loops
         self._last_telemetry: Optional[CellDataTelemetry] = None
+        self._step_activated_time: float = 0.0
+
+    @property
+    def selected_cell(self) -> int:
+        return self._selected_cell
+
+    @selected_cell.setter
+    def selected_cell(self, cell_num: int) -> None:
+        self._selected_cell = cell_num
+        self.safety_monitor.selected_cell = cell_num
 
         # Watchdog periodic timer (1s)
         self._watchdog_timer = QTimer(self)
@@ -159,11 +169,21 @@ class CyclerEngine(QObject):
 
         # 1. Safety check
         if not self.safety_monitor.check_telemetry(telemetry):
+            fault_reason = self.safety_monitor.trip_reason
+            if self.state == EngineState.RUNNING and self.active_step:
+                self._handle_step_fault(fault_reason)
+                return
+
+            if self.state == EngineState.STEP_TRANSITION:
+                # Still transitioning hardware to the new step; clear trip flag to allow settling
+                self.safety_monitor.reset_safety()
+                return
+
             if self.state != EngineState.SAFETY_STOP:
                 self.transition_controller.abort()
                 self._safe_idle_hardware()
-                self._set_state(EngineState.SAFETY_STOP, self.safety_monitor.trip_reason)
-                self.safety_tripped.emit(self.safety_monitor.trip_reason)
+                self._set_state(EngineState.SAFETY_STOP, fault_reason)
+                self.safety_tripped.emit(fault_reason)
             return
 
         # 2. Update metrics integration
@@ -191,12 +211,54 @@ class CyclerEngine(QObject):
 
     def on_fault_soc_telemetry(self, fault_soc: FaultSoCTelemetry) -> None:
         """Driven by incoming 0x3000 frames."""
-        if not self.safety_monitor.check_bms_faults(fault_soc):
+        stype = self.active_step.step_type.value if self.active_step else None
+        v_cell = self._last_telemetry.voltage if self._last_telemetry else None
+        if not self.safety_monitor.check_bms_faults(fault_soc, active_step_type=stype, cell_voltage=v_cell):
+            fault_reason = self.safety_monitor.trip_reason
+            if self.state == EngineState.RUNNING and self.active_step:
+                self._handle_step_fault(fault_reason)
+                return
+
+            if self.state == EngineState.STEP_TRANSITION:
+                self.safety_monitor.reset_safety()
+                return
+
             if self.state != EngineState.SAFETY_STOP:
                 self.transition_controller.abort()
                 self._safe_idle_hardware()
-                self._set_state(EngineState.SAFETY_STOP, self.safety_monitor.trip_reason)
-                self.safety_tripped.emit(self.safety_monitor.trip_reason)
+                self._set_state(EngineState.SAFETY_STOP, fault_reason)
+                self.safety_tripped.emit(fault_reason)
+
+    def _handle_step_fault(self, fault_reason: str) -> None:
+        """Switch to next profile step when a fault occurs during active test execution."""
+        if not self.recipe or not self.active_step:
+            return
+
+        has_next_step = (self.current_step_idx + 1) < len(self.recipe.steps)
+        if has_next_step:
+            step_name = self.active_step.name
+            logger.warning(
+                f"[Fault Handling] Fault during step '{step_name}': {fault_reason} "
+                f"-> Advancing to next profile step"
+            )
+            # Reset safety trip flag so the next step can run cleanly
+            self.safety_monitor.reset_safety()
+
+            cutoff_msg = f"FAULT: {fault_reason}"
+            finished_step = self.metrics_tracker.complete_step(cutoff_msg)
+            self.step_completed.emit(finished_step)
+
+            self.current_step_idx += 1
+            self._execute_next_step()
+        else:
+            logger.warning(
+                f"[Fault Handling] Fault on final step '{self.active_step.name}': {fault_reason} "
+                f"-> No further steps in profile, shutting down safely"
+            )
+            self.transition_controller.abort()
+            self._safe_idle_hardware()
+            self._set_state(EngineState.SAFETY_STOP, fault_reason)
+            self.safety_tripped.emit(fault_reason)
 
     def _execute_next_step(self) -> None:
         """Step sequencer and loop dispatcher."""
@@ -246,6 +308,11 @@ class CyclerEngine(QObject):
     def _on_transition_completed(self, step: TestStep) -> None:
         if self.state != EngineState.STEP_TRANSITION:
             return
+        # Refresh watchdog baseline so the 8 s window is fresh for the new step.
+        # This prevents accumulated transition delays from eating into the step's budget.
+        self.safety_monitor.last_telemetry_time = time.time()
+        self.safety_monitor.reset_safety()
+        self._step_activated_time = time.time()
         self._set_state(EngineState.RUNNING, f"Executing: {step.name}")
         self.metrics_tracker.start_step(
             cycle_index=self.current_cycle,
@@ -275,8 +342,9 @@ class CyclerEngine(QObject):
         # 2. De-select parameters and load bank
         self._command_sender(FRAME_CHARGE_SEL, 0x00, 0)
         self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 0)
-        # 3. Disconnect cell relay (open circuit)
-        self._command_sender(FRAME_RELAY_CTRL, 0x00, 0)
+        # 3. Disconnect cell relay (open circuit) while preserving selected cell position
+        relay_idle = int(RelayControlBits.CELL_SELECT) if self.selected_cell == 2 else 0x00
+        self._command_sender(FRAME_RELAY_CTRL, relay_idle, 0)
 
     def _reset_execution_state(self) -> None:
         self.current_cycle = 1
