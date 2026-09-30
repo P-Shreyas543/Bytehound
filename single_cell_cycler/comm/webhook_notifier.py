@@ -56,6 +56,7 @@ class NotificationEvent(Enum):
 # config/webhook_settings.json (or is entered in the Webhook dialog).
 DEFAULT_WEBHOOK_URL = ""
 DEFAULT_OPERATOR_TAG = "Shreyas P"
+DEFAULT_WORKSTATION = ""
 
 
 @dataclass
@@ -70,6 +71,7 @@ class WebhookSettings:
     notify_test_paused_resumed: bool = True
     notify_emergency_stop: bool = True
     operator_tag: str = DEFAULT_OPERATOR_TAG
+    workstation: str = DEFAULT_WORKSTATION
     # Upload the run's CSV files (telemetry + step/cycle/dQ-dV summaries) when a test ends
     send_csv_on_test_end: bool = True
     # The protocol currently does not carry a BMS serial-number frame. This is
@@ -88,6 +90,7 @@ class WebhookSettings:
             "notify_test_paused_resumed": self.notify_test_paused_resumed,
             "notify_emergency_stop": self.notify_emergency_stop,
             "operator_tag": self.operator_tag,
+            "workstation": self.workstation,
             "bms_serial_number": self.bms_serial_number,
             "send_csv_on_test_end": self.send_csv_on_test_end,
         }
@@ -106,6 +109,7 @@ class WebhookSettings:
             notify_test_paused_resumed=data.get("notify_test_paused_resumed", True),
             notify_emergency_stop=data.get("notify_emergency_stop", True),
             operator_tag=data.get("operator_tag") or DEFAULT_OPERATOR_TAG,
+            workstation=str(data.get("workstation") or data.get("workstation_tag") or data.get("workstation_name") or DEFAULT_WORKSTATION).strip(),
             bms_serial_number=str(data.get("bms_serial_number") or "").strip(),
             send_csv_on_test_end=bool(data.get("send_csv_on_test_end", True)),
         )
@@ -457,7 +461,7 @@ class WebhookNotifier:
         ctx = self._context()
         identity = self._bms_identity()
         cell = ctx.get("cell")
-        host = ctx.get("host", "")
+        host = self.settings.workstation.strip() or ctx.get("host", "")
         embed = payload.get("embeds", [{}])[0]
         title = embed.get("title", "")
         tag = f"{identity} · Cell {cell}" if cell else identity
@@ -503,6 +507,7 @@ class WebhookNotifier:
         if not self.settings.url:
             return False, "No Webhook URL configured."
         operator = self.settings.operator_tag or "Shreyas P"
+        workstation = self.settings.workstation.strip() or "Bytehound BMS Lab"
         payload = build_universal_payload(
             event=NotificationEvent.PING,
             title="🔔 Webhook Ping Test",
@@ -511,7 +516,7 @@ class WebhookNotifier:
                 {"name": "Status", "value": "✅ Online"},
                 {"name": "Operator", "value": operator},
                 {"name": "Time", "value": _local_timestamp()},
-                {"name": "Workstation", "value": "Bytehound BMS Lab"},
+                {"name": "Workstation", "value": workstation},
             ],
             color=0x38BDF8,  # Sky blue
         )

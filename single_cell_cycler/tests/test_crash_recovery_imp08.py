@@ -266,3 +266,18 @@ def test_mainwindow_crash_recovery_integration(qapp, tmp_journal_dir):
     assert window.engine.active_step.name == "Phase 2 Discharge"
 
     window.close()
+
+
+def test_tests_never_write_to_real_logs_folder():
+    """Verify that StateJournalManager and AsyncTelemetryLogger default to isolated temp dir in tests."""
+    from single_cell_cycler.config.cycler_config import _resolve_log_dir
+    from single_cell_cycler.data.async_logger import AsyncTelemetryLogger
+
+    real_log_dir = _resolve_log_dir()
+
+    mgr = StateJournalManager()
+    logger = AsyncTelemetryLogger()
+
+    assert mgr.journal_dir != real_log_dir
+    assert logger.log_dir != real_log_dir
+    assert not (real_log_dir / ".active_test_journal.json").exists()

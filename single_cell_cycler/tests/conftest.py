@@ -5,6 +5,9 @@
   Discord URL with a dummy one).
 - Network: real HTTP is blocked, so no test can post fake alerts to a real channel. Tests that
   exercise delivery patch urllib.request.urlopen themselves, which overrides this block.
+- Logs: tests write telemetry CSVs and crash-recovery journals into a temporary folder instead
+  of the operator's real single_cell_cycler/logs/ folder. DEFAULT_LOG_DIR is patched across all
+  modules that import it by value.
 """
 
 import json
@@ -19,7 +22,14 @@ def _isolate_webhook(tmp_path, monkeypatch):
     from single_cell_cycler.comm import webhook_notifier
 
     cfg = tmp_path / "webhook_settings.json"
-    cfg.write_text(json.dumps({"url": "https://discord.com/api/webhooks/0/test-only", "enabled": True}), encoding="utf-8")
+    cfg.write_text(
+        json.dumps({
+            "url": "https://discord.com/api/webhooks/0/test-only",
+            "enabled": True,
+            "workstation": "Test Workstation",
+        }),
+        encoding="utf-8",
+    )
     monkeypatch.setattr(webhook_notifier, "CONFIG_PATH", cfg)
 
     def _blocked(*args, **kwargs):
@@ -27,3 +37,33 @@ def _isolate_webhook(tmp_path, monkeypatch):
 
     monkeypatch.setattr(urllib.request, "urlopen", _blocked)
     yield
+
+
+@pytest.fixture(autouse=True)
+def _isolate_logs(tmp_path, monkeypatch):
+    test_logs = tmp_path / "logs"
+    test_logs.mkdir(parents=True, exist_ok=True)
+
+    modules_to_patch = [
+        "single_cell_cycler.config.cycler_config",
+        "single_cell_cycler.config",
+        "single_cell_cycler.core.state_journal",
+        "single_cell_cycler.data.async_logger",
+        "single_cell_cycler.data.run_exporter",
+        "single_cell_cycler.ui.main_window",
+    ]
+    for mod_name in modules_to_patch:
+        try:
+            mod = __import__(mod_name, fromlist=["DEFAULT_LOG_DIR"])
+            monkeypatch.setattr(mod, "DEFAULT_LOG_DIR", test_logs)
+        except (ImportError, AttributeError):
+            pass
+
+    try:
+        import single_cell_cycler.main as _main
+        monkeypatch.setattr(_main, "DEFAULT_LOG_DIR", test_logs)
+    except (ImportError, AttributeError):
+        pass
+
+    yield test_logs
+

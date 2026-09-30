@@ -66,6 +66,7 @@ def test_webhook_settings_persistence(tmp_path):
         notify_test_paused_resumed=True,
         notify_emergency_stop=True,
         operator_tag="Metrologist Alice",
+        workstation="Bench 42",
         bms_serial_number="BMS-TEST-0042",
     )
     settings.save(cfg_file)
@@ -78,6 +79,7 @@ def test_webhook_settings_persistence(tmp_path):
     assert loaded.notify_cycle_completed is True
     assert loaded.notify_test_completed is False
     assert loaded.operator_tag == "Metrologist Alice"
+    assert loaded.workstation == "Bench 42"
     assert loaded.bms_serial_number == "BMS-TEST-0042"
 
 
@@ -202,6 +204,7 @@ def test_webhook_dialog_interaction():
     dlg.chk_step.setChecked(True)
     dlg.chk_cycle.setChecked(True)
     dlg.edit_operator.setText("Lead Engineer Bob")
+    dlg.edit_workstation.setText("Workstation 7")
     dlg.edit_bms_serial.setText("BMS-LAB-001")
     dlg._on_save()
 
@@ -209,6 +212,7 @@ def test_webhook_dialog_interaction():
     assert settings.notify_step_completed is True
     assert settings.notify_cycle_completed is True
     assert settings.operator_tag == "Lead Engineer Bob"
+    assert settings.workstation == "Workstation 7"
     assert settings.bms_serial_number == "BMS-LAB-001"
     notifier.close()
 

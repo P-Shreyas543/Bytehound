@@ -168,8 +168,18 @@ class CyclerEngine(QObject):
             else:
                 self._set_state(EngineState.RUNNING, "Resuming Test Profile")
 
+    def _close_active_step(self, reason: str) -> None:
+        """Complete the active step if running so metrics and summaries record it.
+
+        Never records a dummy step (when current_step_metrics is None).
+        """
+        if self.metrics_tracker.current_step_metrics is not None:
+            finished_step = self.metrics_tracker.complete_step(reason)
+            self.step_completed.emit(finished_step)
+
     def stop_test(self) -> None:
         """Gracefully stop test and disconnect cell."""
+        self._close_active_step("Stopped by operator")
         self.transition_controller.abort()
         self._safe_idle_hardware()
         self.journal_manager.clear_journal()
@@ -191,6 +201,7 @@ class CyclerEngine(QObject):
         The immediate burst is sent on every press, including when already in Safety Stop,
         so a repeated E-STOP never waits behind a confirmed sequence that is still retrying.
         """
+        self._close_active_step("EMERGENCY STOP")
         self.transition_controller.abort()
         self.safety_monitor.emergency_stop()
         self._safe_idle_hardware()
@@ -239,6 +250,7 @@ class CyclerEngine(QObject):
                 return
 
             if self.state != EngineState.SAFETY_STOP:
+                self._close_active_step(fault_reason)
                 self.transition_controller.abort()
                 self._safe_idle_hardware()
                 self._set_state(EngineState.SAFETY_STOP, fault_reason)
@@ -303,6 +315,7 @@ class CyclerEngine(QObject):
                 return
 
             if self.state != EngineState.SAFETY_STOP:
+                self._close_active_step(fault_reason)
                 self.transition_controller.abort()
                 self._safe_idle_hardware()
                 self._set_state(EngineState.SAFETY_STOP, fault_reason)
@@ -422,6 +435,7 @@ class CyclerEngine(QObject):
         self.step_started.emit(self.current_cycle, self.current_step_idx + 1, step.name, step.step_type.value)
 
     def _on_transition_failed(self, error_msg: str) -> None:
+        self._close_active_step(f"Step setup failed: {error_msg}")
         self._safe_idle_hardware()
         self._set_state(EngineState.SAFETY_STOP, f"Step Transition Error: {error_msg}")
         self.safety_tripped.emit(f"Hardware misaligned: {error_msg}")
@@ -472,10 +486,12 @@ class CyclerEngine(QObject):
         if self.state == EngineState.RUNNING:
             if not self.safety_monitor.check_watchdog():
                 if self.state != EngineState.SAFETY_STOP:
+                    trip_reason = self.safety_monitor.trip_reason
+                    self._close_active_step(trip_reason)
                     self.transition_controller.abort()
                     self._safe_idle_hardware()
-                    self._set_state(EngineState.SAFETY_STOP, self.safety_monitor.trip_reason)
-                    self.safety_tripped.emit(self.safety_monitor.trip_reason)
+                    self._set_state(EngineState.SAFETY_STOP, trip_reason)
+                    self.safety_tripped.emit(trip_reason)
 
     def _sync_journal(self) -> None:
         """Persist active engine and metrology snapshot to atomic journal (IMP-08)."""

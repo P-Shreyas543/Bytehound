@@ -554,6 +554,67 @@ def test_software_overtemperature_limit_safety_stops():
     assert engine.state == EngineState.SAFETY_STOP
 
 
+def test_stop_while_running_records_stopped_by_operator():
+    board = FakeBoard(relay=0x02)
+    engine = _running_engine(board, [charge_step()])
+    completed = []
+    engine.step_completed.connect(completed.append)
+
+    engine.stop_test()
+
+    assert engine.state == EngineState.ABORTED
+    assert len(engine.metrics_tracker.step_history) == 1
+    assert engine.metrics_tracker.step_history[-1].cutoff_reason == "Stopped by operator"
+    assert len(completed) == 1
+
+
+def test_estop_while_running_records_emergency_stop():
+    board = FakeBoard(relay=0x02)
+    engine = _running_engine(board, [charge_step()])
+    completed = []
+    engine.step_completed.connect(completed.append)
+
+    engine.emergency_stop()
+
+    assert engine.state == EngineState.SAFETY_STOP
+    assert len(engine.metrics_tracker.step_history) == 1
+    assert engine.metrics_tracker.step_history[-1].cutoff_reason == "EMERGENCY STOP"
+    assert len(completed) == 1
+
+
+def test_stop_while_idle_records_nothing():
+    board = FakeBoard(relay=0x02)
+    engine = CyclerEngine(command_sender=board.sender)
+    engine.transition_controller.auto_ack = False
+    engine.transition_controller.delays_enabled = False
+    board.ctrl = engine.transition_controller
+    completed = []
+    engine.step_completed.connect(completed.append)
+
+    engine.stop_test()
+
+    assert len(engine.metrics_tracker.step_history) == 0
+    assert len(completed) == 0
+
+
+def test_voltage_fault_then_stop_does_not_duplicate_step():
+    board = FakeBoard(relay=0x02)
+    engine = _running_engine(board, [charge_step()])
+    completed = []
+    engine.step_completed.connect(completed.append)
+
+    # Voltage fault triggers step completion (and since it's the last step, completes the test)
+    engine.on_fault_soc_telemetry(_fault(cov=True))
+    assert len(engine.metrics_tracker.step_history) == 1
+    assert "FAULT:" in engine.metrics_tracker.step_history[0].cutoff_reason
+    assert len(completed) == 1
+
+    # Now call stop_test()
+    engine.stop_test()
+    assert len(engine.metrics_tracker.step_history) == 1
+    assert len(completed) == 1
+
+
 # --- Plot buffers -------------------------------------------------------------------------
 
 def test_series_buffer_is_a_bounded_contiguous_window():
