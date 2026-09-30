@@ -313,11 +313,19 @@ def build_installer(version: str) -> bool:
             installer_path = REPO_ROOT / "dist" / "installer" / f"{APP_NAME}.exe"
         if not installer_path.exists():
             installer_path = REPO_ROOT / "dist" / "installer" / "SingleCellCycler.exe"
+        # Also copy the installer directly into dist/ for prominent access
+        direct_dist_installer = DIST_DIR / f"{APP_NAME}_Setup.exe"
+        if installer_path.exists():
+            try:
+                shutil.copy2(installer_path, direct_dist_installer)
+            except Exception:
+                pass
+
         print(f"[build] Inno Setup installer created successfully: {installer_path}")
-        return True
+        return installer_path
 
     print(f"[build] [ERROR] Inno Setup installer build failed with code {result}.")
-    return False
+    return None
 
 
 def create_distribution_zip(version: str, onefile: bool) -> Path:
@@ -390,16 +398,29 @@ def main() -> int:
         print(f"[build] [ERROR] Expected executable {target_exe} was not produced!")
         return 1
 
-    if not args.onefile and not build_installer(version):
-        return 1
+    installer_path = None
+    if not args.onefile:
+        installer_path = build_installer(version)
+        if installer_path is None:
+            return 1
+
+    zip_path = None
+    if not args.no_zip:
+        zip_path = create_distribution_zip(version, onefile=args.onefile)
 
     print("\n" + "=" * 65)
-    print(f"   BUILD SUCCEEDED: {target_exe.name}")
-    print(f"   Executable Location: {target_exe}")
+    print("   BUILD SUCCEEDED — RELEASE ARTIFACTS GENERATED")
     print("=" * 65)
-
-    if not args.no_zip:
-        create_distribution_zip(version, onefile=args.onefile)
+    print(f"   1. Executable Location : {target_exe}")
+    if installer_path and installer_path.exists():
+        direct_installer = DIST_DIR / installer_path.name
+        inst_size_mb = installer_path.stat().st_size / (1024 * 1024)
+        print(f"   2. Windows Installer   : {direct_installer} ({inst_size_mb:.1f} MB)")
+        print(f"                            (also at: {installer_path})")
+    if zip_path and zip_path.exists():
+        zip_size_mb = zip_path.stat().st_size / (1024 * 1024)
+        print(f"   3. Release Archive     : {zip_path} ({zip_size_mb:.1f} MB)")
+    print("=" * 65)
 
     print("\n[build] All build steps completed successfully!")
     print(f"Run the application with: {target_exe}\n")
