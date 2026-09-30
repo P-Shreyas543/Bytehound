@@ -1302,7 +1302,58 @@ class MainWindow(QMainWindow):
             return False
 
     def run_preflight_check(self) -> PreflightReport:
-        """Execute automated pre-flight sanity diagnostic and update UI pill (IMP-10)."""
+        """Execute automated pre-flight sanity diagnostic and update UI pill (IMP-10).
+
+        For Cell 2: the idle relay is CELL_SELECT=1, CELL_ENABLE=0 (open circuit).
+        The hardware ADC reads ~0 V in this state, which would cause a false
+        "floating sense lead" failure.  We temporarily enable the relay before
+        evaluating, wait one telemetry cycle for fresh data, then restore idle state.
+        """
+        is_conn = self.transceiver.isRunning() if hasattr(self, "transceiver") else False
+        now = time.time()
+        last_rx = self.engine.safety_monitor.last_telemetry_time if is_conn else 0.0
+        age = (now - last_rx) if (is_conn and last_rx > 0) else None
+        cell_data = self._last_cell_data if is_conn else None
+        board_params = self._last_board_params if is_conn else None
+        active_chem = self.profile_editor.active_chemistry
+        cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+
+        # -- Cell 2 pre-flight sense: temporarily enable relay so ADC reads real cell voltage --
+        rb_relay = self.engine.transition_controller.control_readbacks.get(
+            FRAME_RELAY_CTRL, 0
+        )
+        cell2_needs_temp_enable = (
+            is_conn
+            and cell_id == 2
+            and self.engine.state in (EngineState.IDLE, EngineState.COMPLETED, EngineState.ABORTED)
+            and not bool(rb_relay & RelayControlBits.CELL_ENABLE)  # only if currently disabled
+        )
+        if cell2_needs_temp_enable:
+            # Enable relay briefly for sensing: CELL_SELECT=1 | CELL_ENABLE=1
+            sense_payload = int(RelayControlBits.CELL_SELECT | RelayControlBits.CELL_ENABLE)
+            self._on_command_dispatch(FRAME_RELAY_CTRL, sense_payload, 1)
+            logger.info("[Preflight] Cell 2: temporarily enabled relay for sense voltage read (waiting 600 ms)...")
+            # Defer the actual check via a timer so the 10 Hz MCU telemetry can deliver fresh data
+            QTimer.singleShot(600, self._run_preflight_after_sense)
+            return self._last_preflight_report or PreflightReport(cell_id=cell_id)
+
+        report = self.preflight_checker.evaluate(
+            cell_data=cell_data,
+            board_params=board_params,
+            readbacks=self.engine.transition_controller.control_readbacks,
+            last_telemetry_age_s=age,
+            cell_id=cell_id,
+            chemistry_name=active_chem.name,
+            chemistry_min_v=active_chem.min_voltage,
+            chemistry_max_v=active_chem.max_voltage,
+        )
+        self._last_preflight_report = report
+        self._update_preflight_ui()
+        self._update_start_gate()
+        return report
+
+    def _run_preflight_after_sense(self) -> None:
+        """Complete Cell 2 pre-flight after the sense relay was temporarily enabled."""
         is_conn = self.transceiver.isRunning() if hasattr(self, "transceiver") else False
         now = time.time()
         last_rx = self.engine.safety_monitor.last_telemetry_time if is_conn else 0.0
@@ -1325,7 +1376,14 @@ class MainWindow(QMainWindow):
         self._last_preflight_report = report
         self._update_preflight_ui()
         self._update_start_gate()
-        return report
+
+        # Restore idle relay: CELL_SELECT=1, CELL_ENABLE=0 (safe open-circuit state)
+        idle_payload = int(RelayControlBits.CELL_SELECT)
+        self._on_command_dispatch(FRAME_RELAY_CTRL, idle_payload, 1)
+        logger.info(
+            f"[Preflight] Cell 2: sense relay restored to idle (0x{idle_payload:02X}). "
+            f"Result: {'PASSED' if report.passed else 'FAILED'}"
+        )
 
     def _update_preflight_ui(self) -> None:
         """Update toolbar status pill based on latest diagnostic report."""

@@ -127,7 +127,7 @@ class SafetyMonitor:
         # Evaluate slope if we have at least 5.0 seconds of history in the window
         earliest_t, earliest_temp = self._temp_history[0]
         dt = t_sample - earliest_t
-        if dt >= 5.0:
+        if dt >= 5.0 and dt > 0.0:  # Guard: dt > 0 prevents ZeroDivisionError
             dT = max_temp - earliest_temp
             rate_c_per_min = (dT / dt) * 60.0
             self.last_rate_of_rise_c_per_min = rate_c_per_min
@@ -137,8 +137,8 @@ class SafetyMonitor:
                     self._rate_trip_start_time = t_sample
                 elif (t_sample - self._rate_trip_start_time) >= self.limits.temp_rate_sustain_s:
                     self._trigger_shutdown(
-                        f"SAFETY TRIP: Rate of temperature rise exceeded limit: {rate_c_per_min:.2f} °C/min "
-                        f"(limit: {self.limits.max_temp_rate_of_rise_c_per_min:.2f} °C/min sustained for {self.limits.temp_rate_sustain_s:.1f}s)"
+                        f"SAFETY TRIP: Rate of temperature rise exceeded limit: {rate_c_per_min:.2f} \u00b0C/min "
+                        f"(limit: {self.limits.max_temp_rate_of_rise_c_per_min:.2f} \u00b0C/min sustained for {self.limits.temp_rate_sustain_s:.1f}s)"
                     )
                     return False
             else:

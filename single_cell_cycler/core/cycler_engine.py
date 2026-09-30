@@ -184,6 +184,24 @@ class CyclerEngine(QObject):
         # 1. Safety check
         if not self.safety_monitor.check_telemetry(telemetry):
             fault_reason = self.safety_monitor.trip_reason
+
+            # Only hard-trip the interlock during an active test.  In IDLE /
+            # PAUSED / COMPLETED / ABORTED states the relay CELL_ENABLE may be
+            # open (e.g. Cell 2 selected but not yet enabled reads ~0 V) which
+            # would otherwise permanently lock the start gate.  Log a warning
+            # and clear the trip so the operator can still start a test.
+            if self.state in (
+                EngineState.IDLE,
+                EngineState.COMPLETED,
+                EngineState.ABORTED,
+            ):
+                logger.warning(
+                    f"[Engine] Out-of-range telemetry in {self.state.value} (no test running) "
+                    f"- suppressing safety trip: {fault_reason}"
+                )
+                self.safety_monitor.reset_safety()
+                return
+
             if self.state == EngineState.RUNNING and self.active_step:
                 self._handle_step_fault(fault_reason)
                 return
@@ -236,6 +254,22 @@ class CyclerEngine(QObject):
             is_transitioning=is_trans,
         ):
             fault_reason = self.safety_monitor.trip_reason
+
+            # Suppress BMS fault trips in IDLE / COMPLETED / ABORTED states.
+            # Comparator latches can persist after a test ends or before one starts;
+            # tripping in idle would lock out the start gate unnecessarily.
+            if self.state in (
+                EngineState.IDLE,
+                EngineState.COMPLETED,
+                EngineState.ABORTED,
+            ):
+                logger.warning(
+                    f"[Engine] BMS fault flags in {self.state.value} (no test running) "
+                    f"- suppressing safety trip: {fault_reason}"
+                )
+                self.safety_monitor.reset_safety()
+                return
+
             if self.state == EngineState.RUNNING and self.active_step:
                 self._handle_step_fault(fault_reason)
                 return

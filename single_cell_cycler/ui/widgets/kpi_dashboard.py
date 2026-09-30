@@ -8,6 +8,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QLayout,
     QVBoxLayout,
     QSizePolicy,
     QWidget,
@@ -58,7 +59,7 @@ class KPICard(QFrame):
 
         # Title
         self.lbl_title = QLabel(title.upper())
-        self.lbl_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.lbl_title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.lbl_title.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;")
         layout.addWidget(self.lbl_title)
 
@@ -66,7 +67,7 @@ class KPICard(QFrame):
         val_row = QHBoxLayout()
         val_row.setSpacing(6)
         self.lbl_value = QLabel(initial_value)
-        self.lbl_value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.lbl_value.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.lbl_value.setStyleSheet(f"color: {accent_color}; font-size: 26px; font-weight: 800; font-family: 'Consolas', monospace;")
         val_row.addWidget(self.lbl_value)
 
@@ -79,13 +80,13 @@ class KPICard(QFrame):
 
         # Subtitle / Status
         self.lbl_sub = QLabel(subtitle)
-        self.lbl_sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.lbl_sub.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.lbl_sub.setWordWrap(True)
         self.lbl_sub.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
         layout.addWidget(self.lbl_sub)
 
         self.lbl_age = QLabel("No telemetry")
-        self.lbl_age.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.lbl_age.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
         self.lbl_age.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
         layout.addWidget(self.lbl_age)
 
@@ -118,6 +119,7 @@ class KPIDashboard(QWidget):
         layout = QGridLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
+        layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
 
         # Internal operational states for dynamic card presentation
         self._is_charging: bool = False

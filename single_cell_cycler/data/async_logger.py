@@ -76,7 +76,6 @@ class AsyncTelemetryLogger:
         p = Path(log_path)
         self.current_log_path = p
         file_exists = p.exists() and p.stat().st_size > 0
-        self._file = open(self.current_log_path, "a", newline="", encoding="utf-8")
         self._open_file(p, "a", write_header=not file_exists)
 
         self._is_running = True
