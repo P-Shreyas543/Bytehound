@@ -110,6 +110,7 @@ def cycle_summary_to_dict(s: CycleSummary) -> Dict[str, Any]:
         "dcir_1s_mohm": s.dcir_1s_mohm,
         "dcir_10s_mohm": s.dcir_10s_mohm,
         "dcir_mohm": s.dcir_mohm,
+        "partial_initial_charge": s.partial_initial_charge,
     }
 
 
@@ -126,6 +127,7 @@ def cycle_summary_from_dict(d: Dict[str, Any]) -> CycleSummary:
         dcir_1s_mohm=d.get("dcir_1s_mohm"),
         dcir_10s_mohm=d.get("dcir_10s_mohm"),
         dcir_mohm=d.get("dcir_mohm"),
+        partial_initial_charge=bool(d.get("partial_initial_charge", False)),
     )
 
 

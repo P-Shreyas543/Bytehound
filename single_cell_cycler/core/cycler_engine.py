@@ -64,6 +64,7 @@ class CyclerEngine(QObject):
     cycle_completed = Signal(object)              # CycleSummary
     recipe_completed = Signal(str)                # summary message
     safety_tripped = Signal(str)                  # reason
+    step_fault = Signal(str)                      # voltage fault ended a step; test continues
 
     def __init__(
         self,
@@ -78,6 +79,7 @@ class CyclerEngine(QObject):
         self.metrics_tracker = MetricsTracker()
         self.cutoff_detector = CutoffDetector()
         self.safety_monitor = SafetyMonitor(command_sender)
+        self.safety_monitor.armed = False  # engine starts IDLE
         self.transition_controller = StepTransitionController(
             command_sender=command_sender,
             parent=self,
@@ -85,6 +87,10 @@ class CyclerEngine(QObject):
         self.transition_controller.transition_completed.connect(self._on_transition_completed)
         self.transition_controller.transition_status.connect(self._on_transition_status)
         self.transition_controller.transition_failed.connect(self._on_transition_failed)
+        self.transition_controller.safe_idle_unconfirmed.connect(self._on_safe_idle_unconfirmed)
+        self.safety_monitor.relay_readback = lambda: self.transition_controller.control_readbacks.get(
+            FRAME_RELAY_CTRL, 0
+        )
 
         # Execution tracking
         self._selected_cell: int = 1  # 1 = Cell 1 (bit 1 = 0), 2 = Cell 2 (bit 1 = 1)
@@ -111,8 +117,20 @@ class CyclerEngine(QObject):
 
     @selected_cell.setter
     def selected_cell(self, cell_num: int) -> None:
+        # The cell is fixed for the whole test: only the Cell Enable relay changes after START
+        if self.test_active and cell_num != self._selected_cell:
+            logger.warning(
+                f"[Engine] Ignoring cell change to Cell {cell_num}: Cell {self._selected_cell} is locked "
+                f"while the test is {self.state.value}"
+            )
+            return
         self._selected_cell = cell_num
         self.safety_monitor.selected_cell = cell_num
+
+    @property
+    def test_active(self) -> bool:
+        """A test owns the hardware (cell locked) from START until Stop/Complete/Safety Stop."""
+        return self.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION, EngineState.PAUSED)
 
     def load_recipe(self, recipe: TestRecipe) -> None:
         if self.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION):
@@ -130,6 +148,8 @@ class CyclerEngine(QObject):
         self.safety_monitor.last_telemetry_time = time.time()
         self.metrics_tracker.reset_all()
         self._reset_execution_state()
+        # A new test always closes the Cell Enable relay itself (confirmed + settled)
+        self.transition_controller.relay_owned_by_test = False
         self._set_state(EngineState.STEP_TRANSITION, "Starting Test Profile: initializing hardware...")
         self._sync_journal()
         self._execute_next_step()
@@ -137,7 +157,8 @@ class CyclerEngine(QObject):
     def pause_test(self) -> None:
         if self.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION):
             self.transition_controller.abort()
-            self._safe_idle_hardware()
+            # Pause only opens the Cell Enable relay; Cell Select stays on the test cell
+            self._safe_idle_hardware(keep_select=True)
             self._set_state(EngineState.PAUSED, "Test Paused by Operator")
 
     def resume_test(self) -> None:
@@ -165,11 +186,15 @@ class CyclerEngine(QObject):
             self._execute_next_step()
 
     def emergency_stop(self) -> None:
-        """Instant emergency shutdown."""
+        """Instant emergency shutdown: immediate unconfirmed zeros, then the confirmed sequence.
+
+        The immediate burst is sent on every press, including when already in Safety Stop,
+        so a repeated E-STOP never waits behind a confirmed sequence that is still retrying.
+        """
         self.transition_controller.abort()
+        self.safety_monitor.emergency_stop()
         self._safe_idle_hardware()
         if self.state != EngineState.SAFETY_STOP:
-            self.safety_monitor.emergency_stop()
             self._set_state(EngineState.SAFETY_STOP, "EMERGENCY STOP EXECUTED")
             self.safety_tripped.emit("Manual Emergency Stop")
 
@@ -185,13 +210,15 @@ class CyclerEngine(QObject):
         if not self.safety_monitor.check_telemetry(telemetry):
             fault_reason = self.safety_monitor.trip_reason
 
-            # Only hard-trip the interlock during an active test.  In IDLE /
-            # PAUSED / COMPLETED / ABORTED states the relay CELL_ENABLE may be
-            # open (e.g. Cell 2 selected but not yet enabled reads ~0 V) which
-            # would otherwise permanently lock the start gate.  Log a warning
-            # and clear the trip so the operator can still start a test.
+            # Only hard-trip the interlock during an active test.  In IDLE / PAUSED /
+            # COMPLETED / ABORTED states no cell is connected; out-of-range readings
+            # (e.g. ~0 V with no cell fitted on the selected position) would otherwise
+            # permanently lock the start gate.  Log a warning and clear the trip so the
+            # operator can still start a test.  (Cell Select alone routes the selected
+            # cell's voltage to the ADC; Cell Enable does not need to be closed to read it.)
             if self.state in (
                 EngineState.IDLE,
+                EngineState.PAUSED,
                 EngineState.COMPLETED,
                 EngineState.ABORTED,
             ):
@@ -255,11 +282,12 @@ class CyclerEngine(QObject):
         ):
             fault_reason = self.safety_monitor.trip_reason
 
-            # Suppress BMS fault trips in IDLE / COMPLETED / ABORTED states.
+            # Suppress BMS fault trips in IDLE / PAUSED / COMPLETED / ABORTED states.
             # Comparator latches can persist after a test ends or before one starts;
             # tripping in idle would lock out the start gate unnecessarily.
             if self.state in (
                 EngineState.IDLE,
+                EngineState.PAUSED,
                 EngineState.COMPLETED,
                 EngineState.ABORTED,
             ):
@@ -281,35 +309,40 @@ class CyclerEngine(QObject):
                 self.safety_tripped.emit(fault_reason)
 
     def _handle_step_fault(self, fault_reason: str) -> None:
-        """Switch to next profile step when a fault occurs during active test execution."""
+        """Handle a fault raised while a step is running.
+
+        Voltage faults (COV/CUV or the software voltage limits) end the step like a cut-off
+        and the profile continues. Temperature, current and every other fault stop the test.
+        """
         if not self.recipe or not self.active_step:
             return
 
-        has_next_step = (self.current_step_idx + 1) < len(self.recipe.steps)
-        if has_next_step:
-            step_name = self.active_step.name
+        kind = self.safety_monitor.trip_kind
+        step_name = self.active_step.name
+        if kind == "voltage":
             logger.warning(
-                f"[Fault Handling] Fault during step '{step_name}': {fault_reason} "
-                f"-> Advancing to next profile step"
+                f"[Fault Handling] Voltage fault during step '{step_name}': {fault_reason} "
+                f"-> ending step like a cut-off"
             )
-            # Reset safety trip flag so the next step can run cleanly
             self.safety_monitor.reset_safety()
-
-            cutoff_msg = f"FAULT: {fault_reason}"
-            finished_step = self.metrics_tracker.complete_step(cutoff_msg)
+            finished_step = self.metrics_tracker.complete_step(f"FAULT: {fault_reason}")
             self.step_completed.emit(finished_step)
-
+            self.step_fault.emit(f"{step_name}: {fault_reason}")
             self.current_step_idx += 1
+            self._sync_journal()
             self._execute_next_step()
-        else:
-            logger.warning(
-                f"[Fault Handling] Fault on final step '{self.active_step.name}': {fault_reason} "
-                f"-> No further steps in profile, shutting down safely"
-            )
-            self.transition_controller.abort()
-            self._safe_idle_hardware()
-            self._set_state(EngineState.SAFETY_STOP, fault_reason)
-            self.safety_tripped.emit(fault_reason)
+            return
+
+        logger.critical(
+            f"[Fault Handling] {kind or 'unclassified'} fault during step '{step_name}': {fault_reason} "
+            f"-> Safety Stop"
+        )
+        finished_step = self.metrics_tracker.complete_step(f"FAULT: {fault_reason}")
+        self.step_completed.emit(finished_step)
+        self.transition_controller.abort()
+        self._safe_idle_hardware()
+        self._set_state(EngineState.SAFETY_STOP, fault_reason)
+        self.safety_tripped.emit(fault_reason)
 
     def _execute_next_step(self) -> None:
         """Step sequencer and loop dispatcher."""
@@ -319,6 +352,7 @@ class CyclerEngine(QObject):
         if self.current_step_idx >= len(self.recipe.steps):
             # Finished all steps in recipe!
             cycle_sum = self.metrics_tracker.compute_cycle_summary(self.current_cycle)
+            self._flag_partial_cycle(cycle_sum)
             self.cycle_completed.emit(cycle_sum)
             self.journal_manager.clear_journal()
             self._safe_idle_hardware()
@@ -334,6 +368,7 @@ class CyclerEngine(QObject):
             if rem_loops > 1:
                 self._loop_counters[self.current_step_idx] = rem_loops - 1
                 cycle_sum = self.metrics_tracker.compute_cycle_summary(self.current_cycle)
+                self._flag_partial_cycle(cycle_sum)
                 self.cycle_completed.emit(cycle_sum)
                 self.current_cycle += 1
                 target_0idx = max(0, min(len(self.recipe.steps) - 1, step.loop_target_step - 1))
@@ -352,6 +387,17 @@ class CyclerEngine(QObject):
         self.active_step = step
         self._set_state(EngineState.STEP_TRANSITION, f"Configuring hardware for {step.name}...")
         self.transition_controller.start_transition(step=step, selected_cell=self.selected_cell)
+
+    def _flag_partial_cycle(self, cycle_sum: CycleSummary) -> None:
+        """Cycle 1 of a recipe whose first active step is a charge starts from an unknown charge
+        level, so its charge capacity and efficiencies are partial."""
+        if cycle_sum.cycle_index != 1 or not self.recipe:
+            return
+        first_active = next(
+            (s for s in self.recipe.steps if s.step_type in (StepType.CHARGE, StepType.DISCHARGE)), None
+        )
+        if first_active is not None and first_active.step_type == StepType.CHARGE:
+            cycle_sum.partial_initial_charge = True
 
     def _on_transition_status(self, msg: str) -> None:
         logger.info(f"Transition Status: {msg}")
@@ -385,18 +431,22 @@ class CyclerEngine(QObject):
         self._set_state(EngineState.STEP_TRANSITION, f"Reconfiguring hardware for {step.name}...")
         self.transition_controller.start_transition(step=step, selected_cell=self.selected_cell)
 
-    def _safe_idle_hardware(self) -> None:
-        """Place hardware in safe non-energized state (all 5 control registers to zero)."""
-        logger.info("[Engine] Setting all hardware control registers (0x6000 - 0x6004) to 0x00 (Safe Idle)")
-        # 1. Disable active drives (Charge & Discharge Enable)
-        self._command_sender(FRAME_CHARGE_CTRL, 0x00, 0)
-        self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 0)
-        # 2. De-select parameters and load bank
-        self._command_sender(FRAME_CHARGE_SEL, 0x00, 0)
-        self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 0)
-        # 3. Disconnect cell relay (open circuit) while preserving selected cell position
-        relay_idle = int(RelayControlBits.CELL_SELECT) if self.selected_cell == 2 else 0x00
-        self._command_sender(FRAME_RELAY_CTRL, relay_idle, 0)
+    def _safe_idle_hardware(self, keep_select: bool = False) -> None:
+        """Place hardware in safe non-energized state with readback-confirmed writes.
+
+        Order: Charge/Discharge Control off -> Charge Select / Discharge Load cleared ->
+        Cell Enable relay opened -> (unless keep_select, e.g. Pause) 0x6000 = 0.
+        """
+        logger.info(
+            "[Engine] Safe Idle: de-energizing 0x6002/0x6003, clearing 0x6001/0x6004, opening Cell Enable relay"
+            + (" (Cell Select kept)" if keep_select else ", 0x6000 -> 0")
+        )
+        self.transition_controller.safe_idle(self.selected_cell, priority=0, keep_select=keep_select)
+
+    def _on_safe_idle_unconfirmed(self, detail: str) -> None:
+        msg = f"SAFE IDLE NOT CONFIRMED by hardware readback: {detail}"
+        logger.critical(f"[Engine] {msg}")
+        self.state_changed.emit(self.state.value, msg)
 
     def _reset_execution_state(self) -> None:
         self.current_cycle = 1
@@ -412,6 +462,9 @@ class CyclerEngine(QObject):
         if self.state == new_state and new_state in (EngineState.SAFETY_STOP, EngineState.IDLE, EngineState.PAUSED):
             return
         self.state = new_state
+        # The monitor may write hardware only while a step is running; otherwise registers
+        # are zeroed or owned by a confirmed sequence (a burst there would undo it)
+        self.safety_monitor.armed = new_state == EngineState.RUNNING
         logger.info(f"Engine State -> {new_state.value}: {msg}")
         self.state_changed.emit(new_state.value, msg)
 
@@ -479,6 +532,7 @@ class CyclerEngine(QObject):
 
         self.safety_monitor.last_telemetry_time = time.time()
         self.safety_monitor.reset_safety()
+        self.transition_controller.relay_owned_by_test = False
         self._set_state(EngineState.STEP_TRANSITION, f"Resuming Test Profile from Step {self.current_step_idx + 1}...")
         self._sync_journal()
         self._execute_next_step()

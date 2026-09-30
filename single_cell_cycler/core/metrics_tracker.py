@@ -50,6 +50,9 @@ class CycleSummary:
     dqv_peak_voltage_v: Optional[float] = None     # Voltage of primary phase transition peak (V)
     dqv_peak_height_mah_v: Optional[float] = None  # Height of primary phase transition peak (mAh/V)
     dqv_peak_shift_mv: Optional[float] = None      # Voltage shift in mV relative to Cycle 1
+    # Cycle 1 of a recipe that starts with a charge: the starting charge level is unknown, so
+    # the first charge is partial and CE / EE / charge capacity are not comparable (CE can exceed 100 %)
+    partial_initial_charge: bool = False
 
 
 @dataclass
@@ -218,6 +221,7 @@ class MetricsTracker:
             # Standardized Pulse DCIR measurement (IEC 62660-1 / USABC)
             if (
                 self._dcir_v0 is not None
+                and self._dcir_v0 > 0.5          # no baseline reading (0 V) -> no resistance
                 and self._dcir_i0 is not None
                 and self.current_step_metrics.step_type in (StepType.CHARGE, StepType.DISCHARGE)
             ):
@@ -248,8 +252,12 @@ class MetricsTracker:
                         if self.current_step_metrics.dcir_mohm is None:
                             self.current_step_metrics.dcir_mohm = r_mohm
 
-            # Buffer raw (V, Q) samples for Differential Capacity Analysis (dQ/dV vs V)
-            if self.current_step_metrics.step_type in (StepType.CHARGE, StepType.DISCHARGE):
+            # Buffer raw (V, Q) samples for Differential Capacity Analysis (dQ/dV vs V).
+            # Constant-current part only: in the CV tail V is pinned while Q grows (dQ/dV -> inf).
+            if (
+                self.current_step_metrics.step_type in (StepType.CHARGE, StepType.DISCHARGE)
+                and abs(telemetry.current) >= 0.9 * self.current_step_metrics.peak_current
+            ):
                 self._step_v_buf.append(telemetry.voltage)
                 self._step_q_buf.append(abs(self.current_step_metrics.capacity_mah))
 
@@ -360,7 +368,7 @@ class MetricsTracker:
 
         # Extract primary dQ/dV peak for this cycle (prefer Charge step, fallback to Discharge)
         cycle_dqv = [p for p in self.dqv_profiles if p.cycle_index == cycle_index and p.peaks]
-        chg_dqv = next((p for p in cycle_dqv if "charge" in p.step_type.lower()), None)
+        chg_dqv = next((p for p in cycle_dqv if p.step_type.lower() == "charge"), None)
         selected_dqv = chg_dqv if chg_dqv else (cycle_dqv[0] if cycle_dqv else None)
 
         pk_v = None

@@ -63,6 +63,13 @@ class SafetyMonitor:
         self.last_telemetry_time = time.time()
         self.active_faults: list[str] = []
         self.selected_cell: int = 1
+        # Returns the latest 0x6000 readback; set by the engine so shutdown never moves Select under a closed Enable
+        self.relay_readback: Optional[Callable[[], int]] = None
+        # When False, trips are recorded but no hardware writes are sent (engine not Running:
+        # hardware is already zeroed and the confirmed sequences own the registers)
+        self.armed: bool = True
+        # Class of the last trip: voltage | current | thermal | watchdog | manual
+        self.trip_kind: str = ""
 
         # Rate-of-rise thermal runaway detection (IMP-09)
         self._temp_history: collections.deque = collections.deque(maxlen=300)
@@ -83,27 +90,31 @@ class SafetyMonitor:
         # 1. Overvoltage limit
         if cell_data.voltage > self.limits.max_voltage_v:
             self._trigger_shutdown(
-                f"SAFETY TRIP: Cell Voltage {cell_data.voltage:.3f} V exceeded safety limit {self.limits.max_voltage_v:.3f} V"
+                f"SAFETY TRIP: Cell Voltage {cell_data.voltage:.3f} V exceeded safety limit {self.limits.max_voltage_v:.3f} V",
+                kind="voltage",
             )
             return False
 
         # 2. Undervoltage limit
         if cell_data.voltage < self.limits.min_voltage_v:
             self._trigger_shutdown(
-                f"SAFETY TRIP: Cell Voltage {cell_data.voltage:.3f} V dropped below safety limit {self.limits.min_voltage_v:.3f} V"
+                f"SAFETY TRIP: Cell Voltage {cell_data.voltage:.3f} V dropped below safety limit {self.limits.min_voltage_v:.3f} V",
+                kind="voltage",
             )
             return False
 
         # 3. Overcurrent limits
         if cell_data.current > self.limits.max_charge_current_a:
             self._trigger_shutdown(
-                f"SAFETY TRIP: Charge current {cell_data.current:.3f} A exceeded limit {self.limits.max_charge_current_a:.3f} A"
+                f"SAFETY TRIP: Charge current {cell_data.current:.3f} A exceeded limit {self.limits.max_charge_current_a:.3f} A",
+                kind="current",
             )
             return False
 
         if abs(cell_data.current) > self.limits.max_discharge_current_a and cell_data.current < 0:
             self._trigger_shutdown(
-                f"SAFETY TRIP: Discharge current {abs(cell_data.current):.3f} A exceeded limit {self.limits.max_discharge_current_a:.3f} A"
+                f"SAFETY TRIP: Discharge current {abs(cell_data.current):.3f} A exceeded limit {self.limits.max_discharge_current_a:.3f} A",
+                kind="current",
             )
             return False
 
@@ -111,7 +122,8 @@ class SafetyMonitor:
         max_temp = max(cell_data.body_temp, cell_data.terminal_temp)
         if max_temp > self.limits.max_temp_c:
             self._trigger_shutdown(
-                f"SAFETY TRIP: Cell temperature {max_temp:.1f} °C exceeded limit {self.limits.max_temp_c:.1f} °C"
+                f"SAFETY TRIP: Cell temperature {max_temp:.1f} °C exceeded limit {self.limits.max_temp_c:.1f} °C",
+                kind="thermal",
             )
             return False
 
@@ -138,7 +150,8 @@ class SafetyMonitor:
                 elif (t_sample - self._rate_trip_start_time) >= self.limits.temp_rate_sustain_s:
                     self._trigger_shutdown(
                         f"SAFETY TRIP: Rate of temperature rise exceeded limit: {rate_c_per_min:.2f} \u00b0C/min "
-                        f"(limit: {self.limits.max_temp_rate_of_rise_c_per_min:.2f} \u00b0C/min sustained for {self.limits.temp_rate_sustain_s:.1f}s)"
+                        f"(limit: {self.limits.max_temp_rate_of_rise_c_per_min:.2f} \u00b0C/min sustained for {self.limits.temp_rate_sustain_s:.1f}s)",
+                        kind="thermal",
                     )
                     return False
             else:
@@ -171,6 +184,8 @@ class SafetyMonitor:
         self.last_telemetry_time = time.time()
         self.active_faults.clear()
 
+        # Exact step type ("charge" / "discharge" / "rest"); substring tests matched
+        # "charge" inside "discharge" and silently ignored under-voltage while discharging
         step_type_str = str(active_step_type).lower() if active_step_type else ""
 
         for flag, label in FAULT_LABELS.items():
@@ -187,22 +202,22 @@ class SafetyMonitor:
 
                 # Handle comparator hysteresis during normal transitions
                 if flag == BMSFaultFlags.CUV:
-                    if "charge" in step_type_str:
+                    if step_type_str == "charge":
                         continue  # Expected while recovering from low voltage
-                    if "rest" in step_type_str and (cell_voltage is None or cell_voltage >= self.limits.min_voltage_v):
+                    if step_type_str == "rest" and (cell_voltage is None or cell_voltage >= self.limits.min_voltage_v):
                         continue  # Expected post-discharge relaxation above 2.4V
                 elif flag == BMSFaultFlags.COV:
-                    if "discharge" in step_type_str:
+                    if step_type_str == "discharge":
                         continue  # Expected at start of discharge from 4.2V
                 elif flag in (BMSFaultFlags.OCC, BMSFaultFlags.OCD):
-                    if "rest" in step_type_str:
+                    if step_type_str == "rest":
                         continue  # Zero current in rest; ignore un-cleared comparator latches
 
                 self.active_faults.append(label)
 
         if self.active_faults and not self.is_tripped:
             fault_str = ", ".join(self.active_faults)
-            self._trigger_shutdown(f"HARDWARE BMS FAULT DETECTED: {fault_str}")
+            self._trigger_shutdown(f"HARDWARE BMS FAULT DETECTED: {fault_str}", kind=self._bms_fault_kind())
             return False
 
         return True
@@ -222,7 +237,8 @@ class SafetyMonitor:
             self._trigger_shutdown(
                 f"COMMUNICATION WATCHDOG TIMEOUT: No telemetry received for "
                 f"{elapsed:.1f} s (limit: {self.limits.watchdog_timeout_s:.0f} s). "
-                f"Check USB connection and MCU power."
+                f"Check USB connection and MCU power.",
+                kind="watchdog",
             )
             return False
 
@@ -230,22 +246,39 @@ class SafetyMonitor:
 
     def emergency_stop(self) -> None:
         """Manual Emergency Stop invoked by user."""
-        self._trigger_shutdown("MANUAL EMERGENCY STOP TRIGGERED BY OPERATOR")
+        self._trigger_shutdown("MANUAL EMERGENCY STOP TRIGGERED BY OPERATOR", kind="manual", force=True)
 
     def reset_safety(self) -> None:
         """Clear tripped status after issue resolution."""
         self.is_tripped = False
         self.trip_reason = ""
+        self.trip_kind = ""
         self.active_faults.clear()
         self.last_telemetry_time = time.time()
         self._temp_history.clear()
         self._rate_trip_start_time = None
         self.last_rate_of_rise_c_per_min = 0.0
 
-    def _trigger_shutdown(self, reason: str) -> None:
-        """Execute hardware safe-state shutdown with priority 0."""
+    def _bms_fault_kind(self) -> str:
+        """Most severe class among the active BMS fault flags: thermal > current > voltage."""
+        labels = set(self.active_faults)
+        if labels & {FAULT_LABELS[BMSFaultFlags.COT], FAULT_LABELS[BMSFaultFlags.CUT]}:
+            return "thermal"
+        if labels & {FAULT_LABELS[BMSFaultFlags.OCC], FAULT_LABELS[BMSFaultFlags.OCD]}:
+            return "current"
+        return "voltage"
+
+    def _trigger_shutdown(self, reason: str, kind: str = "", force: bool = False) -> None:
+        """Execute hardware safe-state shutdown with priority 0.
+
+        Only sends writes while armed (engine Running) or when forced (manual E-STOP).
+        """
         self.is_tripped = True
         self.trip_reason = reason
+        self.trip_kind = kind
+        if not (self.armed or force):
+            logger.info(f"Safety trip recorded without hardware writes (no test running): {reason}")
+            return
         logger.critical(f"Executing Emergency Safety Shutdown: {reason}")
 
         try:
@@ -256,6 +289,11 @@ class SafetyMonitor:
             self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 0)
             # De-energize cell enable while preserving selected cell position
             relay_idle = int(RelayControlBits.CELL_SELECT) if self.selected_cell == 2 else 0x00
+            if self.relay_readback is not None:
+                rb = self.relay_readback() & int(RelayControlBits.CELL_SELECT | RelayControlBits.CELL_ENABLE)
+                if rb & RelayControlBits.CELL_ENABLE:
+                    # Enable is closed: keep the Select the board reports so only Cell Enable moves
+                    relay_idle = rb & int(RelayControlBits.CELL_SELECT)
             self._command_sender(FRAME_RELAY_CTRL, relay_idle, 0)
         except Exception as exc:
             logger.error(f"Error during emergency shutdown commands: {exc}")

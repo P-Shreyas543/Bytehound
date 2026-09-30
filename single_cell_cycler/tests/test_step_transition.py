@@ -60,8 +60,8 @@ def test_charge_transition_sequence():
     assert (FRAME_DISCHARGE_CTRL, 0x00) in commands_sent
     assert (FRAME_DISCHARGE_SEL, 0x00) in commands_sent
 
-    # 2. Cell Select relay for Cell 1 (bit 1=0, bit 0=0)
-    assert (FRAME_RELAY_CTRL, 0x00) in commands_sent
+    # 2. Cell Select relay already reads Cell 1 (0x00) -> confirmed from readback, not rewritten
+    assert (FRAME_RELAY_CTRL, 0x00) not in commands_sent
 
     # 3. Cell Enable relay (bit 0=1)
     assert (FRAME_RELAY_CTRL, int(RelayControlBits.CELL_ENABLE)) in commands_sent
@@ -141,11 +141,15 @@ def test_discharge_transition_sequence():
 
 
 def test_misalignment_retry_mechanism():
-    """Verify that when a hardware readback does not match, the controller retries setup."""
+    """A write whose readback never confirms is resent MAX_RETRIES times, then the transition fails."""
     commands_sent = []
+    ctrl = None
 
     def mock_sender(frame_id, payload, priority):
+        # Board echoes every write, except Discharge Control which stays stuck at Enable=1
         commands_sent.append((frame_id, payload))
+        value = int(DischargeControlBits.DISCHARGE_ENABLE) if frame_id == FRAME_DISCHARGE_CTRL else payload
+        ctrl.on_command_echo(CommandEchoTelemetry(frame_id=frame_id, payload_byte=value))
 
     ctrl = StepTransitionController(
         command_sender=mock_sender,
@@ -154,7 +158,9 @@ def test_misalignment_retry_mechanism():
     )
 
     status_messages = []
+    failures = []
     ctrl.transition_status.connect(lambda msg: status_messages.append(msg))
+    ctrl.transition_failed.connect(lambda msg: failures.append(msg))
 
     step = TestStep(
         step_index=1,
@@ -163,16 +169,17 @@ def test_misalignment_retry_mechanism():
         max_charge_voltage=True,
     )
 
-    # Inject an initial dirty state (Discharge Enable is ON)
+    # Inject a dirty state that the (silent) hardware never clears: Discharge Enable is ON
     ctrl.control_readbacks[FRAME_DISCHARGE_CTRL] = int(DischargeControlBits.DISCHARGE_ENABLE)
 
-    # Start transition - it will attempt to clear unwanted flags
     ctrl.start_transition(step=step, selected_cell=1)
 
-    # Because auto_ack is False and readback still shows Discharge Enable ON,
-    # it detects misalignment and retries
-    assert ctrl.retry_count >= 1
     assert any("misaligned" in m for m in status_messages)
+    assert commands_sent.count((FRAME_DISCHARGE_CTRL, 0x00)) == 1 + ctrl.MAX_RETRIES
+    assert len(failures) == 1
+    # Nothing after the unconfirmed write may be sent
+    assert (FRAME_RELAY_CTRL, int(RelayControlBits.CELL_ENABLE)) not in commands_sent
+    assert (FRAME_CHARGE_CTRL, int(ChargeControlBits.CHARGE_ENABLE)) not in commands_sent
 
 
 def test_rest_transition_preserves_cell_select_and_zeros_cell_enable():

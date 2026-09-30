@@ -143,14 +143,26 @@ def test_all_controls_zeroed_on_stop_and_pause_and_trip():
     commands.clear()
     engine.start_test()
     commands.clear()
-    # Send telemetry that triggers safety trip (4.28V > 4.25V limit)
+    # Send telemetry that triggers safety trip (4.28V > 4.25V limit).
+    # A voltage fault ends the step like a cut-off; on the last step the test completes.
     engine.on_cell_telemetry(CellDataTelemetry(4.28, 1.0, 25.0, 25.0, timestamp=time.time()))
+    assert engine.state == EngineState.COMPLETED
+    for frame_id in ALL_CONTROL_FRAMES:
+        assert (frame_id, 0x00, 0) in commands
+
+    # 5. Test Safety Trip (over-temperature) stops the test and zeroes all controls
+    engine.safety_monitor.reset_safety()
+    engine.load_recipe(recipe)
+    commands.clear()
+    engine.start_test()
+    commands.clear()
+    engine.on_cell_telemetry(CellDataTelemetry(4.1, 1.0, 75.0, 74.0, timestamp=time.time()))
     assert engine.state == EngineState.SAFETY_STOP
     for frame_id in ALL_CONTROL_FRAMES:
         assert (frame_id, 0x00, 0) in commands
 
 
-def test_fault_advances_to_next_step():
+def test_voltage_fault_advances_but_thermal_fault_stops():
     from single_cell_cycler.comm.packet_codec import FaultSoCTelemetry
     from single_cell_cycler.comm.protocol_defs import BMSFaultFlags
 
@@ -212,39 +224,44 @@ def test_fault_advances_to_next_step():
     )
     engine.on_fault_soc_telemetry(cot_fault)
 
-    # Engine must advance to Step 3 (Discharge Step)!
-    assert engine.state != EngineState.SAFETY_STOP
-    assert engine.active_step.name == "Discharge Step"
+    # Over-temperature is never skipped past: the test stops (no discharge on a hot cell)
+    assert engine.state == EngineState.SAFETY_STOP
+    assert engine.active_step.name == "Rest Step"
     assert len(engine.metrics_tracker.step_history) == 2
     assert "FAULT:" in engine.metrics_tracker.step_history[1].cutoff_reason
 
 
-def test_cell_2_selection_preserves_cell_select_on_idle_and_safety():
-    """Verify that when Cell 2 is selected:
-    - _safe_idle_hardware() sends 0x02 to FRAME_RELAY_CTRL (Bit 1 = 1, Bit 0 = 0).
-    - Emergency stop sends 0x02 to FRAME_RELAY_CTRL.
-    - Bit 1 is NEVER cleared to 0x00 while Cell 2 is active.
+def test_cell_2_idle_and_estop_end_all_zero_without_moving_select_under_enable():
+    """Cell 2 connected (0x6000 = 3):
+    - _safe_idle_hardware() ends at 0x6000 = 0 via 3 -> 2 -> 0 (Enable opens before Select moves).
+    - Emergency stop's immediate burst opens only Cell Enable (0x02), then the confirmed
+      sequence brings 0x6000 to 0.
+    - 0x00 is never written while the readback still shows Cell Enable closed.
     """
     commands = []
+    engine = None
 
     def mock_sender(fid, payload, prio):
+        if fid == FRAME_RELAY_CTRL and payload == 0x00:
+            rb = engine.transition_controller.control_readbacks.get(FRAME_RELAY_CTRL, 0)
+            assert not (rb & RelayControlBits.CELL_ENABLE and rb & RelayControlBits.CELL_SELECT),                 "Cell Select moved while Cell 2 Enable was closed"
         commands.append((fid, payload, prio))
 
     engine = CyclerEngine(command_sender=mock_sender)
     engine.selected_cell = 2
     assert engine.safety_monitor.selected_cell == 2
 
-    # Safe idle on Cell 2
+    # Safe idle on Cell 2 connected
+    engine.transition_controller.control_readbacks[FRAME_RELAY_CTRL] = 0x03
     commands.clear()
     engine._safe_idle_hardware()
-    assert (FRAME_RELAY_CTRL, int(RelayControlBits.CELL_SELECT), 0) in commands
-    assert (FRAME_RELAY_CTRL, 0x00, 0) not in commands
+    relay = [p for f, p, _ in commands if f == FRAME_RELAY_CTRL]
+    assert relay == [0x02, 0x00]
 
-    # Emergency stop on Cell 2
+    # Emergency stop on Cell 2 connected
+    engine.transition_controller.control_readbacks[FRAME_RELAY_CTRL] = 0x03
     commands.clear()
     engine.emergency_stop()
-    assert (FRAME_RELAY_CTRL, int(RelayControlBits.CELL_SELECT), 0) in commands
-    assert (FRAME_RELAY_CTRL, 0x00, 0) not in commands
-
-
-
+    relay = [p for f, p, _ in commands if f == FRAME_RELAY_CTRL]
+    assert relay[0] == 0x02          # immediate burst: Enable open, Select kept
+    assert relay[-1] == 0x00         # confirmed sequence ends all zero
