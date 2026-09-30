@@ -160,9 +160,8 @@ recipes_path = cycler_root / 'config' / 'recipes'
 if recipes_path.exists():
     datas.append((str(recipes_path), 'single_cell_cycler/config/recipes'))
 
-webhook_path = cycler_root / 'config' / 'webhook_settings.json'
-if webhook_path.exists():
-    datas.append((str(webhook_path), 'single_cell_cycler/config'))
+# webhook_settings.json is NOT bundled: it holds a secret webhook URL. The installed app keeps
+# per-machine webhook settings in %LOCALAPPDATA%\Bytehound\SingleCellCycler (see webhook_notifier).
 
 # Include branding if present
 branding_path = repo_root / 'branding'

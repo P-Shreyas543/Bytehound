@@ -211,3 +211,99 @@ def test_webhook_dialog_interaction():
     assert settings.operator_tag == "Lead Engineer Bob"
     assert settings.bms_serial_number == "BMS-LAB-001"
     notifier.close()
+
+
+# --- Identification, live readings, CSV upload -------------------------------------------------
+
+def _ctx():
+    return {
+        "cell": 2, "port": "COM15", "adapter": "(Silicon Labs CP210x, SN 0001)", "host": "LAB-PC-07",
+        "run_id": "20260930-140541", "recipe": "CCCV Cycling (15 Cycles)", "chemistry": "NMC",
+        "app_version": "v1.2.3",
+        "live_lines": ["State        : Running", "Voltage      : 4.119 V", "Current      : +1.161 A"],
+    }
+
+
+def test_every_message_identifies_device_cell_host_and_run():
+    n = WebhookNotifier(settings=WebhookSettings(url="https://discord.com/api/webhooks/1/x", bms_serial_number="BMS-LAB-001"))
+    n.context_provider = _ctx
+    captured = []
+    n._queue_json = captured.append
+    n.notify_test_started(2, "CCCV Cycling (15 Cycles)", "NMC", 5)
+    p = captured[0]
+    embed = p["embeds"][0]
+    assert p["content"].startswith("**[BMS-LAB-001 · Cell 2]**")        # visible in the push preview
+    assert "LAB-PC-07" in embed["author"]["name"] and "COM15" in embed["author"]["name"]
+    names = [f["name"] for f in embed["fields"]]
+    assert names[0] == "BMS Serial / Device ID"
+    assert "🔎 Device & Run" in names and "📊 Readings at this moment" in names
+    device = next(f["value"] for f in embed["fields"] if f["name"] == "🔎 Device & Run")
+    for text in ("BMS-LAB-001", "COM15", "SN 0001", "LAB-PC-07", "20260930-140541", "v1.2.3"):
+        assert text in device
+    assert len(embed["fields"]) <= 25 and all(len(f["value"]) <= 1024 for f in embed["fields"])
+    n.close()
+
+
+def test_stop_is_now_reported():
+    n = WebhookNotifier(settings=WebhookSettings(url="https://discord.com/api/webhooks/1/x"))
+    captured = []
+    n._queue_json = captured.append
+    n.notify_test_stopped(2, "1. CC/CV Charge")
+    assert "Test Stopped" in captured[0]["embeds"][0]["title"]
+    n.close()
+
+
+def test_run_files_are_zipped_and_split_under_the_upload_limit(tmp_path):
+    import zipfile
+    from single_cell_cycler.comm.webhook_notifier import package_run_files
+    tele = tmp_path / "run.csv"
+    rows = ["timestamp,voltage_v,current_a\n"] + [f"2026-09-30T08:36:{k % 60:02d}Z,{4.0 + (k % 97) / 1000:.3f},{1.2:.3f}\n" for k in range(120_000)]
+    tele.write_text("".join(rows), encoding="utf-8")
+    steps = tmp_path / "summary_steps_1.csv"
+    steps.write_text("cycle,step\n1,1\n", encoding="utf-8")
+
+    parts = package_run_files([tele, steps], tmp_path / "out", "20260930-140541_Cell2_BMS", part_limit=200_000)
+    assert len(parts) >= 2
+    rebuilt = []
+    for zp in parts:
+        assert zp.stat().st_size <= 200_000 * 1.1
+        with zipfile.ZipFile(zp) as z:
+            for name in z.namelist():
+                text = z.read(name).decode()
+                if name.startswith("run_chunk"):
+                    assert text.startswith("timestamp,voltage_v,current_a\n")   # every chunk opens alone
+                    rebuilt.extend(text.splitlines()[1:])
+    assert len(rebuilt) == 120_000                           # no row lost or duplicated
+
+
+def test_slack_gets_a_file_listing_instead_of_an_upload(tmp_path):
+    f = tmp_path / "run.csv"
+    f.write_text("a,b\n1,2\n", encoding="utf-8")
+    n = WebhookNotifier(settings=WebhookSettings(url="https://hooks.slack.com/services/T/B/C"))
+    captured = []
+    n._queue_json = captured.append
+    n.send_run_files([f], "Completed", tmp_path / "up")
+    assert captured and "Saved on workstation" in json.dumps(captured[0])
+    n.close()
+
+
+def test_tests_never_touch_the_real_settings_file():
+    from single_cell_cycler.comm import webhook_notifier
+    assert "pytest" in str(webhook_notifier.CONFIG_PATH).lower() or "tmp" in str(webhook_notifier.CONFIG_PATH).lower()
+
+
+def test_installed_app_keeps_webhook_settings_in_localappdata(monkeypatch, tmp_path):
+    """Program Files is read-only and the file holds a secret: never inside the install folder."""
+    import sys
+    from single_cell_cycler.comm import webhook_notifier
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setenv("LOCALAPPDATA", str(tmp_path))
+    path = webhook_notifier._resolve_settings_path()
+    assert path == tmp_path / "Bytehound" / "SingleCellCycler" / "webhook_settings.json"
+
+
+def test_template_has_no_webhook_url():
+    import json
+    from pathlib import Path
+    tmpl = Path(__file__).resolve().parent.parent / "config" / "webhook_settings.example.json"
+    assert json.loads(tmpl.read_text(encoding="utf-8"))["url"] == ""

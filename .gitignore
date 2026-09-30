@@ -112,3 +112,5 @@ the_energy_company_4850.xlsx
 
 
 single_cell_cycler/exports/
+# Per-machine webhook settings contain a secret URL; config/webhook_settings.example.json is the template
+single_cell_cycler/config/webhook_settings.json

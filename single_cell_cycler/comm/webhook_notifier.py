@@ -21,7 +21,23 @@ from typing import Any, Dict, List, Optional, Tuple
 
 logger = logging.getLogger("SingleCellCycler.WebhookNotifier")
 
-CONFIG_PATH = Path(__file__).resolve().parent.parent / "config" / "webhook_settings.json"
+def _resolve_settings_path() -> Path:
+    """Per-machine webhook settings (they contain a secret URL, so they are never bundled or tracked).
+
+    Installed app: %LOCALAPPDATA%\\Bytehound\\SingleCellCycler\\webhook_settings.json (the install
+    folder under Program Files is read-only). Source tree: config/webhook_settings.json, which is
+    git-ignored; config/webhook_settings.example.json is the tracked template.
+    """
+    import os
+    import sys
+
+    if getattr(sys, "frozen", False):
+        base = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local"))
+        return base / "Bytehound" / "SingleCellCycler" / "webhook_settings.json"
+    return Path(__file__).resolve().parent.parent / "config" / "webhook_settings.json"
+
+
+CONFIG_PATH = _resolve_settings_path()
 
 
 class NotificationEvent(Enum):
@@ -36,10 +52,9 @@ class NotificationEvent(Enum):
     PING = "PING"
 
 
-DEFAULT_WEBHOOK_URL = (
-    "https://discord.com/api/webhooks/1554409170881478696/"
-    "8mKrBjLtwhXwXpRdP-N_0nx7WguT2Xvbwa_En8A-ADMI7j_cAEGDS7YlcQzsBVZRwCBN"
-)
+# No URL is built into the source: a webhook URL contains a secret token. It lives only in
+# config/webhook_settings.json (or is entered in the Webhook dialog).
+DEFAULT_WEBHOOK_URL = ""
 DEFAULT_OPERATOR_TAG = "Shreyas P"
 
 
@@ -55,6 +70,8 @@ class WebhookSettings:
     notify_test_paused_resumed: bool = True
     notify_emergency_stop: bool = True
     operator_tag: str = DEFAULT_OPERATOR_TAG
+    # Upload the run's CSV files (telemetry + step/cycle/dQ-dV summaries) when a test ends
+    send_csv_on_test_end: bool = True
     # The protocol currently does not carry a BMS serial-number frame. This is
     # therefore user-configurable, with MainWindow supplying a USB/COM fallback.
     bms_serial_number: str = ""
@@ -72,13 +89,14 @@ class WebhookSettings:
             "notify_emergency_stop": self.notify_emergency_stop,
             "operator_tag": self.operator_tag,
             "bms_serial_number": self.bms_serial_number,
+            "send_csv_on_test_end": self.send_csv_on_test_end,
         }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> WebhookSettings:
         raw_url = data.get("url", "")
         return cls(
-            url=raw_url if raw_url else DEFAULT_WEBHOOK_URL,
+            url=raw_url or DEFAULT_WEBHOOK_URL,
             enabled=data.get("enabled", True),
             notify_test_started=data.get("notify_test_started", True),
             notify_step_completed=data.get("notify_step_completed", True),
@@ -89,9 +107,11 @@ class WebhookSettings:
             notify_emergency_stop=data.get("notify_emergency_stop", True),
             operator_tag=data.get("operator_tag") or DEFAULT_OPERATOR_TAG,
             bms_serial_number=str(data.get("bms_serial_number") or "").strip(),
+            send_csv_on_test_end=bool(data.get("send_csv_on_test_end", True)),
         )
 
-    def save(self, path: Path = CONFIG_PATH) -> None:
+    def save(self, path: Optional[Path] = None) -> None:
+        path = Path(path) if path is not None else CONFIG_PATH   # resolved at call time
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(json.dumps(self.to_dict(), indent=2), encoding="utf-8")
@@ -99,7 +119,8 @@ class WebhookSettings:
             logger.warning(f"Could not save webhook config: {exc}")
 
     @classmethod
-    def load(cls, path: Path = CONFIG_PATH) -> WebhookSettings:
+    def load(cls, path: Optional[Path] = None) -> WebhookSettings:
+        path = Path(path) if path is not None else CONFIG_PATH   # resolved at call time
         try:
             if path.exists():
                 data = json.loads(path.read_text(encoding="utf-8"))
@@ -172,11 +193,88 @@ def build_universal_payload(
     }
 
 
+# Discord rejects webhook uploads over 10 MB per message; stay safely under it
+DISCORD_FILE_LIMIT_BYTES = 8 * 1024 * 1024
+
+
+def _is_discord(url: str) -> bool:
+    return "discord.com/api/webhooks" in url or "discordapp.com/api/webhooks" in url
+
+
+def _block(lines: List[str]) -> str:
+    """Monospace block for an embed field (Discord field values max 1024 chars)."""
+    text = "\n".join(line for line in lines if line)
+    return ("```\n" + text[:1000] + "\n```") if text else "—"
+
+
+def package_run_files(
+    csv_paths: List[Path], out_dir: Path, run_label: str, part_limit: int = DISCORD_FILE_LIMIT_BYTES
+) -> List[Path]:
+    """Zip a run's CSV files into one or more archives, each under part_limit bytes.
+
+    Small files go into part 1 whole. A telemetry CSV too large for one archive is split by
+    rows, repeating the header line, so every part opens on its own in Excel / pandas.
+    """
+    import zipfile
+
+    out_dir.mkdir(parents=True, exist_ok=True)
+    files = [Path(f) for f in csv_paths if f and Path(f).exists()]
+    if not files:
+        return []
+    safe = "".join(c if c.isalnum() or c in "-_." else "_" for c in run_label)[:80] or "run"
+    parts: List[Path] = []
+    part_no = 1
+    current = out_dir / f"{safe}_part{part_no}.zip"
+    zf = zipfile.ZipFile(current, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6)
+
+    def _roll() -> None:
+        nonlocal zf, current, part_no
+        zf.close()
+        parts.append(current)
+        part_no += 1
+        current = out_dir / f"{safe}_part{part_no}.zip"
+        zf = zipfile.ZipFile(current, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6)
+
+    # CSV compresses ~8-10x; budget raw bytes per archive conservatively at 5x the limit
+    raw_budget = part_limit * 5
+    for f in sorted(files, key=lambda x: x.stat().st_size):
+        size = f.stat().st_size
+        if size <= raw_budget // 2:
+            zf.write(f, arcname=f.name)
+            if current.stat().st_size > part_limit * 0.9:
+                _roll()
+            continue
+        # large telemetry file: split by rows with the header repeated
+        with f.open("r", encoding="utf-8", errors="replace") as src:
+            header = src.readline()
+            chunk_idx = 1
+            buf: List[str] = [header]
+            buf_bytes = len(header)
+            for line in src:
+                buf.append(line)
+                buf_bytes += len(line)
+                if buf_bytes >= raw_budget:
+                    zf.writestr(f"{f.stem}_chunk{chunk_idx:03d}.csv", "".join(buf))
+                    chunk_idx += 1
+                    buf, buf_bytes = [header], len(header)
+                    _roll()
+            if len(buf) > 1:
+                zf.writestr(f"{f.stem}_chunk{chunk_idx:03d}.csv", "".join(buf))
+    zf.close()
+    if zipfile.ZipFile(current).namelist():
+        parts.append(current)
+    else:
+        current.unlink(missing_ok=True)
+    return parts
+
+
 class WebhookNotifier:
     """Non-blocking background thread notifier sending HTTP POST payloads to webhook endpoints."""
 
     def __init__(self, settings: Optional[WebhookSettings] = None):
         self.settings = settings or WebhookSettings.load()
+        # Set by the main window: returns device identity + live readings for every message
+        self.context_provider: Optional[Any] = None
         self._queue: queue.Queue = queue.Queue(maxsize=100)
         self._thread: Optional[threading.Thread] = None
         self._is_running = True
@@ -190,8 +288,13 @@ class WebhookNotifier:
     def _worker_loop(self) -> None:
         while self._is_running:
             try:
-                url, payload = self._queue.get(timeout=0.5)
-                self._post_with_retry(url, payload)
+                item = self._queue.get(timeout=0.5)
+                if len(item) == 3:                       # ("files", url, (payload, [zip paths]))
+                    _, url, (payload, zips) = item
+                    self._post_files(url, payload, zips)
+                else:
+                    url, payload = item
+                    self._post_with_retry(url, payload)
                 self._queue.task_done()
             except queue.Empty:
                 continue
@@ -248,6 +351,153 @@ class WebhookNotifier:
             logger.warning(f"Webhook dispatch failed: {msg}")
             return False, msg
 
+    def _post_multipart(self, url: str, payload: Dict[str, Any], file_path: Path, timeout_s: float = 90.0) -> Tuple[bool, str]:
+        """Discord webhook upload: multipart/form-data with payload_json + files[0]."""
+        import uuid
+
+        boundary = f"----BytehoundBoundary{uuid.uuid4().hex}"
+        data = Path(file_path).read_bytes()
+        body = b"".join([
+            f"--{boundary}\r\n".encode(),
+            b'Content-Disposition: form-data; name="payload_json"\r\n',
+            b"Content-Type: application/json\r\n\r\n",
+            json.dumps(payload).encode("utf-8"), b"\r\n",
+            f"--{boundary}\r\n".encode(),
+            f'Content-Disposition: form-data; name="files[0]"; filename="{Path(file_path).name}"\r\n'.encode(),
+            b"Content-Type: application/zip\r\n\r\n",
+            data, b"\r\n",
+            f"--{boundary}--\r\n".encode(),
+        ])
+        try:
+            req = urllib.request.Request(
+                url,
+                data=body,
+                headers={
+                    "Content-Type": f"multipart/form-data; boundary={boundary}",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+                method="POST",
+            )
+            with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+                if 200 <= resp.status < 300:
+                    logger.info(f"Webhook file delivered: {Path(file_path).name} ({len(data) / 1024:.0f} KB)")
+                    return True, f"HTTP {resp.status} OK"
+                return False, f"HTTP {resp.status}"
+        except urllib.error.HTTPError as exc:
+            return False, f"HTTP Error {exc.code}: {exc.reason}"
+        except Exception as exc:
+            return False, f"Error: {exc}"
+
+    def _post_files(self, url: str, payload: Dict[str, Any], zips: List[Path]) -> None:
+        n = len(zips)
+        for k, zp in enumerate(zips, start=1):
+            part_payload = json.loads(json.dumps(payload))
+            if n > 1:
+                part_payload["content"] = f"{part_payload.get('content', '')} (part {k}/{n})"
+            for attempt in range(1, 4):
+                ok, msg = self._post_multipart(url, part_payload, zp)
+                if ok:
+                    break
+                logger.warning(f"Webhook file upload {zp.name} attempt {attempt}/3 failed: {msg}")
+                time.sleep(2.0 * attempt)
+            else:
+                logger.error(f"Webhook file upload abandoned: {zp.name}")
+
+    def send_run_files(self, csv_paths: List[Path], end_status: str, work_dir: Path) -> None:
+        """Queue the run's CSV files for upload when a test ends (Discord only).
+
+        Other platforms' incoming webhooks cannot carry files; they get a message listing where
+        the files are saved on the workstation instead.
+        """
+        if not (self.settings.enabled and self.settings.send_csv_on_test_end and self.settings.url):
+            return
+        files = [Path(f) for f in csv_paths if f and Path(f).exists()]
+        if not files:
+            return
+        ctx = self._context()
+        run_label = f"{ctx.get('run_id', 'run')}_Cell{ctx.get('cell', '')}_{self._bms_identity()}"
+        listing = [f"{f.name}  ({f.stat().st_size / 1024:.0f} KB)" for f in files]
+        payload = build_universal_payload(
+            event=NotificationEvent.TEST_COMPLETED,
+            title=f"📎 Test Data Files: Cell {ctx.get('cell', '?')}",
+            description=f"Run data after **{end_status}**. CSV files are zipped; large telemetry is split into parts.",
+            fields=[{"name": "Files", "value": _block(listing)}],
+            color=0x64748B,
+        )
+        payload["embeds"][0]["fields"][0]["inline"] = False
+        self._add_bms_identity(payload)
+        self._decorate(payload)
+        if not _is_discord(self.settings.url):
+            payload["embeds"][0]["fields"].append(
+                {"name": "Saved on workstation", "value": _block([str(files[0].parent)]), "inline": False}
+            )
+            self._queue_json(payload)
+            return
+        try:
+            zips = package_run_files(files, Path(work_dir), run_label)
+        except Exception as exc:
+            logger.error(f"Could not package run files for webhook: {exc}")
+            return
+        try:
+            self._queue.put_nowait(("files", self.settings.url, (payload, zips)))
+        except queue.Full:
+            logger.warning("Webhook dispatch queue full; dropping file upload.")
+
+    def _context(self) -> Dict[str, Any]:
+        if self.context_provider is None:
+            return {}
+        try:
+            return dict(self.context_provider() or {})
+        except Exception as exc:
+            logger.debug(f"Webhook context provider failed: {exc}")
+            return {}
+
+    def _decorate(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Make every message identifiable at a glance and add device + live readings."""
+        ctx = self._context()
+        identity = self._bms_identity()
+        cell = ctx.get("cell")
+        host = ctx.get("host", "")
+        embed = payload.get("embeds", [{}])[0]
+        title = embed.get("title", "")
+        tag = f"{identity} · Cell {cell}" if cell else identity
+        embed["author"] = {"name": " · ".join(x for x in (tag, host, ctx.get("port", "")) if x)[:250]}
+        payload["content"] = f"**[{tag}]** {title}" + (f" — {ctx['recipe']}" if ctx.get("recipe") else "")
+
+        device = [
+            f"BMS / Device : {identity}",
+            f"Cell         : {cell}" if cell else "",
+            f"Serial port  : {ctx.get('port', '')} {ctx.get('adapter', '')}".rstrip(),
+            f"Workstation  : {host}" if host else "",
+            f"Operator     : {self.settings.operator_tag}" if self.settings.operator_tag else "",
+            f"Run ID       : {ctx.get('run_id', '')}" if ctx.get("run_id") else "",
+            f"Recipe       : {ctx.get('recipe', '')}" if ctx.get("recipe") else "",
+            f"Chemistry    : {ctx.get('chemistry', '')}" if ctx.get("chemistry") else "",
+            f"App version  : {ctx.get('app_version', '')}" if ctx.get("app_version") else "",
+            f"Local time   : {_local_timestamp()}",
+        ]
+        live = ctx.get("live_lines") or []
+        fields = embed.setdefault("fields", [])
+        fields.append({"name": "🔎 Device & Run", "value": _block(device), "inline": False})
+        if live:
+            fields.append({"name": "📊 Readings at this moment", "value": _block(live), "inline": False})
+        del fields[25:]                                        # Discord: max 25 fields
+        payload["text"] = f"[{tag}] {title} — " + " | ".join(x for x in device if x)
+        return payload
+
+    def notify_test_stopped(self, cell_id: int, step_name: str, reason: str = "Stopped by operator") -> None:
+        """Operator pressed STOP: the run ended early (no message was sent for this before)."""
+        if not self.settings.enabled or not self.settings.notify_test_completed or not self.settings.url:
+            return
+        payload = build_universal_payload(
+            event=NotificationEvent.TEST_COMPLETED,
+            title=f"⏹ Test Stopped: Cell {cell_id}",
+            description=f"The test on **Cell {cell_id}** was stopped before completion. {reason}.",
+            fields=[{"name": "Last Active Step", "value": step_name or "—"}],
+            color=0x94A3B8,
+        )
+        self._enqueue(payload)
+
     def send_ping(self) -> Tuple[bool, str]:
         """Synchronously test configured webhook endpoint."""
         if not self.settings.url:
@@ -266,7 +516,8 @@ class WebhookNotifier:
             color=0x38BDF8,  # Sky blue
         )
         self._add_bms_identity(payload)
-        return self._post_http(self.settings.url, payload, timeout_s=4.0)
+        self._decorate(payload)
+        return self._post_http(self.settings.url, payload, timeout_s=8.0)
 
     def set_bms_serial_number(self, serial_number: str) -> None:
         """Set the identifier shown on subsequent alerts without forcing persistence."""
@@ -382,11 +633,11 @@ class WebhookNotifier:
             return
 
         st_lower = str(step_type).lower()
-        if "charge" in st_lower:
+        if st_lower == "charge":
             color = 0x6366F1  # Indigo
             type_icon = "⚡"
             cap_sign = "+"
-        elif "discharge" in st_lower:
+        elif st_lower == "discharge":
             color = 0x06B6D4  # Cyan
             type_icon = "🔋"
             cap_sign = "-"
@@ -527,8 +778,12 @@ class WebhookNotifier:
         self._enqueue(payload)
 
     def _enqueue(self, payload: Dict[str, Any]) -> None:
+        self._add_bms_identity(payload)
+        self._decorate(payload)
+        self._queue_json(payload)
+
+    def _queue_json(self, payload: Dict[str, Any]) -> None:
         try:
-            self._add_bms_identity(payload)
             self._queue.put_nowait((self.settings.url, payload))
         except queue.Full:
             logger.warning("Webhook dispatch queue full; dropping notification.")

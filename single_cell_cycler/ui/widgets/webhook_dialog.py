@@ -142,7 +142,8 @@ class WebhookSettingsDialog(QDialog):
         self.chk_pause = QCheckBox("Test Paused / Resumed Events")
         self.chk_estop = QCheckBox("Manual Emergency Stop (Instant Disconnect)")
         self.chk_trip = QCheckBox("Safety Interlock Trips (Immediate Voltage/Temp Alert)")
-        self.chk_done = QCheckBox("Test Completed (Final Capacity, Energy Wh, Duration)")
+        self.chk_done = QCheckBox("Test Completed / Stopped (Final Capacity, Energy Wh, Duration)")
+        self.chk_files = QCheckBox("Send the run's CSV files when a test ends (Discord: zipped upload)")
         layout.addWidget(self.chk_start)
         layout.addWidget(self.chk_step)
         layout.addWidget(self.chk_cycle)
@@ -150,6 +151,7 @@ class WebhookSettingsDialog(QDialog):
         layout.addWidget(self.chk_estop)
         layout.addWidget(self.chk_trip)
         layout.addWidget(self.chk_done)
+        layout.addWidget(self.chk_files)
 
         # Status feedback pill
         self.lbl_status = QLabel("")
@@ -204,6 +206,7 @@ class WebhookSettingsDialog(QDialog):
         self.chk_estop.setChecked(s.notify_emergency_stop)
         self.chk_trip.setChecked(s.notify_safety_trip)
         self.chk_done.setChecked(s.notify_test_completed)
+        self.chk_files.setChecked(s.send_csv_on_test_end)
         self._update_identity_state()
         for widget in [*self.findChildren(QLineEdit), *self.findChildren(QCheckBox)]:
             if widget is self.chk_show_url:
@@ -263,6 +266,7 @@ class WebhookSettingsDialog(QDialog):
         self.settings.notify_emergency_stop = self.chk_estop.isChecked()
         self.settings.notify_safety_trip = self.chk_trip.isChecked()
         self.settings.notify_test_completed = self.chk_done.isChecked()
+        self.settings.send_csv_on_test_end = self.chk_files.isChecked()
         self.settings.save()
         self.lbl_settings_state.setText("Saved")
         self.lbl_settings_state.setStyleSheet("color:#86efac; font-size:11px;")
