@@ -187,7 +187,9 @@ def generate_html_report(
     retention_pct = (final_q / initial_q * 100.0) if initial_q > 0 else 100.0
     capacity_loss_pct = 100.0 - retention_pct
 
-    avg_ce = (sum(c.coulombic_efficiency_pct for c in cycles) / len(cycles)) if cycles else 0.0
+    # Partial cycles (cycle 1 started mid-charge) are not comparable: keep them out of the average
+    ce_cycles = [c for c in cycles if not getattr(c, "partial_initial_charge", False)]
+    avg_ce = (sum(c.coulombic_efficiency_pct for c in ce_cycles) / len(ce_cycles)) if ce_cycles else 0.0
     tot_chg_mah = metrics_tracker.cumulative_charge_mah if metrics_tracker else sum(c.charge_capacity_mah for c in cycles)
     tot_dis_mah = metrics_tracker.cumulative_discharge_mah if metrics_tracker else sum(c.discharge_capacity_mah for c in cycles)
     tot_dis_wh = (metrics_tracker.cumulative_discharge_mwh / 1000.0) if metrics_tracker else sum(c.discharge_energy_mwh for c in cycles) / 1000.0
@@ -202,7 +204,9 @@ def generate_html_report(
     # Build Table Rows
     table_rows = []
     for c in cycles:
-        ce_color = "#34d399" if c.coulombic_efficiency_pct >= 99.0 else "#fbbf24"
+        is_partial = getattr(c, "partial_initial_charge", False)
+        ce_color = "#94a3b8" if is_partial else ("#34d399" if c.coulombic_efficiency_pct >= 99.0 else "#fbbf24")
+        partial_mark = " *" if is_partial else ""
         r_str = f"{(c.dcir_10s_mohm or c.dcir_mohm):.2f}" if (c.dcir_10s_mohm or c.dcir_mohm) else "—"
         table_rows.append(f"""
         <tr>
@@ -211,7 +215,7 @@ def generate_html_report(
             <td style="color:#38bdf8; font-weight:600;">{c.discharge_capacity_mah:.1f}</td>
             <td>{c.charge_energy_mwh:.1f}</td>
             <td>{c.discharge_energy_mwh:.1f}</td>
-            <td style="color:{ce_color}; font-weight:700;">{c.coulombic_efficiency_pct:.2f}%</td>
+            <td style="color:{ce_color}; font-weight:700;">{c.coulombic_efficiency_pct:.2f}%{partial_mark}</td>
             <td>{c.energy_efficiency_pct:.2f}%</td>
             <td>{r_str}</td>
             <td>{c.duration_s:.0f}s</td>
@@ -441,6 +445,7 @@ def generate_html_report(
                 {''.join(table_rows) if table_rows else '<tr><td colspan="9" style="text-align:center; padding:18px;">No cycles completed yet.</td></tr>'}
             </tbody>
         </table>
+        {'<p style="color:#94a3b8; font-size:12px; margin-top:6px;">* Partial cycle: the test started with a charge from an unknown charge level, so this cycle is excluded from the average coulombic efficiency.</p>' if any(getattr(c, "partial_initial_charge", False) for c in cycles) else ''}
 
         <!-- Signatures & Lab Certification -->
         <div class="footer-signatures">

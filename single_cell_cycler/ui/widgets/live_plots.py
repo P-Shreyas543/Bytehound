@@ -22,6 +22,7 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QSizePolicy,
     QDialog,
     QHeaderView,
     QHBoxLayout,
@@ -36,6 +37,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...comm.packet_codec import CellDataTelemetry
+from .elided_label import ElidedLabel
 from ...core.aging_analysis import (
     DegradationForecast,
     fit_capacity_degradation,
@@ -67,7 +69,7 @@ _C2_V = "#f97316"       # orange – Cell 2 voltage
 _C1_I = COLOR_CHARGE    # green  – Cell 1 current
 _C2_I = "#a855f7"       # purple – Cell 2 current
 _TERM_COLOR = "#f97316"
-_BODY_COLOR = "#ec4899"
+_BODY_COLOR = "#22d3ee"   # cyan: clearly distinct from the orange terminal trace
 
 # Differential Capacity (dQ/dV) and multi-cycle palette (IMP-05)
 CYCLE_PALETTE = [
@@ -94,6 +96,94 @@ _AGING_EOL_LINE_COLOR = "#f43f5e" # Rose / Red
 _AGING_CE_COLOR = "#10b981"       # Teal / Emerald
 _AGING_EE_COLOR = "#a855f7"       # Purple
 _AGING_DCIR_COLOR = "#f59e0b"     # Amber
+
+
+class _SeriesBuffer:
+    """Fixed-capacity float series whose contents are always one contiguous numpy view.
+
+    Backed by an array of 2 x capacity: appends write at the end, and when the array is full
+    the newest ``capacity`` samples are moved to the front (one copy per ``capacity`` appends).
+    ``view()`` never copies, so redrawing does not cost O(history) per frame.
+    Supports the deque subset used here: append, extend, clear, len, bool, indexing.
+    """
+
+    def __init__(self, capacity: int):
+        self.capacity = int(capacity)
+        self._buf = np.empty(2 * self.capacity, dtype=np.float64)
+        self._start = 0
+        self._end = 0
+
+    def append(self, value: float) -> None:
+        if self._end == self._buf.size:
+            keep = self.capacity - 1
+            self._buf[:keep] = self._buf[self._end - keep:self._end]
+            self._start, self._end = 0, keep
+        self._buf[self._end] = value
+        self._end += 1
+        if self._end - self._start > self.capacity:
+            self._start += 1
+
+    def extend(self, values) -> None:
+        arr = np.asarray(values, dtype=np.float64).ravel()[-self.capacity:]
+        n = arr.size
+        if n == 0:
+            return
+        if self._end + n > self._buf.size:
+            keep = min(len(self), self.capacity - n)
+            self._buf[:keep] = self._buf[self._end - keep:self._end].copy()
+            self._start, self._end = 0, keep
+        self._buf[self._end:self._end + n] = arr
+        self._end += n
+        if self._end - self._start > self.capacity:
+            self._start = self._end - self.capacity
+
+    def clear(self) -> None:
+        self._start = self._end = 0
+
+    def view(self) -> np.ndarray:
+        return self._buf[self._start:self._end]
+
+    def __len__(self) -> int:
+        return self._end - self._start
+
+    def __bool__(self) -> bool:
+        return self._end > self._start
+
+    def __getitem__(self, idx):
+        return self.view()[idx]
+
+
+class _Envelope:
+    """Min/max summary of fixed-size sample blocks, built as data arrives.
+
+    Each completed block contributes two points (block start/end time, min/max value) so a
+    zoomed-out view can be drawn from ~2/block of the samples without scanning the history.
+    """
+
+    def __init__(self, block: int, n_series: int, capacity_samples: int):
+        self.block = block
+        cap = 2 * (capacity_samples // block + 1)
+        self.t = _SeriesBuffer(cap)
+        self.y = [_SeriesBuffer(cap) for _ in range(n_series)]
+
+    def add_block(self, t_blk: np.ndarray, ys_blk: List[np.ndarray]) -> None:
+        self.t.append(t_blk[0])
+        self.t.append(t_blk[-1])
+        for buf, y in zip(self.y, ys_blk):
+            finite = y[np.isfinite(y)]
+            lo, hi = (float(finite.min()), float(finite.max())) if finite.size else (np.nan, np.nan)
+            buf.append(lo)
+            buf.append(hi)
+
+    def clear(self) -> None:
+        self.t.clear()
+        for buf in self.y:
+            buf.clear()
+
+
+# Envelope block sizes (samples) and the max points handed to a curve per redraw
+_ENVELOPE_BLOCKS = (32, 1024)
+_MAX_DRAW_POINTS = 4000
 
 
 class ZoomMode(Enum):
@@ -217,7 +307,7 @@ class CurrentAxisItem(pg.AxisItem):
 
 
 class TemperatureAxisItem(pg.AxisItem):
-    """Left Y-Axis explicitly formatted for Temperature (0 to 70 °C)."""
+    """Left Y-Axis formatted for Temperature (°C); the range follows the data."""
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -227,6 +317,50 @@ class TemperatureAxisItem(pg.AxisItem):
 
     def tickStrings(self, values, scale, spacing):
         return [f"{v:.0f} °C" for v in values]
+
+
+class ElapsedTimeAxisItem(pg.AxisItem):
+    """Bottom axis for elapsed test time: seconds, m:ss or h:mm depending on the visible span."""
+
+    _SPACINGS = (1, 2, 5, 10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200, 10800, 21600, 43200, 86400)
+
+    def tickValues(self, minVal, maxVal, size):  # noqa: N802
+        span = maxVal - minVal
+        if span <= 0 or not np.isfinite(span):
+            return []
+        wanted = max(2, int(size / 90))           # about one label per 90 px
+        major = next((sp for sp in self._SPACINGS if span / sp <= wanted), self._SPACINGS[-1])
+        start = np.ceil(minVal / major) * major
+        return [(major, list(np.arange(start, maxVal + 1e-9, major)))]
+
+    def tickStrings(self, values, scale, spacing):  # noqa: N802
+        span = (max(values) - min(values)) if len(values) > 1 else spacing
+        out = []
+        for v in values:
+            v = max(0.0, float(v))
+            if span >= 7200 or spacing >= 1800:
+                out.append(f"{int(v // 3600)}:{int(v % 3600 // 60):02d} h")
+            elif span >= 120 or spacing >= 60:
+                out.append(f"{int(v // 60)}:{int(v % 60):02d}")
+            else:
+                out.append(f"{v:.0f} s")
+        return out
+
+
+class CycleAxisItem(pg.AxisItem):
+    """Bottom axis for cycle number: whole cycles only."""
+
+    def tickValues(self, minVal, maxVal, size):  # noqa: N802
+        span = maxVal - minVal
+        if span <= 0 or not np.isfinite(span):
+            return []
+        wanted = max(2, int(size / 60))
+        major = next((sp for sp in (1, 2, 5, 10, 20, 50, 100, 200, 500, 1000, 2000, 5000) if span / sp <= wanted), 5000)
+        start = max(major, int(np.ceil(minVal / major) * major)) if minVal > 0 else major if major > 1 else 1
+        return [(major, [float(c) for c in range(int(start), int(maxVal) + 1, major)])]
+
+    def tickStrings(self, values, scale, spacing):  # noqa: N802
+        return [str(int(round(v))) for v in values]
 
 
 class LivePlotWidget(QWidget):
@@ -239,16 +373,24 @@ class LivePlotWidget(QWidget):
         # ------------------------------------------------------------------ #
         # Time-series buffers (1,000,000 samples = >27 hours at 10 Hz)        #
         # ------------------------------------------------------------------ #
-        self._t: collections.deque = collections.deque(maxlen=self.max_points)
-        self._v: collections.deque = collections.deque(maxlen=self.max_points)
-        self._i: collections.deque = collections.deque(maxlen=self.max_points)
-        self._t_term: collections.deque = collections.deque(maxlen=self.max_points)
-        self._t_body: collections.deque = collections.deque(maxlen=self.max_points)
+        # Contiguous numpy-backed buffers: redraws take zero-copy views instead of
+        # converting the whole history every 100 ms tick
+        self._t = _SeriesBuffer(self.max_points)
+        self._v = _SeriesBuffer(self.max_points)
+        self._i = _SeriesBuffer(self.max_points)
+        self._t_term = _SeriesBuffer(self.max_points)
+        self._t_body = _SeriesBuffer(self.max_points)
+        # Series order in envelopes: voltage, current, terminal temp, body temp
+        self._envelopes = [_Envelope(b, 4, self.max_points) for b in _ENVELOPE_BLOCKS]
+        self._env_pending = [0 for _ in _ENVELOPE_BLOCKS]
+        self._rendered_xrange: Optional[Tuple[float, float]] = None
+        self._step_peak_abs_i = 0.0
 
         # V-Q
         self._vq_cap: collections.deque = collections.deque(maxlen=100_000)
         self._vq_volt: collections.deque = collections.deque(maxlen=100_000)
-        self._vq_history_curves: List[Tuple[str, pg.PlotDataItem]] = []
+        self._vq_history_curves: List[Tuple[str, pg.PlotDataItem, np.ndarray, np.ndarray]] = []
+        self._vq_hist_qmax, self._vq_hist_vmin, self._vq_hist_vmax = 0.0, 6.0, 0.0
 
         self.start_epoch: float = time.time()
 
@@ -292,6 +434,7 @@ class LivePlotWidget(QWidget):
         self._cycle_q_chg: List[float] = []
         self._cycle_ce: List[float] = []
         self._cycle_ee: List[float] = []
+        self._cycle_partial: List[bool] = []
         self._cycle_dcir_cycles: List[int] = []
         self._cycle_dcir: List[float] = []
         self._aging_model: str = "linear"
@@ -331,21 +474,20 @@ class LivePlotWidget(QWidget):
             if data.timestamp > 0
             else time.time() - self.start_epoch
         )
-        self._t.append(elapsed)
-        self._v.append(data.voltage)
-        self._i.append(data.current)
-        self._t_term.append(data.terminal_temp)
-        self._t_body.append(data.body_temp)
+        self._push_sample(elapsed, data.voltage, data.current, data.terminal_temp, data.body_temp)
 
         # V-Q curve (IMP-02/IMP-07: exclude REST steps to eliminate vertical zero-capacity artifacts)
         if "rest" not in self._current_step_type.lower():
             self._vq_cap.append(abs(step_mah))
             self._vq_volt.append(data.voltage)
 
-        # Differential Capacity Q-V trace (IMP-05)
+        # Differential Capacity Q-V trace (IMP-05). Only the constant-current part is valid:
+        # in the CV tail the voltage is pinned while charge keeps flowing, so dQ/dV explodes.
         if "rest" not in self._current_step_type.lower():
-            self._dqv_v_buf.append(data.voltage)
-            self._dqv_q_buf.append(abs(step_mah))
+            self._step_peak_abs_i = max(self._step_peak_abs_i, abs(data.current))
+            if abs(data.current) >= 0.9 * self._step_peak_abs_i:
+                self._dqv_v_buf.append(data.voltage)
+                self._dqv_q_buf.append(abs(step_mah))
 
         self._dirty = True
 
@@ -397,41 +539,46 @@ class LivePlotWidget(QWidget):
 
         if tab_idx == 0:
             # Tab 0 – Voltage & Current (convert only what is needed)
-            t = np.array(self._t)
-            v = np.array(self._v)
-            i_arr = np.array(self._i)
+            # Frame first so only the visible window is sliced and drawn
+            if self._zoom_mode != ZoomMode.MANUAL:
+                self._apply_zoom_framing()
+            x0, x1 = self.plot_vi.viewRange()[0]
+            t, (v, i_arr, _, _) = self._series_for_range(x0, x1)
             self.curve_voltage.setData(t, v)
             self.curve_current.setData(t, i_arr)
+            self._rendered_xrange = (x0, x1)
             # Fixed Y-ranges: 0-6V for voltage, -3 to 3A for current (aligned 6.0 unit spans)
             self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
             self.view_current.setYRange(-3.0, 3.0, padding=0.0)
-            if self._zoom_mode != ZoomMode.MANUAL:
-                self._apply_zoom_framing()
 
         elif tab_idx == 1:
             # Tab 1 – Temperature (convert only temperature buffers)
-            t = np.array(self._t)
-            self.curve_term_temp.setData(t, np.array(self._t_term))
-            self.curve_body_temp.setData(t, np.array(self._t_body))
-            # Fixed Y-range: 0-70°C for temperature
-            self.plot_temp.setYRange(0.0, 70.0, padding=0.0)
             if self._zoom_mode != ZoomMode.MANUAL:
                 self._apply_zoom_framing()
+            x0, x1 = self.plot_temp.viewRange()[0]
+            t, (_, _, t_term, t_body) = self._series_for_range(x0, x1)
+            self.curve_term_temp.setData(t, t_term)
+            self.curve_body_temp.setData(t, t_body)
+            self._rendered_xrange = (x0, x1)
+            # Y follows the visible data (a fixed 0-70 °C squashed a 5 °C swing into a line)
+            self._fit_temp_y(t_term, t_body)
 
         elif tab_idx == 2:
             # Tab 2 – V-Q Curve
             if self._vq_cap:
                 caps = np.array(self._vq_cap)
                 volts = np.array(self._vq_volt)
-                is_charge = "charge" in self._current_step_type.lower()
+                # exact match: "charge" is also a substring of "discharge"
+                is_charge = self._current_step_type.lower() == "charge"
                 pen_color = _AGING_Q_CHG_COLOR if is_charge else _AGING_Q_DIS_COLOR
                 self.curve_vq_current.setPen(pg.mkPen(pen_color, width=2.2))
                 self.curve_vq_current.setData(caps, volts)
                 self.curve_vq_current.setVisible(True)
                 if self._zoom_mode != ZoomMode.MANUAL and len(caps) > 10:
-                    max_cap = float(np.nanmax(caps))
-                    v_min = float(np.nanmin(volts))
-                    v_max = float(np.nanmax(volts))
+                    # Frame on the live trace AND the archived curves, not the live trace alone
+                    max_cap = max(float(np.nanmax(caps)), self._vq_hist_qmax)
+                    v_min = min(float(np.nanmin(volts)), self._vq_hist_vmin)
+                    v_max = max(float(np.nanmax(volts)), self._vq_hist_vmax)
                     self.plot_vq.setXRange(0.0, max(100.0, max_cap * 1.05), padding=0.02)
                     self.plot_vq.setYRange(max(0.0, v_min - 0.15), min(6.0, v_max + 0.15), padding=0.02)
             else:
@@ -457,6 +604,7 @@ class LivePlotWidget(QWidget):
 
         latest_t = float(self._t[-1]) if self._t and not np.isnan(self._t[-1]) else 0.0
         self._current_step_start_t = latest_t
+        self._step_peak_abs_i = 0.0
         self._current_step_idx = step_idx
         self._current_step_type = step_type
         if cycle_idx != self._current_cycle_idx:
@@ -490,11 +638,29 @@ class LivePlotWidget(QWidget):
         # Immediately execute view framing
         self._apply_zoom_framing()
 
+    def _fit_temp_y(self, t_term: Optional[np.ndarray] = None, t_body: Optional[np.ndarray] = None) -> None:
+        """Frame the temperature axis on the visible data: >= 6 °C span, 1.5 °C margin."""
+        if not hasattr(self, "plot_temp"):
+            return
+        if t_term is None or t_body is None:
+            x0, x1 = self.plot_temp.viewRange()[0]
+            _, (_, _, t_term, t_body) = self._series_for_range(x0, x1)
+        vals = np.concatenate((np.asarray(t_term, float), np.asarray(t_body, float)))
+        vals = vals[np.isfinite(vals)]
+        if vals.size == 0:
+            self.plot_temp.setYRange(15.0, 40.0, padding=0.0)
+            return
+        lo, hi = float(vals.min()) - 1.5, float(vals.max()) + 1.5
+        if hi - lo < 6.0:
+            mid = (hi + lo) / 2.0
+            lo, hi = mid - 3.0, mid + 3.0
+        self.plot_temp.setYRange(lo, hi, padding=0.0)
+
     def _apply_zoom_framing(self) -> None:
         """Apply active zoom range to plot viewboxes."""
         if not hasattr(self, "plot_vi") or not hasattr(self, "plot_temp"):
             return
-        t_arr = np.array(self._t) if self._t else np.array([])
+        t_arr = self._t.view()
         latest_t = float(t_arr[-1]) if len(t_arr) > 0 and not np.isnan(t_arr[-1]) else 10.0
 
         if self._zoom_mode == ZoomMode.FIT_ALL:
@@ -502,7 +668,7 @@ class LivePlotWidget(QWidget):
             self.plot_temp.setXRange(0.0, max(10.0, latest_t), padding=0.01)
             self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
             self.view_current.setYRange(-3.0, 3.0, padding=0.0)
-            self.plot_temp.setYRange(0.0, 70.0, padding=0.0)
+            self._fit_temp_y()
         elif self._zoom_mode == ZoomMode.CURRENT_STEP:
             s_t = max(0.0, self._current_step_start_t)
             self.plot_vi.setXRange(s_t, max(s_t + 5.0, latest_t), padding=0.02)
@@ -584,9 +750,11 @@ class LivePlotWidget(QWidget):
     def clear_chart_history(self) -> None:
         """Remove dense historical chart overlays without deleting recorded telemetry."""
         if hasattr(self, "plot_vq"):
-            for _, item in self._vq_history_curves:
+            for entry in self._vq_history_curves:
+                item = entry[1]
                 self.plot_vq.removeItem(item)
             self._vq_history_curves.clear()
+            self._vq_hist_qmax, self._vq_hist_vmin, self._vq_hist_vmax = 0.0, 6.0, 0.0
             self._vq_cap.clear()
             self._vq_volt.clear()
             if hasattr(self, "curve_vq_current"):
@@ -609,7 +777,7 @@ class LivePlotWidget(QWidget):
         if self.plot_vi.plotItem.sceneBoundingRect().contains(pos):
             mouse_pt = vb.mapSceneToView(pos)
             x_time = mouse_pt.x()
-            t_arr = np.array(self._t)
+            t_arr = self._t.view()
             if len(t_arr) == 0:
                 return
             idx = int(np.clip(np.searchsorted(t_arr, x_time), 0, len(t_arr) - 1))
@@ -647,7 +815,7 @@ class LivePlotWidget(QWidget):
         if self.plot_temp.plotItem.sceneBoundingRect().contains(pos):
             mouse_pt = vb.mapSceneToView(pos)
             x_time = mouse_pt.x()
-            t_arr = np.array(self._t)
+            t_arr = self._t.view()
             if len(t_arr) == 0:
                 return
             idx = int(np.clip(np.searchsorted(t_arr, x_time), 0, len(t_arr) - 1))
@@ -697,19 +865,16 @@ class LivePlotWidget(QWidget):
             caps = np.array(self._vq_cap)
             volts = np.array(self._vq_volt)
             if np.nanmax(caps) - np.nanmin(caps) >= 1.0:
-                is_charge = "charge" in target_stype
-                hist_color = "#16a34a" if is_charge else "#0284c7"
-                p_hist = self.plot_vq.plot(
-                    caps,
-                    volts,
-                    pen=pg.mkPen(hist_color, width=1.3, style=Qt.PenStyle.DashLine),
-                )
+                p_hist = self.plot_vq.plot(caps, volts)
                 p_hist.setClipToView(True)
-                self._vq_history_curves.append((target_stype, p_hist))
+                # Keep the raw arrays: getData() on a clip-to-view curve returns only the
+                # points already on screen, which pinned the auto-fit to the current window
+                self._vq_history_curves.append((target_stype, p_hist, caps, volts))
 
                 while len(self._vq_history_curves) > 20:
-                    _, old_item = self._vq_history_curves.pop(0)
-                    self.plot_vq.removeItem(old_item)
+                    old = self._vq_history_curves.pop(0)
+                    self.plot_vq.removeItem(old[1])
+                self._restyle_vq_history()
 
         self._vq_cap.clear()
         self._vq_volt.clear()
@@ -757,8 +922,14 @@ class LivePlotWidget(QWidget):
         charge_mah: float = 0.0,
         energy_eff: float = 0.0,
         dcir_mohm: Optional[float] = None,
+        partial: bool = False,
     ) -> None:
-        """Cycle summary hook for Aging & Health tracker (IMP-07)."""
+        """Cycle summary hook for Aging & Health tracker (IMP-07).
+
+        partial=True (cycle 1 started mid-charge): CE / EE / Q_chg are drawn as hollow
+        'partial' markers and kept out of the trend lines and the axis scaling.
+        """
+        self._cycle_partial.append(bool(partial))
         self._cycle_indices.append(cycle_idx)
         self._cycle_q_dis.append(discharge_mah)
         self._cycle_q_chg.append(charge_mah)
@@ -776,6 +947,10 @@ class LivePlotWidget(QWidget):
         """Full reset for a new test run."""
         self._t.clear(); self._v.clear(); self._i.clear()
         self._t_term.clear(); self._t_body.clear()
+        for env in self._envelopes:
+            env.clear()
+        self._env_pending = [0 for _ in _ENVELOPE_BLOCKS]
+        self._rendered_xrange = None
         self._vq_cap.clear(); self._vq_volt.clear()
         self._dqv_v_buf.clear(); self._dqv_q_buf.clear()
         self._dqv_profiles.clear()
@@ -785,6 +960,7 @@ class LivePlotWidget(QWidget):
             self.lbl_event_strip.setText("Events: waiting for step transitions")
         self.plot_vq.clear()
         self._vq_history_curves.clear()
+        self._vq_hist_qmax, self._vq_hist_vmin, self._vq_hist_vmax = 0.0, 6.0, 0.0
         self.curve_vq_current = self.plot_vq.plot(
             pen=pg.mkPen(_AGING_Q_CHG_COLOR, width=2.2)
         )
@@ -812,6 +988,14 @@ class LivePlotWidget(QWidget):
         self._cycle_q_chg.clear()
         self._cycle_ce.clear()
         self._cycle_ee.clear()
+        self._cycle_partial.clear()
+        for item in getattr(self, "_partial_labels", []):
+            if item.getViewBox() is not None:
+                item.getViewBox().removeItem(item)
+        self._partial_labels = []
+        if hasattr(self, "scatter_aging_partial_eff"):
+            self.scatter_aging_partial_eff.setData([], [])
+            self.scatter_aging_partial_cap.setData([], [])
         self._cycle_dcir_cycles.clear()
         self._cycle_dcir.clear()
         if hasattr(self, "curve_aging_q_dis"):
@@ -857,7 +1041,7 @@ class LivePlotWidget(QWidget):
         self.curve_body_temp.setData([], [])
         self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
         self.view_current.setYRange(-3.0, 3.0, padding=0.0)
-        self.plot_temp.setYRange(0.0, 70.0, padding=0.0)
+        self.plot_temp.setYRange(15.0, 40.0, padding=0.0)
         self.set_zoom_mode(ZoomMode.FIT_ALL)
 
     # ----------------------------------------------------------------------- #
@@ -866,12 +1050,64 @@ class LivePlotWidget(QWidget):
 
     def _insert_nan_break(self) -> None:
         last_t = self._t[-1] if self._t else (time.time() - self.start_epoch)
-        self._t.append(last_t + 0.001)
-        self._v.append(float("nan"))
-        self._i.append(float("nan"))
-        self._t_term.append(float("nan"))
-        self._t_body.append(float("nan"))
+        nan = float("nan")
+        self._push_sample(last_t + 0.001, nan, nan, nan, nan)
         self._dirty = True
+
+    def _push_sample(self, t: float, v: float, i: float, t_term: float, t_body: float) -> None:
+        """Append one sample to the time series and complete any envelope blocks."""
+        self._t.append(t)
+        self._v.append(v)
+        self._i.append(i)
+        self._t_term.append(t_term)
+        self._t_body.append(t_body)
+        for level, env in enumerate(self._envelopes):
+            self._env_pending[level] += 1
+            if self._env_pending[level] == env.block:
+                self._env_pending[level] = 0
+                b = env.block
+                env.add_block(
+                    self._t.view()[-b:],
+                    [self._v.view()[-b:], self._i.view()[-b:],
+                     self._t_term.view()[-b:], self._t_body.view()[-b:]],
+                )
+
+    def _series_for_range(self, x0: float, x1: float) -> Tuple[np.ndarray, List[np.ndarray]]:
+        """Return (t, [v, i, t_term, t_body]) covering [x0, x1] with at most ~_MAX_DRAW_POINTS points.
+
+        Uses raw samples when few enough are visible, otherwise the finest min/max envelope
+        that fits, plus the newest samples not yet summarized into a block.
+        """
+        t = self._t.view()
+        series = [self._v.view(), self._i.view(), self._t_term.view(), self._t_body.view()]
+        lo = max(0, int(np.searchsorted(t, x0)) - 1)
+        hi = min(len(t), int(np.searchsorted(t, x1, side="right")) + 1)
+        if hi - lo <= _MAX_DRAW_POINTS:
+            return t[lo:hi], [y[lo:hi] for y in series]
+
+        for level, env in enumerate(self._envelopes):
+            et = env.t.view()
+            a = max(0, int(np.searchsorted(et, x0)) - 2)
+            b = min(len(et), int(np.searchsorted(et, x1, side="right")) + 2)
+            if b - a <= _MAX_DRAW_POINTS or level == len(self._envelopes) - 1:
+                tail = self._env_pending[level]
+                if tail and b == len(et):
+                    return (
+                        np.concatenate((et[a:b], t[-tail:])),
+                        [np.concatenate((ey.view()[a:b], y[-tail:])) for ey, y in zip(env.y, series)],
+                    )
+                return et[a:b], [ey.view()[a:b] for ey in env.y]
+        return t[lo:hi], [y[lo:hi] for y in series]
+
+    def _on_view_xrange_changed(self, *args) -> None:
+        """Pan/zoom changed the visible window: redraw it on the next tick."""
+        if not hasattr(self, "plot_vi"):
+            return
+        x_range = tuple(self.plot_vi.viewRange()[0])
+        if self._rendered_xrange is None or any(
+            abs(a - b) > 1e-9 for a, b in zip(x_range, self._rendered_xrange)
+        ):
+            self._dirty = True
 
     def _sync_current_view(self) -> None:
         self.view_current.setGeometry(
@@ -921,7 +1157,7 @@ class LivePlotWidget(QWidget):
         legend_row.addWidget(note)
         top_bar.addLayout(legend_row)
 
-        self.lbl_event_strip = QLabel("Events: waiting for step transitions")
+        self.lbl_event_strip = ElidedLabel("Events: waiting for step transitions", min_width=60)
         self.lbl_event_strip.setStyleSheet("color:#64748b; font-size:10px; font-family:Consolas, monospace;")
         top_bar.addWidget(self.lbl_event_strip)
 
@@ -929,7 +1165,10 @@ class LivePlotWidget(QWidget):
 
         self.lbl_hud_vi = QLabel("<span style='color:#64748b; font-style:italic;'>Hover over chart to inspect</span>")
         self.lbl_hud_vi.setStyleSheet(_HUD_STYLE)
-        top_bar.addWidget(self.lbl_hud_vi)
+        # May shrink (clipping the readout) rather than forcing the window wider
+        self.lbl_hud_vi.setMinimumWidth(120)
+        self.lbl_hud_vi.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        top_bar.addWidget(self.lbl_hud_vi, 3)
 
         top_bar.addStretch(1)
 
@@ -955,6 +1194,7 @@ class LivePlotWidget(QWidget):
             pen=pg.mkPen(_C1_V, width=2.0), connect="finite"
         )
         self.curve_voltage.setClipToView(True)
+        self.curve_voltage.setDownsampling(auto=True, method="peak")
 
         self.view_current = pg.ViewBox()
         self.plot_vi.plotItem.scene().addItem(self.view_current)
@@ -972,6 +1212,7 @@ class LivePlotWidget(QWidget):
             pen=pg.mkPen(_C1_I, width=1.8), connect="finite"
         )
         self.curve_current.setClipToView(True)
+        self.curve_current.setDownsampling(auto=True, method="peak")
         self.view_current.addItem(self.curve_current)
         self.plot_vi.plotItem.getViewBox().sigResized.connect(self._sync_current_view)
         self._update_axis_styling(_C1_V, _C1_I)
@@ -986,9 +1227,10 @@ class LivePlotWidget(QWidget):
         # Signals for Hover HUD and Manual Zoom Tracking
         self.plot_vi.scene().sigMouseMoved.connect(self._on_mouse_moved_vi)
         self.plot_vi.plotItem.vb.sigRangeChangedManually.connect(self._on_manual_view_changed)
+        self.plot_vi.plotItem.vb.sigXRangeChanged.connect(self._on_view_xrange_changed)
 
         vlay.addWidget(self.plot_vi)
-        self.tabs.addTab(tab, "⚡ Voltage & Current")
+        self.tabs.addTab(tab, "⚡ Voltage && Current")
 
     def _build_temp_tab(self) -> None:
         tab = QWidget()
@@ -1020,28 +1262,30 @@ class LivePlotWidget(QWidget):
         vlay.addLayout(top_bar)
 
         self.ax_temp = TemperatureAxisItem(orientation="left")
-        self.plot_temp = pg.PlotWidget(axisItems={"left": self.ax_temp})
+        self.plot_temp = pg.PlotWidget(axisItems={"left": self.ax_temp, "bottom": ElapsedTimeAxisItem(orientation="bottom")})
         self.plot_temp.showGrid(x=True, y=True, alpha=0.18)
         self.ax_temp.setTickPen(pg.mkPen("#334155", width=1))
         self.plot_temp.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
-        self.plot_temp.setLabel("left", "<span style='color:#fb923c; font-weight:bold; font-size:12px;'>🌡 Temperature (0 – 70 °C)</span>")
-        self.plot_temp.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Elapsed Time (s)</span>")
+        self.plot_temp.setLabel("left", "<span style='color:#fb923c; font-weight:bold; font-size:12px;'>🌡 Temperature (°C)</span>")
+        self.plot_temp.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Elapsed Time</span>")
 
         # Fixed Y-axis: 0.0 to 70.0 °C
-        self.plot_temp.setYRange(0.0, 70.0, padding=0.0)
+        self.plot_temp.setYRange(15.0, 40.0, padding=0.0)
         self.plot_temp.plotItem.getViewBox().enableAutoRange(axis=pg.ViewBox.YAxis, enable=False)
         self.plot_temp.plotItem.getViewBox().enableAutoRange(axis=pg.ViewBox.XAxis, enable=False)
-        self.plot_temp.plotItem.getViewBox().setLimits(xMin=0.0, yMin=0.0, yMax=70.0)
+        self.plot_temp.plotItem.getViewBox().setLimits(xMin=0.0, yMin=-30.0, yMax=120.0)
 
         self.curve_term_temp = self.plot_temp.plot(
             pen=pg.mkPen(_TERM_COLOR, width=2.0), connect="finite"
         )
         self.curve_term_temp.setClipToView(True)
+        self.curve_term_temp.setDownsampling(auto=True, method="peak")
 
         self.curve_body_temp = self.plot_temp.plot(
             pen=pg.mkPen(_BODY_COLOR, width=2.0), connect="finite"
         )
         self.curve_body_temp.setClipToView(True)
+        self.curve_body_temp.setDownsampling(auto=True, method="peak")
 
         # Crosshair vertical marker (IMP-01)
         self.crosshair_v_temp = pg.InfiniteLine(
@@ -1053,6 +1297,7 @@ class LivePlotWidget(QWidget):
         # Signals for Hover HUD and Manual Zoom Tracking
         self.plot_temp.scene().sigMouseMoved.connect(self._on_mouse_moved_temp)
         self.plot_temp.plotItem.vb.sigRangeChangedManually.connect(self._on_manual_view_changed)
+        self.plot_temp.plotItem.vb.sigXRangeChanged.connect(self._on_view_xrange_changed)
 
         vlay.addWidget(self.plot_temp)
         self.tabs.addTab(tab, "🌡 Temperature")
@@ -1073,7 +1318,7 @@ class LivePlotWidget(QWidget):
         legend_row.setSpacing(6)
         legend_row.addWidget(_legend_label(_AGING_Q_CHG_COLOR, "Charge"))
         legend_row.addWidget(_legend_label(_AGING_Q_DIS_COLOR, "Discharge"))
-        legend_row.addWidget(_legend_label("#64748b", "History (dashed)"))
+        legend_row.addWidget(_legend_label("#64748b", "Older cycles (faded)"))
         top_bar.addLayout(legend_row)
 
         top_bar.addStretch(1)
@@ -1141,10 +1386,11 @@ class LivePlotWidget(QWidget):
         legend_row = QHBoxLayout()
         legend_row.setContentsMargins(0, 0, 0, 0)
         legend_row.setSpacing(4)
-        legend_row.addWidget(_legend_label(_DQV_CHARGE_COLOR, "Charge dQ/dV"))
-        legend_row.addWidget(_legend_label(_DQV_DISCHARGE_COLOR, "Discharge dQ/dV"))
+        # Curves are coloured by cycle; charge is the upper lobe, discharge the lower one
+        legend_row.addWidget(_legend_label(_DQV_CHARGE_COLOR, "Charge (+, above 0)"))
+        legend_row.addWidget(_legend_label(_DQV_DISCHARGE_COLOR, "Discharge (−, below 0)"))
+        legend_row.addWidget(_legend_label("#64748b", "Colour = cycle"))
         legend_row.addWidget(_legend_label(_PEAK_MARKER_COLOR, "Phase Peaks (◆)"))
-        legend_row.addWidget(_legend_label("#64748b", "History (dashed)"))
         top_bar.addLayout(legend_row)
 
         top_bar.addStretch(1)
@@ -1155,21 +1401,24 @@ class LivePlotWidget(QWidget):
             "background-color: #1e293b; color: #facc15; border: 1px solid #475569; "
             "border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 600;"
         )
-        top_bar.addWidget(self.lbl_dqv_peaks_badge)
+        dqv_info = QHBoxLayout()
+        dqv_info.setContentsMargins(4, 0, 4, 2)
+        dqv_info.setSpacing(8)
+        dqv_info.addWidget(self.lbl_dqv_peaks_badge)
 
         btn_peaks = QPushButton("Peak Table")
         btn_peaks.setToolTip("Open the detected dQ/dV phase-transition peak table")
         btn_peaks.clicked.connect(self._show_dqv_peak_table)
-        top_bar.addWidget(btn_peaks)
+        dqv_info.addWidget(btn_peaks)
 
         self.lbl_dqv_context = QLabel("Cell 1 · Cycle 1 · Charge · 5 mV grid · ± sign")
         self.lbl_dqv_context.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 600;")
-        top_bar.addWidget(self.lbl_dqv_context)
+        dqv_info.addWidget(self.lbl_dqv_context)
 
         # HUD readout
         self.lbl_hud_dqv = QLabel("<span style='color:#64748b; font-style:italic;'>Hover over chart to inspect</span>")
         self.lbl_hud_dqv.setStyleSheet(_HUD_STYLE)
-        top_bar.addWidget(self.lbl_hud_dqv)
+        dqv_info.addWidget(self.lbl_hud_dqv, 1)
 
         top_bar.addStretch(1)
 
@@ -1218,9 +1467,11 @@ class LivePlotWidget(QWidget):
 
         top_bar.addLayout(ctrls)
         vlay.addLayout(top_bar)
+        vlay.addLayout(dqv_info)
 
         # Plot Widget
         self.plot_dqv = pg.PlotWidget()
+        self.plot_dqv.setMinimumHeight(48)
         self.plot_dqv.showGrid(x=True, y=True, alpha=0.18)
         self.plot_dqv.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
         self.plot_dqv.plotItem.getAxis("left").setTickPen(pg.mkPen("#334155", width=1))
@@ -1253,6 +1504,9 @@ class LivePlotWidget(QWidget):
         self.plot_dqv.scene().sigMouseMoved.connect(self._on_mouse_moved_dqv)
 
         vlay.addWidget(self.plot_dqv)
+        # Only the hover readout may shrink; the context label keeps its text
+        self.lbl_hud_dqv.setMinimumWidth(60)
+        self.lbl_hud_dqv.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.tabs.addTab(tab, "dQ/dV Capacity Analysis")
 
     def _render_dqv_active(self) -> None:
@@ -1580,22 +1834,25 @@ class LivePlotWidget(QWidget):
             "background-color: #064e3b; color: #6ee7b7; border: 1px solid #059669; "
             "border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold;"
         )
-        top_bar.addWidget(self.lbl_aging_health_badge)
+        aging_info = QHBoxLayout()
+        aging_info.setContentsMargins(4, 0, 4, 2)
+        aging_info.setSpacing(8)
+        aging_info.addWidget(self.lbl_aging_health_badge)
 
         self.lbl_aging_fade_badge = QLabel("Fade: 0.00 mAh/cyc")
         self.lbl_aging_fade_badge.setStyleSheet(
             "background-color: #1e293b; color: #94a3b8; border: 1px solid #334155; "
             "border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold;"
         )
-        top_bar.addWidget(self.lbl_aging_fade_badge)
+        aging_info.addWidget(self.lbl_aging_fade_badge)
 
         self.lbl_aging_data_state = QLabel("Waiting for first completed cycle")
         self.lbl_aging_data_state.setStyleSheet("color: #fbbf24; font-size: 11px; font-weight: 600;")
-        top_bar.addWidget(self.lbl_aging_data_state)
+        aging_info.addWidget(self.lbl_aging_data_state)
 
         self.lbl_hud_aging = QLabel("<span style='color:#64748b; font-style:italic;'>Hover over chart to inspect</span>")
         self.lbl_hud_aging.setStyleSheet(_HUD_STYLE)
-        top_bar.addWidget(self.lbl_hud_aging)
+        aging_info.addWidget(self.lbl_hud_aging, 1)
 
         top_bar.addStretch(1)
 
@@ -1630,13 +1887,14 @@ class LivePlotWidget(QWidget):
 
         top_bar.addLayout(ctrls)
         vlay.addLayout(top_bar)
+        vlay.addLayout(aging_info)
 
         # Vertical Splitter for Dual Charts (Top: Capacity & Forecast, Bottom: Efficiency & DCIR)
         splitter = QSplitter(Qt.Orientation.Vertical)
-        splitter.setStyleSheet("QSplitter::handle { background-color: #334155; height: 3px; }")
+        splitter.setStyleSheet("QSplitter::handle { background-color: transparent; height: 6px; }")
 
         # Top Plot: Capacity Fade
-        self.plot_aging_cap = pg.PlotWidget()
+        self.plot_aging_cap = pg.PlotWidget(axisItems={"bottom": CycleAxisItem(orientation="bottom")})
         self.plot_aging_cap.showGrid(x=True, y=True, alpha=0.18)
         self.plot_aging_cap.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
         self.plot_aging_cap.plotItem.getAxis("left").setTickPen(pg.mkPen("#334155", width=1))
@@ -1659,6 +1917,11 @@ class LivePlotWidget(QWidget):
             symbolBrush=pg.mkBrush(_AGING_Q_CHG_COLOR),
             symbolPen=pg.mkPen("#0f172a", width=1),
         )
+
+        self.scatter_aging_partial_cap = pg.ScatterPlotItem(
+            symbol="s", size=8, brush=pg.mkBrush(0, 0, 0, 0), pen=pg.mkPen(_AGING_Q_CHG_COLOR, width=1.5)
+        )
+        self.plot_aging_cap.addItem(self.scatter_aging_partial_cap)
 
         self.curve_aging_q_proj = self.plot_aging_cap.plot(
             pen=pg.mkPen(_AGING_PROJ_COLOR, width=2.0, style=Qt.PenStyle.DashLine)
@@ -1683,7 +1946,9 @@ class LivePlotWidget(QWidget):
         self.plot_aging_cap.addItem(self.crosshair_v_aging_cap, ignoreBounds=True)
 
         # Bottom Plot: Efficiency & DCIR
-        self.plot_aging_eff = pg.PlotWidget()
+        self.plot_aging_eff = pg.PlotWidget(axisItems={"bottom": CycleAxisItem(orientation="bottom")})
+        # Same cycle window on both aging charts
+        self.plot_aging_eff.setXLink(self.plot_aging_cap)
         self.plot_aging_eff.showGrid(x=True, y=True, alpha=0.18)
         self.plot_aging_eff.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
         self.plot_aging_eff.plotItem.getAxis("left").setTickPen(pg.mkPen("#334155", width=1))
@@ -1702,6 +1967,13 @@ class LivePlotWidget(QWidget):
             symbolBrush=pg.mkBrush(_AGING_CE_COLOR),
             symbolPen=pg.mkPen("#0f172a", width=1),
         )
+
+        # Hollow markers for partial cycles (cycle 1 started mid-charge)
+        self.scatter_aging_partial_eff = pg.ScatterPlotItem(
+            symbol="o", size=9, brush=pg.mkBrush(0, 0, 0, 0), pen=pg.mkPen("#94a3b8", width=1.5)
+        )
+        self.plot_aging_eff.addItem(self.scatter_aging_partial_eff)
+        self._partial_labels: List[pg.TextItem] = []
 
         self.curve_aging_ee = self.plot_aging_eff.plot(
             pen=pg.mkPen(_AGING_EE_COLOR, width=1.8),
@@ -1747,11 +2019,16 @@ class LivePlotWidget(QWidget):
         self.plot_aging_cap.scene().sigMouseMoved.connect(self._on_mouse_moved_aging)
         self.plot_aging_eff.scene().sigMouseMoved.connect(self._on_mouse_moved_aging)
 
+        # Explicit small minimums: the stacked pair must not force the window taller than a laptop screen
+        self.plot_aging_cap.setMinimumHeight(48)
+        self.plot_aging_eff.setMinimumHeight(48)
         splitter.addWidget(self.plot_aging_cap)
         splitter.addWidget(self.plot_aging_eff)
         splitter.setSizes([320, 220])
 
         vlay.addWidget(splitter)
+        self.lbl_hud_aging.setMinimumWidth(60)
+        self.lbl_hud_aging.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.tabs.addTab(tab, "Cycle Aging && Health")
 
     def _sync_aging_dcir_view(self) -> None:
@@ -1774,8 +2051,10 @@ class LivePlotWidget(QWidget):
 
         if hasattr(self, "lbl_aging_data_state"):
             model_name = "Linear" if self._aging_model == "linear" else "Exponential"
+            n_partial = sum(self._cycle_partial)
+            partial_txt = " · cycle 1 partial (started mid-charge)" if n_partial else ""
             self.lbl_aging_data_state.setText(
-                f"{len(self._cycle_indices)} completed cycle{'s' if len(self._cycle_indices) != 1 else ''} · {model_name} model"
+                f"{len(self._cycle_indices)} completed cycle{'s' if len(self._cycle_indices) != 1 else ''} · {model_name} model{partial_txt}"
             )
             self.lbl_aging_data_state.setStyleSheet("color: #86efac; font-size: 11px; font-weight: 600;")
 
@@ -1784,11 +2063,28 @@ class LivePlotWidget(QWidget):
         q_chg_arr = np.array(self._cycle_q_chg, dtype=float)
         ce_arr = np.array(self._cycle_ce, dtype=float)
         ee_arr = np.array(self._cycle_ee, dtype=float)
+        partial = np.array(self._cycle_partial, dtype=bool)
 
+        # Partial cycles leave the trend lines; they are drawn as hollow, labelled markers instead
+        full = ~partial
         self.curve_aging_q_dis.setData(c_arr, q_dis_arr)
-        self.curve_aging_q_chg.setData(c_arr, q_chg_arr)
-        self.curve_aging_ce.setData(c_arr, ce_arr)
-        self.curve_aging_ee.setData(c_arr, ee_arr)
+        self.curve_aging_q_chg.setData(c_arr[full], q_chg_arr[full])
+        self.curve_aging_ce.setData(c_arr[full], ce_arr[full])
+        self.curve_aging_ee.setData(c_arr[full], ee_arr[full])
+        self.scatter_aging_partial_eff.setData(
+            np.concatenate((c_arr[partial], c_arr[partial])),
+            np.concatenate((ce_arr[partial], ee_arr[partial])),
+        )
+        self.scatter_aging_partial_cap.setData(c_arr[partial], q_chg_arr[partial])
+        for item in self._partial_labels:
+            if item.getViewBox() is not None:
+                item.getViewBox().removeItem(item)
+        self._partial_labels = []
+        for c, ce, ee in zip(c_arr[partial], ce_arr[partial], ee_arr[partial]):
+            lbl = pg.TextItem("partial", color="#94a3b8", anchor=(0.5, 1.4))
+            lbl.setPos(float(c), float(max(ce, ee)))
+            self.plot_aging_eff.addItem(lbl)
+            self._partial_labels.append(lbl)
 
         if self._cycle_dcir_cycles and self._cycle_dcir:
             c_dcir = np.array(self._cycle_dcir_cycles, dtype=float)
@@ -1799,7 +2095,7 @@ class LivePlotWidget(QWidget):
         self._sync_aging_dcir_view()
 
         # Run Degradation Modeling & EOL Projection
-        forecast = fit_capacity_degradation(
+        forecast = self._last_forecast = fit_capacity_degradation(
             c_arr,
             q_dis_arr,
             eol_fraction=0.80,
@@ -1847,11 +2143,17 @@ class LivePlotWidget(QWidget):
         # 1. Capacity Fade View
         if self._cycle_indices:
             max_c = max(self._cycle_indices)
-            self.plot_aging_cap.setXRange(0.5, max(max_c + 1.0, 5.0), padding=0.03)
+            x_hi = max(max_c + 1.0, 5.0)
+            # Show the projected 80 % end-of-life crossing when it is reasonably close
+            eol_c = getattr(getattr(self, "_last_forecast", None), "projected_eol_cycle", None)
+            if eol_c and max_c < eol_c <= max(4 * max_c, max_c + 50):
+                x_hi = eol_c + 1.0
+            self.plot_aging_cap.setXRange(0.5, x_hi, padding=0.03)
 
             # Capacity retention is fundamentally measured by delivered discharge capacity
             dis_caps = [q for q in self._cycle_q_dis if q > 0 and np.isfinite(q)]
-            all_caps = [q for q in (self._cycle_q_dis + self._cycle_q_chg) if q > 0 and np.isfinite(q)]
+            full_chg = [q for q, part in zip(self._cycle_q_chg, self._cycle_partial) if not part]
+            all_caps = [q for q in (self._cycle_q_dis + full_chg) if q > 0 and np.isfinite(q)]
             ref_caps = dis_caps if dis_caps else all_caps
             if ref_caps:
                 q_min = min(ref_caps)
@@ -1868,6 +2170,7 @@ class LivePlotWidget(QWidget):
             self.plot_aging_cap.setYRange(0.0, 3000.0, padding=0.03)
 
         # 2. Efficiency View (Coulombic & Energy Efficiency)
+        # Partial markers stay visible (hollow, labelled), so they are part of the view range
         eff_vals = [e for e in (self._cycle_ce + self._cycle_ee) if e > 0 and np.isfinite(e)]
         if eff_vals:
             e_min = min(eff_vals)
@@ -1895,18 +2198,28 @@ class LivePlotWidget(QWidget):
 
         self._sync_aging_dcir_view()
 
+    def _restyle_vq_history(self) -> None:
+        """Charge green / discharge blue; older curves fade so cycles are distinguishable."""
+        n = len(self._vq_history_curves)
+        self._vq_hist_qmax, self._vq_hist_vmin, self._vq_hist_vmax = 0.0, 6.0, 0.0
+        for k, (stype, item, caps, volts) in enumerate(self._vq_history_curves):
+            base = _AGING_Q_CHG_COLOR if stype.lower() == "charge" else _AGING_Q_DIS_COLOR
+            color = pg.mkColor(base)
+            color.setAlpha(int(70 + 185 * (k + 1) / n))
+            item.setPen(pg.mkPen(color, width=1.4))
+            self._vq_hist_qmax = max(self._vq_hist_qmax, float(np.nanmax(caps)))
+            self._vq_hist_vmin = min(self._vq_hist_vmin, float(np.nanmin(volts)))
+            self._vq_hist_vmax = max(self._vq_hist_vmax, float(np.nanmax(volts)))
+
     def fit_vq_view(self) -> None:
         """Auto-frame V-Q curve view with proper battery operating window."""
         if not hasattr(self, "plot_vq"):
             return
         v_points: List[float] = list(self._vq_volt)
         q_points: List[float] = list(self._vq_cap)
-        for _, p_item in self._vq_history_curves:
-            x_data, y_data = p_item.getData()
-            if x_data is not None and len(x_data) > 0:
-                q_points.extend(x_data[::10])
-            if y_data is not None and len(y_data) > 0:
-                v_points.extend(y_data[::10])
+        for _, _, caps, volts in self._vq_history_curves:
+            q_points.extend(caps[::10])
+            v_points.extend(volts[::10])
 
         valid_v = [v for v in v_points if np.isfinite(v)]
         valid_q = [q for q in q_points if np.isfinite(q)]
