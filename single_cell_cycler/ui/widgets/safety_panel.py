@@ -18,7 +18,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...comm.packet_codec import FaultSoCTelemetry
-from ..theme import BG_CARD, BORDER_COLOR, COLOR_DANGER, COLOR_REST, TEXT_MUTED, TEXT_PRIMARY
+from ..theme import BG_CARD, BORDER_COLOR, COLOR_DANGER, COLOR_REST, TEXT_MUTED, TEXT_PRIMARY, set_style
 
 
 class LEDIndicator(QFrame):
@@ -44,20 +44,20 @@ class LEDIndicator(QFrame):
     def set_active(self, is_active: bool) -> None:
         if is_active:
             # Bright flashing red
-            self.dot.setStyleSheet(f"""
+            set_style(self.dot, f"""
                 background-color: {COLOR_DANGER};
                 border-radius: 7px;
                 border: 2px solid #fca5a5;
             """)
-            self.lbl_text.setStyleSheet(f"font-size: 12px; color: {COLOR_DANGER}; font-weight: 700;")
+            set_style(self.lbl_text, f"font-size: 12px; color: {COLOR_DANGER}; font-weight: 700;")
         else:
             # Dim / OK green or gray
-            self.dot.setStyleSheet(f"""
+            set_style(self.dot, f"""
                 background-color: #22c55e;
                 border-radius: 7px;
                 border: 1px solid #15803d;
             """)
-            self.lbl_text.setStyleSheet(f"font-size: 12px; color: {TEXT_MUTED}; font-weight: 500;")
+            set_style(self.lbl_text, f"font-size: 12px; color: {TEXT_MUTED}; font-weight: 500;")
 
 
 class SafetyPanelWidget(QWidget):

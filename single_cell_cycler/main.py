@@ -144,7 +144,8 @@ def main():
             logging.debug(f"Could not enable DWM dark title bar: {exc}")
 
     app.aboutToQuit.connect(window.close)
-    window.show()
+    # Fill the operator screen whatever its resolution / Windows scaling
+    window.showMaximized()
 
     sys.exit(app.exec())
 

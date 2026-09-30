@@ -18,6 +18,12 @@ COLOR_REST = "#94a3b8"         # Slate Gray
 COLOR_DANGER = "#ef4444"       # Red / Alarm
 COLOR_WARNING = "#eab308"      # Yellow
 
+def set_style(widget, css: str) -> None:
+    """Apply a stylesheet only when it differs; re-polishing on every telemetry frame is costly."""
+    if widget.styleSheet() != css:
+        widget.setStyleSheet(css)
+
+
 def get_main_stylesheet(font_size_px: int = 13) -> str:
     return f"""
 QMainWindow, QWidget {{
@@ -27,11 +33,18 @@ QMainWindow, QWidget {{
     font-size: {font_size_px}px;
 }}
 
+/* Labels and check boxes take the colour of whatever they sit on (cards, group boxes,
+   toolbar) instead of painting their own dark box over it */
+QLabel, QCheckBox, QRadioButton {{
+    background-color: transparent;
+}}
+
 QSplitter::handle:vertical {{
-    background-color: {BORDER_COLOR};
+    background-color: transparent;
     height: 7px;
-    margin: 2px 24px;
-    border-radius: 3px;
+    margin: 2px 45%;
+    border-top: 3px solid {BORDER_COLOR};
+    border-radius: 1px;
 }}
 QSplitter::handle:vertical:hover {{
     background-color: {COLOR_ACCENT};
@@ -212,6 +225,14 @@ QPushButton#btn_estop:pressed {{
     font-weight: 900;
     padding-top: 8px;
     padding-bottom: 4px;
+}}
+
+/* Id-specific button colours above would otherwise keep disabled buttons looking active */
+QPushButton#btn_start:disabled, QPushButton#btn_pause:disabled, QPushButton#btn_skip:disabled,
+QPushButton#btn_stop:disabled, QPushButton#btn_connect:disabled {{
+    background-color: #161a24;
+    color: {TEXT_MUTED};
+    border: 1px solid #222836;
 }}
 
 QComboBox, QSpinBox, QDoubleSpinBox, QLineEdit {{

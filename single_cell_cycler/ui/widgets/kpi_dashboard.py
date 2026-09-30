@@ -15,7 +15,9 @@ from PySide6.QtWidgets import (
 )
 
 from ...comm.packet_codec import BoardParamsTelemetry, CellDataTelemetry, FaultSoCTelemetry
+from .elided_label import ElidedLabel
 from ..theme import (
+    set_style,
     BG_CARD,
     BORDER_COLOR,
     COLOR_ACCENT,
@@ -48,18 +50,19 @@ class KPICard(QFrame):
                 background-color: {BG_CARD};
                 border: 1px solid {BORDER_COLOR};
                 border-radius: 8px;
-                padding: 10px;
+            }}
+            KPICard QLabel {{
+                background-color: transparent;
             }}
         """)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(12, 10, 12, 10)
-        layout.setSpacing(4)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(2)
 
         # Title
-        self.lbl_title = QLabel(title.upper())
-        self.lbl_title.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        self.lbl_title = ElidedLabel(title.upper())
         self.lbl_title.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;")
         layout.addWidget(self.lbl_title)
 
@@ -68,7 +71,7 @@ class KPICard(QFrame):
         val_row.setSpacing(6)
         self.lbl_value = QLabel(initial_value)
         self.lbl_value.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        self.lbl_value.setStyleSheet(f"color: {accent_color}; font-size: 26px; font-weight: 800; font-family: 'Consolas', monospace;")
+        self.lbl_value.setStyleSheet(f"color: {accent_color}; font-size: 24px; font-weight: 800; font-family: 'Consolas', monospace;")
         val_row.addWidget(self.lbl_value)
 
         self.lbl_unit = QLabel(unit)
@@ -79,14 +82,13 @@ class KPICard(QFrame):
         layout.addLayout(val_row)
 
         # Subtitle / Status
-        self.lbl_sub = QLabel(subtitle)
-        self.lbl_sub.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
-        self.lbl_sub.setWordWrap(True)
+        # Single line, elided: a changing subtitle never re-wraps and resizes the card
+        self.lbl_sub = ElidedLabel(subtitle)
         self.lbl_sub.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
         layout.addWidget(self.lbl_sub)
 
-        self.lbl_age = QLabel("No telemetry")
-        self.lbl_age.setSizePolicy(QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Preferred)
+        # Empty while telemetry is fresh; shows a red warning only when data is stale
+        self.lbl_age = ElidedLabel("")
         self.lbl_age.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
         layout.addWidget(self.lbl_age)
 
@@ -98,17 +100,15 @@ class KPICard(QFrame):
         if sub_str is not None:
             self.lbl_sub.setText(sub_str)
         if color is not None:
-            self.lbl_value.setStyleSheet(f"color: {color}; font-size: 26px; font-weight: 800; font-family: 'Consolas', monospace;")
+            set_style(self.lbl_value, f"color: {color}; font-size: 24px; font-weight: 800; font-family: 'Consolas', monospace;")
 
     def set_age(self, age_s: float | None) -> None:
-        if age_s is None:
-            text, color = "No telemetry", TEXT_MUTED
-        elif age_s > 5.0:
-            text, color = f"Telemetry stale · {age_s:.1f}s ago", COLOR_DANGER
+        if age_s is not None and age_s > 5.0:
+            text, color = f"Telemetry stale · {age_s:.0f}s", COLOR_DANGER
         else:
-            text, color = f"Updated {age_s:.1f}s ago", TEXT_MUTED
+            text, color = "", TEXT_MUTED
         self.lbl_age.setText(text)
-        self.lbl_age.setStyleSheet(f"color: {color}; font-size: 10px;")
+        set_style(self.lbl_age, f"color: {color}; font-size: 10px;")
 
 
 class KPIDashboard(QWidget):
@@ -177,7 +177,7 @@ class KPIDashboard(QWidget):
 
     def set_telemetry_age(self, age_s: float | None) -> None:
         """Show freshness without overwriting the metric-specific subtitle."""
-        for card in (self.card_voltage, self.card_current, self.card_temp, self.card_soc):
+        for card in self._cards:
             card.set_age(age_s)
 
     def set_run_context(self, cell_num: int, recipe: str, step_name: str, elapsed_s: float) -> None:
@@ -192,7 +192,8 @@ class KPIDashboard(QWidget):
     def resizeEvent(self, event) -> None:
         """Reflow KPI cards for wide, medium, and compact window widths."""
         width = self.width()
-        columns = 4 if width >= 1180 else 2 if width >= 700 else 1
+        # Keep 4 columns down to small laptop widths: fewer columns doubles the dashboard height
+        columns = 4 if width >= 880 else 2 if width >= 480 else 1
         if columns != self._last_columns:
             for card in self._cards:
                 self._grid_layout.removeWidget(card)
@@ -203,10 +204,9 @@ class KPIDashboard(QWidget):
 
     def update_cell_data(self, data: CellDataTelemetry) -> None:
         # Voltage
+        # One steady colour; red only when the reading is outside the safe window
         v_color = COLOR_ACCENT
-        if data.voltage >= 4.20:
-            v_color = COLOR_CHARGE
-        elif data.voltage <= 2.85:
+        if data.voltage <= 2.85 or data.voltage >= 4.25:
             v_color = COLOR_DANGER
         self.card_voltage.set_value(f"{data.voltage:.3f}", color=v_color)
 

@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...comm.packet_codec import CommandEchoTelemetry
+from ..theme import set_style
 from ...comm.protocol_defs import (
     DISCHARGE_TABLE,
     ChargeControlBits,
@@ -285,13 +286,26 @@ class ManualControlWidget(QWidget):
 
     def set_connection_available(self, connected: bool) -> None:
         """Gate manual commands while preserving readback/status labels."""
-        connected = bool(connected)
-        self.lbl_connection_state.setText(
-            "Manual commands available" if connected else "Manual commands unavailable: connect to hardware"
-        )
-        self.lbl_connection_state.setStyleSheet(
-            f"color: {'#86efac' if connected else '#fbbf24'}; font-weight:700; font-size:11px;"
-        )
+        self._connected = bool(connected)
+        self._apply_command_gate()
+
+    def set_test_active(self, active: bool) -> None:
+        """Lock manual writes while a test owns the hardware (cell selection and relays)."""
+        self._test_active = bool(active)
+        self._apply_command_gate()
+
+    def _apply_command_gate(self) -> None:
+        connected = getattr(self, "_connected", False)
+        test_active = getattr(self, "_test_active", False)
+        available = connected and not test_active
+        if test_active:
+            text, color = "Manual commands locked: a test is running (use Stop or E-STOP)", "#fbbf24"
+        elif connected:
+            text, color = "Manual commands available", "#86efac"
+        else:
+            text, color = "Manual commands unavailable: connect to hardware", "#fbbf24"
+        self.lbl_connection_state.setText(text)
+        self.lbl_connection_state.setStyleSheet(f"color: {color}; font-weight:700; font-size:11px;")
         for widget in [
             *self.findChildren(QPushButton),
             *self.findChildren(QCheckBox),
@@ -299,7 +313,7 @@ class ManualControlWidget(QWidget):
         ]:
             if widget is self.lbl_connection_state:
                 continue
-            widget.setEnabled(connected)
+            widget.setEnabled(available)
 
     # --------------------------------------------------------------------------
     # Live Readback Handler (CommandEchoTelemetry)
@@ -314,9 +328,9 @@ class ManualControlWidget(QWidget):
             en_str = "CONNECTED" if (val & RelayControlBits.CELL_ENABLE) else "DISCONNECTED"
             color = "#10b981" if (val & RelayControlBits.CELL_ENABLE) else "#94a3b8"
             self.lbl_relay_rb.setText(f"Readback: 0x{val:02X} [{cell_str}, {en_str}]")
-            self.lbl_relay_rb.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold;")
+            set_style(self.lbl_relay_rb, f"color: {color}; font-size: 11px; font-weight: bold;")
             self.badge_relay.setText(f"0x6000 Relay: 0x{val:02X} ({cell_str} {en_str})")
-            self.badge_relay.setStyleSheet(f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
+            set_style(self.badge_relay, f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
 
         elif echo.frame_id == FRAME_CHARGE_SEL:
             v_val = 4.2 if (val & ChargeSelectBits.MAX_CHARGE_VOLTAGE) else 3.6
@@ -324,7 +338,7 @@ class ManualControlWidget(QWidget):
             if val & ChargeSelectBits.MAX_CHARGE_CURRENT_1: c_val += 0.5
             if val & ChargeSelectBits.MAX_CHARGE_CURRENT_2: c_val += 1.0
             self.lbl_chg_sel_rb.setText(f"Readback: 0x{val:02X} [{v_val:.1f}V, {c_val:.1f}A]")
-            self.lbl_chg_sel_rb.setStyleSheet("color: #00d2ff; font-size: 11px; font-weight: bold;")
+            set_style(self.lbl_chg_sel_rb, "color: #00d2ff; font-size: 11px; font-weight: bold;")
             self.badge_chg_sel.setText(f"0x6001 Chg Sel: 0x{val:02X} ({v_val:.1f}V, {c_val:.1f}A)")
 
         elif echo.frame_id == FRAME_CHARGE_CTRL:
@@ -333,9 +347,9 @@ class ManualControlWidget(QWidget):
             en_txt = "ON" if en else "OFF"
             color = "#10b981" if en else "#94a3b8"
             self.lbl_chg_ctrl_rb.setText(f"Readback: 0x{val:02X} [EN={en_txt}, Reset={int(rst)}]")
-            self.lbl_chg_ctrl_rb.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold;")
+            set_style(self.lbl_chg_ctrl_rb, f"color: {color}; font-size: 11px; font-weight: bold;")
             self.badge_chg_ctrl.setText(f"0x6002 Chg: 0x{val:02X} (EN={en_txt}, Rst={int(rst)})")
-            self.badge_chg_ctrl.setStyleSheet(f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
+            set_style(self.badge_chg_ctrl, f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
 
         elif echo.frame_id == FRAME_DISCHARGE_CTRL:
             en = bool(val & DischargeControlBits.DISCHARGE_ENABLE)
@@ -343,9 +357,9 @@ class ManualControlWidget(QWidget):
             en_txt = "ON" if en else "OFF"
             color = "#f97316" if en else "#94a3b8"
             self.lbl_dis_ctrl_rb.setText(f"Readback: 0x{val:02X} [EN={en_txt}, Reset={int(rst)}]")
-            self.lbl_dis_ctrl_rb.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold;")
+            set_style(self.lbl_dis_ctrl_rb, f"color: {color}; font-size: 11px; font-weight: bold;")
             self.badge_dis_ctrl.setText(f"0x6003 Dis: 0x{val:02X} (EN={en_txt}, Rst={int(rst)})")
-            self.badge_dis_ctrl.setStyleSheet(f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
+            set_style(self.badge_dis_ctrl, f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
 
         elif echo.frame_id == FRAME_DISCHARGE_SEL:
             dec = val & 0x0F
@@ -358,9 +372,9 @@ class ManualControlWidget(QWidget):
             sw_str = "+".join(switches) if switches else "None"
             color = "#f97316" if dec > 0 else "#94a3b8"
             self.lbl_dis_sel_rb.setText(f"Readback: 0x{dec:02X} [{sw_str} -> {current_a:.1f}A]")
-            self.lbl_dis_sel_rb.setStyleSheet(f"color: {color}; font-size: 11px; font-weight: bold;")
+            set_style(self.lbl_dis_sel_rb, f"color: {color}; font-size: 11px; font-weight: bold;")
             self.badge_dis_sel.setText(f"0x6004 Loads: 0x{dec:02X} ({current_a:.1f}A)")
-            self.badge_dis_sel.setStyleSheet(f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
+            set_style(self.badge_dis_sel, f"background-color: #0f172a; border: 1px solid {color}; border-radius: 6px; padding: 6px 10px; font-family: 'Consolas', monospace; font-size: 11px; color: {color};")
 
     def _clear_unwanted_flags(self) -> None:
         """Immediately clear all 5 control registers to zero (Safe Idle)."""
