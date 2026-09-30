@@ -254,6 +254,16 @@ class TestRecipe:
     chemistry: str = "NMC"
     steps: List[TestStep] = field(default_factory=list)
 
+    @property
+    def total_cycles(self) -> int:
+        loops = [s.loop_count for s in self.steps if s.step_type == StepType.LOOP]
+        return max(loops) if loops else 1
+
+    @property
+    def cycles(self) -> int:
+        """Alias for backward compatibility."""
+        return self.total_cycles
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             "recipe_name": self.recipe_name,

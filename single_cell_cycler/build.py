@@ -27,7 +27,7 @@ import zipfile
 # Resolve repository paths
 SCRIPT_DIR = Path(__file__).resolve().parent
 REPO_ROOT = SCRIPT_DIR.parent
-APP_NAME = "SingleCellCycler"
+APP_NAME = "SingleCellBMSCycler"
 MAIN_ENTRY = SCRIPT_DIR / "main.py"
 SPEC_FILE = SCRIPT_DIR / "SingleCellCycler.spec"
 DIST_DIR = REPO_ROOT / "dist"
@@ -84,6 +84,10 @@ datas = []
 recipes_path = cycler_root / 'config' / 'recipes'
 if recipes_path.exists():
     datas.append((str(recipes_path), 'single_cell_cycler/config/recipes'))
+
+webhook_path = cycler_root / 'config' / 'webhook_settings.json'
+if webhook_path.exists():
+    datas.append((str(webhook_path), 'single_cell_cycler/config'))
 
 # Include branding if present
 branding_path = repo_root / 'branding'

@@ -99,6 +99,12 @@ class CyclerEngine(QObject):
         self.journal_manager = StateJournalManager()
         self.csv_log_file: Optional[str] = None
 
+        # Watchdog periodic timer (1s)
+        self._watchdog_timer = QTimer(self)
+        self._watchdog_timer.setInterval(1000)
+        self._watchdog_timer.timeout.connect(self._on_watchdog_tick)
+        self._watchdog_timer.start()
+
     @property
     def selected_cell(self) -> int:
         return self._selected_cell
@@ -107,12 +113,6 @@ class CyclerEngine(QObject):
     def selected_cell(self, cell_num: int) -> None:
         self._selected_cell = cell_num
         self.safety_monitor.selected_cell = cell_num
-
-        # Watchdog periodic timer (1s)
-        self._watchdog_timer = QTimer(self)
-        self._watchdog_timer.setInterval(1000)
-        self._watchdog_timer.timeout.connect(self._on_watchdog_tick)
-        self._watchdog_timer.start()
 
     def load_recipe(self, recipe: TestRecipe) -> None:
         if self.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION):
@@ -228,14 +228,16 @@ class CyclerEngine(QObject):
         """Driven by incoming 0x3000 frames."""
         stype = self.active_step.step_type.value if self.active_step else None
         v_cell = self._last_telemetry.voltage if self._last_telemetry else None
-        if not self.safety_monitor.check_bms_faults(fault_soc, active_step_type=stype, cell_voltage=v_cell):
+        is_trans = (self.state == EngineState.STEP_TRANSITION)
+        if not self.safety_monitor.check_bms_faults(
+            fault_soc,
+            active_step_type=stype,
+            cell_voltage=v_cell,
+            is_transitioning=is_trans,
+        ):
             fault_reason = self.safety_monitor.trip_reason
             if self.state == EngineState.RUNNING and self.active_step:
                 self._handle_step_fault(fault_reason)
-                return
-
-            if self.state == EngineState.STEP_TRANSITION:
-                self.safety_monitor.reset_safety()
                 return
 
             if self.state != EngineState.SAFETY_STOP:

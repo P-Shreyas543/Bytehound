@@ -22,10 +22,14 @@ import numpy as np
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QDialog,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QPushButton,
     QSplitter,
+    QTableWidget,
+    QTableWidgetItem,
     QTabWidget,
     QVBoxLayout,
     QWidget,
@@ -244,6 +248,7 @@ class LivePlotWidget(QWidget):
         # V-Q
         self._vq_cap: collections.deque = collections.deque(maxlen=100_000)
         self._vq_volt: collections.deque = collections.deque(maxlen=100_000)
+        self._vq_history_curves: List[Tuple[str, pg.PlotDataItem]] = []
 
         self.start_epoch: float = time.time()
 
@@ -252,6 +257,7 @@ class LivePlotWidget(QWidget):
         self._cell_num: int = 1
         self._dirty: bool = False
         self._last_pen_cell: int | None = None
+        self._event_markers: collections.deque[str] = collections.deque(maxlen=6)
 
         # Quick-Zoom and Framing State (IMP-02)
         self._zoom_mode: ZoomMode = ZoomMode.FIT_ALL
@@ -278,6 +284,7 @@ class LivePlotWidget(QWidget):
         self._dqv_butterfly: bool = True  # True: charge +, discharge -; False: absolute |dQ/dV|
         self._dqv_mode_buttons: Dict[str, QPushButton] = {}
         self._dqv_smooth_buttons: Dict[str, QPushButton] = {}
+        self._latest_dqv_peaks: List[DQVPeak] = []
 
         # Aging, Efficiency & Health tracking buffers (IMP-07)
         self._cycle_indices: List[int] = []
@@ -306,6 +313,7 @@ class LivePlotWidget(QWidget):
         cell_switched = (self._cell_num != cell_num) and (len(self._t) > 0)
         self._relay_on = relay_on
         self._cell_num = cell_num
+        self._update_vq_identity_labels()
 
         if cell_switched:
             self._insert_nan_break()
@@ -329,8 +337,10 @@ class LivePlotWidget(QWidget):
         self._t_term.append(data.terminal_temp)
         self._t_body.append(data.body_temp)
 
-        self._vq_cap.append(abs(step_mah))
-        self._vq_volt.append(data.voltage)
+        # V-Q curve (IMP-02/IMP-07: exclude REST steps to eliminate vertical zero-capacity artifacts)
+        if "rest" not in self._current_step_type.lower():
+            self._vq_cap.append(abs(step_mah))
+            self._vq_volt.append(data.voltage)
 
         # Differential Capacity Q-V trace (IMP-05)
         if "rest" not in self._current_step_type.lower():
@@ -357,7 +367,9 @@ class LivePlotWidget(QWidget):
         else:
             self._apply_zoom_framing()
 
-        if index == 3 and hasattr(self, "plot_dqv"):
+        if index == 2 and hasattr(self, "plot_vq"):
+            self.fit_vq_view()
+        elif index == 3 and hasattr(self, "plot_dqv"):
             self._render_dqv_active()
             self.fit_dqv_view()
         elif index == 4 and hasattr(self, "plot_aging_cap"):
@@ -411,11 +423,19 @@ class LivePlotWidget(QWidget):
             if self._vq_cap:
                 caps = np.array(self._vq_cap)
                 volts = np.array(self._vq_volt)
+                is_charge = "charge" in self._current_step_type.lower()
+                pen_color = _AGING_Q_CHG_COLOR if is_charge else _AGING_Q_DIS_COLOR
+                self.curve_vq_current.setPen(pg.mkPen(pen_color, width=2.2))
                 self.curve_vq_current.setData(caps, volts)
-                self.plot_vq.setYRange(0.0, 6.0, padding=0.0)
-                if len(caps) > 0:
-                    max_cap = max(100.0, float(np.nanmax(caps)))
-                    self.plot_vq.setXRange(0.0, max_cap, padding=0.02)
+                self.curve_vq_current.setVisible(True)
+                if self._zoom_mode != ZoomMode.MANUAL and len(caps) > 10:
+                    max_cap = float(np.nanmax(caps))
+                    v_min = float(np.nanmin(volts))
+                    v_max = float(np.nanmax(volts))
+                    self.plot_vq.setXRange(0.0, max(100.0, max_cap * 1.05), padding=0.02)
+                    self.plot_vq.setYRange(max(0.0, v_min - 0.15), min(6.0, v_max + 0.15), padding=0.02)
+            else:
+                self.curve_vq_current.setData([], [])
 
         elif tab_idx == 3:
             # Tab 3 – Differential Capacity Analysis dQ/dV (IMP-05)
@@ -431,6 +451,10 @@ class LivePlotWidget(QWidget):
 
     def notify_step_started(self, cycle_idx: int, step_idx: int, step_type: str = "charge") -> None:
         """Called by MainWindow on every step transition to track step/cycle boundaries."""
+        # Safety auto-flush: If previous step buffers still hold unarchived data, archive them first
+        if (len(self._dqv_v_buf) >= 15 or len(self._vq_cap) >= 15) and "rest" not in self._current_step_type.lower():
+            self.reset_step_vq()
+
         latest_t = float(self._t[-1]) if self._t and not np.isnan(self._t[-1]) else 0.0
         self._current_step_start_t = latest_t
         self._current_step_idx = step_idx
@@ -438,6 +462,13 @@ class LivePlotWidget(QWidget):
         if cycle_idx != self._current_cycle_idx:
             self._current_cycle_idx = cycle_idx
             self._current_cycle_start_t = latest_t
+        self.add_event_marker(f"S{step_idx} {step_type.title()}")
+
+    def add_event_marker(self, label: str) -> None:
+        """Record a bounded event trail for long-running chart sessions."""
+        self._event_markers.append(label)
+        if hasattr(self, "lbl_event_strip"):
+            self.lbl_event_strip.setText("Events: " + "  ·  ".join(self._event_markers))
 
     def set_zoom_mode(self, mode: ZoomMode) -> None:
         """Update zoom framing mode and synchronize UI button active states."""
@@ -542,7 +573,30 @@ class LivePlotWidget(QWidget):
         self._zoom_buttons["1m"].append(btn_1m)
         bar.addWidget(btn_1m)
 
+        btn_clear = QPushButton("Clear History")
+        btn_clear.setToolTip("Clear historical step traces while keeping live telemetry and aging summaries")
+        btn_clear.setStyleSheet(_ZOOM_BTN_STYLE_DEFAULT)
+        btn_clear.clicked.connect(self.clear_chart_history)
+        bar.addWidget(btn_clear)
+
         return bar
+
+    def clear_chart_history(self) -> None:
+        """Remove dense historical chart overlays without deleting recorded telemetry."""
+        if hasattr(self, "plot_vq"):
+            for _, item in self._vq_history_curves:
+                self.plot_vq.removeItem(item)
+            self._vq_history_curves.clear()
+            self._vq_cap.clear()
+            self._vq_volt.clear()
+            if hasattr(self, "curve_vq_current"):
+                self.curve_vq_current.setData([], [])
+            self.fit_vq_view()
+        if hasattr(self, "plot_dqv"):
+            for _, item in self._dqv_history_curves:
+                self.plot_dqv.removeItem(item)
+            self._dqv_history_curves.clear()
+        self.add_event_marker("Chart history cleared")
 
     # ----------------------------------------------------------------------- #
     # Interactive Crosshair & Real-Time HUD (IMP-01)                           #
@@ -626,51 +680,74 @@ class LivePlotWidget(QWidget):
     # Step / Cycle Events                                                      #
     # ----------------------------------------------------------------------- #
 
-    def reset_step_vq(self) -> None:
-        """Archive current V-Q trace and completed dQ/dV profile when a new step begins."""
-        if len(self._vq_cap) > 10:
+    def reset_step_vq(
+        self,
+        step_type: Optional[str] = None,
+        cycle_idx: Optional[int] = None,
+        step_idx: Optional[int] = None,
+    ) -> None:
+        """Archive current V-Q trace and completed dQ/dV profile when a step finishes."""
+        target_stype = (step_type or self._current_step_type).lower()
+        target_cycle = cycle_idx or self._current_cycle_idx
+        target_step = step_idx or self._current_step_idx
+        is_rest = "rest" in target_stype
+
+        # 1. Archive V-Q Trace
+        if len(self._vq_cap) >= 15 and not is_rest:
             caps = np.array(self._vq_cap)
             volts = np.array(self._vq_volt)
-            color = _C1_V if self._cell_num == 1 else _C2_V
-            p_hist = self.plot_vq.plot(
-                caps,
-                volts,
-                pen=pg.mkPen(color, width=1.0, style=pg.QtCore.Qt.PenStyle.DashLine),
-            )
-            p_hist.setClipToView(True)
+            if np.nanmax(caps) - np.nanmin(caps) >= 1.0:
+                is_charge = "charge" in target_stype
+                hist_color = "#16a34a" if is_charge else "#0284c7"
+                p_hist = self.plot_vq.plot(
+                    caps,
+                    volts,
+                    pen=pg.mkPen(hist_color, width=1.3, style=Qt.PenStyle.DashLine),
+                )
+                p_hist.setClipToView(True)
+                self._vq_history_curves.append((target_stype, p_hist))
+
+                while len(self._vq_history_curves) > 20:
+                    _, old_item = self._vq_history_curves.pop(0)
+                    self.plot_vq.removeItem(old_item)
+
         self._vq_cap.clear()
         self._vq_volt.clear()
+        if hasattr(self, "curve_vq_current"):
+            self.curve_vq_current.setData([], [])
 
-        # Archive completed step dQ/dV profile (IMP-05)
-        if len(self._dqv_v_buf) >= 15 and "rest" not in self._current_step_type.lower():
+        # 2. Archive completed step dQ/dV profile (IMP-05)
+        if len(self._dqv_v_buf) >= 15 and not is_rest:
             v_arr = np.array(self._dqv_v_buf)
             q_arr = np.array(self._dqv_q_buf)
             v_grid, dqdv = compute_dq_dv(
                 v_arr,
                 q_arr,
-                step_type=self._current_step_type,
+                step_type=target_stype,
                 dv_grid=self._dqv_dv,
                 smooth_window=self._dqv_window,
             )
             if len(v_grid) > 0:
                 pks = find_dqv_peaks(v_grid, dqdv)
                 prof = DQVProfile(
-                    cycle_index=self._current_cycle_idx,
-                    step_index=self._current_step_idx,
-                    step_type=self._current_step_type,
+                    cycle_index=target_cycle,
+                    step_index=target_step,
+                    step_type=target_stype,
                     voltages=v_grid,
                     dq_dv=dqdv,
                     peaks=pks,
                 )
                 self._dqv_profiles.append(prof)
                 self._plot_historical_dqv(prof)
+                if pks:
+                    self._latest_dqv_peaks = list(pks)
+                    self._update_dqv_peak_scatter(pks)
+                self.fit_dqv_view()
 
         self._dqv_v_buf.clear()
         self._dqv_q_buf.clear()
         if hasattr(self, "curve_dqv_active"):
             self.curve_dqv_active.setData([], [])
-        if hasattr(self, "scatter_dqv_peaks"):
-            self.scatter_dqv_peaks.setData([])
 
     def add_cycle_summary(
         self,
@@ -692,6 +769,8 @@ class LivePlotWidget(QWidget):
             self._cycle_dcir.append(dcir_mohm)
 
         self._render_aging_tab()
+        # Keep newly completed cycles in view even when the tab was already open.
+        self.fit_aging_view()
 
     def reset_all(self) -> None:
         """Full reset for a new test run."""
@@ -700,11 +779,17 @@ class LivePlotWidget(QWidget):
         self._vq_cap.clear(); self._vq_volt.clear()
         self._dqv_v_buf.clear(); self._dqv_q_buf.clear()
         self._dqv_profiles.clear()
+        self._latest_dqv_peaks.clear()
+        self._event_markers.clear()
+        if hasattr(self, "lbl_event_strip"):
+            self.lbl_event_strip.setText("Events: waiting for step transitions")
         self.plot_vq.clear()
+        self._vq_history_curves.clear()
         self.curve_vq_current = self.plot_vq.plot(
-            pen=pg.mkPen(_C1_V, width=2.2)
+            pen=pg.mkPen(_AGING_Q_CHG_COLOR, width=2.2)
         )
         self.curve_vq_current.setClipToView(True)
+        self.fit_vq_view()
         if hasattr(self, "plot_dqv"):
             for _, p_item in self._dqv_history_curves:
                 self.plot_dqv.removeItem(p_item)
@@ -746,6 +831,9 @@ class LivePlotWidget(QWidget):
                 "border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold;"
             )
             self.lbl_aging_fade_badge.setText("Fade: 0.00 mAh/cyc")
+            if hasattr(self, "lbl_aging_data_state"):
+                self.lbl_aging_data_state.setText("Waiting for first completed cycle")
+                self.lbl_aging_data_state.setStyleSheet("color: #fbbf24; font-size: 11px; font-weight: 600;")
             self.fit_aging_view()
 
         self.start_epoch = time.time()
@@ -832,6 +920,10 @@ class LivePlotWidget(QWidget):
         note.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; background: transparent;")
         legend_row.addWidget(note)
         top_bar.addLayout(legend_row)
+
+        self.lbl_event_strip = QLabel("Events: waiting for step transitions")
+        self.lbl_event_strip.setStyleSheet("color:#64748b; font-size:10px; font-family:Consolas, monospace;")
+        top_bar.addWidget(self.lbl_event_strip)
 
         top_bar.addStretch(1)
 
@@ -970,24 +1062,70 @@ class LivePlotWidget(QWidget):
         vlay = QVBoxLayout(tab)
         vlay.setContentsMargins(4, 4, 4, 2)
         vlay.setSpacing(2)
-        vlay.addLayout(
-            _legend_bar(
-                _legend_label(_C1_V, "Cell 1 – Active Step"),
-                _legend_label(_C2_V, "Cell 2 – Active Step"),
-                _legend_label("#475569", "Historical Steps (dashed)"),
-            )
-        )
+
+        # Header bar
+        top_bar = QHBoxLayout()
+        top_bar.setContentsMargins(4, 2, 4, 2)
+        top_bar.setSpacing(8)
+
+        legend_row = QHBoxLayout()
+        legend_row.setContentsMargins(0, 0, 0, 0)
+        legend_row.setSpacing(6)
+        legend_row.addWidget(_legend_label(_AGING_Q_CHG_COLOR, "Charge"))
+        legend_row.addWidget(_legend_label(_AGING_Q_DIS_COLOR, "Discharge"))
+        legend_row.addWidget(_legend_label("#64748b", "History (dashed)"))
+        top_bar.addLayout(legend_row)
+
+        top_bar.addStretch(1)
+
+        self.lbl_vq_context = QLabel("⚡ Cell 1 · V vs Q Envelope")
+        self.lbl_vq_context.setStyleSheet("color: #94a3b8; font-size: 11px; font-weight: 600;")
+        top_bar.addWidget(self.lbl_vq_context)
+
+        top_bar.addStretch(1)
+
+        ctrls = QHBoxLayout()
+        ctrls.setContentsMargins(0, 0, 0, 0)
+        ctrls.setSpacing(4)
+
+        btn_fit = QPushButton("⤢ Fit")
+        btn_fit.setToolTip("Auto-fit V-Q curve view")
+        btn_fit.setStyleSheet(_ZOOM_BTN_STYLE_DEFAULT)
+        btn_fit.clicked.connect(self.fit_vq_view)
+        ctrls.addWidget(btn_fit)
+
+        btn_clear = QPushButton("Clear History")
+        btn_clear.setToolTip("Clear completed cycle traces from V-Q view")
+        btn_clear.setStyleSheet(_ZOOM_BTN_STYLE_DEFAULT)
+        btn_clear.clicked.connect(self.clear_chart_history)
+        ctrls.addWidget(btn_clear)
+
+        top_bar.addLayout(ctrls)
+        vlay.addLayout(top_bar)
+
         self.ax_vq = VoltageAxisItem(orientation="left")
         self.plot_vq = pg.PlotWidget(axisItems={"left": self.ax_vq})
         self.plot_vq.showGrid(x=True, y=True, alpha=0.18)
         self.ax_vq.setTickPen(pg.mkPen("#334155", width=1))
         self.plot_vq.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
-        self.plot_vq.setLabel("left", "<span style='color:#38bdf8; font-weight:bold; font-size:12px;'>⚡ Cell Voltage (0 – 5 V)</span>")
-        self.plot_vq.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Step Capacity (mAh)</span>")
-        self.curve_vq_current = self.plot_vq.plot(pen=pg.mkPen(_C1_V, width=2.2))
+        self.plot_vq.setLabel("left", "<span style='color:#38bdf8; font-weight:bold; font-size:12px;'>⚡ Cell 1 Voltage (V)</span>")
+        self.plot_vq.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Delivered / Stored Capacity (mAh)</span>")
+        self.curve_vq_current = self.plot_vq.plot(pen=pg.mkPen(_AGING_Q_CHG_COLOR, width=2.2))
         self.curve_vq_current.setClipToView(True)
         vlay.addWidget(self.plot_vq)
         self.tabs.addTab(tab, "📈 V-Q Curve")
+
+    def _update_vq_identity_labels(self) -> None:
+        """Keep V-Q axis identity aligned with the selected cell."""
+        cell = int(self._cell_num)
+        color = _C1_V if cell == 1 else _C2_V
+        if hasattr(self, "lbl_vq_context"):
+            self.lbl_vq_context.setText(f"⚡ Cell {cell} · V vs Q Envelope")
+        if hasattr(self, "plot_vq"):
+            self.plot_vq.setLabel(
+                "left",
+                f"<span style='color:{color}; font-weight:bold; font-size:12px;'>⚡ Cell {cell} Voltage (V)</span>",
+            )
 
     def _build_dqv_tab(self) -> None:
         tab = QWidget()
@@ -1018,6 +1156,15 @@ class LivePlotWidget(QWidget):
             "border-radius: 4px; padding: 2px 7px; font-size: 11px; font-weight: 600;"
         )
         top_bar.addWidget(self.lbl_dqv_peaks_badge)
+
+        btn_peaks = QPushButton("Peak Table")
+        btn_peaks.setToolTip("Open the detected dQ/dV phase-transition peak table")
+        btn_peaks.clicked.connect(self._show_dqv_peak_table)
+        top_bar.addWidget(btn_peaks)
+
+        self.lbl_dqv_context = QLabel("Cell 1 · Cycle 1 · Charge · 5 mV grid · ± sign")
+        self.lbl_dqv_context.setStyleSheet("color: #94a3b8; font-size: 10px; font-weight: 600;")
+        top_bar.addWidget(self.lbl_dqv_context)
 
         # HUD readout
         self.lbl_hud_dqv = QLabel("<span style='color:#64748b; font-style:italic;'>Hover over chart to inspect</span>")
@@ -1123,6 +1270,11 @@ class LivePlotWidget(QWidget):
                 smooth_window=self._dqv_window,
             )
             if len(v_grid) > 0:
+                self.lbl_dqv_context.setText(
+                    f"Cell {self._cell_num} · Cycle {self._current_cycle_idx} · "
+                    f"{self._current_step_type.title()} · {int(self._dqv_dv * 1000)} mV grid · "
+                    f"{'±' if self._dqv_butterfly else '| |'} sign"
+                )
                 is_dis = "discharge" in self._current_step_type.lower()
                 pen_col = _DQV_DISCHARGE_COLOR if is_dis else _DQV_CHARGE_COLOR
                 self.curve_dqv_active.setPen(pg.mkPen(pen_col, width=2.4))
@@ -1131,40 +1283,128 @@ class LivePlotWidget(QWidget):
 
                 # Peak detection
                 pks = find_dqv_peaks(v_grid, dqdv)
-                if pks:
-                    spots = [
-                        {
-                            "pos": (p.voltage, p.dq_dv if self._dqv_butterfly else abs(p.dq_dv)),
-                            "data": p.label,
-                            "brush": pg.mkBrush(_PEAK_MARKER_COLOR),
-                            "pen": pg.mkPen("#0f172a", width=1),
-                            "size": 11,
-                            "symbol": "d",
-                        }
-                        for p in pks
-                    ]
-                    self.scatter_dqv_peaks.setData(spots)
-                    p_str = ", ".join([f"{p.voltage:.2f}V ({abs(p.dq_dv):.0f})" for p in pks[:3]])
-                    self.lbl_dqv_peaks_badge.setText(f"Peaks: {p_str}")
-                else:
-                    self.scatter_dqv_peaks.setData([])
-                    self.lbl_dqv_peaks_badge.setText("Peaks: None detected")
+                self._latest_dqv_peaks = list(pks)
+                self._update_dqv_peak_scatter(pks)
                 return
 
+        # Active step is idle, resting, or buffering (<15 samples)
         self.curve_dqv_active.setData([], [])
-        self.scatter_dqv_peaks.setData([])
-        self.lbl_dqv_peaks_badge.setText("Peaks: Monitoring...")
+        if self._dqv_profiles:
+            last_prof = self._dqv_profiles[-1]
+            if last_prof.peaks:
+                self._latest_dqv_peaks = list(last_prof.peaks)
+                self._update_dqv_peak_scatter(last_prof.peaks)
+            self.lbl_dqv_context.setText(
+                f"Cell {self._cell_num} · {len(self._dqv_profiles)} historical profile{'s' if len(self._dqv_profiles) != 1 else ''} · "
+                f"{self._current_step_type.title()} active"
+            )
+        else:
+            self.scatter_dqv_peaks.setData([])
+            self._latest_dqv_peaks = []
+            self.lbl_dqv_peaks_badge.setText("Peaks: Monitoring...")
+            self.lbl_dqv_context.setText(
+                f"Cell {self._cell_num} · Cycle {self._current_cycle_idx} · "
+                f"{self._current_step_type.title()} · Insufficient samples (need 15+)"
+            )
+
+    def _update_dqv_peak_scatter(self, pks: List[DQVPeak]) -> None:
+        """Render peak diamond markers on the dQ/dV plot."""
+        if not hasattr(self, "scatter_dqv_peaks"):
+            return
+        if pks:
+            spots = [
+                {
+                    "pos": (p.voltage, p.dq_dv if self._dqv_butterfly else abs(p.dq_dv)),
+                    "data": p.label,
+                    "brush": pg.mkBrush(_PEAK_MARKER_COLOR),
+                    "pen": pg.mkPen("#0f172a", width=1),
+                    "size": 11,
+                    "symbol": "d",
+                }
+                for p in pks
+            ]
+            self.scatter_dqv_peaks.setData(spots)
+            p_str = ", ".join([f"{p.voltage:.2f}V ({abs(p.dq_dv):.0f})" for p in pks[:3]])
+            self.lbl_dqv_peaks_badge.setText(f"Peaks: {p_str}")
+        else:
+            self.scatter_dqv_peaks.setData([])
+            self.lbl_dqv_peaks_badge.setText("Peaks: None detected")
+
+    def _show_dqv_peak_table(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("dQ/dV Phase Transition Peaks")
+        dialog.resize(620, 320)
+        layout = QVBoxLayout(dialog)
+        table = QTableWidget(0, 5)
+        table.setHorizontalHeaderLabels(["Voltage (V)", "dQ/dV (mAh/V)", "Prominence", "Cycle", "Direction"])
+        table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+
+        all_peaks_data: List[Tuple[DQVPeak, int, str]] = []
+        for prof in self._dqv_profiles:
+            for pk in prof.peaks:
+                all_peaks_data.append((pk, prof.cycle_index, prof.step_type.title()))
+
+        if not all_peaks_data and self._latest_dqv_peaks:
+            for pk in self._latest_dqv_peaks:
+                all_peaks_data.append((pk, self._current_cycle_idx, self._current_step_type.title()))
+
+        for pk, cyc, direction in all_peaks_data:
+            row = table.rowCount()
+            table.insertRow(row)
+            values = [
+                f"{pk.voltage:.4f}",
+                f"{pk.dq_dv:+.2f}",
+                f"{pk.prominence:.2f}",
+                f"Cycle {cyc}",
+                direction,
+            ]
+            for col, val in enumerate(values):
+                table.setItem(row, col, QTableWidgetItem(val))
+
+        table.cellDoubleClicked.connect(
+            lambda row, _col: self._center_dqv_peak(all_peaks_data[row][0])
+            if 0 <= row < len(all_peaks_data) else None
+        )
+
+        if not all_peaks_data:
+            table.setRowCount(1)
+            table.setItem(0, 0, QTableWidgetItem("No peaks detected or insufficient samples"))
+            table.setSpan(0, 0, 1, 5)
+
+        layout.addWidget(table)
+        close_btn = QPushButton("Close")
+        close_btn.clicked.connect(dialog.accept)
+        layout.addWidget(close_btn)
+        dialog.exec()
+
+    def _center_dqv_peak(self, peak: DQVPeak) -> None:
+        """Center the dQ/dV chart on a selected phase-transition peak."""
+        if not hasattr(self, "plot_dqv"):
+            return
+        half_span = 0.12
+        self.plot_dqv.setXRange(max(0.0, peak.voltage - half_span), peak.voltage + half_span, padding=0.0)
+        y_value = abs(peak.dq_dv) if self._dqv_butterfly else abs(peak.dq_dv)
+        self.plot_dqv.setYRange(min(-1.0, y_value * -0.25), max(1.0, y_value * 1.15), padding=0.0)
+        self.crosshair_v_dqv.setPos(peak.voltage)
+        self.crosshair_v_dqv.setVisible(True)
+        self.lbl_hud_dqv.setText(
+            f"<b>Peak</b> · V: {peak.voltage:.4f} V · dQ/dV: {peak.dq_dv:.2f} mAh/V · {peak.label}"
+        )
 
     def _plot_historical_dqv(self, prof: DQVProfile) -> None:
         """Render completed step dQ/dV curve with cycle gradient styling."""
         if not hasattr(self, "plot_dqv"):
             return
-        c_idx = (prof.cycle_index - 1) % len(CYCLE_PALETTE)
-        color = CYCLE_PALETTE[c_idx]
         is_dis = "discharge" in prof.step_type.lower()
+        if prof.cycle_index == 1:
+            color = _DQV_DISCHARGE_COLOR if is_dis else _DQV_CHARGE_COLOR
+        else:
+            c_idx = (prof.cycle_index - 1) % len(CYCLE_PALETTE)
+            color = CYCLE_PALETTE[c_idx]
+
         pen = pg.mkPen(
             color,
-            width=1.3,
+            width=1.5,
             style=pg.QtCore.Qt.PenStyle.DashLine if is_dis else pg.QtCore.Qt.PenStyle.SolidLine,
         )
         y_data = prof.dq_dv if self._dqv_butterfly else np.abs(prof.dq_dv)
@@ -1230,9 +1470,28 @@ class LivePlotWidget(QWidget):
 
     def fit_dqv_view(self) -> None:
         """Auto-frame dQ/dV view to encompass all active and historical data."""
-        if hasattr(self, "plot_dqv"):
-            self.plot_dqv.setXRange(2.0, 4.6, padding=0.02)
-            self.plot_dqv.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+        if not hasattr(self, "plot_dqv"):
+            return
+        y_vals: List[float] = []
+        if hasattr(self, "curve_dqv_active"):
+            act_x, act_y = self.curve_dqv_active.getData()
+            if act_y is not None and len(act_y) > 0:
+                y_vals.extend(act_y[::5])
+        for prof, _ in self._dqv_history_curves:
+            y_data = prof.dq_dv if self._dqv_butterfly else np.abs(prof.dq_dv)
+            if len(y_data) > 0:
+                y_vals.extend(y_data[::5])
+
+        valid_y = [y for y in y_vals if np.isfinite(y)]
+        if valid_y:
+            y_min = min(valid_y)
+            y_max = max(valid_y)
+            pad = max(50.0, (y_max - y_min) * 0.1)
+            self.plot_dqv.setYRange(y_min - pad, y_max + pad, padding=0.02)
+        else:
+            self.plot_dqv.setYRange(-500.0, 1500.0, padding=0.02)
+
+        self.plot_dqv.setXRange(2.5, 4.35, padding=0.02)
 
     def _update_axis_styling(self, v_col: str, i_col: str) -> None:
         """Dynamically style axes lines, text, and titles to match active cell curve colors."""
@@ -1329,6 +1588,10 @@ class LivePlotWidget(QWidget):
             "border-radius: 4px; padding: 2px 8px; font-size: 11px; font-weight: bold;"
         )
         top_bar.addWidget(self.lbl_aging_fade_badge)
+
+        self.lbl_aging_data_state = QLabel("Waiting for first completed cycle")
+        self.lbl_aging_data_state.setStyleSheet("color: #fbbf24; font-size: 11px; font-weight: 600;")
+        top_bar.addWidget(self.lbl_aging_data_state)
 
         self.lbl_hud_aging = QLabel("<span style='color:#64748b; font-style:italic;'>Hover over chart to inspect</span>")
         self.lbl_hud_aging.setStyleSheet(_HUD_STYLE)
@@ -1504,7 +1767,17 @@ class LivePlotWidget(QWidget):
     def _render_aging_tab(self) -> None:
         """Render cycle capacity history, EOL regression forecast, efficiency, and DCIR."""
         if not hasattr(self, "curve_aging_q_dis") or not self._cycle_indices:
+            if hasattr(self, "lbl_aging_data_state"):
+                self.lbl_aging_data_state.setText("Waiting for first completed cycle")
+                self.lbl_aging_data_state.setStyleSheet("color: #fbbf24; font-size: 11px; font-weight: 600;")
             return
+
+        if hasattr(self, "lbl_aging_data_state"):
+            model_name = "Linear" if self._aging_model == "linear" else "Exponential"
+            self.lbl_aging_data_state.setText(
+                f"{len(self._cycle_indices)} completed cycle{'s' if len(self._cycle_indices) != 1 else ''} · {model_name} model"
+            )
+            self.lbl_aging_data_state.setStyleSheet("color: #86efac; font-size: 11px; font-weight: 600;")
 
         c_arr = np.array(self._cycle_indices, dtype=float)
         q_dis_arr = np.array(self._cycle_q_dis, dtype=float)
@@ -1567,19 +1840,87 @@ class LivePlotWidget(QWidget):
         )
 
     def fit_aging_view(self) -> None:
-        """Auto-frame capacity and efficiency views."""
+        """Auto-frame capacity and efficiency views with proper scaling and clipping protection."""
         if not hasattr(self, "plot_aging_cap") or not hasattr(self, "plot_aging_eff"):
             return
+
+        # 1. Capacity Fade View
         if self._cycle_indices:
             max_c = max(self._cycle_indices)
             self.plot_aging_cap.setXRange(0.5, max(max_c + 1.0, 5.0), padding=0.03)
+
+            # Capacity retention is fundamentally measured by delivered discharge capacity
+            dis_caps = [q for q in self._cycle_q_dis if q > 0 and np.isfinite(q)]
+            all_caps = [q for q in (self._cycle_q_dis + self._cycle_q_chg) if q > 0 and np.isfinite(q)]
+            ref_caps = dis_caps if dis_caps else all_caps
+            if ref_caps:
+                q_min = min(ref_caps)
+                q_max = max(all_caps) if all_caps else max(ref_caps)
+                q_init = ref_caps[0]
+                eol_q = q_init * 0.80
+                y_low = max(0.0, min(q_min * 0.96, eol_q * 0.95))
+                y_high = max(q_max * 1.04, y_low + 10.0)
+                self.plot_aging_cap.setYRange(y_low, y_high, padding=0.03)
+            else:
+                self.plot_aging_cap.setYRange(0.0, 3000.0, padding=0.03)
         else:
             self.plot_aging_cap.setXRange(0.5, 10.0, padding=0.03)
-        self.plot_aging_cap.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
-        self.plot_aging_eff.setYRange(80.0, 102.0, padding=0.02)
+            self.plot_aging_cap.setYRange(0.0, 3000.0, padding=0.03)
+
+        # 2. Efficiency View (Coulombic & Energy Efficiency)
+        eff_vals = [e for e in (self._cycle_ce + self._cycle_ee) if e > 0 and np.isfinite(e)]
+        if eff_vals:
+            e_min = min(eff_vals)
+            e_max = max(eff_vals)
+            # Default window is 80% to 102%. Dynamically expand if unconditioned Cycle 1 (e.g. 260%) or low efficiency
+            y_eff_low = min(80.0, max(0.0, e_min - 5.0))
+            y_eff_high = max(102.0, e_max + 5.0)
+            self.plot_aging_eff.setYRange(y_eff_low, y_eff_high, padding=0.02)
+        else:
+            self.plot_aging_eff.setYRange(80.0, 102.0, padding=0.02)
+
+        # 3. DCIR Right-Axis View (protect against zero-width range when 1 cycle has DCIR)
         if hasattr(self, "view_aging_dcir"):
-            self.view_aging_dcir.enableAutoRange(axis=pg.ViewBox.YAxis, enable=True)
+            r_vals = [r for r in self._cycle_dcir if r > 0 and np.isfinite(r)]
+            if len(r_vals) == 1:
+                val = r_vals[0]
+                self.view_aging_dcir.setYRange(max(0.0, val * 0.5), val * 1.5, padding=0.05)
+            elif len(r_vals) > 1:
+                r_min = min(r_vals)
+                r_max = max(r_vals)
+                span = max(2.0, (r_max - r_min) * 0.25)
+                self.view_aging_dcir.setYRange(max(0.0, r_min - span), r_max + span, padding=0.03)
+            else:
+                self.view_aging_dcir.setYRange(0.0, 100.0, padding=0.05)
+
         self._sync_aging_dcir_view()
+
+    def fit_vq_view(self) -> None:
+        """Auto-frame V-Q curve view with proper battery operating window."""
+        if not hasattr(self, "plot_vq"):
+            return
+        v_points: List[float] = list(self._vq_volt)
+        q_points: List[float] = list(self._vq_cap)
+        for _, p_item in self._vq_history_curves:
+            x_data, y_data = p_item.getData()
+            if x_data is not None and len(x_data) > 0:
+                q_points.extend(x_data[::10])
+            if y_data is not None and len(y_data) > 0:
+                v_points.extend(y_data[::10])
+
+        valid_v = [v for v in v_points if np.isfinite(v)]
+        valid_q = [q for q in q_points if np.isfinite(q)]
+        if valid_v and valid_q:
+            v_min = min(valid_v)
+            v_max = max(valid_v)
+            q_max = max(valid_q)
+            y_low = max(0.0, v_min - 0.15)
+            y_high = min(6.0, v_max + 0.15)
+            self.plot_vq.setYRange(y_low, y_high, padding=0.03)
+            self.plot_vq.setXRange(0.0, max(50.0, q_max * 1.05), padding=0.03)
+        else:
+            self.plot_vq.setYRange(2.5, 4.35, padding=0.03)
+            self.plot_vq.setXRange(0.0, 100.0, padding=0.03)
 
     def set_aging_model(self, model: str) -> None:
         """Switch between linear and exponential degradation regression models."""

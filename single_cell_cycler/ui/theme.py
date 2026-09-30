@@ -174,17 +174,17 @@ QPushButton#btn_skip:pressed {{
 }}
 
 QPushButton#btn_stop {{
-    background-color: #7f1d1d;
+    background-color: #92400e;
     color: #ffffff;
     font-weight: 600;
-    border: 1px solid #991b1b;
+    border: 1px solid #f59e0b;
 }}
 QPushButton#btn_stop:hover {{
-    background-color: #991b1b;
-    border-color: #ef4444;
+    background-color: #b45309;
+    border-color: #fbbf24;
 }}
 QPushButton#btn_stop:pressed {{
-    background-color: #ef4444;
+    background-color: #d97706;
     color: #ffffff;
     border: 2px solid #fca5a5;
     font-weight: 800;

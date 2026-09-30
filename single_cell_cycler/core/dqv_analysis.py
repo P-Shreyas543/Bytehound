@@ -31,6 +31,7 @@ class DQVProfile:
     step_type: str                         # "charge" or "discharge"
     voltages: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
     dq_dv: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
+    capacities: np.ndarray = field(default_factory=lambda: np.array([], dtype=float))
     peaks: List[DQVPeak] = field(default_factory=list)
 
 
@@ -88,7 +89,8 @@ def compute_dq_dv(
     dv_grid: float = 0.005,
     smooth_window: int = 15,
     polyorder: int = 2,
-) -> Tuple[np.ndarray, np.ndarray]:
+    return_capacity: bool = False,
+) -> Tuple[np.ndarray, ...]:
     """Resample Q(V) onto a uniform voltage grid and compute smoothed dQ/dV.
 
     Parameters:
@@ -105,11 +107,13 @@ def compute_dq_dv(
         Window length for Savitzky-Golay polynomial derivative filter (must be odd).
     polyorder : int
         Polynomial degree for local fitting (default: 2 = quadratic).
+    return_capacity : bool
+        If True, also returns the resampled capacity array (v_grid, dq_dv, q_grid).
 
     Returns:
     --------
-    Tuple[np.ndarray, np.ndarray]
-        (v_grid, dq_dv): Uniform voltage array (V) and differential capacity (mAh/V).
+    Tuple[np.ndarray, np.ndarray] or Tuple[np.ndarray, np.ndarray, np.ndarray]
+        (v_grid, dq_dv) or (v_grid, dq_dv, q_grid)
     """
     v_arr = np.asarray(voltages, dtype=float)
     q_arr = np.asarray(capacities, dtype=float)
@@ -119,6 +123,8 @@ def compute_dq_dv(
     q_valid = q_arr[mask]
 
     if len(v_valid) < 15:
+        if return_capacity:
+            return np.array([], dtype=float), np.array([], dtype=float), np.array([], dtype=float)
         return np.array([], dtype=float), np.array([], dtype=float)
 
     # Sort strictly by voltage to guarantee well-defined resampling
@@ -136,11 +142,15 @@ def compute_dq_dv(
     span = v_max - v_min
     if span < (dv_grid * 3.0):
         # Insufficient voltage variation during this step
+        if return_capacity:
+            return np.array([], dtype=float), np.array([], dtype=float), np.array([], dtype=float)
         return np.array([], dtype=float), np.array([], dtype=float)
 
     # Construct uniform voltage grid
     v_grid = np.arange(v_min + (dv_grid / 2.0), v_max, dv_grid, dtype=float)
     if len(v_grid) < 5:
+        if return_capacity:
+            return np.array([], dtype=float), np.array([], dtype=float), np.array([], dtype=float)
         return np.array([], dtype=float), np.array([], dtype=float)
 
     # Resample Q onto uniform V grid
@@ -165,6 +175,8 @@ def compute_dq_dv(
         # If Q was already monotonic in the reverse direction, invert so discharge stays negative
         dq_dv = -dq_dv
 
+    if return_capacity:
+        return v_grid, dq_dv, q_grid
     return v_grid, dq_dv
 
 

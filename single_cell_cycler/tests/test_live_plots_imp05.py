@@ -144,3 +144,71 @@ def test_dqv_hover_and_reset(qapp):
     assert len(widget._dqv_profiles) == 0
     assert len(widget._dqv_history_curves) == 0
     assert not widget.crosshair_v_dqv.isVisible()
+
+
+def test_dqv_history_retention_across_step_transitions_and_rest(qapp):
+    """Verify that dQ/dV curves and peak markers do not vanish when steps end or transition to Rest."""
+    widget = LivePlotWidget()
+    widget.set_relay_state(True, cell_num=1)
+
+    # 1. Run Step 1: Charge
+    widget.notify_step_started(cycle_idx=1, step_idx=1, step_type="Charge")
+    for i in range(40):
+        frac = i / 40.0
+        v = 3.2 + 0.8 * frac + 0.05 * np.sin(frac * np.pi)
+        q = frac * 2000.0
+        widget.add_telemetry(
+            CellDataTelemetry(voltage=v, current=1.5, terminal_temp=25.0, body_temp=25.5, timestamp=float(i)),
+            step_mah=q,
+        )
+
+    # 2. Step 1 completes and transitions to Step 2 (Rest)
+    # This reproduces the exact sequence from MainWindow
+    widget.reset_step_vq(step_type="Charge", cycle_idx=1, step_idx=1)
+    widget.notify_step_started(cycle_idx=1, step_idx=2, step_type="Rest")
+
+    # Historical curve MUST be archived and visible on plot_dqv
+    assert len(widget._dqv_profiles) == 1, "Charge dQ/dV profile must be stored in history"
+    assert len(widget._dqv_history_curves) == 1, "Charge dQ/dV historical curve item must exist"
+
+    # Switch to dQ/dV tab during Rest
+    widget.tabs.setCurrentIndex(3)
+    widget._render_tab(3, force=True)
+
+    # Historical curve on plot_dqv must have data
+    hist_prof, hist_item = widget._dqv_history_curves[0]
+    hist_x, hist_y = hist_item.getData()
+    assert len(hist_x) > 0, "Historical dQ/dV curve data must NOT be empty during Rest"
+    assert "historical profile" in widget.lbl_dqv_context.text()
+
+    # Peak markers must remain visible
+    if hist_prof.peaks:
+        assert len(widget._latest_dqv_peaks) == len(hist_prof.peaks)
+        assert len(widget.scatter_dqv_peaks.data) > 0, "Peaks must NOT vanish during Rest"
+
+    # 3. Rest step runs (should not produce dQ/dV or overwrite history)
+    for i in range(20):
+        widget.add_telemetry(
+            CellDataTelemetry(voltage=4.15, current=0.0, terminal_temp=25.0, body_temp=25.0, timestamp=float(40 + i)),
+            step_mah=0.0,
+        )
+    widget.reset_step_vq(step_type="Rest", cycle_idx=1, step_idx=2)
+    assert len(widget._dqv_profiles) == 1, "Rest step must not add fake dQ/dV profile"
+
+    # 4. Step 3: Discharge
+    widget.notify_step_started(cycle_idx=1, step_idx=3, step_type="Discharge")
+    for i in range(40):
+        frac = i / 40.0
+        v = 4.15 - 0.8 * frac
+        q = frac * 1950.0
+        widget.add_telemetry(
+            CellDataTelemetry(voltage=v, current=-1.5, terminal_temp=26.0, body_temp=26.0, timestamp=float(60 + i)),
+            step_mah=q,
+        )
+
+    widget.reset_step_vq(step_type="Discharge", cycle_idx=1, step_idx=3)
+
+    # Both Charge and Discharge must be preserved in history
+    assert len(widget._dqv_profiles) == 2, "Both Charge and Discharge profiles must be retained"
+    assert len(widget._dqv_history_curves) == 2, "Both historical curves must be present on plot"
+

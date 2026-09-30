@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
 from ..comm.packet_codec import CellDataTelemetry
+from .dqv_analysis import DQVPeak, DQVProfile, compute_dq_dv, find_dqv_peaks
 from .profile_model import StepType
 
 
@@ -45,6 +46,10 @@ class CycleSummary:
     dcir_1s_mohm: Optional[float] = None
     dcir_10s_mohm: Optional[float] = None
     dcir_mohm: Optional[float] = None
+    # dQ/dV Peak Analysis (Option B)
+    dqv_peak_voltage_v: Optional[float] = None     # Voltage of primary phase transition peak (V)
+    dqv_peak_height_mah_v: Optional[float] = None  # Height of primary phase transition peak (mAh/V)
+    dqv_peak_shift_mv: Optional[float] = None      # Voltage shift in mV relative to Cycle 1
 
 
 @dataclass
@@ -82,6 +87,11 @@ class MetricsTracker:
         self.step_history: List[StepMetrics] = []
         self.cycle_summaries: List[CycleSummary] = []
         self.dcir_measurements: List[DCIRMeasurement] = []
+        self.dqv_profiles: List[DQVProfile] = []
+
+        # Buffer for dQ/dV curve computation (Option A + B)
+        self._step_v_buf: List[float] = []
+        self._step_q_buf: List[float] = []
 
         # Numerical integration state
         self._last_telemetry: Optional[CellDataTelemetry] = None
@@ -91,6 +101,9 @@ class MetricsTracker:
         self._dcir_v0: Optional[float] = None
         self._dcir_i0: Optional[float] = None
         self._dcir_captured_time: Optional[float] = None
+        self._dcir_pulse_start_time: Optional[float] = None
+        self._resting_v0: Optional[float] = None
+        self._resting_i0: Optional[float] = None
 
     def restore_state(
         self,
@@ -132,12 +145,31 @@ class MetricsTracker:
             peak_temp=t_init,
         )
         self.current_cycle_index = cycle_index
+        self._step_v_buf.clear()
+        self._step_q_buf.clear()
 
-        # Store baseline for DCIR estimation if moving from Rest to active step
-        if self._last_telemetry is not None:
-            self._dcir_v0 = self._last_telemetry.voltage
-            self._dcir_i0 = self._last_telemetry.current
+        # Store baseline for DCIR estimation if moving to an active Charge/Discharge step
+        if step_type in (StepType.CHARGE, StepType.DISCHARGE):
+            if self._resting_v0 is not None:
+                self._dcir_v0 = self._resting_v0
+                self._dcir_i0 = self._resting_i0
+            elif self._last_telemetry is not None:
+                self._dcir_v0 = self._last_telemetry.voltage
+                self._dcir_i0 = self._last_telemetry.current
+            else:
+                self._dcir_v0 = v_init
+                self._dcir_i0 = 0.0
             self._dcir_captured_time = now
+            init_i = initial_telemetry.current if initial_telemetry else 0.0
+            if abs(init_i - (self._dcir_i0 or 0.0)) >= 0.1:
+                self._dcir_pulse_start_time = now
+            else:
+                self._dcir_pulse_start_time = None
+        else:
+            self._dcir_v0 = None
+            self._dcir_i0 = None
+            self._dcir_captured_time = None
+            self._dcir_pulse_start_time = None
 
         self._last_time = now
         self._last_telemetry = initial_telemetry
@@ -187,12 +219,15 @@ class MetricsTracker:
             if (
                 self._dcir_v0 is not None
                 and self._dcir_i0 is not None
-                and self._dcir_captured_time is not None
+                and self.current_step_metrics.step_type in (StepType.CHARGE, StepType.DISCHARGE)
             ):
-                elapsed_dcir = now - self._dcir_captured_time
                 delta_i = abs(telemetry.current - self._dcir_i0)
                 delta_v = abs(telemetry.voltage - self._dcir_v0)
                 if delta_i >= 0.1:  # Minimum 100mA delta required for valid DCIR
+                    if self._dcir_pulse_start_time is None:
+                        self._dcir_pulse_start_time = now
+
+                    elapsed_dcir = now - self._dcir_pulse_start_time
                     r_ohms = delta_v / delta_i
                     r_mohm = round(r_ohms * 1000.0, 2)
 
@@ -210,6 +245,13 @@ class MetricsTracker:
                     # 30s pulse resistance (29.0s - 31.0s)
                     if 29.0 <= elapsed_dcir <= 31.0 and self.current_step_metrics.dcir_30s_mohm is None:
                         self.current_step_metrics.dcir_30s_mohm = r_mohm
+                        if self.current_step_metrics.dcir_mohm is None:
+                            self.current_step_metrics.dcir_mohm = r_mohm
+
+            # Buffer raw (V, Q) samples for Differential Capacity Analysis (dQ/dV vs V)
+            if self.current_step_metrics.step_type in (StepType.CHARGE, StepType.DISCHARGE):
+                self._step_v_buf.append(telemetry.voltage)
+                self._step_q_buf.append(abs(self.current_step_metrics.capacity_mah))
 
         self._last_time = now
         self._last_telemetry = telemetry
@@ -221,6 +263,15 @@ class MetricsTracker:
             self.current_step_metrics.end_time = now
             self.current_step_metrics.duration_s = max(0.0, now - self.current_step_metrics.start_time)
             self.current_step_metrics.cutoff_reason = cutoff_reason
+
+            # Record resting baseline when a REST step completes
+            if self.current_step_metrics.step_type == StepType.REST:
+                if self._last_telemetry is not None:
+                    self._resting_v0 = self._last_telemetry.voltage
+                    self._resting_i0 = self._last_telemetry.current
+            else:
+                self._resting_v0 = None
+                self._resting_i0 = None
 
             # Record DCIR measurement if captured during this step
             if (
@@ -243,6 +294,36 @@ class MetricsTracker:
                     r_30s_mohm=self.current_step_metrics.dcir_30s_mohm,
                 )
                 self.dcir_measurements.append(meas)
+
+            # Compute Differential Capacity Curve (dQ/dV vs V) & Peak Detection (Option A + B)
+            if (
+                self.current_step_metrics.step_type in (StepType.CHARGE, StepType.DISCHARGE)
+                and len(self._step_v_buf) >= 15
+            ):
+                try:
+                    import numpy as np
+                    v_arr = np.array(self._step_v_buf)
+                    q_arr = np.array(self._step_q_buf)
+                    v_grid, dqdv, q_grid = compute_dq_dv(
+                        v_arr,
+                        q_arr,
+                        step_type=self.current_step_metrics.step_type.value,
+                        return_capacity=True,
+                    )
+                    if len(v_grid) > 0:
+                        pks = find_dqv_peaks(v_grid, dqdv)
+                        prof = DQVProfile(
+                            cycle_index=self.current_step_metrics.cycle_index,
+                            step_index=self.current_step_metrics.step_index,
+                            step_type=self.current_step_metrics.step_type.value,
+                            voltages=v_grid,
+                            dq_dv=dqdv,
+                            capacities=q_grid,
+                            peaks=pks,
+                        )
+                        self.dqv_profiles.append(prof)
+                except Exception:
+                    pass
 
             self.step_history.append(self.current_step_metrics)
             finished_step = self.current_step_metrics
@@ -277,6 +358,31 @@ class MetricsTracker:
         dcir_fallback = next((s.dcir_mohm for s in cycle_steps if s.dcir_mohm is not None), None)
         dcir_val = dcir_10s if dcir_10s is not None else (dcir_1s if dcir_1s is not None else dcir_fallback)
 
+        # Extract primary dQ/dV peak for this cycle (prefer Charge step, fallback to Discharge)
+        cycle_dqv = [p for p in self.dqv_profiles if p.cycle_index == cycle_index and p.peaks]
+        chg_dqv = next((p for p in cycle_dqv if "charge" in p.step_type.lower()), None)
+        selected_dqv = chg_dqv if chg_dqv else (cycle_dqv[0] if cycle_dqv else None)
+
+        pk_v = None
+        pk_h = None
+        shift_mv = None
+
+        if selected_dqv and selected_dqv.peaks:
+            primary_pk = max(selected_dqv.peaks, key=lambda pk: pk.prominence)
+            pk_v = primary_pk.voltage
+            pk_h = primary_pk.dq_dv
+
+            # Reference Cycle 1 primary peak to track voltage shift (polarization/aging)
+            c1_dqv = [
+                p for p in self.dqv_profiles
+                if p.cycle_index == 1 and p.peaks and p.step_type == selected_dqv.step_type
+            ]
+            if c1_dqv and c1_dqv[0].peaks:
+                c1_primary = max(c1_dqv[0].peaks, key=lambda pk: pk.prominence)
+                shift_mv = round((pk_v - c1_primary.voltage) * 1000.0, 1)
+            elif cycle_index == 1:
+                shift_mv = 0.0
+
         summary = CycleSummary(
             cycle_index=cycle_index,
             charge_capacity_mah=round(q_chg, 2),
@@ -289,6 +395,9 @@ class MetricsTracker:
             dcir_1s_mohm=dcir_1s,
             dcir_10s_mohm=dcir_10s,
             dcir_mohm=dcir_val,
+            dqv_peak_voltage_v=pk_v,
+            dqv_peak_height_mah_v=pk_h,
+            dqv_peak_shift_mv=shift_mv,
         )
         self.cycle_summaries.append(summary)
         return summary

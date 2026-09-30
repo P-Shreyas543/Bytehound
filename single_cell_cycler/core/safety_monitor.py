@@ -151,15 +151,23 @@ class SafetyMonitor:
         fault_soc: FaultSoCTelemetry,
         active_step_type: Optional[str] = None,
         cell_voltage: Optional[float] = None,
+        is_transitioning: bool = False,
     ) -> bool:
         """Scan Frame 0x3000 fault flags.
         
         Returns True if safe, False if tripped.
         Contextual tolerance:
+        - During Step Transitions: Comparator flags (OCC, OCD, COV, CUV) are actively being
+          sequenced and reset via hardware pulses; only thermal emergencies (COT, CUT) trip.
         - During Charge or Rest above min_voltage_v (2.4V): CUV (Under Voltage) is expected
           post-discharge comparator hysteresis and does not trip safety.
         - During Discharge: COV (Over Voltage) is expected at high initial SoC.
+        - During Rest: OCC and OCD are suppressed because current is physically 0 A; any
+          tripped comparator bits reflect un-cleared latches or turn-off transients.
         """
+        if self.is_tripped:
+            return False
+
         self.last_telemetry_time = time.time()
         self.active_faults.clear()
 
@@ -167,6 +175,16 @@ class SafetyMonitor:
 
         for flag, label in FAULT_LABELS.items():
             if fault_soc.fault_byte & flag:
+                # During step transitions, comparator resets (0->1->0) and relay switches are in progress.
+                # Suppress comparator latches so we do not flood emergency shutdown commands.
+                if is_transitioning and flag in (
+                    BMSFaultFlags.OCC,
+                    BMSFaultFlags.OCD,
+                    BMSFaultFlags.COV,
+                    BMSFaultFlags.CUV,
+                ):
+                    continue
+
                 # Handle comparator hysteresis during normal transitions
                 if flag == BMSFaultFlags.CUV:
                     if "charge" in step_type_str:
@@ -176,6 +194,10 @@ class SafetyMonitor:
                 elif flag == BMSFaultFlags.COV:
                     if "discharge" in step_type_str:
                         continue  # Expected at start of discharge from 4.2V
+                elif flag in (BMSFaultFlags.OCC, BMSFaultFlags.OCD):
+                    if "rest" in step_type_str:
+                        continue  # Zero current in rest; ignore un-cleared comparator latches
+
                 self.active_faults.append(label)
 
         if self.active_faults and not self.is_tripped:

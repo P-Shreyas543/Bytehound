@@ -18,9 +18,10 @@ from typing import Any, Dict, List, Optional
 import zipfile
 
 from ..config.cycler_config import DEFAULT_LOG_DIR
+from ..core.dqv_analysis import DQVProfile
 from ..core.metrics_tracker import CycleSummary, MetricsTracker, StepMetrics
 from ..core.profile_model import TestRecipe
-from .summary_writer import write_cycle_summary_csv, write_step_summary_csv
+from .summary_writer import write_cycle_summary_csv, write_dqv_curves_csv, write_step_summary_csv
 
 logger = logging.getLogger("SingleCellCycler.RunExporter")
 
@@ -37,6 +38,7 @@ def export_run_package(
     raw_csv_path: Optional[str | Path] = None,
     step_history: Optional[List[StepMetrics]] = None,
     cycle_summaries: Optional[List[CycleSummary]] = None,
+    dqv_profiles: Optional[List[DQVProfile]] = None,
     app_log_path: Optional[str | Path] = None,
     metrics_tracker: Optional[MetricsTracker] = None,
     operator: str = "Lab Technician",
@@ -137,7 +139,23 @@ def export_run_package(
         except Exception as exc:
             logger.warning(f"Failed to generate cycle summary CSV: {exc}")
 
-    # 5. Diagnostic Log Slice
+    # 5. Differential Capacity Analysis (dQ/dV vs V) Curves CSV (Option A)
+    if dqv_profiles is None and metrics_tracker is not None:
+        dqv_profiles = getattr(metrics_tracker, "dqv_profiles", None)
+
+    if dqv_profiles:
+        try:
+            import tempfile
+            with tempfile.NamedTemporaryFile("w+", delete=False, suffix=".csv", encoding="utf-8") as tmp:
+                tmp_path = Path(tmp.name)
+            write_dqv_curves_csv(tmp_path, dqv_profiles)
+            dqv_bytes = tmp_path.read_bytes()
+            tmp_path.unlink(missing_ok=True)
+            archive_entries["dqv_curves.csv"] = dqv_bytes
+        except Exception as exc:
+            logger.warning(f"Failed to generate dQ/dV curves CSV: {exc}")
+
+    # 6. Diagnostic Log Slice
     if app_log_path is None:
         app_log_path = DEFAULT_LOG_DIR / "cycler_app.txt"
     p_log = Path(app_log_path)

@@ -77,3 +77,38 @@ def test_manual_emergency_stop():
     assert len(dispatched_commands) == 5
     for frame_id in ALL_CONTROL_FRAMES:
         assert (frame_id, 0x00, 0) in dispatched_commands
+
+
+def test_transition_and_rest_comparator_immunity():
+    dispatched_commands = []
+    monitor = SafetyMonitor(
+        command_sender=lambda f, p, prio: dispatched_commands.append((f, p, prio))
+    )
+
+    occ_fault = FaultSoCTelemetry(
+        fault_byte=BMSFaultFlags.OCC,
+        cov=False, cuv=False, occ=True, ocd=False, cot=False, cut=False,
+        soc_ocv=50.0, soc_cc=50.0,
+    )
+
+    # 1. During step transition, OCC comparator flag must NOT trip safety or dispatch shutdown
+    assert monitor.check_bms_faults(occ_fault, is_transitioning=True) is True
+    assert not monitor.is_tripped
+    assert len(dispatched_commands) == 0
+
+    # 2. During Rest step, OCC/OCD flags must NOT trip safety or dispatch shutdown
+    assert monitor.check_bms_faults(occ_fault, active_step_type="Rest", is_transitioning=False) is True
+    assert not monitor.is_tripped
+    assert len(dispatched_commands) == 0
+
+    # 3. But real thermal runaway (COT) during transition MUST trip safety
+    cot_fault = FaultSoCTelemetry(
+        fault_byte=BMSFaultFlags.COT,
+        cov=False, cuv=False, occ=False, ocd=False, cot=True, cut=False,
+        soc_ocv=50.0, soc_cc=50.0,
+    )
+    assert monitor.check_bms_faults(cot_fault, is_transitioning=True) is False
+    assert monitor.is_tripped is True
+    assert "Cell Over Temperature" in monitor.trip_reason
+    assert len(dispatched_commands) == 5
+

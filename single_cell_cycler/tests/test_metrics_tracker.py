@@ -54,3 +54,56 @@ def test_cycle_summary_and_coulombic_efficiency():
     assert pytest.approx(summary.discharge_capacity_mah, rel=1e-2) == 980.0
     # Coulombic Efficiency: 980 / 1000 = 98.0 %
     assert pytest.approx(summary.coulombic_efficiency_pct, rel=1e-2) == 98.0
+
+
+def test_dqv_curve_logging_and_cycle_peak_tracking(tmp_path):
+    """Verify Option A (dedicated dQ/dV curve CSV) and Option B (peak metrics in cycle summary)."""
+    from single_cell_cycler.data.summary_writer import write_cycle_summary_csv, write_dqv_curves_csv
+    import numpy as np
+
+    tracker = MetricsTracker()
+
+    # Step 1: Synthesize a realistic charge step with 100 points from 3.2V to 4.2V
+    t = 0.0
+    tracker.start_step(1, 1, "CC Charge", StepType.CHARGE, CellDataTelemetry(3.20, 1.0, 25.0, 25.0, timestamp=t))
+    v_points = np.linspace(3.20, 4.20, 100)
+    # Add a transition plateau around 3.70V
+    v_curve = np.sort(v_points + 0.05 * np.tanh((np.linspace(0, 1, 100) - 0.5) * 8))
+    for v in v_curve:
+        t += 36.0
+        tracker.update(CellDataTelemetry(voltage=float(v), current=1.0, terminal_temp=25.0, body_temp=25.0, timestamp=t))
+
+    finished = tracker.complete_step("Target Voltage")
+
+    # Verify that a dQ/dV profile was generated
+    assert len(tracker.dqv_profiles) == 1
+    prof = tracker.dqv_profiles[0]
+    assert prof.cycle_index == 1
+    assert prof.step_index == 1
+    assert len(prof.voltages) > 0
+    assert len(prof.dq_dv) == len(prof.voltages)
+
+    # Compute cycle summary (Option B)
+    summary = tracker.compute_cycle_summary(1)
+    if prof.peaks:
+        assert summary.dqv_peak_voltage_v is not None
+        assert summary.dqv_peak_height_mah_v is not None
+        assert summary.dqv_peak_shift_mv == 0.0  # Cycle 1 shift is 0.0 mV
+
+    # Test Option A: Write dQ/dV curves to CSV
+    dqv_csv = tmp_path / "dqv_curves.csv"
+    write_dqv_curves_csv(dqv_csv, tracker.dqv_profiles)
+    assert dqv_csv.exists()
+    content = dqv_csv.read_text(encoding="utf-8")
+    assert "cycle_index,step_index,step_type,voltage_v,capacity_mah,dq_dv_mah_v" in content
+    assert "Charge" in content
+
+    # Test Option B: Write cycle summary with dQ/dV peak columns
+    cycle_csv = tmp_path / "summary_cycles.csv"
+    write_cycle_summary_csv(cycle_csv, tracker.cycle_summaries)
+    assert cycle_csv.exists()
+    c_content = cycle_csv.read_text(encoding="utf-8")
+    assert "dqv_peak_voltage_v" in c_content
+    assert "dqv_peak_height_mah_v" in c_content
+    assert "dqv_peak_shift_mv" in c_content
+

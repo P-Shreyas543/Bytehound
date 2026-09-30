@@ -101,7 +101,9 @@ def test_recipe_validation_logic():
     assert "below LFP safe min (2.50V)" in errors[0]
 
 
-def test_profile_editor_ui_guardrail_integration(qapp):
+def test_profile_editor_ui_guardrail_integration(qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+    monkeypatch.setattr(QMessageBox, "question", lambda *args, **kwargs: QMessageBox.StandardButton.Yes)
     editor = ProfileEditorWidget()
     editor.show()
     editor.resize(900, 500)

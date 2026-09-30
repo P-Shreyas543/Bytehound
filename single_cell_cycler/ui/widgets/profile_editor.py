@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
     QGroupBox,
     QHBoxLayout,
     QHeaderView,
+    QAbstractItemView,
     QLabel,
     QLineEdit,
     QMessageBox,
@@ -330,6 +331,9 @@ class RecipeTimelinePreview(QWidget):
         hdr.addWidget(lbl_note)
 
         hdr.addStretch()
+        self.lbl_preview_hud = QLabel("Hover over the preview for step details")
+        self.lbl_preview_hud.setStyleSheet("color:#94a3b8; font-size:10px; font-family:Consolas, monospace;")
+        hdr.addWidget(self.lbl_preview_hud)
         layout.addLayout(hdr)
 
         # Main PyQtGraph PlotWidget
@@ -359,11 +363,13 @@ class RecipeTimelinePreview(QWidget):
 
         self.step_lines: list[pg.InfiniteLine] = []
         self.step_labels: list[pg.TextItem] = []
+        self._preview_segments: list[tuple[float, float, int, str, float, float]] = []
 
         self.plot.plotItem.getViewBox().sigResized.connect(self._sync_view)
+        self.plot.scene().sigMouseMoved.connect(self._on_mouse_moved_preview)
         layout.addWidget(self.plot)
         self.setMinimumHeight(140)
-        self.setMaximumHeight(200)
+        self.setMaximumHeight(240)
 
     def _sync_view(self) -> None:
         self.view_i.setGeometry(self.plot.plotItem.getViewBox().sceneBoundingRect())
@@ -377,10 +383,12 @@ class RecipeTimelinePreview(QWidget):
             self.plot.removeItem(label)
         self.step_lines.clear()
         self.step_labels.clear()
+        self._preview_segments.clear()
 
         if not recipe or not recipe.steps:
             self.curve_v.setData([], [])
             self.curve_i.setData([], [])
+            self.lbl_preview_hud.setText("No steps to preview")
             return
 
         chem = CHEMISTRY_PRESETS.get(recipe.chemistry, CHEMISTRY_PRESETS["CUSTOM"])
@@ -451,6 +459,7 @@ class RecipeTimelinePreview(QWidget):
 
             cur_t += duration
             cur_v = target_v
+            self._preview_segments.append((step_start_t, cur_t, step_num, step.name, target_v, target_i))
 
             # Step vertical boundary marker
             if step_start_t > 0:
@@ -478,6 +487,20 @@ class RecipeTimelinePreview(QWidget):
         self.view_i.setYRange(-3.5, 3.5, padding=0.0)
         self._sync_view()
 
+    def _on_mouse_moved_preview(self, pos) -> None:
+        if not self._preview_segments or not self.plot.plotItem.sceneBoundingRect().contains(pos):
+            self.lbl_preview_hud.setText("Hover over the preview for step details")
+            return
+        x_value = self.plot.plotItem.vb.mapSceneToView(pos).x()
+        segment = next(
+            (item for item in self._preview_segments if item[0] <= x_value <= item[1]),
+            self._preview_segments[-1] if x_value >= self._preview_segments[-1][1] else self._preview_segments[0],
+        )
+        start, end, step_num, name, voltage, current = segment
+        self.lbl_preview_hud.setText(
+            f"t={max(start, min(end, x_value)):.0f}s · S{step_num} {name} · V={voltage:.2f}V · I={current:+.2f}A"
+        )
+
 
 class ProfileEditorWidget(QWidget):
     """Interactive recipe step table and profile management widget."""
@@ -488,6 +511,9 @@ class ProfileEditorWidget(QWidget):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
         self.current_recipe: Optional[TestRecipe] = None
+        self._dirty = False
+        self._rendering = False
+        self._editing_enabled = True
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -512,6 +538,10 @@ class ProfileEditorWidget(QWidget):
         self.btn_new.clicked.connect(self._new_recipe)
         top_bar.addWidget(self.btn_new)
 
+        self.lbl_recipe_state = QLabel("Saved")
+        self.lbl_recipe_state.setStyleSheet("color: #86efac; font-weight: 600; padding-left: 6px;")
+        top_bar.addWidget(self.lbl_recipe_state)
+
         top_bar.addSpacing(12)
 
         # Cell Chemistry Selector & Safety Guardrail Badge (IMP-03)
@@ -524,6 +554,7 @@ class ProfileEditorWidget(QWidget):
         for code, chem in CHEMISTRY_PRESETS.items():
             self.combo_chemistry.addItem(chem.name, code)
         self.combo_chemistry.currentIndexChanged.connect(self._on_chemistry_changed)
+        self._last_chemistry_index = self.combo_chemistry.currentIndex()
         top_bar.addWidget(self.combo_chemistry)
 
         self.lbl_chem_info = QLabel()
@@ -535,6 +566,13 @@ class ProfileEditorWidget(QWidget):
 
         top_bar.addStretch()
         layout.addLayout(top_bar)
+
+        self.lbl_recipe_summary = QLabel("Recipe summary: no steps")
+        self.lbl_recipe_summary.setStyleSheet(
+            "background:#111827; border:1px solid #334155; border-radius:4px; "
+            "color:#cbd5e1; padding:4px 8px; font-size:11px;"
+        )
+        layout.addWidget(self.lbl_recipe_summary)
 
         # 2. Step Table
         self.table_steps = QTableWidget(0, 7)
@@ -549,6 +587,9 @@ class ProfileEditorWidget(QWidget):
         ])
         self.table_steps.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
         self.table_steps.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        self.table_steps.setAlternatingRowColors(True)
+        self.table_steps.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table_steps.itemChanged.connect(self._on_table_item_changed)
         self.table_steps.cellDoubleClicked.connect(self._on_cell_double_clicked)
         layout.addWidget(self.table_steps)
 
@@ -588,6 +629,18 @@ class ProfileEditorWidget(QWidget):
         self.btn_move_down.clicked.connect(lambda: self._move_step(1))
         btn_bar.addWidget(self.btn_move_down)
 
+        self.btn_duplicate_step = QPushButton("Duplicate Step")
+        self.btn_duplicate_step.clicked.connect(self._duplicate_step)
+        btn_bar.addWidget(self.btn_duplicate_step)
+
+        self.btn_insert_before = QPushButton("Insert Before")
+        self.btn_insert_before.clicked.connect(lambda: self._insert_step(-1))
+        btn_bar.addWidget(self.btn_insert_before)
+
+        self.btn_insert_after = QPushButton("Insert After")
+        self.btn_insert_after.clicked.connect(lambda: self._insert_step(1))
+        btn_bar.addWidget(self.btn_insert_after)
+
         btn_bar.addStretch()
         layout.addLayout(btn_bar)
 
@@ -616,6 +669,26 @@ class ProfileEditorWidget(QWidget):
         return CHEMISTRY_PRESETS.get(code, CHEMISTRY_PRESETS["CUSTOM"])
 
     def _on_chemistry_changed(self, index: int) -> None:
+        if (
+            self.current_recipe
+            and self._dirty
+            and self._editing_enabled
+            and index != self._last_chemistry_index
+            and self.isVisible()
+        ):
+            choice = QMessageBox.question(
+                self,
+                "Change Cell Chemistry",
+                "Changing chemistry may invalidate setpoints in this recipe. Continue and revalidate?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                self.combo_chemistry.blockSignals(True)
+                self.combo_chemistry.setCurrentIndex(self._last_chemistry_index)
+                self.combo_chemistry.blockSignals(False)
+                return
+        self._last_chemistry_index = index
         code = self.combo_chemistry.currentData()
         chem = CHEMISTRY_PRESETS.get(code, CHEMISTRY_PRESETS["CUSTOM"])
         self.lbl_chem_info.setText(
@@ -623,8 +696,40 @@ class ProfileEditorWidget(QWidget):
         )
         if self.current_recipe:
             self.current_recipe.chemistry = code
+            self._set_dirty(True)
             self._render_table()
             self.recipe_loaded.emit(self.current_recipe)
+
+    def _set_dirty(self, dirty: bool = True) -> None:
+        self._dirty = bool(dirty)
+        if self._dirty:
+            self.lbl_recipe_state.setText("Unsaved changes")
+            self.lbl_recipe_state.setStyleSheet("color: #fbbf24; font-weight: 700; padding-left: 6px;")
+        else:
+            self.lbl_recipe_state.setText("Saved")
+            self.lbl_recipe_state.setStyleSheet("color: #86efac; font-weight: 600; padding-left: 6px;")
+        self._update_recipe_summary()
+
+    def _on_table_item_changed(self, item: QTableWidgetItem) -> None:
+        if not self._rendering and self._editing_enabled:
+            self._set_dirty(True)
+
+    def set_editing_enabled(self, enabled: bool) -> None:
+        """Lock recipe editing while a test is running."""
+        self._editing_enabled = bool(enabled)
+        widgets = (
+            self.combo_presets, self.btn_load_file, self.btn_save_file, self.btn_new,
+            self.combo_chemistry, self.table_steps, self.btn_add_step, self.btn_edit_hw,
+            self.btn_edit_cutoffs, self.btn_del_step, self.btn_move_up,
+            self.btn_move_down, self.btn_duplicate_step,
+            self.btn_insert_before, self.btn_insert_after,
+        )
+        for widget in widgets:
+            widget.setEnabled(self._editing_enabled)
+        self.lbl_recipe_state.setToolTip(
+            "Recipe editing is locked while a test is running."
+            if not self._editing_enabled else "Recipe is ready to edit."
+        )
 
     def get_validation_errors(self) -> List[str]:
         if not self.current_recipe:
@@ -669,16 +774,20 @@ class ProfileEditorWidget(QWidget):
             self.combo_chemistry.blockSignals(True)
             self.combo_chemistry.setCurrentIndex(idx)
             self.combo_chemistry.blockSignals(False)
+            self._last_chemistry_index = idx
         chem = CHEMISTRY_PRESETS.get(chem_code, CHEMISTRY_PRESETS["CUSTOM"])
         self.lbl_chem_info.setText(
             f"Nominal: {chem.nominal_voltage:.1f}V | Safe Range: [{chem.min_voltage:.2f}V – {chem.max_voltage:.2f}V] | Max I: {chem.max_charge_current:.1f}A"
         )
         self._render_table()
+        self._set_dirty(False)
         self.recipe_loaded.emit(recipe)
 
     def _render_table(self) -> None:
+        self._rendering = True
         self.table_steps.setRowCount(0)
         if not self.current_recipe:
+            self._rendering = False
             return
 
         chem = self.active_chemistry
@@ -751,6 +860,27 @@ class ProfileEditorWidget(QWidget):
         self._validate_and_render_status()
         if hasattr(self, "preview_widget"):
             self.preview_widget.update_preview(self.current_recipe)
+        self._update_recipe_summary()
+        self._rendering = False
+
+    def _update_recipe_summary(self) -> None:
+        if not hasattr(self, "lbl_recipe_summary"):
+            return
+        if not self.current_recipe:
+            self.lbl_recipe_summary.setText("Recipe summary: no steps")
+            return
+        duration_s = 0.0
+        for step in self.current_recipe.steps:
+            duration_s += next(
+                (c.threshold for c in step.cutoffs if c.enabled and c.cutoff_type == CutoffType.DURATION_MAX and c.threshold > 0),
+                0.0,
+            )
+        cycles = next((s.loop_count for s in self.current_recipe.steps if s.step_type == StepType.LOOP), 1)
+        self.lbl_recipe_summary.setText(
+            f"Recipe: {self.current_recipe.recipe_name} · Chemistry: {self.active_chemistry.code} · "
+            f"{len(self.current_recipe.steps)} steps · ~{duration_s / 60.0:.1f} min/cycle · {cycles} cycle(s) · "
+            f"{'Modified' if self._dirty else 'Saved'}"
+        )
 
     def _format_hw_summary(self, step: TestStep) -> str:
         cell_str = f"Cell {getattr(step, 'cell_select', 1)}"
@@ -770,7 +900,7 @@ class ProfileEditorWidget(QWidget):
         elif step.step_type == StepType.REST:
             return f"OCV Rest ({cell_str})"
         elif step.step_type == StepType.LOOP:
-            return f"Loop -> Step {step.loop_target_step} ({step.loop_count}x)"
+            return f"Repeat from Step {step.loop_target_step} - {step.loop_count} cycles"
         return "--"
 
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
@@ -788,11 +918,13 @@ class ProfileEditorWidget(QWidget):
         step = self.current_recipe.steps[row]
         dlg = StepHardwareDialog(step, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._set_dirty(True)
             self._render_table()
             self.recipe_loaded.emit(self.current_recipe)
 
     def _on_type_changed(self, step: TestStep, val: str) -> None:
         step.step_type = StepType(val)
+        self._set_dirty(True)
         self._render_table()
 
     def _edit_cutoffs(self) -> None:
@@ -804,6 +936,7 @@ class ProfileEditorWidget(QWidget):
         step = self.current_recipe.steps[row]
         dlg = CutoffEditDialog(step, self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
+            self._set_dirty(True)
             self._render_table()
             self.recipe_loaded.emit(self.current_recipe)
 
@@ -820,6 +953,7 @@ class ProfileEditorWidget(QWidget):
             cutoffs=[CutoffCondition(CutoffType.DURATION_MAX, 60.0, True, "60s Rest")],
         )
         self.current_recipe.steps.append(new_s)
+        self._set_dirty(True)
         self._render_table()
         self.recipe_loaded.emit(self.current_recipe)
 
@@ -827,6 +961,7 @@ class ProfileEditorWidget(QWidget):
         row = self.table_steps.currentRow()
         if row >= 0 and self.current_recipe and len(self.current_recipe.steps) > row:
             self.current_recipe.steps.pop(row)
+            self._set_dirty(True)
             self._render_table()
             self.recipe_loaded.emit(self.current_recipe)
 
@@ -838,6 +973,7 @@ class ProfileEditorWidget(QWidget):
         if 0 <= new_row < len(self.current_recipe.steps):
             steps = self.current_recipe.steps
             steps[row], steps[new_row] = steps[new_row], steps[row]
+            self._set_dirty(True)
             self._render_table()
             self.table_steps.selectRow(new_row)
             self.recipe_loaded.emit(self.current_recipe)
@@ -866,6 +1002,39 @@ class ProfileEditorWidget(QWidget):
             ],
         )
         self._render_table()
+        self._set_dirty(True)
+        self.recipe_loaded.emit(self.current_recipe)
+
+    def _duplicate_step(self) -> None:
+        row = self.table_steps.currentRow()
+        if row < 0 or not self.current_recipe or row >= len(self.current_recipe.steps):
+            QMessageBox.information(self, "Select Step", "Please select a step to duplicate.")
+            return
+        source = self.current_recipe.steps[row]
+        duplicate = TestStep.from_dict(source.to_dict())
+        duplicate.name = f"{source.name} Copy"
+        self.current_recipe.steps.insert(row + 1, duplicate)
+        self._set_dirty(True)
+        self._render_table()
+        self.table_steps.selectRow(row + 1)
+        self.recipe_loaded.emit(self.current_recipe)
+
+    def _insert_step(self, direction: int) -> None:
+        if not self.current_recipe:
+            self._new_recipe()
+            return
+        row = self.table_steps.currentRow()
+        insert_at = len(self.current_recipe.steps) if row < 0 else max(0, row + (1 if direction > 0 else 0))
+        new_step = TestStep(
+            step_index=insert_at + 1,
+            name="New Rest",
+            step_type=StepType.REST,
+            cutoffs=[CutoffCondition(CutoffType.DURATION_MAX, 60.0, True, "60s Rest")],
+        )
+        self.current_recipe.steps.insert(insert_at, new_step)
+        self._set_dirty(True)
+        self._render_table()
+        self.table_steps.selectRow(insert_at)
         self.recipe_loaded.emit(self.current_recipe)
 
     def _browse_recipe(self) -> None:
@@ -884,6 +1053,7 @@ class ProfileEditorWidget(QWidget):
         if file_path:
             try:
                 self.current_recipe.save_json(file_path)
+                self._set_dirty(False)
                 QMessageBox.information(self, "Saved", f"Recipe saved to {file_path}")
                 self._refresh_presets()
             except Exception as exc:

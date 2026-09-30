@@ -342,6 +342,120 @@ The current implementation also includes the following long-run safeguards:
 - Asynchronous CSV logs rotate at 256 MB and stop accepting new records when free disk space falls below 1 GB, while emitting a critical warning.
 - Frozen builds store logs in the per-user `%LOCALAPPDATA%\Bytehound\SingleCellCycler\logs` directory instead of the protected Program Files directory.
 
+## GUI Audit Backlog — September 2026
+
+This section is the consolidated GUI review of the running application screenshots, the PySide6 widgets, and the existing headless UI/plot tests. It is an implementation backlog, not a claim that every item is currently missing.
+
+### P0 — Correctness and operator safety
+
+1. **Make all cell labels dynamic.** The V–Q chart currently displays a static `Cell Voltage`/Cell 1-style axis label even when Cell 2 is selected. Every chart axis, legend, hover HUD, export label, window title, and KPI should use the active cell number.
+2. **Lock recipe editing during a run.** Disable Add, Delete, Move, setpoint, cut-off, chemistry, and recipe-file controls while the engine is running or paused. Show `Recipe locked while test is running`.
+3. **Separate Stop Test from Emergency Stop.** Use amber for normal stop and reserved red for the immediate hardware emergency stop. Keep Emergency Stop fixed at the far right and make it visually dominant.
+4. **Add a persistent alarm banner.** Safety trips, communication loss, stale telemetry, high temperature, low disk, and webhook failures should remain visible until acknowledged, with timestamp and severity.
+5. **Prevent unsafe starts.** The Start button should remain disabled until connection, pre-flight, recipe validation, selected cell, and required telemetry freshness are all valid. Show the exact missing prerequisite on hover/click.
+
+### P1 — Main window, toolbar, and run context
+
+1. **Group the toolbar.** Organize controls into Connection, Cell, Test Control, Analysis/Export, and Safety groups; move lower-frequency actions into an overflow menu on narrow windows.
+2. **Add a run-context banner.** Show `RUNNING · BMS-ID · COM15 · Recipe · Cycle x/y · Step x/y · elapsed` above the tabs or beside the KPI cards.
+3. **Add a visible BMS identity badge.** Display the configured BMS Serial / Device ID next to the COM port. If it is only a USB/COM fallback, label it as such.
+4. **Add connection health indicators.** Show last packet age, RX/TX rate, reconnect count, baud, and the time of the last successful frame.
+5. **Add unsaved-state indicators.** Show `Saved`, `Modified`, or `Save failed` for recipes and webhook settings; warn before closing with unsaved changes.
+6. **Improve responsive toolbar behavior.** At 1366×768 and lower, prevent clipping by wrapping or collapsing controls, preserving Start/Stop and Emergency Stop visibility.
+7. **Make status colors consistent.** Use one semantic palette for connected, running, paused, warning, fault, stale, and disconnected states across toolbar, cards, tabs, and status bar.
+
+### P1 — KPI dashboard and status bar
+
+1. Add a stale-data indicator and last-update age to every KPI card.
+2. Use alarm thresholds to color the value, not only the small subtitle; include a clear normal/warning/critical legend.
+3. Show the active cell, recipe, step name, and test elapsed time in the Cycle / Step card.
+4. Add tooltips explaining SoC source (OCV vs coulomb counting), sign convention, and capacity/energy reset behavior.
+5. Make the KPI grid responsive: four columns on wide screens, two columns on medium screens, and a scrollable/compact layout on small screens.
+6. Keep the status bar stable instead of replacing important health values with transient TX messages. Put transient messages in a separate event stream.
+
+### P1 — Live charts
+
+1. Fix the V–Q dynamic axis/legend labels for Cell 1 vs Cell 2.
+2. Label curves explicitly, for example `Cell 2 · Active Step` and `Cell 2 · Historical Step`, rather than relying on color alone.
+3. Add 5–10% X-axis padding after the latest sample so the endpoint is not flush with the border.
+4. Add a color-blind-safe palette and line-style differences between active, historical, projected, and alarm-limit curves.
+5. Add a persistent chart toolbar for visibility toggles, fit, current step, current cycle, 1 minute, 10 minute, export image, and export CSV.
+6. Synchronize crosshair position, time readout, and active step across Voltage/Current and Temperature charts.
+7. Add a small event marker strip for step transitions, safety trips, reconnects, pauses, and webhook failures.
+8. Add a `Show last cycle` / `Clear history` control to prevent long runs from becoming visually crowded.
+9. Make the legend collapsible and allow curves to be muted without removing their data.
+10. Add explicit empty states: `Waiting for telemetry`, `Insufficient samples`, and `No completed cycle data` instead of a blank plot.
+
+### P1 — dQ/dV and aging analysis
+
+1. Display the selected cell, cycle, step type, smoothing grid, and sign convention in the dQ/dV header.
+2. Add a peak table listing voltage, dQ/dV, prominence, cycle, and charge/discharge direction; allow clicking a peak to center the chart.
+3. Explain the minimum-data and insufficient-voltage-span conditions directly in the chart empty state.
+4. Add cycle selection and overlay controls for historical dQ/dV curves.
+5. On aging plots, show model type, sample count, fit quality, confidence/uncertainty, and the EOL forecast basis.
+6. Distinguish measured, fitted, and projected aging curves by both color and line style.
+7. Add reset-zoom and export controls to every analysis tab.
+
+### P1 — Recipe Sequencer and profile preview
+
+1. Make the table/preview split draggable and allocate more vertical space to the step table by default.
+2. Widen Name and Cut-offs columns; allow horizontal scrolling rather than truncating hardware setpoints.
+3. Replace compressed loop text with `Repeat steps 1–4 · 15 cycles` and visually connect loop targets to their source rows.
+4. Add per-row validation icons for valid, warning, and invalid setpoints/cut-offs.
+5. Add `Duplicate Step`, `Insert Before`, and `Insert After` actions.
+6. Add a clear selected-row highlight and keyboard navigation for step editing.
+7. Make the preview hover readout show simulated time, voltage, current, step name, and cycle number.
+8. Show recipe name, chemistry, total estimated duration, total cycles, and modified/saved status in a compact summary strip.
+9. Require an explicit confirmation when changing chemistry or loading a different recipe over unsaved edits.
+
+### P1 — Execution Tracker and history
+
+1. Add search/filter by cycle, step, status, cutoff reason, and fault state.
+2. Freeze the Step and Status columns while horizontally scrolling detailed metrics.
+3. Add row status badges for active, completed, skipped, paused, failed, and safety-tripped.
+4. Add a selected-row detail pane with start/end timestamps, duration, capacity, energy, cutoff, and DCIR.
+5. Add export of the filtered tracker view and a `Jump to active step` action.
+
+### P1 — Manual Hardware Control and safety diagnostics
+
+1. Disable manual controls while disconnected and show why each disabled command is unavailable.
+2. Require confirmation for energizing relays/loads, but keep the emergency stop immediate.
+3. Show command acknowledgement, command age, and readback state beside every manual control.
+4. Add a prominent `Hardware safe / energized` state indicator.
+5. Make fault LEDs include first-seen time, last-seen time, latched/cleared state, and the recommended operator action.
+6. Add a one-click `Run pre-flight again` action and show per-check measured values, not only pass/fail.
+
+### P1 — Export, report, webhook, and dialogs
+
+1. Add progress and cancel controls to run export and report generation; show the output path as a clickable action.
+2. Add a summary before exporting: date range, cell, BMS ID, recipe, file count, and estimated archive size.
+3. Show the BMS Serial / Device ID and whether it is configured or fallback-derived in the webhook dialog.
+4. Mask webhook URLs/secrets in the UI and provide a clear test-ping result with HTTP status and timestamp.
+5. Standardize dialog widths, button order, keyboard shortcuts, validation banners, and error wording.
+6. Replace modal information popups for routine events with non-blocking toasts or the event log; reserve modal dialogs for safety and destructive actions.
+
+### P2 — Accessibility, scaling, and long-run ergonomics
+
+1. Make 11 pt the default font and preserve the existing 10–16 pt scaling options.
+2. Verify keyboard focus order, visible focus rings, Enter/Escape behavior, and shortcuts for Start/Pause/Stop/Fit/Export.
+3. Ensure all color-coded states also have text/icon labels for color-blind users.
+4. Test 100%, 125%, 150%, and 200% Windows display scaling without clipped buttons or truncated labels.
+5. Add a compact mode for long-duration unattended runs and a full mode for analysis.
+6. Add a persistent event log with severity filtering and bounded memory.
+7. Add a screen-reader-friendly accessible name and description for every critical control.
+
+### GUI verification checklist
+
+- Main window at 1366×768, 1920×1080, and 2560×1440.
+- Cell 1 and Cell 2 selected in every plot, title, legend, HUD, export, and alert.
+- Connected, disconnected, reconnecting, stale telemetry, paused, completed, and safety-trip states.
+- Empty/no-data, one-sample, completed-cycle, and multi-cycle plot states.
+- Recipe editing before a run, during a run, after pause, and with unsaved changes.
+- Manual control disconnected/connected/acknowledged/unacknowledged states.
+- Pre-flight pass, warning, failure, and rerun flows.
+- Webhook configured, unconfigured, fallback BMS ID, retry, and disabled states.
+- Font sizes 10–16 pt and Windows display scaling 100–200%.
+
 ---
 
 ## Execution Sequence
@@ -366,3 +480,34 @@ Phase 3: Sprint 3 (Certification & Automation - Pillar 4 & Advanced)
   ├── IMP-07: Capacity Degradation Trend Modeling
   └── IMP-13: Remote Lab Notifications (Webhooks)
 ```
+
+## GUI Implementation Update — September 2026
+
+Implemented in the current pass:
+
+- Dynamic Cell 1/Cell 2 identity in KPI cards and V-Q plot axis labels.
+- Recipe editor saved/unsaved state, duplicate-step action, alternating rows, row selection, and run-time edit lock.
+- Persistent run-context banner showing engine state, cell, port, recipe, step, and elapsed time.
+- BMS identity shown in the toolbar and used as the operator-facing webhook context.
+- Connection-health status with stale telemetry and reconnect attention states.
+- Safety panel last-telemetry and fault-latched timestamps.
+- Clear amber Stop Test styling separate from the red Emergency Stop control.
+- Larger recipe timeline preview for better schedule readability.
+
+Also implemented in the continuation pass:
+
+- Persistent alarm banner with acknowledge action for safety, stale telemetry, and low-disk conditions.
+- Start gating with visible prerequisite tooltip for connection, fresh telemetry, pre-flight, recipe validation, and safety reset.
+- KPI telemetry-age labels and 11 pt default UI font.
+- Keyboard shortcuts for Start/Stop, Pause/Resume, and Emergency Stop plus accessible names for critical controls.
+- dQ/dV context/insufficient-sample messaging, aging model/sample status, and automatic aging viewport framing.
+- Recipe Insert Before/After actions and summary strip with recipe, chemistry, duration, cycles, and saved/modified state.
+- Execution tracker filtering and Jump to Active Step control.
+- Filtered execution-tracker CSV export.
+- Compact unattended-run mode and bounded severity-filtered operator event log.
+- Manual hardware connection gating and confirmation before energizing relay, charge, discharge, or load controls.
+- Webhook URL masking, configured/fallback identity status, and modified/saved state.
+- Bounded live-chart event trail for step transitions, communication changes, pauses, and safety trips.
+- dQ/dV peak table dialog with voltage, differential capacity, prominence, cycle, and direction.
+
+Remaining validation/extension items: full Windows 100–200% DPI visual review and a full hardware GUI soak test. Core operator-safety, plotting, recipe, dialog, accessibility, tracker-detail, and long-run GUI controls are implemented and covered by focused smoke/test paths.

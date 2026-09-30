@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Dict
 
 from PySide6.QtCore import Qt
@@ -105,6 +106,9 @@ class SafetyPanelWidget(QWidget):
         self.lbl_trip_status = QLabel("SAFETY STATUS: ALL SYSTEMS NOMINAL")
         self.lbl_trip_status.setStyleSheet("color: #22c55e; font-weight: 700; font-size: 13px;")
         tf_layout.addWidget(self.lbl_trip_status)
+        self.lbl_last_fault = QLabel("Last telemetry: --")
+        self.lbl_last_fault.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
+        tf_layout.addWidget(self.lbl_last_fault)
         tf_layout.addStretch()
 
         self.btn_reset = QPushButton("Reset Safety Interlock")
@@ -116,6 +120,7 @@ class SafetyPanelWidget(QWidget):
         layout.addStretch()
 
     def update_faults(self, fault_soc: FaultSoCTelemetry) -> None:
+        self.lbl_last_fault.setText(f"Last telemetry: {datetime.now().strftime('%H:%M:%S')}")
         self.led_cov.set_active(fault_soc.cov)
         self.led_cuv.set_active(fault_soc.cuv)
         self.led_occ.set_active(fault_soc.occ)
@@ -124,6 +129,7 @@ class SafetyPanelWidget(QWidget):
         self.led_cut.set_active(fault_soc.cut)
 
     def set_tripped(self, reason: str) -> None:
+        self.lbl_last_fault.setText(f"Fault latched: {datetime.now().strftime('%H:%M:%S')}")
         self.lbl_trip_status.setText(f"SAFETY INTERLOCK TRIPPED: {reason}")
         self.lbl_trip_status.setStyleSheet(f"color: {COLOR_DANGER}; font-weight: 800; font-size: 13px;")
         self.trip_frame.setStyleSheet(f"background-color: #450a0a; border: 2px solid {COLOR_DANGER}; border-radius: 8px; padding: 10px;")

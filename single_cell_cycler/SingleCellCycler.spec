@@ -16,6 +16,10 @@ recipes_path = cycler_root / 'config' / 'recipes'
 if recipes_path.exists():
     datas.append((str(recipes_path), 'single_cell_cycler/config/recipes'))
 
+webhook_path = cycler_root / 'config' / 'webhook_settings.json'
+if webhook_path.exists():
+    datas.append((str(webhook_path), 'single_cell_cycler/config'))
+
 # Include branding if present
 branding_path = repo_root / 'branding'
 if branding_path.exists():
@@ -77,9 +81,9 @@ pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 exe = EXE(
     pyz,
     a.scripts,
-    a.binaries, a.zipfiles, a.datas,
-    exclude_binaries=False,
-    name='SingleCellCycler',
+    [],
+    exclude_binaries=True,
+    name='SingleCellBMSCycler',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -93,4 +97,13 @@ exe = EXE(
     icon=r'C:\Users\Shreyas\Documents\Python\Bytehound\branding\logo.ico',
 )
 
-# Onefile build completes at EXE
+coll = COLLECT(
+    exe,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name='SingleCellBMSCycler',
+)

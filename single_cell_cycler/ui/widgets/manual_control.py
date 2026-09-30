@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QMessageBox,
     QVBoxLayout,
     QWidget,
 )
@@ -77,6 +78,10 @@ class ManualControlWidget(QWidget):
         lbl_hdr.setStyleSheet("color: #64ffda; font-weight: 800; font-size: 12px; letter-spacing: 0.5px;")
         hdr_row.addWidget(lbl_hdr)
         hdr_row.addStretch()
+
+        self.lbl_connection_state = QLabel("Manual commands unavailable: connect to hardware")
+        self.lbl_connection_state.setStyleSheet("color:#fbbf24; font-weight:700; font-size:11px;")
+        hdr_row.addWidget(self.lbl_connection_state)
 
         btn_clear_unwanted = QPushButton("🧹 All Controls to Zero (Safe Idle)")
         btn_clear_unwanted.setToolTip("Sets all 5 control registers (0x6000 - 0x6004) to zero, clears loads, and disconnects cell relay")
@@ -276,6 +281,25 @@ class ManualControlWidget(QWidget):
         # Initial summaries
         self._update_relay_summary()
         self._update_chg_sel_summary()
+        self.set_connection_available(False)
+
+    def set_connection_available(self, connected: bool) -> None:
+        """Gate manual commands while preserving readback/status labels."""
+        connected = bool(connected)
+        self.lbl_connection_state.setText(
+            "Manual commands available" if connected else "Manual commands unavailable: connect to hardware"
+        )
+        self.lbl_connection_state.setStyleSheet(
+            f"color: {'#86efac' if connected else '#fbbf24'}; font-weight:700; font-size:11px;"
+        )
+        for widget in [
+            *self.findChildren(QPushButton),
+            *self.findChildren(QCheckBox),
+            *self.findChildren(QComboBox),
+        ]:
+            if widget is self.lbl_connection_state:
+                continue
+            widget.setEnabled(connected)
 
     # --------------------------------------------------------------------------
     # Live Readback Handler (CommandEchoTelemetry)
@@ -375,7 +399,19 @@ class ManualControlWidget(QWidget):
             val |= RelayControlBits.CELL_ENABLE
         if self.combo_cell_sel.currentData() == 1:
             val |= RelayControlBits.CELL_SELECT
+        if val & RelayControlBits.CELL_ENABLE and not self._confirm_energy_action("connect the selected cell relay"):
+            return
         self._command_sender(FRAME_RELAY_CTRL, val, 1)
+
+    def _confirm_energy_action(self, action: str) -> bool:
+        choice = QMessageBox.question(
+            self,
+            "Confirm Manual Hardware Action",
+            f"This will {action}. Continue?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        return choice == QMessageBox.StandardButton.Yes
 
     # --- Charge Select Helpers ---
     def _update_chg_sel_summary(self) -> None:
@@ -408,6 +444,8 @@ class ManualControlWidget(QWidget):
 
     def _send_chg_ctrl(self) -> None:
         val = ChargeControlBits.CHARGE_ENABLE if self.chk_chg_en.isChecked() else 0
+        if val and not self._confirm_energy_action("energize the charge control"):
+            return
         self._command_sender(FRAME_CHARGE_CTRL, val, 1)
 
     def _pulse_chg_comp(self) -> None:
@@ -415,6 +453,8 @@ class ManualControlWidget(QWidget):
         val_high = ChargeControlBits.CHARGE_COMPARATOR_RESET
         if self.chk_chg_en.isChecked():
             val_high |= ChargeControlBits.CHARGE_ENABLE
+        if self.chk_chg_en.isChecked() and not self._confirm_energy_action("energize the charge comparator"):
+            return
         self._command_sender(FRAME_CHARGE_CTRL, val_high, 0)
         # 50ms pulse duration before returning low
         val_low = ChargeControlBits.CHARGE_ENABLE if self.chk_chg_en.isChecked() else 0
@@ -422,6 +462,8 @@ class ManualControlWidget(QWidget):
 
     def _send_dis_ctrl(self) -> None:
         val = DischargeControlBits.DISCHARGE_ENABLE if self.chk_dis_en.isChecked() else 0
+        if val and not self._confirm_energy_action("energize the discharge control"):
+            return
         self._command_sender(FRAME_DISCHARGE_CTRL, val, 1)
 
     def _pulse_dis_comp(self) -> None:
@@ -429,6 +471,8 @@ class ManualControlWidget(QWidget):
         val_high = DischargeControlBits.DISCHARGE_COMPARATOR_RESET
         if self.chk_dis_en.isChecked():
             val_high |= DischargeControlBits.DISCHARGE_ENABLE
+        if self.chk_dis_en.isChecked() and not self._confirm_energy_action("energize the discharge comparator"):
+            return
         self._command_sender(FRAME_DISCHARGE_CTRL, val_high, 0)
         val_low = DischargeControlBits.DISCHARGE_ENABLE if self.chk_dis_en.isChecked() else 0
         QTimer.singleShot(50, lambda: self._command_sender(FRAME_DISCHARGE_CTRL, val_low, 1))
@@ -474,4 +518,6 @@ class ManualControlWidget(QWidget):
         if self.chk_load_2.isChecked(): val |= DischargeSelectBits.LOAD_2
         if self.chk_load_3.isChecked(): val |= DischargeSelectBits.LOAD_3
         if self.chk_load_4.isChecked(): val |= DischargeSelectBits.LOAD_4
+        if val and not self._confirm_energy_action("enable discharge loads"):
+            return
         self._command_sender(FRAME_DISCHARGE_SEL, val, 1)

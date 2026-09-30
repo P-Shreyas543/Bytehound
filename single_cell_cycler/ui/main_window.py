@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
@@ -11,7 +12,7 @@ from typing import Optional
 
 import serial.tools.list_ports
 from PySide6.QtCore import Qt, QTimer, QUrl
-from PySide6.QtGui import QDesktopServices, QFont, QIcon
+from PySide6.QtGui import QDesktopServices, QFont, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -21,11 +22,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QMainWindow,
     QMessageBox,
+    QPlainTextEdit,
     QPushButton,
     QSplitter,
     QStatusBar,
+    QSizePolicy,
     QTabWidget,
     QToolBar,
+    QToolButton,
+    QMenu,
     QVBoxLayout,
     QWidget,
 )
@@ -55,7 +60,7 @@ from ..core.state_journal import (
 from ..data.async_logger import AsyncTelemetryLogger
 from ..data.report_generator import generate_html_report
 from ..data.run_exporter import export_run_package
-from ..data.summary_writer import write_cycle_summary_csv, write_step_summary_csv
+from ..data.summary_writer import write_cycle_summary_csv, write_dqv_curves_csv, write_step_summary_csv
 from .theme import (
     BG_CARD,
     COLOR_ACCENT,
@@ -100,6 +105,8 @@ class MainWindow(QMainWindow):
         self._test_start_epoch: float = 0.0  # Unix epoch when START was pressed
         self._test_start_monotonic: float = 0.0  # monotonic clock for durations
         self._tick_elapsed_s: float = 0.0  # cached wall-clock elapsed duration
+        self._last_rx_monotonic: float = 0.0
+        self._reconnect_count: int = 0
         self.preflight_checker = PreflightSanityChecker()
         self._last_preflight_report: Optional[PreflightReport] = None
         self.webhook_notifier = WebhookNotifier()
@@ -109,6 +116,8 @@ class MainWindow(QMainWindow):
         self._wire_signals()
         self._refresh_com_ports()
         self._update_window_title()
+        self._update_start_gate()
+        self._update_toolbar_responsive()
 
         # 3. Deterministic 10 Hz UI + logging tick
         self._ui_tick_timer = QTimer(self)
@@ -162,6 +171,10 @@ class MainWindow(QMainWindow):
         self.combo_port = QComboBox()
         self.combo_port.setMinimumWidth(110)
         self.toolbar.addWidget(self.combo_port)
+        self.lbl_bms_identity = QLabel("BMS: USB/COM fallback")
+        self.lbl_bms_identity.setStyleSheet("color: #94a3b8; font-size: 11px; padding: 0 4px;")
+        self.lbl_bms_identity.setToolTip("BMS identity used in webhook alerts")
+        self.toolbar.addWidget(self.lbl_bms_identity)
 
         self.btn_refresh_ports = QPushButton("↻")
         self.btn_refresh_ports.setObjectName("btn_refresh")
@@ -178,6 +191,7 @@ class MainWindow(QMainWindow):
 
         self.btn_connect = QPushButton("Connect")
         self.btn_connect.setObjectName("btn_connect")
+        self.btn_connect.setAccessibleName("Serial connection toggle")
         self.btn_connect.clicked.connect(self._toggle_connection)
         self.toolbar.addWidget(self.btn_connect)
 
@@ -185,6 +199,7 @@ class MainWindow(QMainWindow):
         self.toolbar.addSeparator()
         self.toolbar.addWidget(QLabel("Cell: "))
         self.combo_active_cell = QComboBox()
+        self.combo_active_cell.setAccessibleName("Active BMS cell selector")
         self.combo_active_cell.addItem("Cell 1", 1)
         self.combo_active_cell.addItem("Cell 2", 2)
         self.combo_active_cell.setToolTip("Active cell relay position (0x6000 Bit 1: 0=Cell 1, 1=Cell 2)")
@@ -195,6 +210,7 @@ class MainWindow(QMainWindow):
         self.toolbar.addSeparator()
         self.btn_start_stop = QPushButton("▶  START TEST")
         self.btn_start_stop.setObjectName("btn_start")
+        self.btn_start_stop.setAccessibleName("Start or stop automated test")
         self.btn_start_stop.setToolTip("Start automated battery cycler test profile")
         self.btn_start_stop.clicked.connect(self._toggle_start_stop)
         self.toolbar.addWidget(self.btn_start_stop)
@@ -226,6 +242,7 @@ class MainWindow(QMainWindow):
             "14 pt (Extra Large)",
             "16 pt (Huge)",
         ])
+        self.combo_font.setCurrentIndex(1)
         self.combo_font.setToolTip("Adjust interface text and font size")
         self.combo_font.currentIndexChanged.connect(self._on_font_size_changed)
         self.toolbar.addWidget(self.combo_font)
@@ -234,6 +251,7 @@ class MainWindow(QMainWindow):
         self.btn_preflight = QPushButton("● Pre-Flight: Not Checked")
         self.btn_preflight.setObjectName("btn_preflight")
         self.btn_preflight.setToolTip("Click to view hardware sanity diagnostic report")
+        self.btn_preflight.setAccessibleName("Open pre-flight hardware diagnostic")
         self.btn_preflight.setStyleSheet(
             "background-color: #1e293b; color: #94a3b8; border: 1px solid #475569; "
             "font-weight: 700; border-radius: 12px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
@@ -245,6 +263,7 @@ class MainWindow(QMainWindow):
         self.btn_export_run = QPushButton("📦 Export Run")
         self.btn_export_run.setObjectName("btn_export_run")
         self.btn_export_run.setToolTip("Export complete diagnostic package (.zip) including CSVs, recipe, logs, and manifest")
+        self.btn_export_run.setAccessibleName("Export diagnostic run package")
         self.btn_export_run.setStyleSheet(
             "background-color: #1e293b; color: #38bdf8; border: 1px solid #0284c7; "
             "font-weight: 700; border-radius: 6px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
@@ -256,6 +275,7 @@ class MainWindow(QMainWindow):
         self.btn_report = QPushButton("📄 Test Report")
         self.btn_report.setObjectName("btn_report")
         self.btn_report.setToolTip("Generate formal battery test qualification certificate (HTML / PDF print)")
+        self.btn_report.setAccessibleName("Generate test report")
         self.btn_report.setStyleSheet(
             "background-color: #1e293b; color: #c084fc; border: 1px solid #9333ea; "
             "font-weight: 700; border-radius: 6px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
@@ -274,6 +294,33 @@ class MainWindow(QMainWindow):
         self.btn_webhook.clicked.connect(lambda: self.show_webhook_settings())
         self.toolbar.addWidget(self.btn_webhook)
 
+        self.btn_event_log = QPushButton("Event Log")
+        self.btn_event_log.setCheckable(True)
+        self.btn_event_log.setToolTip("Show or hide the bounded operator event log")
+        self.btn_event_log.clicked.connect(self._toggle_event_log)
+        self.toolbar.addWidget(self.btn_event_log)
+
+        self.btn_compact = QPushButton("Compact")
+        self.btn_compact.setCheckable(True)
+        self.btn_compact.setToolTip("Switch to compact unattended-run layout")
+        self.btn_compact.clicked.connect(self._set_compact_mode)
+        self.toolbar.addWidget(self.btn_compact)
+
+        self.btn_overflow = QToolButton()
+        self.btn_overflow.setText("More...")
+        self.btn_overflow.setToolTip("Additional diagnostics, export, report, and notification actions")
+        self.btn_overflow.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        overflow_menu = QMenu(self)
+        overflow_menu.addAction("Pre-flight Diagnostics", self.show_preflight_dialog)
+        overflow_menu.addAction("Export Run Package", self.export_run_bundle)
+        overflow_menu.addAction("Generate Test Report", self.generate_test_report)
+        overflow_menu.addAction("Webhook Settings", self.show_webhook_settings)
+        overflow_menu.addAction("Toggle Event Log", lambda: self.btn_event_log.click())
+        overflow_menu.addAction("Toggle Compact Mode", lambda: self.btn_compact.click())
+        self.btn_overflow.setMenu(overflow_menu)
+        self.btn_overflow.setVisible(False)
+        self.toolbar.addWidget(self.btn_overflow)
+
         # Spacer and Emergency Stop
         spacer = QWidget()
         spacer.setSizePolicy(
@@ -284,6 +331,7 @@ class MainWindow(QMainWindow):
 
         self.btn_estop = QPushButton("🛑 EMERGENCY STOP")
         self.btn_estop.setObjectName("btn_estop")
+        self.btn_estop.setAccessibleName("Emergency stop all hardware")
         self.btn_estop.clicked.connect(self._emergency_stop)
         self.toolbar.addWidget(self.btn_estop)
 
@@ -293,6 +341,31 @@ class MainWindow(QMainWindow):
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(10, 8, 10, 8)
         main_layout.setSpacing(6)
+
+        self.lbl_run_context = QLabel("Idle | Cell 1 | Waiting for connection")
+        self.lbl_run_context.setObjectName("run_context")
+        self.lbl_run_context.setStyleSheet(
+            "background-color: #111827; border: 1px solid #334155; border-radius: 4px; "
+            "color: #cbd5e1; padding: 5px 9px; font-weight: 600;"
+        )
+        main_layout.addWidget(self.lbl_run_context)
+
+        alarm_widget = QWidget()
+        alarm_layout = QHBoxLayout(alarm_widget)
+        alarm_layout.setContentsMargins(0, 0, 0, 0)
+        self.lbl_alarm_banner = QLabel()
+        self.lbl_alarm_banner.setWordWrap(True)
+        self.lbl_alarm_banner.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        alarm_layout.addWidget(self.lbl_alarm_banner)
+        self.btn_ack_alarm = QPushButton("Acknowledge")
+        self.btn_ack_alarm.setToolTip("Acknowledge the visible operator alarm")
+        self.btn_ack_alarm.clicked.connect(self._acknowledge_alarm)
+        self.btn_ack_alarm.setVisible(False)
+        alarm_layout.addWidget(self.btn_ack_alarm)
+        alarm_widget.setVisible(False)
+        self._alarm_widget = alarm_widget
+        self._alarm_severity = 0
+        main_layout.addWidget(alarm_widget)
 
         self.main_splitter = QSplitter(Qt.Orientation.Vertical)
         self.main_splitter.setChildrenCollapsible(False)
@@ -309,6 +382,30 @@ class MainWindow(QMainWindow):
         self.main_splitter.setStretchFactor(1, 1)
         self.main_splitter.setSizes([180, 680])
         main_layout.addWidget(self.main_splitter)
+
+        self.event_panel = QWidget()
+        event_layout = QVBoxLayout(self.event_panel)
+        event_layout.setContentsMargins(0, 0, 0, 0)
+        event_header = QHBoxLayout()
+        event_header.addWidget(QLabel("Operator Event Log"))
+        self.combo_event_severity = QComboBox()
+        self.combo_event_severity.addItems(["All severities", "Warnings and faults", "Faults only"])
+        self.combo_event_severity.currentIndexChanged.connect(self._refresh_event_log)
+        event_header.addWidget(self.combo_event_severity)
+        event_header.addStretch()
+        btn_clear_events = QPushButton("Clear")
+        btn_clear_events.clicked.connect(self._clear_event_log)
+        event_header.addWidget(btn_clear_events)
+        event_layout.addLayout(event_header)
+        self.event_text = QPlainTextEdit()
+        self.event_text.setReadOnly(True)
+        self.event_text.setMaximumBlockCount(300)
+        self.event_text.setMaximumHeight(120)
+        event_layout.addWidget(self.event_text)
+        self.event_panel.setVisible(False)
+        main_layout.addWidget(self.event_panel)
+        self._event_records: list[tuple[str, str, str]] = []
+        self._compact_mode = False
 
         # Tab 1: Live Plotting Suite
         self.live_plots = LivePlotWidget()
@@ -338,11 +435,25 @@ class MainWindow(QMainWindow):
         self.lbl_status_stats = QLabel("RX: 0 | TX: 0")
         self.lbl_status_ctrl = QLabel("Ctrl: Relay Disconn | Chg: OFF | Dis: OFF")
         self.lbl_status_log = QLabel("Log: Idle")
+        self.lbl_status_health = QLabel("Health: Waiting for telemetry")
+        self.lbl_status_output = QLabel("")
+        self.lbl_status_output.setOpenExternalLinks(False)
+        self.lbl_status_output.linkActivated.connect(lambda url: QDesktopServices.openUrl(QUrl(url)))
         self.statusBar.addPermanentWidget(self.lbl_status_comm)
         self.statusBar.addPermanentWidget(self.lbl_status_engine)
         self.statusBar.addPermanentWidget(self.lbl_status_ctrl)
         self.statusBar.addPermanentWidget(self.lbl_status_stats)
         self.statusBar.addPermanentWidget(self.lbl_status_log)
+        self.statusBar.addPermanentWidget(self.lbl_status_health)
+        self.statusBar.addPermanentWidget(self.lbl_status_output)
+
+        self._shortcut_start = QShortcut(QKeySequence("Ctrl+Shift+S"), self)
+        self._shortcut_start.activated.connect(self._toggle_start_stop)
+        self._shortcut_pause = QShortcut(QKeySequence("Ctrl+Shift+P"), self)
+        self._shortcut_pause.activated.connect(self._toggle_pause)
+        self._shortcut_estop = QShortcut(QKeySequence("Ctrl+Shift+E"), self)
+        self._shortcut_estop.activated.connect(self._emergency_stop)
+        self._update_toolbar_responsive()
 
     def _wire_signals(self) -> None:
         # Transceiver signals
@@ -409,18 +520,140 @@ class MainWindow(QMainWindow):
         configured = self.webhook_notifier.settings.bms_serial_number.strip()
         if configured:
             self.webhook_notifier.set_bms_serial_number(configured)
+            self.lbl_bms_identity.setText(f"BMS: {configured}")
             return
 
         port_info = next((item for item in serial.tools.list_ports.comports() if item.device == port), None)
         fallback = ""
         if port_info is not None:
             fallback = str(getattr(port_info, "serial_number", "") or "").strip()
-        self.webhook_notifier.set_bms_serial_number(fallback or port or "Unknown / not configured")
+        identity = fallback or port or "Unknown / not configured"
+        self.webhook_notifier.set_bms_serial_number(identity)
+        self.lbl_bms_identity.setText(f"BMS: {identity}")
 
     def _on_connection_changed(self, state: str, msg: str) -> None:
         self.lbl_status_comm.setText(f"Comm: {state}")
+        self.manual_control.set_connection_available(self.transceiver.isRunning())
+        self._append_event(f"Communication {state}: {msg}", "warning" if "fail" in msg.lower() else "info")
+        if "reconnect" in msg.lower() or "retry" in msg.lower():
+            self._reconnect_count += 1
         self.statusBar.showMessage(msg, 3000)
+        self.live_plots.add_event_marker(f"Comm {state}")
         self._update_window_title()
+        self._update_run_context()
+        self._update_start_gate()
+
+    def _set_alarm(self, message: str, severity: str = "warning") -> None:
+        """Keep important operator alarms visible until explicitly acknowledged."""
+        rank = {"warning": 1, "critical": 2}.get(severity, 1)
+        if rank < self._alarm_severity:
+            return
+        self._alarm_severity = rank
+        if severity == "critical":
+            style = "background:#450a0a; color:#fca5a5; border:2px solid #ef4444;"
+        else:
+            style = "background:#451a03; color:#fed7aa; border:1px solid #f59e0b;"
+        self.lbl_alarm_banner.setText(f"{('CRITICAL' if severity == 'critical' else 'WARNING')}: {message}")
+        self.lbl_alarm_banner.setStyleSheet(style + " border-radius:5px; padding:6px 10px; font-weight:700;")
+        self._alarm_widget.setVisible(True)
+        self.btn_ack_alarm.setVisible(True)
+
+    def _acknowledge_alarm(self) -> None:
+        self._alarm_severity = 0
+        self._alarm_widget.setVisible(False)
+        self.btn_ack_alarm.setVisible(False)
+
+    def _append_event(self, message: str, severity: str = "info") -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self._event_records.append((timestamp, severity, message))
+        self._event_records = self._event_records[-300:]
+        self._refresh_event_log()
+
+    def _set_output_path(self, path: Path) -> None:
+        uri = QUrl.fromLocalFile(str(path.resolve())).toString()
+        self.lbl_status_output.setText(f"Output: <a href=\"{uri}\">{path.name}</a>")
+        self.lbl_status_output.setToolTip(str(path.resolve()))
+
+    def _refresh_event_log(self) -> None:
+        if not hasattr(self, "event_text"):
+            return
+        selected = self.combo_event_severity.currentIndex()
+        lines = []
+        for timestamp, severity, message in self._event_records:
+            if selected == 1 and severity not in ("warning", "critical"):
+                continue
+            if selected == 2 and severity != "critical":
+                continue
+            lines.append(f"[{timestamp}] {severity.upper():8s} {message}")
+        self.event_text.setPlainText("\n".join(lines))
+        scrollbar = self.event_text.verticalScrollBar()
+        scrollbar.setValue(scrollbar.maximum())
+
+    def _clear_event_log(self) -> None:
+        self._event_records.clear()
+        self._refresh_event_log()
+
+    def _toggle_event_log(self, checked: bool) -> None:
+        self.event_panel.setVisible(bool(checked))
+
+    def _set_compact_mode(self, checked: bool) -> None:
+        """Reduce chrome for unattended runs while keeping live/safety tabs visible."""
+        self._compact_mode = bool(checked)
+        for index in (1, 2, 3):
+            self.tabs.setTabVisible(index, not self._compact_mode)
+        self.event_panel.setVisible(self._compact_mode or self.btn_event_log.isChecked())
+        if self._compact_mode:
+            self.main_splitter.setSizes([130, 760])
+            self.lbl_run_context.setToolTip("Compact unattended-run view")
+        else:
+            self.main_splitter.setSizes([180, 680])
+            self.lbl_run_context.setToolTip("")
+
+    def _update_toolbar_responsive(self) -> None:
+        """Collapse low-frequency toolbar actions into More... on narrow windows."""
+        if not hasattr(self, "btn_overflow"):
+            return
+        narrow = self.width() < 1550
+        for button in (
+            self.btn_preflight,
+            self.btn_export_run,
+            self.btn_report,
+            self.btn_webhook,
+            self.btn_event_log,
+            self.btn_compact,
+        ):
+            button.setVisible(not narrow)
+        self.btn_overflow.setVisible(narrow)
+
+    def resizeEvent(self, event) -> None:
+        self._update_toolbar_responsive()
+        super().resizeEvent(event)
+
+    def _update_start_gate(self) -> None:
+        """Enable Start only when the operator has a current safe-to-start context."""
+        if not hasattr(self, "btn_start_stop"):
+            return
+        running = self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION, EngineState.PAUSED)
+        if running:
+            self.btn_start_stop.setEnabled(True)
+            return
+        reasons: list[str] = []
+        if not self.transceiver.isRunning():
+            reasons.append("connect to a COM port")
+        age = time.monotonic() - self._last_rx_monotonic if self._last_rx_monotonic else None
+        if age is None or age > 5.0:
+            reasons.append("receive fresh telemetry")
+        if self._last_preflight_report is None or not self._last_preflight_report.passed:
+            reasons.append("pass pre-flight checks")
+        if self.profile_editor.get_validation_errors():
+            reasons.append("fix recipe safety violations")
+        if self.engine.safety_monitor.is_tripped:
+            reasons.append("reset the safety interlock")
+        self.btn_start_stop.setEnabled(not reasons)
+        self.btn_start_stop.setToolTip(
+            "Start automated battery cycler test profile"
+            if not reasons else "Start locked: " + ", ".join(reasons) + "."
+        )
 
     def _on_command_dispatch(self, frame_id: int, payload_byte: int, priority: int = 1) -> None:
         self.transceiver.send_command(frame_id, payload_byte, priority)
@@ -456,6 +689,15 @@ class MainWindow(QMainWindow):
         Actual plotting and logging are handled by the 10 Hz ``_on_ui_tick``.
         """
         self._last_cell_data = data
+        self._last_rx_monotonic = time.monotonic()
+        self._update_start_gate()
+        max_temp = max(float(data.terminal_temp), float(data.body_temp))
+        if max_temp >= 60.0:
+            self._set_alarm(f"Critical cell temperature: {max_temp:.1f} °C.", "critical")
+            self._append_event(f"Critical cell temperature {max_temp:.1f} °C", "critical")
+        elif max_temp >= 45.0:
+            self._set_alarm(f"High cell temperature: {max_temp:.1f} °C.", "warning")
+            self._append_event(f"High cell temperature {max_temp:.1f} °C", "warning")
         self.dashboard.update_cell_data(data)
         self.engine.on_cell_telemetry(data)
 
@@ -483,8 +725,13 @@ class MainWindow(QMainWindow):
     def _on_cell_selection_changed(self, index: int) -> None:
         cell_num = self.combo_active_cell.currentData()
         self.engine.selected_cell = cell_num
+        self.dashboard.set_cell_number(cell_num)
+        self.live_plots.set_relay_state(
+            self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION), cell_num
+        )
         logger.info(f"Active test cell set to: Cell {cell_num}")
         self._update_window_title()
+        self._update_run_context()
         # If test is actively running, update hardware relay connection immediately
         if self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION) and self.engine.active_step:
             self.engine._apply_hardware_for_step(self.engine.active_step)
@@ -566,9 +813,41 @@ class MainWindow(QMainWindow):
 
     def _on_stats_updated(self, rx: int, tx: int, err: int) -> None:
         self.lbl_status_stats.setText(f"RX: {rx} | TX: {tx} | Err: {err}")
+        age = time.monotonic() - self._last_rx_monotonic if self._last_rx_monotonic else None
+        self.dashboard.set_telemetry_age(age)
+        if age is None:
+            health = "Health: Waiting for telemetry"
+            color = "#94a3b8"
+        elif age > 5.0:
+            health = f"Health: STALE ({age:.0f}s)"
+            color = "#f87171"
+            self._set_alarm(f"Telemetry has been stale for {age:.0f} seconds.", "warning")
+            self._append_event(f"Telemetry stale for {age:.0f} seconds", "warning")
+        elif err > 0 or self._reconnect_count:
+            health = f"Health: Attention | reconnects {self._reconnect_count}"
+            color = "#fbbf24"
+        else:
+            health = "Health: Good"
+            color = "#86efac"
+        self.lbl_status_health.setText(health)
+        self.lbl_status_health.setStyleSheet(f"color: {color};")
+        try:
+            free_gb = shutil.disk_usage(DEFAULT_LOG_DIR).free / (1024 ** 3)
+            if free_gb < 1.0:
+                self.lbl_status_health.setText(f"Health: LOW DISK ({free_gb:.1f} GB free)")
+                self.lbl_status_health.setStyleSheet("color: #f87171; font-weight: 700;")
+                self._set_alarm(f"Only {free_gb:.1f} GB remains on the logging drive.", "critical")
+                self._append_event(f"Low disk space: {free_gb:.1f} GB free", "critical")
+        except OSError:
+            pass
+        self._update_run_context()
 
     def _on_recipe_loaded(self, recipe) -> None:
+        if self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION, EngineState.PAUSED):
+            logger.warning("Ignoring recipe reload request while a test is actively running.")
+            return
         self.engine.load_recipe(recipe)
+        self._update_start_gate()
 
     def _start_test(self) -> None:
         # Pre-flight check: Cell Chemistry Safety Guardrails (IMP-03)
@@ -636,9 +915,12 @@ class MainWindow(QMainWindow):
                 chemistry=chem_name,
                 steps_count=steps_cnt,
             )
-
             self._set_test_running_ui(True)
         except Exception as exc:
+            try:
+                self.logger.stop_session()
+            except Exception:
+                pass
             logger.error(f"[Test Start Exception] Failed to start test profile: {exc}", exc_info=True)
             if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
                 QMessageBox.critical(self, "Start Error", str(exc))
@@ -671,6 +953,9 @@ class MainWindow(QMainWindow):
             self.btn_pause.setText("⏸ Pause")
             self.btn_skip.setEnabled(False)
 
+        self.profile_editor.set_editing_enabled(not running)
+        self._update_run_context()
+
         # Force Qt stylesheet re-evaluation on dynamic objectName change
         self.btn_start_stop.style().unpolish(self.btn_start_stop)
         self.btn_start_stop.style().polish(self.btn_start_stop)
@@ -682,10 +967,12 @@ class MainWindow(QMainWindow):
         last_i = self._last_cell_data.current if self._last_cell_data else 0.0
         if self.engine.state == EngineState.RUNNING:
             self.engine.pause_test()
+            self.live_plots.add_event_marker("Paused")
             self.btn_pause.setText("▶ Resume")
             self.webhook_notifier.notify_test_paused(cell_id, st_name, last_v, last_i)
         elif self.engine.state == EngineState.PAUSED:
             self.engine.resume_test()
+            self.live_plots.add_event_marker("Resumed")
             self.btn_pause.setText("⏸ Pause")
             self.webhook_notifier.notify_test_resumed(cell_id, st_name, last_v, last_i)
 
@@ -705,11 +992,15 @@ class MainWindow(QMainWindow):
     def _on_reset_safety(self) -> None:
         self.engine.safety_monitor.reset_safety()
         self.engine._set_state(EngineState.IDLE, "Safety Interlock Reset")
+        self._update_start_gate()
 
     def _on_safety_tripped(self, reason: str) -> None:
         import os
         logger.critical(f"[SAFETY INTERLOCK TRIPPED] Reason: {reason}")
         self.safety_panel.set_tripped(reason)
+        self._set_alarm(reason, "critical")
+        self._append_event(reason, "critical")
+        self.live_plots.add_event_marker("SAFETY TRIP")
         self._finish_ui_session(f"SAFETY TRIP: {reason}")
 
         # Dispatch immediate critical alert to remote webhook (IMP-13)
@@ -735,10 +1026,15 @@ class MainWindow(QMainWindow):
         if step_idx == 1 and cycle_idx == 1:
             self.live_plots.reset_all()
         self.live_plots.notify_step_started(cycle_idx, step_idx, stype)
-        self.live_plots.reset_step_vq()
 
     def _on_step_completed(self, metrics: StepMetrics) -> None:
         self.tracker_table.add_completed_step(metrics)
+        stype = metrics.step_type.value if hasattr(metrics.step_type, "value") else str(metrics.step_type)
+        self.live_plots.reset_step_vq(
+            step_type=stype,
+            cycle_idx=metrics.cycle_index,
+            step_idx=metrics.step_index,
+        )
 
         # Dispatch step transition card to remote webhook (IMP-13)
         cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
@@ -785,7 +1081,7 @@ class MainWindow(QMainWindow):
 
         # Dispatch cycle summary card to remote webhook (IMP-13)
         cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
-        tot_cycles = self.engine.recipe.cycles if self.engine.recipe else summary.cycle_index
+        tot_cycles = getattr(self.engine.recipe, "total_cycles", getattr(self.engine.recipe, "cycles", summary.cycle_index)) if self.engine.recipe else summary.cycle_index
         dcir_val = summary.dcir_10s_mohm if summary.dcir_10s_mohm is not None else summary.dcir_mohm
         self.webhook_notifier.notify_cycle_completed(
             cell_id=cell_id,
@@ -825,6 +1121,25 @@ class MainWindow(QMainWindow):
     def _on_engine_state_changed(self, state: str, msg: str) -> None:
         self.lbl_status_engine.setText(f"Engine: {state}")
         self.statusBar.showMessage(msg, 3000)
+        self._append_event(msg, "critical" if "safety" in msg.lower() or "fault" in msg.lower() else "info")
+        self._update_run_context()
+
+    def _update_run_context(self) -> None:
+        """Show the operator-facing context needed to interpret live data."""
+        if not hasattr(self, "lbl_run_context"):
+            return
+        cell = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
+        port = self.combo_port.currentData() if hasattr(self, "combo_port") else ""
+        state = getattr(self.engine.state, "value", str(self.engine.state))
+        recipe = self.engine.recipe.recipe_name if self.engine.recipe else "No recipe"
+        step = self.engine.active_step.name if self.engine.active_step else "Idle"
+        elapsed = self._current_test_elapsed_s()
+        minutes, seconds = divmod(int(elapsed), 60)
+        connection = port if self.transceiver.isRunning() and port else "Disconnected"
+        self.lbl_run_context.setText(
+            f"{state} | Cell {cell} | {connection} | {recipe} | Step: {step} | Elapsed: {minutes:02d}:{seconds:02d}"
+        )
+        self.dashboard.set_run_context(cell, recipe, step, elapsed)
 
     def _current_test_elapsed_s(self) -> float:
         """Return elapsed test time from a monotonic clock, avoiding UI-timer drift."""
@@ -844,6 +1159,9 @@ class MainWindow(QMainWindow):
         if self.engine.metrics_tracker.cycle_summaries:
             csum_path = DEFAULT_LOG_DIR / f"summary_cycles_{int(self.engine.metrics_tracker.total_test_start_time)}.csv"
             write_cycle_summary_csv(csum_path, self.engine.metrics_tracker.cycle_summaries)
+        if self.engine.metrics_tracker.dqv_profiles:
+            dqv_path = DEFAULT_LOG_DIR / f"summary_dqv_{int(self.engine.metrics_tracker.total_test_start_time)}.csv"
+            write_dqv_curves_csv(dqv_path, self.engine.metrics_tracker.dqv_profiles)
 
         self._set_test_running_ui(False)
 
@@ -863,6 +1181,17 @@ class MainWindow(QMainWindow):
                 logger.info(f"Scaled UI Font Size to {pt} pt ({px} px)")
 
     def closeEvent(self, event) -> None:
+        if getattr(self.profile_editor, "_dirty", False) and self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+            choice = QMessageBox.question(
+                self,
+                "Unsaved Recipe Changes",
+                "The current recipe has unsaved changes. Close without saving?",
+                QMessageBox.StandardButton.Close | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.Cancel,
+            )
+            if choice != QMessageBox.StandardButton.Close:
+                event.ignore()
+                return
         logger.info("Application closing: resetting all hardware controls (0x6000 - 0x6004) to 0...")
         if self.engine.state in (EngineState.RUNNING, EngineState.STEP_TRANSITION, EngineState.PAUSED):
             self.engine.stop_test()
@@ -995,6 +1324,7 @@ class MainWindow(QMainWindow):
         )
         self._last_preflight_report = report
         self._update_preflight_ui()
+        self._update_start_gate()
         return report
 
     def _update_preflight_ui(self) -> None:
@@ -1067,6 +1397,7 @@ class MainWindow(QMainWindow):
 
             msg = f"Exported diagnostic package: {zip_path.name}"
             self.statusBar.showMessage(msg, 5000)
+            self._set_output_path(zip_path)
             logger.info(f"[Run Exporter] Package saved to {zip_path}")
 
             if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
@@ -1119,6 +1450,7 @@ class MainWindow(QMainWindow):
             )
 
             self.statusBar.showMessage(f"Test report generated: {rep_path.name}", 5000)
+            self._set_output_path(rep_path)
             logger.info(f"[Report Generator] Generated certificate at {rep_path}")
 
             if auto_open and self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":

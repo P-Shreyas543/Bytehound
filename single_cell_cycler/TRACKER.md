@@ -132,3 +132,15 @@ Key Objectives:
 | Windows release | PyInstaller onedir build, Inno Setup installer, release ZIP | Build completed successfully for v1.2.3 |
 
 The current package is suitable for controlled pilot use. Complete a real-device 24–72 hour soak test and enter the actual BMS serial number before unattended production deployment.
+
+## 5. GUI Improvement Backlog
+
+The complete GUI audit is maintained in [`improvements.md`](improvements.md) under **GUI Audit Backlog — September 2026**. The highest-priority items are:
+
+1. Correct the V–Q axis and legend labels so Cell 1/Cell 2 is always accurate.
+2. Lock recipe editing while a run is active and add an unsaved-recipe indicator.
+3. Separate normal Stop Test styling from the red Emergency Stop control.
+4. Add a persistent run-context banner with BMS ID, recipe, cycle, step, and elapsed time.
+5. Add connection health, stale-data, alarm, and low-disk indicators.
+6. Improve chart legend clarity, endpoint padding, empty states, event markers, and long-run history controls.
+7. Improve responsive sizing, keyboard accessibility, and 100–200% display-scaling behavior.

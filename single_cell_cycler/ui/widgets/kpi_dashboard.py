@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QVBoxLayout,
+    QSizePolicy,
     QWidget,
 )
 
@@ -49,6 +50,7 @@ class KPICard(QFrame):
                 padding: 10px;
             }}
         """)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 10, 12, 10)
@@ -56,6 +58,7 @@ class KPICard(QFrame):
 
         # Title
         self.lbl_title = QLabel(title.upper())
+        self.lbl_title.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.lbl_title.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; font-weight: 700; letter-spacing: 0.5px;")
         layout.addWidget(self.lbl_title)
 
@@ -63,6 +66,7 @@ class KPICard(QFrame):
         val_row = QHBoxLayout()
         val_row.setSpacing(6)
         self.lbl_value = QLabel(initial_value)
+        self.lbl_value.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.lbl_value.setStyleSheet(f"color: {accent_color}; font-size: 26px; font-weight: 800; font-family: 'Consolas', monospace;")
         val_row.addWidget(self.lbl_value)
 
@@ -75,8 +79,15 @@ class KPICard(QFrame):
 
         # Subtitle / Status
         self.lbl_sub = QLabel(subtitle)
+        self.lbl_sub.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.lbl_sub.setWordWrap(True)
         self.lbl_sub.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
         layout.addWidget(self.lbl_sub)
+
+        self.lbl_age = QLabel("No telemetry")
+        self.lbl_age.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.lbl_age.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
+        layout.addWidget(self.lbl_age)
 
     def set_title(self, title: str) -> None:
         self.lbl_title.setText(title.upper())
@@ -87,6 +98,16 @@ class KPICard(QFrame):
             self.lbl_sub.setText(sub_str)
         if color is not None:
             self.lbl_value.setStyleSheet(f"color: {color}; font-size: 26px; font-weight: 800; font-family: 'Consolas', monospace;")
+
+    def set_age(self, age_s: float | None) -> None:
+        if age_s is None:
+            text, color = "No telemetry", TEXT_MUTED
+        elif age_s > 5.0:
+            text, color = f"Telemetry stale · {age_s:.1f}s ago", COLOR_DANGER
+        else:
+            text, color = f"Updated {age_s:.1f}s ago", TEXT_MUTED
+        self.lbl_age.setText(text)
+        self.lbl_age.setStyleSheet(f"color: {color}; font-size: 10px;")
 
 
 class KPIDashboard(QWidget):
@@ -134,6 +155,49 @@ class KPIDashboard(QWidget):
         # Card 8: Cycle & Step Status
         self.card_cycle_kpi = KPICard("Cycle / Step", "Cycle 1", "", "Step: Idle", COLOR_ACCENT)
         layout.addWidget(self.card_cycle_kpi, 1, 3)
+        self._grid_layout = layout
+        self._cards = [
+            self.card_voltage, self.card_current, self.card_temp, self.card_soc,
+            self.card_step_cap, self.card_tot_cap, self.card_bus, self.card_cycle_kpi,
+        ]
+        self._last_columns = 4
+        self.card_soc.setToolTip("SoC sources: displayed OCV and coulomb-counting values from the BMS.")
+        self.card_current.setToolTip("Positive current is charging; negative current is discharging.")
+        self.card_step_cap.setToolTip("Capacity and energy accumulated since the current step began.")
+        self.card_tot_cap.setToolTip("Cumulative charge/discharge throughput for this test session.")
+
+    def set_cell_number(self, cell_num: int) -> None:
+        """Make the live KPI identity explicit when the active relay changes."""
+        cell = 2 if int(cell_num) == 2 else 1
+        self.card_voltage.set_title(f"Cell {cell} Voltage")
+        self.card_current.set_title(f"Cell {cell} Current")
+        self.card_temp.set_title(f"Cell {cell} Temp")
+
+    def set_telemetry_age(self, age_s: float | None) -> None:
+        """Show freshness without overwriting the metric-specific subtitle."""
+        for card in (self.card_voltage, self.card_current, self.card_temp, self.card_soc):
+            card.set_age(age_s)
+
+    def set_run_context(self, cell_num: int, recipe: str, step_name: str, elapsed_s: float) -> None:
+        minutes, seconds = divmod(int(max(0.0, elapsed_s)), 60)
+        current = self.card_cycle_kpi.lbl_value.text()
+        self.card_cycle_kpi.set_title(f"Cell {int(cell_num)} · Cycle / Step")
+        self.card_cycle_kpi.set_value(
+            current,
+            f"{recipe} · {step_name} · {minutes:02d}:{seconds:02d}",
+        )
+
+    def resizeEvent(self, event) -> None:
+        """Reflow KPI cards for wide, medium, and compact window widths."""
+        width = self.width()
+        columns = 4 if width >= 1180 else 2 if width >= 700 else 1
+        if columns != self._last_columns:
+            for card in self._cards:
+                self._grid_layout.removeWidget(card)
+            for index, card in enumerate(self._cards):
+                self._grid_layout.addWidget(card, index // columns, index % columns)
+            self._last_columns = columns
+        super().resizeEvent(event)
 
     def update_cell_data(self, data: CellDataTelemetry) -> None:
         # Voltage

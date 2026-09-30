@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Optional
 
 from PySide6.QtCore import Qt
@@ -103,8 +104,18 @@ class WebhookSettingsDialog(QDialog):
         form.addRow("Status:", self.chk_enable)
 
         self.edit_url = QLineEdit()
+        self.edit_url.setEchoMode(QLineEdit.EchoMode.Password)
         self.edit_url.setPlaceholderText("https://discord.com/api/webhooks/... or https://hooks.slack.com/...")
-        form.addRow("Webhook URL:", self.edit_url)
+        url_row = QHBoxLayout()
+        url_row.addWidget(self.edit_url)
+        self.chk_show_url = QCheckBox("Show")
+        self.chk_show_url.toggled.connect(
+            lambda visible: self.edit_url.setEchoMode(
+                QLineEdit.EchoMode.Normal if visible else QLineEdit.EchoMode.Password
+            )
+        )
+        url_row.addWidget(self.chk_show_url)
+        form.addRow("Webhook URL:", url_row)
 
         self.edit_operator = QLineEdit()
         self.edit_operator.setPlaceholderText("e.g. Lead Metrologist / Station A")
@@ -116,6 +127,10 @@ class WebhookSettingsDialog(QDialog):
             "Identifier included in every alert. The current telemetry protocol does not expose a BMS serial frame."
         )
         form.addRow("BMS Serial / ID:", self.edit_bms_serial)
+
+        self.lbl_identity_state = QLabel("Identity: USB/COM fallback")
+        self.lbl_identity_state.setStyleSheet("color:#fbbf24; font-size:11px;")
+        form.addRow("Identity status:", self.lbl_identity_state)
 
         layout.addLayout(form)
 
@@ -141,6 +156,10 @@ class WebhookSettingsDialog(QDialog):
         self.lbl_status.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.lbl_status.setStyleSheet("font-size: 11px; padding: 4px; border-radius: 4px;")
         layout.addWidget(self.lbl_status)
+
+        self.lbl_settings_state = QLabel("Saved")
+        self.lbl_settings_state.setStyleSheet("color:#86efac; font-size:11px;")
+        layout.addWidget(self.lbl_settings_state)
 
         # Buttons
         btn_layout = QHBoxLayout()
@@ -185,6 +204,28 @@ class WebhookSettingsDialog(QDialog):
         self.chk_estop.setChecked(s.notify_emergency_stop)
         self.chk_trip.setChecked(s.notify_safety_trip)
         self.chk_done.setChecked(s.notify_test_completed)
+        self._update_identity_state()
+        for widget in [*self.findChildren(QLineEdit), *self.findChildren(QCheckBox)]:
+            if widget is self.chk_show_url:
+                continue
+            if isinstance(widget, QLineEdit):
+                widget.textChanged.connect(self._mark_modified)
+            else:
+                widget.toggled.connect(self._mark_modified)
+
+    def _mark_modified(self, *args) -> None:
+        self.lbl_settings_state.setText("Modified — save to apply")
+        self.lbl_settings_state.setStyleSheet("color:#fbbf24; font-size:11px;")
+        self._update_identity_state()
+
+    def _update_identity_state(self) -> None:
+        configured = bool(self.edit_bms_serial.text().strip())
+        self.lbl_identity_state.setText(
+            "Identity: configured BMS serial/ID" if configured else "Identity: USB/COM fallback"
+        )
+        self.lbl_identity_state.setStyleSheet(
+            f"color:{'#86efac' if configured else '#fbbf24'}; font-size:11px;"
+        )
 
     def _on_ping(self) -> None:
         url = self.edit_url.text().strip()
@@ -223,4 +264,6 @@ class WebhookSettingsDialog(QDialog):
         self.settings.notify_safety_trip = self.chk_trip.isChecked()
         self.settings.notify_test_completed = self.chk_done.isChecked()
         self.settings.save()
+        self.lbl_settings_state.setText("Saved")
+        self.lbl_settings_state.setStyleSheet("color:#86efac; font-size:11px;")
         self.accept()

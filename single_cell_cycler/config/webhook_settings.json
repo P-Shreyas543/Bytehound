@@ -1,5 +1,5 @@
 {
-  "url": "https://discord.com/api/webhooks/1554409170881478696/8mKrBjLtwhXwXpRdP-N_0nx7WguT2Xvbwa_En8A-ADMI7j_cAEGDS7YlcQzsBVZRwCBN",
+  "url": "https://hooks.slack.com/services/XYZ",
   "enabled": true,
   "notify_test_started": true,
   "notify_step_completed": true,
@@ -8,6 +8,6 @@
   "notify_test_completed": true,
   "notify_test_paused_resumed": true,
   "notify_emergency_stop": true,
-  "operator_tag": "Shreyas P",
+  "operator_tag": "Lead Engineer Bob",
   "bms_serial_number": "BMS-LAB-001"
 }

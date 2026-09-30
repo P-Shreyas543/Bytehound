@@ -113,3 +113,74 @@ def test_aging_tab_reset_all(qapp):
     assert len(widget._cycle_q_dis) == 0
     assert len(widget._cycle_dcir) == 0
     assert not widget.line_aging_eol.isVisible()
+
+
+def test_vq_curve_rest_exclusion_and_charge_discharge_styling(qapp):
+    from single_cell_cycler.comm.packet_codec import CellDataTelemetry
+    widget = LivePlotWidget()
+    widget.set_relay_state(True, cell_num=1)
+
+    # 1. Rest Step: must be ignored by V-Q buffers
+    widget.notify_step_started(cycle_idx=1, step_idx=1, step_type="Rest")
+    for sec in range(20):
+        widget.add_telemetry(CellDataTelemetry(voltage=3.85, current=0.0, terminal_temp=25.0, body_temp=25.0, timestamp=float(sec)), step_mah=0.0)
+    assert len(widget._vq_cap) == 0
+    assert len(widget._vq_volt) == 0
+    widget.reset_step_vq()
+    assert len(widget._vq_history_curves) == 0  # No vertical line archived!
+
+    # 2. Charge Step: populated and styled as Charge
+    widget.notify_step_started(cycle_idx=1, step_idx=2, step_type="Charge")
+    for sec in range(30):
+        widget.add_telemetry(CellDataTelemetry(voltage=3.0 + sec * 0.04, current=1.5, terminal_temp=25.0, body_temp=25.0, timestamp=float(20 + sec)), step_mah=sec * 30.0)
+    assert len(widget._vq_cap) == 30
+    widget.tabs.setCurrentIndex(2)
+    widget._render_tab(2, force=True)
+    assert widget.curve_vq_current.isVisible()
+
+    widget.reset_step_vq()
+    assert len(widget._vq_history_curves) == 1
+    assert len(widget._vq_cap) == 0
+
+    # 3. Discharge Step: populated and styled as Discharge
+    widget.notify_step_started(cycle_idx=1, step_idx=3, step_type="Discharge")
+    for sec in range(30):
+        widget.add_telemetry(CellDataTelemetry(voltage=4.2 - sec * 0.04, current=-1.5, terminal_temp=25.0, body_temp=25.0, timestamp=float(50 + sec)), step_mah=sec * 30.0)
+    widget.reset_step_vq()
+    assert len(widget._vq_history_curves) == 2
+
+    # Auto-fit V-Q view does not crash and properly bounds window
+    widget.fit_vq_view()
+    y_range = widget.plot_vq.viewRange()[1]
+    assert y_range[0] >= 0.0
+    assert y_range[1] <= 6.0
+
+    # 4. Clear History
+    widget.clear_chart_history()
+    assert len(widget._vq_history_curves) == 0
+
+
+def test_aging_tab_outlier_efficiency_and_single_dcir_framing(qapp):
+    widget = LivePlotWidget()
+
+    # Cycle 1: unconditioned with CE = 260.4% (charge 969 mAh, discharge 2523 mAh) and DCIR = 56.01 mOhm
+    widget.add_cycle_summary(1, discharge_mah=2523.87, coulombic_eff=260.4, charge_mah=969.22, energy_eff=231.34, dcir_mohm=56.01)
+    # Cycle 2: normal CE = 99.98% and no DCIR measurement
+    widget.add_cycle_summary(2, discharge_mah=2522.35, coulombic_eff=99.98, charge_mah=2522.97, energy_eff=94.72, dcir_mohm=None)
+
+    widget.fit_aging_view()
+
+    # 1. Efficiency Y range must adapt and not clip 260.4%
+    eff_y_range = widget.plot_aging_eff.viewRange()[1]
+    assert eff_y_range[1] >= 260.0, f"Expected Y-max >= 260.0, got {eff_y_range[1]}"
+
+    # 2. DCIR ViewBox must handle 1 data point without zero-range failure
+    dcir_y_range = widget.view_aging_dcir.viewRange()[1]
+    assert dcir_y_range[1] > dcir_y_range[0], "DCIR Y range must have positive span"
+    assert dcir_y_range[0] <= 56.01 <= dcir_y_range[1]
+
+    # 3. Capacity plot must frame around ~2000-2600 mAh, not 0 to 50,000
+    cap_y_range = widget.plot_aging_cap.viewRange()[1]
+    assert cap_y_range[0] >= 1800.0, f"Expected capacity Y-min around ~1900-2000, got {cap_y_range[0]}"
+    assert cap_y_range[1] <= 2800.0, f"Expected capacity Y-max around ~2600-2700, got {cap_y_range[1]}"
+

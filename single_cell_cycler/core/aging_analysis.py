@@ -117,12 +117,18 @@ def fit_capacity_degradation(
     # Generate projection trajectory
     last_cyc = int(c_valid[-1])
     target_end_cyc = min(n_eol + 10 if n_eol else last_cyc + 30, max_forecast_cycles)
-    if target_end_cyc > last_cyc:
+    if target_end_cyc > last_cyc and slope < 0:
         proj_cycles = np.arange(1, target_end_cyc + 1, dtype=float)
         if model == "exponential":
             proj_capacities = np.exp(slope * proj_cycles + intercept)
         else:
             proj_capacities = slope * proj_cycles + intercept
+
+        # Clip projected capacities to physical floor (don't project below 90% of EOL)
+        min_phys = max(0.0, q_eol * 0.90)
+        valid_mask = proj_capacities >= min_phys
+        proj_cycles = proj_cycles[valid_mask]
+        proj_capacities = proj_capacities[valid_mask]
     else:
         proj_cycles = np.array([], dtype=float)
         proj_capacities = np.array([], dtype=float)

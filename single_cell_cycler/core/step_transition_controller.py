@@ -648,6 +648,10 @@ class StepTransitionController(QObject):
         rb_sel = self.control_readbacks.get(FRAME_DISCHARGE_SEL, 0)
 
         if (rb_chg != 0 or rb_dis != 0 or rb_sel != 0) and not self.auto_ack:
+            if self._in_phase_retries < 3:
+                self._in_phase_retries += 1
+                self._schedule_next(100, self._verify_rest_complete)
+                return
             self._repeat_step_due_to_misalignment(
                 f"Rest readbacks not clear: Chg=0x{rb_chg:02X}, Dis=0x{rb_dis:02X}, Sel=0x{rb_sel:02X}"
             )

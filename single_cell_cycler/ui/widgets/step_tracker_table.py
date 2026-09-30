@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import time
+import csv
+from pathlib import Path
 from typing import Optional
 
 from PySide6.QtCore import Qt, QTimer
@@ -12,6 +14,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QLineEdit,
+    QFileDialog,
+    QPushButton,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -141,6 +146,21 @@ class StepTrackerTableWidget(QWidget):
 
         layout.addWidget(self.banner)
 
+        filter_row = QHBoxLayout()
+        self.edit_filter = QLineEdit()
+        self.edit_filter.setPlaceholderText("Filter cycle, step, status, cutoff, or fault...")
+        self.edit_filter.setClearButtonEnabled(True)
+        self.edit_filter.textChanged.connect(self._filter_rows)
+        filter_row.addWidget(self.edit_filter, stretch=1)
+        self.btn_jump_active = QPushButton("Jump to Active Step")
+        self.btn_jump_active.setToolTip("Scroll to the latest tracker entry")
+        self.btn_jump_active.clicked.connect(self.jump_to_active_step)
+        filter_row.addWidget(self.btn_jump_active)
+        self.btn_export_filtered = QPushButton("Export Filtered CSV")
+        self.btn_export_filtered.clicked.connect(self.export_filtered_csv)
+        filter_row.addWidget(self.btn_export_filtered)
+        layout.addLayout(filter_row)
+
         # ------------------------------------------------------------------ #
         # History Table                                                        #
         # ------------------------------------------------------------------ #
@@ -171,6 +191,15 @@ class StepTrackerTableWidget(QWidget):
 
         layout.addWidget(self.table)
 
+        self.lbl_selected_detail = QLabel("Select a completed step to inspect its details.")
+        self.lbl_selected_detail.setWordWrap(True)
+        self.lbl_selected_detail.setStyleSheet(
+            f"background:{BG_CARD}; border:1px solid {BORDER_COLOR}; border-radius:5px; "
+            f"color:{TEXT_SECONDARY}; padding:5px 8px; font-size:11px;"
+        )
+        self.table.itemSelectionChanged.connect(self._update_selected_detail)
+        layout.addWidget(self.lbl_selected_detail)
+
         # ------------------------------------------------------------------ #
         # Clock update timer (500ms is optimal for 1-second resolution clocks) #
         # ------------------------------------------------------------------ #
@@ -199,6 +228,61 @@ class StepTrackerTableWidget(QWidget):
         self.step_start_time = time.time()
         if self.test_start_time is None:
             self.test_start_time = self.step_start_time
+
+    def jump_to_active_step(self) -> None:
+        """Scroll to the newest completed entry, closest to the active step."""
+        if self.table.rowCount() > 0:
+            self.table.selectRow(self.table.rowCount() - 1)
+            self.table.scrollToBottom()
+
+    def _update_selected_detail(self) -> None:
+        row = self.table.currentRow()
+        if row < 0 or self.table.item(row, _COL_NAME) is None:
+            self.lbl_selected_detail.setText("Select a completed step to inspect its details.")
+            return
+        def value(column: int) -> str:
+            item = self.table.item(row, column)
+            return item.text() if item else "--"
+        self.lbl_selected_detail.setText(
+            f"Cycle {value(_COL_CYCLE)} · Step {value(_COL_STEP)} · {value(_COL_NAME)} "
+            f"[{value(_COL_TYPE)}] · Duration {value(_COL_DUR)} · "
+            f"Voltage {value(_COL_START_V)} → {value(_COL_END_V)} · "
+            f"Capacity {value(_COL_CAP)} · Energy {value(_COL_ENERGY)} · "
+            f"DCIR {value(_COL_DCIR)} · Cut-off: {value(_COL_CUTOFF)}"
+        )
+
+    def _filter_rows(self, text: str) -> None:
+        needle = text.strip().casefold()
+        for row in range(self.table.rowCount()):
+            if not needle:
+                self.table.setRowHidden(row, False)
+                continue
+            values = [
+                self.table.item(row, col).text().casefold()
+                for col in range(self.table.columnCount())
+                if self.table.item(row, col) is not None
+            ]
+            self.table.setRowHidden(row, not any(needle in value for value in values))
+
+    def export_filtered_csv(self) -> Optional[Path]:
+        """Export only the currently visible tracker rows."""
+        file_path, _ = QFileDialog.getSaveFileName(
+            self, "Export Tracker CSV", "step_tracker_filtered.csv", "CSV Files (*.csv)"
+        )
+        if not file_path:
+            return None
+        target = Path(file_path)
+        with target.open("w", newline="", encoding="utf-8") as handle:
+            writer = csv.writer(handle)
+            writer.writerow(_HEADERS)
+            for row in range(self.table.rowCount()):
+                if self.table.isRowHidden(row):
+                    continue
+                writer.writerow([
+                    self.table.item(row, col).text() if self.table.item(row, col) else ""
+                    for col in range(self.table.columnCount())
+                ])
+        return target
 
     def add_completed_step(self, metrics: StepMetrics) -> None:
         """Append a completed step row, with a cycle separator if needed."""
