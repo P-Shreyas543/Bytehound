@@ -1,0 +1,147 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "schema_version": "1.0.0",
+  "application": {
+    "name": "SingleCellBMSCycler",
+    "display_name": "Bytehound Single-Cell BMS Cycler",
+    "app_id": "com.bytehound.cycler.singlecell",
+    "package_name": "bytehound-single-cell-cycler",
+    "channel": "stable",
+    "status": "production-ready",
+    "category": "Engineering / Battery Testing & Characterization"
+  },
+  "version": "1.2.3",
+  "version_info": {
+    "major": 1,
+    "minor": 2,
+    "patch": 3,
+    "prerelease": null,
+    "build_metadata": null,
+    "semver": "1.2.3",
+    "min_compatible_version": "1.0.0"
+  },
+  "vcs": {
+    "system": "git",
+    "repository": "https://github.com/P-Shreyas543/Bytehound",
+    "branch": "Migration_To_C++",
+    "commit_hash": "eddd0544a035b02e12e5a0220766740f84f98fc7",
+    "commit_short": "eddd054",
+    "tag": "v1.2.3",
+    "dirty": false
+  },
+  "organization": {
+    "publisher": "DECIBELS LAB PRIVATE LIMITED",
+    "publisher_url": "https://lms.decibelslab.com/",
+    "author": "Shreyas P",
+    "developer_github": "https://github.com/P-Shreyas543",
+    "support_contact": "support@decibelslab.com"
+  },
+  "licensing": {
+    "license": "MIT",
+    "spdx_identifier": "MIT",
+    "license_url": "https://bytehound.shreyasp182002.workers.dev/LICENSE",
+    "copyright": "Copyright (c) 2026 Decibels Lab Private Limited & Shreyas P. All rights reserved."
+  },
+  "build": {
+    "build_date": "2026-09-30",
+    "build_timestamp": "2026-09-30T06:29:17Z",
+    "target_os": "windows",
+    "target_architecture": "x86_64",
+    "minimum_os_version": "Windows 10 Build 19041+ (64-bit)",
+    "python_runtime": {
+      "version": "3.10.11",
+      "implementation": "CPython",
+      "bitness": 64
+    },
+    "toolchain": {
+      "compiler": "PyInstaller 6.22.3",
+      "gui_toolkit": "PySide6 (Qt 6.7+)",
+      "graphing_engine": "pyqtgraph 0.13.7",
+      "installer_engine": "Inno Setup 6.7.3"
+    }
+  },
+  "distribution": {
+    "installer": {
+      "type": "inno_setup_executable",
+      "filename": "SingleCellBMSCycler_Setup.exe",
+      "relative_path": "dist/installer/SingleCellBMSCycler_Setup.exe",
+      "size_bytes": 43337172,
+      "sha256": "e4f82c7e2f0ba060dc4b881f7c5a8e5974b6290b74551fbe52d45ff9d92b2310"
+    },
+    "release_archive": {
+      "type": "zip_archive",
+      "filename": "SingleCellBMSCycler_v1.2.3_win64.zip",
+      "relative_path": "dist/SingleCellBMSCycler_v1.2.3_win64.zip",
+      "size_bytes": 62161648,
+      "sha256": "d4d5d14f600e2e410d9437c0e89ea08a8fc3bba957223a7a3b85cf4069a5b429"
+    },
+    "binary": {
+      "type": "win64_pe_executable",
+      "filename": "SingleCellBMSCycler.exe",
+      "relative_path": "dist/SingleCellBMSCycler/SingleCellBMSCycler.exe",
+      "sha256": "fafdac2993c09c23123cda6d60442074bb8590adb51f01fc5e669123f3e92321"
+    }
+  },
+  "endpoints": {
+    "homepage": "https://bytehound.shreyasp182002.workers.dev/",
+    "documentation": "https://bytehound.shreyasp182002.workers.dev/docs",
+    "issue_tracker": "https://github.com/P-Shreyas543/Bytehound/issues",
+    "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
+    "installer_download_url": "https://bytehound.shreyasp182002.workers.dev/SingleCellBMSCycler_Setup.exe",
+    "webhook_api_specification": "https://bytehound.shreyasp182002.workers.dev/api/v1/webhook_spec"
+  },
+  "hardware_compatibility": {
+    "supported_protocols": [
+      "MCU BMS SLIP (Serial Line Internet Protocol)",
+      "Waveshare USB-CAN (Dedicated Fixed 20-Byte Frame)",
+      "Waveshare USB-CAN (Variable Length Stream)"
+    ],
+    "default_baudrates": [
+      115200,
+      460800,
+      921600
+    ],
+    "supported_cell_chemistries": [
+      "LFP",
+      "NMC",
+      "LTO",
+      "Sodium-Ion"
+    ],
+    "voltage_operating_range_v": {
+      "min": 2.0,
+      "max": 4.5
+    },
+    "current_operating_range_a": {
+      "min": -3.0,
+      "max": 1.5
+    },
+    "temperature_operating_range_c": {
+      "min": 10.0,
+      "max": 65.0
+    }
+  },
+  "release_notes": {
+    "version": "1.2.3",
+    "title": "v1.2.3 — High-Fidelity Characterization, Webhook Notifications & Packaging Stability",
+    "date": "2026-09-30",
+    "highlights": "Comprehensive integration of automated webhooks, full dQ/dV phase transition peak detection, resilient Windows build tooling with read-only permission recovery, and Inno Setup 6 installer distribution.",
+    "changelog": {
+      "features": [
+        "Real-time webhook notification engine for test starts, cycle completions, emergency stops, and operator tagging",
+        "Adaptive differential capacity (dQ/dV) peak extraction and phase transition characterization",
+        "Configurable multi-chemistry guardrails (LFP, NMC, LTO, Na-Ion) with hardware setpoint handshakes",
+        "Multi-format run exporter generating CSV streams, Excel summaries, and cryptographic manifest verification"
+      ],
+      "fixes": [
+        "Resolved dQ/dV graph curve vanishing during dynamic real-time window rescale events",
+        "Fixed V-Q and aging plot clipping on high-refresh-rate multi-monitor setups",
+        "Fixed Windows WinError 5 access denied issues during PyInstaller clean and collect steps",
+        "Aligned Inno Setup compiler parameterization with SingleCellBMSCycler binary naming"
+      ],
+      "security_and_resilience": [
+        "Robust hardware e-stop timeout fail-safe with latching alarm states",
+        "Automated sliding-window serial stream re-synchronization on physical disconnects"
+      ]
+    }
+  }
+}

@@ -8,8 +8,9 @@ Usage:
     python single_cell_cycler/build.py --no-zip     # Skip creating the distribution .zip
 
 Output:
-    dist/SingleCellCycler/SingleCellCycler.exe       (onedir bundle)
-    dist/SingleCellCycler_v1.0.0_win64.zip          (distributable release archive)
+    dist/SingleCellBMSCycler/SingleCellBMSCycler.exe       (onedir bundle)
+    dist/SingleCellBMSCycler_v1.2.3_win64.zip              (distributable release archive)
+    dist/installer/SingleCellBMSCycler_Setup.exe           (Inno Setup Windows installer)
 """
 
 from __future__ import annotations
@@ -38,28 +39,83 @@ ICON_PATH = BRANDING_DIR / "logo.ico"
 
 
 def get_app_version() -> str:
-    """Read version from version.json in repo root or fallback to 1.0.0."""
-    ver_file = REPO_ROOT / "version.json"
-    if ver_file.exists():
-        try:
-            with open(ver_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return str(data.get("version", "1.0.0"))
-        except Exception:
-            pass
+    """Read version from version.json in single_cell_cycler or repo root, fallback to 1.0.0."""
+    for ver_file in (SCRIPT_DIR / "version.json", REPO_ROOT / "version.json"):
+        if ver_file.exists():
+            try:
+                with open(ver_file, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    return str(data.get("version", "1.0.0"))
+            except Exception:
+                pass
     return "1.0.0"
 
 
+import stat
+
+
+def _remove_readonly(func, path, exc_info):
+    """Clear read-only / system attributes and retry file removal on Windows."""
+    try:
+        os.chmod(path, stat.S_IWRITE | stat.S_IREAD)
+        func(path)
+    except Exception:
+        pass
+
+
+def safe_rmtree(target: Path, retries: int = 5, delay: float = 0.5) -> bool:
+    """Robustly remove a directory tree on Windows, stripping read-only flags and retrying."""
+    if not target.exists():
+        return True
+
+    for _ in range(retries):
+        if sys.platform == "win32":
+            try:
+                subprocess.run(
+                    ["cmd", "/c", f'attrib -r -s /s /d "{target}\\*"'],
+                    capture_output=True,
+                    timeout=5,
+                )
+            except Exception:
+                pass
+
+        try:
+            shutil.rmtree(target, onerror=_remove_readonly)
+        except Exception:
+            pass
+
+        if not target.exists():
+            return True
+
+        if sys.platform == "win32":
+            try:
+                subprocess.run(
+                    ["cmd", "/c", f'rmdir /s /q "{target}"'],
+                    capture_output=True,
+                    timeout=5,
+                )
+            except Exception:
+                pass
+            if not target.exists():
+                return True
+
+        time.sleep(delay)
+
+    return not target.exists()
+
+
 def clean_artifacts() -> None:
-    """Clean previous build and dist directories."""
+    """Clean previous build and dist directories, handling Windows file locks and attributes."""
     print(f"[build] Cleaning previous build artifacts...")
-    for target in (OUTPUT_DIR, BUILD_DIR):
+    legacy_output = DIST_DIR / "SingleCellCycler"
+    spec_work_dir = REPO_ROOT / "build" / SPEC_FILE.stem
+    targets = [OUTPUT_DIR, legacy_output, BUILD_DIR, spec_work_dir]
+
+    for target in targets:
         if target.exists():
             print(f"  Removing {target}")
-            try:
-                shutil.rmtree(target, ignore_errors=True)
-            except Exception as e:
-                print(f"  [warn] Could not remove {target}: {e}")
+            if not safe_rmtree(target):
+                print(f"  [warn] Could not completely remove {target}. Proceeding with build...")
 
 
 def generate_spec_file(onefile: bool = False, console: bool = False) -> Path:
@@ -72,7 +128,26 @@ def generate_spec_file(onefile: bool = False, console: bool = False) -> Path:
 
 import os
 import sys
+import shutil
+import stat
 from pathlib import Path
+
+# Inoculate PyInstaller rmtree against Windows read-only file/folder permissions
+try:
+    import PyInstaller.building.utils
+
+    def _safe_pyi_rmtree(path):
+        def _err(func, p, exc_info):
+            try:
+                os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+                func(p)
+            except Exception:
+                pass
+        shutil.rmtree(path, onerror=_err)
+
+    PyInstaller.building.utils._rmtree = _safe_pyi_rmtree
+except Exception:
+    pass
 
 block_cipher = None
 
@@ -94,7 +169,9 @@ branding_path = repo_root / 'branding'
 if branding_path.exists():
     datas.append((str(branding_path), 'branding'))
 
-version_json = repo_root / 'version.json'
+version_json = cycler_root / 'version.json'
+if not version_json.exists():
+    version_json = repo_root / 'version.json'
 if version_json.exists():
     datas.append((str(version_json), '.'))
 
@@ -221,11 +298,21 @@ def build_installer(version: str) -> bool:
         return False
 
     installer_script = REPO_ROOT / "installer.iss"
-    command = [compiler, f"/DMyAppVersion={version}", str(installer_script)]
+    command = [
+        compiler,
+        f"/DMyAppVersion={version}",
+        f"/DMyAppName={APP_NAME}",
+        f"/DMyAppExe={APP_NAME}.exe",
+        str(installer_script),
+    ]
     print(f"[build] Building installer with Inno Setup: {' '.join(command)}")
     result = subprocess.call(command, cwd=REPO_ROOT)
     if result == 0:
-        installer_path = REPO_ROOT / "dist" / "installer" / "SingleCellCycler.exe"
+        installer_path = REPO_ROOT / "dist" / "installer" / f"{APP_NAME}_Setup.exe"
+        if not installer_path.exists():
+            installer_path = REPO_ROOT / "dist" / "installer" / f"{APP_NAME}.exe"
+        if not installer_path.exists():
+            installer_path = REPO_ROOT / "dist" / "installer" / "SingleCellCycler.exe"
         print(f"[build] Inno Setup installer created successfully: {installer_path}")
         return True
 

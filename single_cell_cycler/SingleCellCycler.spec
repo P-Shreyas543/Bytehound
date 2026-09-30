@@ -3,7 +3,26 @@
 
 import os
 import sys
+import shutil
+import stat
 from pathlib import Path
+
+# Inoculate PyInstaller rmtree against Windows read-only file/folder permissions
+try:
+    import PyInstaller.building.utils
+
+    def _safe_pyi_rmtree(path):
+        def _err(func, p, exc_info):
+            try:
+                os.chmod(p, stat.S_IWRITE | stat.S_IREAD)
+                func(p)
+            except Exception:
+                pass
+        shutil.rmtree(path, onerror=_err)
+
+    PyInstaller.building.utils._rmtree = _safe_pyi_rmtree
+except Exception:
+    pass
 
 block_cipher = None
 
@@ -25,7 +44,9 @@ branding_path = repo_root / 'branding'
 if branding_path.exists():
     datas.append((str(branding_path), 'branding'))
 
-version_json = repo_root / 'version.json'
+version_json = cycler_root / 'version.json'
+if not version_json.exists():
+    version_json = repo_root / 'version.json'
 if version_json.exists():
     datas.append((str(version_json), '.'))
 

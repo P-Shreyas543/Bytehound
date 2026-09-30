@@ -1,20 +1,28 @@
-; Inno Setup script for SingleCellCycler.
+﻿; Inno Setup script for SingleCellBMSCycler.
 
 #ifndef MyAppVersion
   #define MyAppVersion "1.0.0"
 #endif
 
+#ifndef MyAppName
+  #define MyAppName "SingleCellBMSCycler"
+#endif
+
+#ifndef MyAppExe
+  #define MyAppExe "SingleCellBMSCycler.exe"
+#endif
+
 [Setup]
-AppName=SingleCellCycler
+AppName=Bytehound Single-Cell BMS Cycler
 AppVersion={#MyAppVersion}
 AppPublisher=Bytehound
-DefaultDirName={autopf}\SingleCellCycler
+DefaultDirName={autopf}\{#MyAppName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=dist\installer
-OutputBaseFilename=SingleCellCycler
+OutputBaseFilename=SingleCellBMSCycler_Setup
 SetupIconFile=branding\logo.ico
-UninstallDisplayIcon={app}\SingleCellCycler.exe
+UninstallDisplayIcon={app}\{#MyAppExe}
 Compression=lzma
 SolidCompression=yes
 
@@ -22,12 +30,12 @@ SolidCompression=yes
 Name: "desktopicon"; Description: "Create a desktop icon"; GroupDescription: "Additional icons:"
 
 [Files]
-Source: "dist\SingleCellCycler\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "dist\{#MyAppName}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
-Name: "{group}\SingleCellCycler"; Filename: "{app}\SingleCellCycler.exe"
-Name: "{group}\Uninstall SingleCellCycler"; Filename: "{uninstallexe}"
-Name: "{autodesktop}\SingleCellCycler"; Filename: "{app}\SingleCellCycler.exe"; Tasks: desktopicon
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"
+Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExe}"; Tasks: desktopicon
 
 [Run]
-Filename: "{app}\SingleCellCycler.exe"; Description: "Launch SingleCellCycler"; Flags: postinstall nowait skipifsilent
+Filename: "{app}\{#MyAppExe}"; Description: "Launch {#MyAppName}"; Flags: postinstall nowait skipifsilent
