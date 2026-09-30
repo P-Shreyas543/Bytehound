@@ -18,6 +18,8 @@ from typing import Any, Dict, List, Optional
 from .metrics_tracker import CycleSummary, StepMetrics
 from .profile_model import StepType, TestRecipe
 
+from single_cell_cycler.config.cycler_config import DEFAULT_LOG_DIR
+
 logger = logging.getLogger("SingleCellCycler.StateJournal")
 
 DEFAULT_JOURNAL_FILENAME = ".active_test_journal.json"
@@ -130,9 +132,13 @@ def cycle_summary_from_dict(d: Dict[str, Any]) -> CycleSummary:
 class StateJournalManager:
     """Manages atomic writing, loading, and recovery of active test journals."""
 
-    def __init__(self, journal_dir: str | Path = "single_cell_cycler/logs"):
-        self.journal_dir = Path(journal_dir)
-        self.journal_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, journal_dir: str | Path | None = None):
+        self.journal_dir = Path(journal_dir) if journal_dir is not None else DEFAULT_LOG_DIR
+        try:
+            self.journal_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self.journal_dir = Path.home() / ".bytehound" / "cycler" / "logs"
+            self.journal_dir.mkdir(parents=True, exist_ok=True)
         self.journal_path = self.journal_dir / DEFAULT_JOURNAL_FILENAME
         self.tmp_path = self.journal_dir / f"{DEFAULT_JOURNAL_FILENAME}.tmp"
 

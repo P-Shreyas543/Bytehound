@@ -17,6 +17,7 @@ from ..comm.packet_codec import (
     CellDataTelemetry,
     FaultSoCTelemetry,
 )
+from ..config.cycler_config import DEFAULT_LOG_DIR
 
 logger = logging.getLogger("SingleCellCycler.AsyncLogger")
 
@@ -34,9 +35,13 @@ class AsyncTelemetryLogger:
         "total_charge_mah", "total_discharge_mah",
     ]
 
-    def __init__(self, log_dir: str | Path = "single_cell_cycler/logs"):
-        self.log_dir = Path(log_dir)
-        self.log_dir.mkdir(parents=True, exist_ok=True)
+    def __init__(self, log_dir: str | Path | None = None):
+        self.log_dir = Path(log_dir) if log_dir is not None else DEFAULT_LOG_DIR
+        try:
+            self.log_dir.mkdir(parents=True, exist_ok=True)
+        except Exception:
+            self.log_dir = Path.home() / ".bytehound" / "cycler" / "logs"
+            self.log_dir.mkdir(parents=True, exist_ok=True)
 
         self._queue: queue.Queue = queue.Queue(maxsize=10000)
         self._thread: Optional[threading.Thread] = None
