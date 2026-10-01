@@ -32,6 +32,7 @@ class CutoffDetector:
         step_elapsed_time_s: float,
         step_capacity_mah: float,
         comparator_tripped: bool = False,
+        current_soc: Optional[float] = None,
     ) -> CutoffResult:
         """Check all enabled cut-off conditions for the active step.
         
@@ -134,6 +135,24 @@ class CutoffDetector:
                     return CutoffResult(
                         is_triggered=True,
                         trigger_reason="Hardware comparator tripped on BMS board",
+                        condition=cond,
+                    )
+
+            # 9. SoC Upper Cutoff (e.g. >= 80% or 100%)
+            elif cond.cutoff_type == CutoffType.SOC_MAX:
+                if current_soc is not None and current_soc >= cond.threshold:
+                    return CutoffResult(
+                        is_triggered=True,
+                        trigger_reason=f"SoC reached {current_soc:.1f}% >= target {cond.threshold:.1f}%",
+                        condition=cond,
+                    )
+
+            # 10. SoC Lower Cutoff (e.g. <= 20% or 10%)
+            elif cond.cutoff_type == CutoffType.SOC_MIN:
+                if current_soc is not None and current_soc <= cond.threshold:
+                    return CutoffResult(
+                        is_triggered=True,
+                        trigger_reason=f"SoC reached {current_soc:.1f}% <= target {cond.threshold:.1f}%",
                         condition=cond,
                     )
 

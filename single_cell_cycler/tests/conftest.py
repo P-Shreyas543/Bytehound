@@ -17,6 +17,27 @@ import urllib.request
 import pytest
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _offscreen_qt_with_real_fonts():
+    """Headless Qt has no fonts of its own; its fallback is far wider than Segoe UI and inflates
+    every layout (the 1280x720 fit test measured a 1700 px minimum width). Load the fonts the
+    app actually runs with."""
+    import os
+    from pathlib import Path
+
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtGui import QFont, QFontDatabase
+    from PySide6.QtWidgets import QApplication
+
+    app = QApplication.instance() or QApplication([])
+    fonts = Path(os.environ.get("WINDIR", r"C:\Windows")) / "Fonts"
+    for name in ("segoeui.ttf", "segoeuib.ttf", "seguisb.ttf", "seguisym.ttf", "consola.ttf"):
+        if (fonts / name).exists():
+            QFontDatabase.addApplicationFont(str(fonts / name))
+    app.setFont(QFont("Segoe UI", 10))
+    yield
+
+
 @pytest.fixture(autouse=True)
 def _isolate_webhook(tmp_path, monkeypatch):
     from single_cell_cycler.comm import webhook_notifier

@@ -52,13 +52,18 @@ class CutoffEditDialog(QDialog):
         super().__init__(parent)
         self.step = step
         self.setWindowTitle(f"Edit Cut-off Conditions: {step.name}")
-        self.resize(520, 360)
+        self.resize(760, 380)
 
         layout = QVBoxLayout(self)
 
         self.table = QTableWidget(0, 4)
         self.table.setHorizontalHeaderLabels(["Cut-off Type", "Threshold", "Enabled", "Description"])
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        # Type / threshold / enabled fit their editors; the description takes the rest
+        hdr = self.table.horizontalHeader()
+        for col in (0, 1, 2):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         layout.addWidget(self.table)
 
         # Buttons row
@@ -66,6 +71,11 @@ class CutoffEditDialog(QDialog):
         self.btn_add = QPushButton("+ Add Condition")
         self.btn_add.clicked.connect(self._add_row)
         btn_row.addWidget(self.btn_add)
+
+        self.btn_add_soc = QPushButton("+ Add SoC Cut-off (80% / 20%)")
+        self.btn_add_soc.setStyleSheet("color: #38bdf8; font-weight: 600;")
+        self.btn_add_soc.clicked.connect(self._add_soc_row)
+        btn_row.addWidget(self.btn_add_soc)
 
         self.btn_del = QPushButton("- Remove Selected")
         self.btn_del.clicked.connect(self._delete_row)
@@ -102,9 +112,46 @@ class CutoffEditDialog(QDialog):
         self.table.setCellWidget(row, 0, combo)
 
         spin = QDoubleSpinBox()
-        spin.setRange(-1000.0, 100000.0)
-        spin.setDecimals(3)
+
+        def _update_spin_for_type(text: str) -> None:
+            if text in (CutoffType.SOC_MAX.value, CutoffType.SOC_MIN.value):
+                spin.setRange(0.0, 100.0)
+                spin.setDecimals(1)
+                spin.setSuffix(" %")
+                spin.setSingleStep(5.0)
+            elif text in (CutoffType.VOLTAGE_MAX.value, CutoffType.VOLTAGE_MIN.value):
+                spin.setRange(0.0, 10.0)
+                spin.setDecimals(3)
+                spin.setSuffix(" V")
+                spin.setSingleStep(0.05)
+            elif text in (CutoffType.CURRENT_MIN.value, CutoffType.CURRENT_MAX.value):
+                spin.setRange(0.0, 50.0)
+                spin.setDecimals(3)
+                spin.setSuffix(" A")
+                spin.setSingleStep(0.1)
+            elif text == CutoffType.DURATION_MAX.value:
+                spin.setRange(0.0, 864000.0)
+                spin.setDecimals(0)
+                spin.setSuffix(" s")
+                spin.setSingleStep(60.0)
+            elif text == CutoffType.CAPACITY_MAX.value:
+                spin.setRange(0.0, 1000000.0)
+                spin.setDecimals(1)
+                spin.setSuffix(" mAh")
+                spin.setSingleStep(100.0)
+            elif text == CutoffType.TEMP_MAX.value:
+                spin.setRange(0.0, 150.0)
+                spin.setDecimals(1)
+                spin.setSuffix(" °C")
+                spin.setSingleStep(1.0)
+            else:
+                spin.setRange(-1000.0, 100000.0)
+                spin.setDecimals(3)
+                spin.setSuffix("")
+
+        _update_spin_for_type(cond.cutoff_type.value)
         spin.setValue(cond.threshold)
+        combo.currentTextChanged.connect(_update_spin_for_type)
         self.table.setCellWidget(row, 1, spin)
 
         chk = QTableWidgetItem()
@@ -116,6 +163,13 @@ class CutoffEditDialog(QDialog):
 
     def _add_row(self) -> None:
         new_cond = CutoffCondition(CutoffType.VOLTAGE_MAX, 4.20, True, "Voltage cut-off")
+        self._insert_cutoff_row(new_cond)
+
+    def _add_soc_row(self) -> None:
+        if self.step.step_type == StepType.DISCHARGE:
+            new_cond = CutoffCondition(CutoffType.SOC_MIN, 20.0, True, "Discharge to 20% SoC")
+        else:
+            new_cond = CutoffCondition(CutoffType.SOC_MAX, 80.0, True, "Charge to 80% SoC")
         self._insert_cutoff_row(new_cond)
 
     def _delete_row(self) -> None:
@@ -232,6 +286,92 @@ class StepHardwareDialog(QDialog):
         l_dis.addLayout(row_switches)
         layout.addWidget(self.grp_discharge)
 
+        # Primary Step Cut-off & Termination Group
+        self.grp_cutoff = QGroupBox("Primary Step Cut-off && Termination")
+        l_cut = QVBoxLayout(self.grp_cutoff)
+
+        row_cmode = QHBoxLayout()
+        row_cmode.addWidget(QLabel("Cut-off Target:"))
+        self.combo_cmode = QComboBox()
+        self.combo_cmode.addItem("Voltage Cut-off (Standard)", "voltage")
+        self.combo_cmode.addItem("SoC Cut-off (e.g. 80% / 20%)", "soc")
+        self.combo_cmode.addItem("Both (Voltage OR SoC limit)", "both")
+        self.combo_cmode.addItem("Duration Limit (Timer)", "duration")
+        row_cmode.addWidget(self.combo_cmode)
+        l_cut.addLayout(row_cmode)
+
+        self.row_v_cut = QHBoxLayout()
+        v_label_txt = "Upper Voltage Cut-off:" if step.step_type == StepType.CHARGE else "Lower Voltage Cut-off:"
+        self.lbl_v_cut = QLabel(v_label_txt)
+        self.spin_v_cut = QDoubleSpinBox()
+        self.spin_v_cut.setRange(0.0, 5.0)
+        self.spin_v_cut.setDecimals(3)
+        self.spin_v_cut.setSingleStep(0.05)
+        self.spin_v_cut.setSuffix(" V")
+        self.row_v_cut.addWidget(self.lbl_v_cut)
+        self.row_v_cut.addWidget(self.spin_v_cut)
+        l_cut.addLayout(self.row_v_cut)
+
+        self.row_soc_cut = QHBoxLayout()
+        soc_label_txt = "Target Charge SoC (>= %):" if step.step_type == StepType.CHARGE else "Target Discharge SoC (<= %):"
+        self.lbl_soc_cut = QLabel(soc_label_txt)
+        self.spin_soc_cut = QDoubleSpinBox()
+        self.spin_soc_cut.setRange(0.0, 100.0)
+        self.spin_soc_cut.setDecimals(1)
+        self.spin_soc_cut.setSingleStep(5.0)
+        self.spin_soc_cut.setSuffix(" %")
+        self.row_soc_cut.addWidget(self.lbl_soc_cut)
+        self.row_soc_cut.addWidget(self.spin_soc_cut)
+        l_cut.addLayout(self.row_soc_cut)
+
+        row_dur = QHBoxLayout()
+        self.chk_dur_cut = QCheckBox("Safety Max Duration:")
+        self.spin_dur_cut = QSpinBox()
+        self.spin_dur_cut.setRange(10, 864000)
+        self.spin_dur_cut.setSingleStep(60)
+        self.spin_dur_cut.setSuffix(" s")
+        row_dur.addWidget(self.chk_dur_cut)
+        row_dur.addWidget(self.spin_dur_cut)
+        l_cut.addLayout(row_dur)
+
+        layout.addWidget(self.grp_cutoff)
+
+        # Extract initial cut-off values
+        v_cond = next((c for c in step.cutoffs if c.cutoff_type in (CutoffType.VOLTAGE_MAX, CutoffType.VOLTAGE_MIN) and c.enabled), None)
+        soc_cond = next((c for c in step.cutoffs if c.cutoff_type in (CutoffType.SOC_MAX, CutoffType.SOC_MIN) and c.enabled), None)
+        dur_cond = next((c for c in step.cutoffs if c.cutoff_type == CutoffType.DURATION_MAX and c.enabled), None)
+
+        if v_cond and soc_cond:
+            init_mode = "both"
+        elif soc_cond:
+            init_mode = "soc"
+        elif v_cond:
+            init_mode = "voltage"
+        elif dur_cond or step.step_type == StepType.REST:
+            init_mode = "duration"
+        else:
+            init_mode = "voltage"
+
+        mode_idx = self.combo_cmode.findData(init_mode)
+        if mode_idx >= 0:
+            self.combo_cmode.setCurrentIndex(mode_idx)
+
+        default_v = 4.20 if step.step_type == StepType.CHARGE else 2.80
+        self.spin_v_cut.setValue(v_cond.threshold if v_cond else default_v)
+
+        default_soc = 80.0 if step.step_type == StepType.CHARGE else 20.0
+        self.spin_soc_cut.setValue(soc_cond.threshold if soc_cond else default_soc)
+
+        if dur_cond:
+            self.chk_dur_cut.setChecked(True)
+            self.spin_dur_cut.setValue(int(dur_cond.threshold))
+        else:
+            self.chk_dur_cut.setChecked(init_mode == "duration")
+            self.spin_dur_cut.setValue(300 if step.step_type == StepType.REST else 3600)
+
+        self._on_cmode_changed()
+        self.combo_cmode.currentIndexChanged.connect(self._on_cmode_changed)
+
         # Enable/disable based on step type
         if step.step_type == StepType.CHARGE:
             self.grp_charge.setEnabled(True)
@@ -260,6 +400,17 @@ class StepHardwareDialog(QDialog):
         btn_cancel.clicked.connect(self.reject)
         btn_box.addWidget(btn_cancel)
         layout.addLayout(btn_box)
+
+    def _on_cmode_changed(self) -> None:
+        mode = self.combo_cmode.currentData()
+        show_v = mode in ("voltage", "both")
+        show_soc = mode in ("soc", "both")
+        self.lbl_v_cut.setEnabled(show_v)
+        self.spin_v_cut.setEnabled(show_v)
+        self.lbl_soc_cut.setEnabled(show_soc)
+        self.spin_soc_cut.setEnabled(show_soc)
+        if mode == "duration":
+            self.chk_dur_cut.setChecked(True)
 
     def _on_combo_dis_changed(self, idx: int) -> None:
         if self._syncing_loads:
@@ -298,6 +449,36 @@ class StepHardwareDialog(QDialog):
             self.step.discharge_load_2 = bool(dec & 2)
             self.step.discharge_load_3 = bool(dec & 4)
             self.step.discharge_load_4 = bool(dec & 8)
+
+        # Update cutoffs
+        mode = self.combo_cmode.currentData()
+        new_cutoffs = [
+            c for c in self.step.cutoffs
+            if c.cutoff_type not in (
+                CutoffType.VOLTAGE_MAX, CutoffType.VOLTAGE_MIN,
+                CutoffType.SOC_MAX, CutoffType.SOC_MIN,
+                CutoffType.DURATION_MAX,
+            )
+        ]
+
+        is_charge = (self.step.step_type == StepType.CHARGE)
+        if mode in ("voltage", "both"):
+            v_type = CutoffType.VOLTAGE_MAX if is_charge else CutoffType.VOLTAGE_MIN
+            v_val = float(self.spin_v_cut.value())
+            v_desc = f"Charge cutoff ({v_val:.2f} V)" if is_charge else f"Discharge cutoff ({v_val:.2f} V)"
+            new_cutoffs.append(CutoffCondition(v_type, v_val, True, v_desc))
+
+        if mode in ("soc", "both"):
+            soc_type = CutoffType.SOC_MAX if is_charge else CutoffType.SOC_MIN
+            soc_val = float(self.spin_soc_cut.value())
+            soc_desc = f"Charge to {soc_val:.1f}% SoC" if is_charge else f"Discharge to {soc_val:.1f}% SoC"
+            new_cutoffs.append(CutoffCondition(soc_type, soc_val, True, soc_desc))
+
+        if self.chk_dur_cut.isChecked() or mode == "duration":
+            dur_val = float(self.spin_dur_cut.value())
+            new_cutoffs.append(CutoffCondition(CutoffType.DURATION_MAX, dur_val, True, f"Duration limit ({int(dur_val)}s)"))
+
+        self.step.cutoffs = new_cutoffs
         self.accept()
 
 
@@ -585,13 +766,20 @@ class ProfileEditorWidget(QWidget):
             "Loop Target",
             "Loop Count",
         ])
-        self.table_steps.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
-        self.table_steps.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        hdr = self.table_steps.horizontalHeader()
+        # Name and cut-offs share the spare width; the other columns fit their header and content
+        for col in range(self.table_steps.columnCount()):
+            hdr.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
+        # Rows grow to their combo / spin boxes instead of clipping them
+        self.table_steps.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table_steps.setAlternatingRowColors(True)
         self.table_steps.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_steps.itemChanged.connect(self._on_table_item_changed)
         self.table_steps.cellDoubleClicked.connect(self._on_cell_double_clicked)
-        layout.addWidget(self.table_steps)
+        # The step table takes the spare height; the preview below stays compact
+        layout.addWidget(self.table_steps, 3)
 
         # 3. Chemistry Validation Warning Banner (IMP-03)
         self.lbl_validation_banner = QLabel()
@@ -646,7 +834,7 @@ class ProfileEditorWidget(QWidget):
 
         # 5. Recipe Timeline Schedule Preview (IMP-04)
         self.preview_widget = RecipeTimelinePreview()
-        layout.addWidget(self.preview_widget)
+        layout.addWidget(self.preview_widget, 1)
 
         # Populate built-in presets
         self._refresh_presets()
@@ -818,7 +1006,27 @@ class ProfileEditorWidget(QWidget):
             self.table_steps.setItem(row, 3, QTableWidgetItem(hw_summary))
 
             # Cutoffs Summary
-            cutoff_summary = ", ".join(f"{c.cutoff_type.value}: {c.threshold:g}" for c in s.cutoffs if c.enabled)
+            parts = []
+            for c in s.cutoffs:
+                if not c.enabled:
+                    continue
+                if c.cutoff_type == CutoffType.SOC_MAX:
+                    parts.append(f"SoC >= {c.threshold:g}%")
+                elif c.cutoff_type == CutoffType.SOC_MIN:
+                    parts.append(f"SoC <= {c.threshold:g}%")
+                elif c.cutoff_type == CutoffType.VOLTAGE_MAX:
+                    parts.append(f"V >= {c.threshold:.2f}V")
+                elif c.cutoff_type == CutoffType.VOLTAGE_MIN:
+                    parts.append(f"V <= {c.threshold:.2f}V")
+                elif c.cutoff_type == CutoffType.CURRENT_MIN:
+                    parts.append(f"I <= {c.threshold:.3f}A")
+                elif c.cutoff_type == CutoffType.DURATION_MAX:
+                    parts.append(f"t >= {c.threshold:g}s")
+                elif c.cutoff_type == CutoffType.CAPACITY_MAX:
+                    parts.append(f"Cap >= {c.threshold:g}mAh")
+                else:
+                    parts.append(f"{c.cutoff_type.value}: {c.threshold:g}")
+            cutoff_summary = ", ".join(parts)
             self.table_steps.setItem(row, 4, QTableWidgetItem(cutoff_summary or "--"))
 
             # Loop Target
@@ -848,6 +1056,8 @@ class ProfileEditorWidget(QWidget):
                     if c.cutoff_type == CutoffType.VOLTAGE_MAX and c.threshold > chem.max_voltage:
                         has_error = True
                     elif c.cutoff_type == CutoffType.VOLTAGE_MIN and c.threshold < chem.min_voltage:
+                        has_error = True
+                    elif c.cutoff_type in (CutoffType.SOC_MAX, CutoffType.SOC_MIN) and (c.threshold < 0.0 or c.threshold > 100.0):
                         has_error = True
 
             if has_error:

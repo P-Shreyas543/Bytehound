@@ -36,6 +36,7 @@ ALL_CONTROL_FRAMES = (
 PAYLOAD_LEN_CELL_DATA = 8
 PAYLOAD_LEN_BOARD_PARAMS = 6
 PAYLOAD_LEN_FAULT_SOC = 5
+PAYLOAD_LEN_FAULT_SOC_EXT = 17
 PAYLOAD_LEN_CMD = 1
 
 # Fault Bitfield Flags (Frame 0x3000 Fault byte)
@@ -90,7 +91,10 @@ SCALE_CELL_VOLTAGE = 0.001        # uint16 (V)
 SCALE_CELL_CURRENT = 0.001        # int16 (A)
 SCALE_TEMPERATURE = 0.1           # uint16 (°C)
 SCALE_BOARD_VOLTAGE = 0.001       # uint16 (V)
-SCALE_SOC = 0.01                  # uint16 (%)
+SCALE_SOC = 0.01                  # uint16 (%) legacy 5-byte payload
+SCALE_EKF_SOC = 0.01              # uint16 (factor 0.01)
+SCALE_VR = 0.001                  # uint16 (factor 0.001)
+SCALE_P_DIAG = 0.001              # uint16 (factor 0.001)
 
 # Serial Defaults
 DEFAULT_BAUD_RATE = 115200

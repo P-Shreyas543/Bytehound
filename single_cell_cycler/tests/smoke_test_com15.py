@@ -92,8 +92,8 @@ def run_com15_smoke_test(port: str = "COM15", baud: int = 115200):
     print(f"  Cell Current : {i_str} A")
     print(f"  Cell Temp    : {temp_val} °C ({temp_sub})")
     print(f"  State of Chg : {soc_str} % ({soc_sub})")
-    print(f"  Bus Voltages : {bus_str} V ({bus_sub})")
-    print(f"  Live Plot Pts: {len(window.live_plots.voltages)} samples")
+    sample_count = len(window.live_plots._v) if hasattr(window.live_plots, "_v") else 0
+    print(f"  Live Plot Pts: {sample_count} samples")
     print(f"----------------------------------------------\n")
 
     # 4. Verify Active Cell Switching (Cell 1 vs Cell 2)

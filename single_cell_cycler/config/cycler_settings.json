@@ -1,0 +1,7 @@
+{
+  "logging": {
+    "interval_s": 0.1,
+    "thread_priority": "above_normal",
+    "soc_decimals": 2
+  }
+}

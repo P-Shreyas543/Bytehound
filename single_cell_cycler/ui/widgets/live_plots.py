@@ -156,34 +156,41 @@ class _SeriesBuffer:
 class _Envelope:
     """Min/max summary of fixed-size sample blocks, built as data arrives.
 
-    Each completed block contributes two points (block start/end time, min/max value) so a
-    zoomed-out view can be drawn from ~2/block of the samples without scanning the history.
+    Each completed block contributes, per series, its minimum and maximum sample at the times
+    they actually occurred and in that order, so a zoomed-out view is drawn from 2 real samples
+    per block. (Pinning min to the block start and max to its end drew a sawtooth on every
+    ramp and step, which looked like spikes in the signal.)
     """
 
     def __init__(self, block: int, n_series: int, capacity_samples: int):
         self.block = block
         cap = 2 * (capacity_samples // block + 1)
-        self.t = _SeriesBuffer(cap)
+        self.t = [_SeriesBuffer(cap) for _ in range(n_series)]
         self.y = [_SeriesBuffer(cap) for _ in range(n_series)]
 
     def add_block(self, t_blk: np.ndarray, ys_blk: List[np.ndarray]) -> None:
-        self.t.append(t_blk[0])
-        self.t.append(t_blk[-1])
-        for buf, y in zip(self.y, ys_blk):
-            finite = y[np.isfinite(y)]
-            lo, hi = (float(finite.min()), float(finite.max())) if finite.size else (np.nan, np.nan)
-            buf.append(lo)
-            buf.append(hi)
+        for t_buf, y_buf, y in zip(self.t, self.y, ys_blk):
+            if np.isfinite(y).all():
+                a, b = sorted((int(np.argmin(y)), int(np.argmax(y))))
+                if a == b:                       # flat block: keep its first and last sample
+                    a, b = 0, len(y) - 1
+                t_buf.append(t_blk[a]); y_buf.append(y[a])
+                t_buf.append(t_blk[b]); y_buf.append(y[b])
+            else:
+                # Block holds a relay/cell-switch gap: keep the line break
+                t_buf.append(t_blk[0]); y_buf.append(np.nan)
+                t_buf.append(t_blk[-1]); y_buf.append(np.nan)
 
     def clear(self) -> None:
-        self.t.clear()
-        for buf in self.y:
+        for buf in self.t + self.y:
             buf.clear()
 
 
 # Envelope block sizes (samples) and the max points handed to a curve per redraw
-_ENVELOPE_BLOCKS = (32, 1024)
+_ENVELOPE_BLOCKS = (32, 128, 512, 2048)
 _MAX_DRAW_POINTS = 4000
+# Series order in envelopes and in _series_for_range()
+_S_V, _S_I, _S_TERM, _S_BODY = range(4)
 
 
 class ZoomMode(Enum):
@@ -386,9 +393,17 @@ class LivePlotWidget(QWidget):
         self._rendered_xrange: Optional[Tuple[float, float]] = None
         self._step_peak_abs_i = 0.0
 
-        # V-Q
-        self._vq_cap: collections.deque = collections.deque(maxlen=100_000)
-        self._vq_volt: collections.deque = collections.deque(maxlen=100_000)
+        # V-Q (contiguous buffers: the live trace is redrawn from a zero-copy view)
+        self._vq_cap = _SeriesBuffer(100_000)
+        self._vq_volt = _SeriesBuffer(100_000)
+        # Live V-Q / dQ/dV views follow the growing trace until the operator pans or zooms them;
+        # the Fit button resumes following
+        self._vq_follow: bool = True
+        self._dqv_follow: bool = True
+        self._dqv_last_render: float = 0.0
+        # True between a step's completion and the next step's start (hardware transition):
+        # samples in that gap belong to no step and stay out of the V-Q / dQ/dV traces
+        self._between_steps: bool = False
         self._vq_history_curves: List[Tuple[str, pg.PlotDataItem, np.ndarray, np.ndarray]] = []
         self._vq_hist_qmax, self._vq_hist_vmin, self._vq_hist_vmax = 0.0, 6.0, 0.0
 
@@ -415,8 +430,8 @@ class LivePlotWidget(QWidget):
         }
 
         # Differential Capacity dQ/dV buffers & profiles (IMP-05)
-        self._dqv_v_buf: collections.deque = collections.deque(maxlen=100_000)
-        self._dqv_q_buf: collections.deque = collections.deque(maxlen=100_000)
+        self._dqv_v_buf = _SeriesBuffer(100_000)
+        self._dqv_q_buf = _SeriesBuffer(100_000)
         self._dqv_profiles: List[DQVProfile] = []
         self._dqv_history_curves: List[Tuple[DQVProfile, pg.PlotDataItem]] = []
         self._current_step_idx: int = 1
@@ -455,8 +470,10 @@ class LivePlotWidget(QWidget):
         """
         cell_switched = (self._cell_num != cell_num) and (len(self._t) > 0)
         self._relay_on = relay_on
-        self._cell_num = cell_num
-        self._update_vq_identity_labels()
+        if cell_num != self._cell_num:
+            # Re-laying out the axis title is costly: only when the cell really changes
+            self._cell_num = cell_num
+            self._update_vq_identity_labels()
 
         if cell_switched:
             self._insert_nan_break()
@@ -476,14 +493,16 @@ class LivePlotWidget(QWidget):
         )
         self._push_sample(elapsed, data.voltage, data.current, data.terminal_temp, data.body_temp)
 
+        in_active_step = not self._between_steps and "rest" not in self._current_step_type.lower()
+
         # V-Q curve (IMP-02/IMP-07: exclude REST steps to eliminate vertical zero-capacity artifacts)
-        if "rest" not in self._current_step_type.lower():
+        if in_active_step:
             self._vq_cap.append(abs(step_mah))
             self._vq_volt.append(data.voltage)
 
         # Differential Capacity Q-V trace (IMP-05). Only the constant-current part is valid:
         # in the CV tail the voltage is pinned while charge keeps flowing, so dQ/dV explodes.
-        if "rest" not in self._current_step_type.lower():
+        if in_active_step:
             self._step_peak_abs_i = max(self._step_peak_abs_i, abs(data.current))
             if abs(data.current) >= 0.9 * self._step_peak_abs_i:
                 self._dqv_v_buf.append(data.voltage)
@@ -510,10 +529,12 @@ class LivePlotWidget(QWidget):
             self._apply_zoom_framing()
 
         if index == 2 and hasattr(self, "plot_vq"):
-            self.fit_vq_view()
+            if self._vq_follow:
+                self.fit_vq_view()
         elif index == 3 and hasattr(self, "plot_dqv"):
             self._render_dqv_active()
-            self.fit_dqv_view()
+            if self._dqv_follow:
+                self.fit_dqv_view()
         elif index == 4 and hasattr(self, "plot_aging_cap"):
             self._render_aging_tab()
             self.fit_aging_view()
@@ -543,9 +564,9 @@ class LivePlotWidget(QWidget):
             if self._zoom_mode != ZoomMode.MANUAL:
                 self._apply_zoom_framing()
             x0, x1 = self.plot_vi.viewRange()[0]
-            t, (v, i_arr, _, _) = self._series_for_range(x0, x1)
-            self.curve_voltage.setData(t, v)
-            self.curve_current.setData(t, i_arr)
+            series = self._series_for_range(x0, x1)
+            self.curve_voltage.setData(*series[_S_V])
+            self.curve_current.setData(*series[_S_I])
             self._rendered_xrange = (x0, x1)
             # Fixed Y-ranges: 0-6V for voltage, -3 to 3A for current (aligned 6.0 unit spans)
             self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
@@ -556,37 +577,37 @@ class LivePlotWidget(QWidget):
             if self._zoom_mode != ZoomMode.MANUAL:
                 self._apply_zoom_framing()
             x0, x1 = self.plot_temp.viewRange()[0]
-            t, (_, _, t_term, t_body) = self._series_for_range(x0, x1)
-            self.curve_term_temp.setData(t, t_term)
-            self.curve_body_temp.setData(t, t_body)
+            series = self._series_for_range(x0, x1)
+            self.curve_term_temp.setData(*series[_S_TERM])
+            self.curve_body_temp.setData(*series[_S_BODY])
             self._rendered_xrange = (x0, x1)
             # Y follows the visible data (a fixed 0-70 °C squashed a 5 °C swing into a line)
-            self._fit_temp_y(t_term, t_body)
+            self._fit_temp_y(series[_S_TERM][1], series[_S_BODY][1])
 
         elif tab_idx == 2:
             # Tab 2 – V-Q Curve
             if self._vq_cap:
-                caps = np.array(self._vq_cap)
-                volts = np.array(self._vq_volt)
                 # exact match: "charge" is also a substring of "discharge"
                 is_charge = self._current_step_type.lower() == "charge"
                 pen_color = _AGING_Q_CHG_COLOR if is_charge else _AGING_Q_DIS_COLOR
                 self.curve_vq_current.setPen(pg.mkPen(pen_color, width=2.2))
-                self.curve_vq_current.setData(caps, volts)
+                self.curve_vq_current.setData(self._vq_cap.view(), self._vq_volt.view())
                 self.curve_vq_current.setVisible(True)
-                if self._zoom_mode != ZoomMode.MANUAL and len(caps) > 10:
-                    # Frame on the live trace AND the archived curves, not the live trace alone
-                    max_cap = max(float(np.nanmax(caps)), self._vq_hist_qmax)
-                    v_min = min(float(np.nanmin(volts)), self._vq_hist_vmin)
-                    v_max = max(float(np.nanmax(volts)), self._vq_hist_vmax)
-                    self.plot_vq.setXRange(0.0, max(100.0, max_cap * 1.05), padding=0.02)
-                    self.plot_vq.setYRange(max(0.0, v_min - 0.15), min(6.0, v_max + 0.15), padding=0.02)
             else:
                 self.curve_vq_current.setData([], [])
+            # Keep the growing live trace (and the archived curves) in view
+            if self._vq_follow:
+                self.fit_vq_view()
 
         elif tab_idx == 3:
             # Tab 3 – Differential Capacity Analysis dQ/dV (IMP-05)
-            self._render_dqv_active()
+            # Re-differentiating the whole step is the costliest redraw: once a second is enough
+            now = time.monotonic()
+            if force or now - self._dqv_last_render >= 1.0:
+                self._dqv_last_render = now
+                self._render_dqv_active()
+                if self._dqv_follow:
+                    self.fit_dqv_view()
 
         elif tab_idx == 4:
             # Tab 4 – Cycle Aging & Health (IMP-07)
@@ -605,6 +626,7 @@ class LivePlotWidget(QWidget):
         latest_t = float(self._t[-1]) if self._t and not np.isnan(self._t[-1]) else 0.0
         self._current_step_start_t = latest_t
         self._step_peak_abs_i = 0.0
+        self._between_steps = False
         self._current_step_idx = step_idx
         self._current_step_type = step_type
         if cycle_idx != self._current_cycle_idx:
@@ -644,7 +666,8 @@ class LivePlotWidget(QWidget):
             return
         if t_term is None or t_body is None:
             x0, x1 = self.plot_temp.viewRange()[0]
-            _, (_, _, t_term, t_body) = self._series_for_range(x0, x1)
+            series = self._series_for_range(x0, x1)
+            t_term, t_body = series[_S_TERM][1], series[_S_BODY][1]
         vals = np.concatenate((np.asarray(t_term, float), np.asarray(t_body, float)))
         vals = vals[np.isfinite(vals)]
         if vals.size == 0:
@@ -862,8 +885,8 @@ class LivePlotWidget(QWidget):
 
         # 1. Archive V-Q Trace
         if len(self._vq_cap) >= 15 and not is_rest:
-            caps = np.array(self._vq_cap)
-            volts = np.array(self._vq_volt)
+            caps = self._vq_cap.view().copy()
+            volts = self._vq_volt.view().copy()
             if np.nanmax(caps) - np.nanmin(caps) >= 1.0:
                 p_hist = self.plot_vq.plot(caps, volts)
                 p_hist.setClipToView(True)
@@ -883,8 +906,8 @@ class LivePlotWidget(QWidget):
 
         # 2. Archive completed step dQ/dV profile (IMP-05)
         if len(self._dqv_v_buf) >= 15 and not is_rest:
-            v_arr = np.array(self._dqv_v_buf)
-            q_arr = np.array(self._dqv_q_buf)
+            v_arr = self._dqv_v_buf.view()
+            q_arr = self._dqv_q_buf.view()
             v_grid, dqdv = compute_dq_dv(
                 v_arr,
                 q_arr,
@@ -907,12 +930,14 @@ class LivePlotWidget(QWidget):
                 if pks:
                     self._latest_dqv_peaks = list(pks)
                     self._update_dqv_peak_scatter(pks)
-                self.fit_dqv_view()
+                if self._dqv_follow:
+                    self.fit_dqv_view()
 
         self._dqv_v_buf.clear()
         self._dqv_q_buf.clear()
         if hasattr(self, "curve_dqv_active"):
             self.curve_dqv_active.setData([], [])
+        self._between_steps = True
 
     def add_cycle_summary(
         self,
@@ -965,6 +990,9 @@ class LivePlotWidget(QWidget):
             pen=pg.mkPen(_AGING_Q_CHG_COLOR, width=2.2)
         )
         self.curve_vq_current.setClipToView(True)
+        self._between_steps = False
+        self._vq_follow = self._dqv_follow = True
+        self._dqv_last_render = 0.0
         self.fit_vq_view()
         if hasattr(self, "plot_dqv"):
             for _, p_item in self._dqv_history_curves:
@@ -1072,32 +1100,38 @@ class LivePlotWidget(QWidget):
                      self._t_term.view()[-b:], self._t_body.view()[-b:]],
                 )
 
-    def _series_for_range(self, x0: float, x1: float) -> Tuple[np.ndarray, List[np.ndarray]]:
-        """Return (t, [v, i, t_term, t_body]) covering [x0, x1] with at most ~_MAX_DRAW_POINTS points.
+    def _series_for_range(self, x0: float, x1: float) -> List[Tuple[np.ndarray, np.ndarray]]:
+        """Return [(t, v), (t, i), (t, t_term), (t, t_body)] covering [x0, x1], each with at most
+        ~_MAX_DRAW_POINTS points.
 
         Uses raw samples when few enough are visible, otherwise the finest min/max envelope
-        that fits, plus the newest samples not yet summarized into a block.
+        that fits, plus the newest samples not yet summarized into a block. Envelope points sit
+        at the times of the real extremes, so every series carries its own time axis.
         """
         t = self._t.view()
         series = [self._v.view(), self._i.view(), self._t_term.view(), self._t_body.view()]
         lo = max(0, int(np.searchsorted(t, x0)) - 1)
         hi = min(len(t), int(np.searchsorted(t, x1, side="right")) + 1)
         if hi - lo <= _MAX_DRAW_POINTS:
-            return t[lo:hi], [y[lo:hi] for y in series]
+            return [(t[lo:hi], y[lo:hi]) for y in series]
 
-        for level, env in enumerate(self._envelopes):
-            et = env.t.view()
+        # 2 points per block: pick the finest level that keeps the visible span within budget
+        level = next(
+            (k for k, env in enumerate(self._envelopes) if 2 * (hi - lo) // env.block <= _MAX_DRAW_POINTS),
+            len(self._envelopes) - 1,
+        )
+        env = self._envelopes[level]
+        tail = self._env_pending[level]
+        out = []
+        for et_buf, ey_buf, y in zip(env.t, env.y, series):
+            et, ey = et_buf.view(), ey_buf.view()
             a = max(0, int(np.searchsorted(et, x0)) - 2)
             b = min(len(et), int(np.searchsorted(et, x1, side="right")) + 2)
-            if b - a <= _MAX_DRAW_POINTS or level == len(self._envelopes) - 1:
-                tail = self._env_pending[level]
-                if tail and b == len(et):
-                    return (
-                        np.concatenate((et[a:b], t[-tail:])),
-                        [np.concatenate((ey.view()[a:b], y[-tail:])) for ey, y in zip(env.y, series)],
-                    )
-                return et[a:b], [ey.view()[a:b] for ey in env.y]
-        return t[lo:hi], [y[lo:hi] for y in series]
+            if tail and b == len(et):
+                out.append((np.concatenate((et[a:b], t[-tail:])), np.concatenate((ey[a:b], y[-tail:]))))
+            else:
+                out.append((et[a:b], ey[a:b]))
+        return out
 
     def _on_view_xrange_changed(self, *args) -> None:
         """Pan/zoom changed the visible window: redraw it on the next tick."""
@@ -1334,9 +1368,9 @@ class LivePlotWidget(QWidget):
         ctrls.setSpacing(4)
 
         btn_fit = QPushButton("⤢ Fit")
-        btn_fit.setToolTip("Auto-fit V-Q curve view")
+        btn_fit.setToolTip("Auto-fit V-Q curve view and keep following the live trace")
         btn_fit.setStyleSheet(_ZOOM_BTN_STYLE_DEFAULT)
-        btn_fit.clicked.connect(self.fit_vq_view)
+        btn_fit.clicked.connect(self._resume_vq_follow)
         ctrls.addWidget(btn_fit)
 
         btn_clear = QPushButton("Clear History")
@@ -1357,8 +1391,23 @@ class LivePlotWidget(QWidget):
         self.plot_vq.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Delivered / Stored Capacity (mAh)</span>")
         self.curve_vq_current = self.plot_vq.plot(pen=pg.mkPen(_AGING_Q_CHG_COLOR, width=2.2))
         self.curve_vq_current.setClipToView(True)
+        self.plot_vq.plotItem.vb.sigRangeChangedManually.connect(self._pause_vq_follow)
         vlay.addWidget(self.plot_vq)
         self.tabs.addTab(tab, "📈 V-Q Curve")
+
+    def _pause_vq_follow(self, *args) -> None:
+        self._vq_follow = False
+
+    def _resume_vq_follow(self) -> None:
+        self._vq_follow = True
+        self.fit_vq_view()
+
+    def _pause_dqv_follow(self, *args) -> None:
+        self._dqv_follow = False
+
+    def _resume_dqv_follow(self) -> None:
+        self._dqv_follow = True
+        self.fit_dqv_view()
 
     def _update_vq_identity_labels(self) -> None:
         """Keep V-Q axis identity aligned with the selected cell."""
@@ -1460,9 +1509,9 @@ class LivePlotWidget(QWidget):
 
         ctrls.addSpacing(6)
         btn_fit = QPushButton("⤢ Fit")
-        btn_fit.setToolTip("Auto-fit differential capacity plot view")
+        btn_fit.setToolTip("Auto-fit differential capacity plot view and keep following the live curve")
         btn_fit.setStyleSheet(_ZOOM_BTN_STYLE_DEFAULT)
-        btn_fit.clicked.connect(self.fit_dqv_view)
+        btn_fit.clicked.connect(self._resume_dqv_follow)
         ctrls.addWidget(btn_fit)
 
         top_bar.addLayout(ctrls)
@@ -1502,6 +1551,7 @@ class LivePlotWidget(QWidget):
 
         # Signals
         self.plot_dqv.scene().sigMouseMoved.connect(self._on_mouse_moved_dqv)
+        self.plot_dqv.plotItem.vb.sigRangeChangedManually.connect(self._pause_dqv_follow)
 
         vlay.addWidget(self.plot_dqv)
         # Only the hover readout may shrink; the context label keeps its text
@@ -1514,8 +1564,8 @@ class LivePlotWidget(QWidget):
         if not hasattr(self, "curve_dqv_active"):
             return
         if len(self._dqv_v_buf) >= 15 and "rest" not in self._current_step_type.lower():
-            v_arr = np.array(self._dqv_v_buf)
-            q_arr = np.array(self._dqv_q_buf)
+            v_arr = self._dqv_v_buf.view()
+            q_arr = self._dqv_q_buf.view()
             v_grid, dqdv = compute_dq_dv(
                 v_arr,
                 q_arr,
@@ -1726,26 +1776,35 @@ class LivePlotWidget(QWidget):
         """Auto-frame dQ/dV view to encompass all active and historical data."""
         if not hasattr(self, "plot_dqv"):
             return
-        y_vals: List[float] = []
+        # Original dataset, not getData(): a clip-to-view curve returns only what is on screen.
+        # Every sample counts, so a narrow peak is never cut off.
+        xs: List[np.ndarray] = []
+        ys: List[np.ndarray] = []
         if hasattr(self, "curve_dqv_active"):
-            act_x, act_y = self.curve_dqv_active.getData()
+            act_x, act_y = self.curve_dqv_active.getOriginalDataset()
             if act_y is not None and len(act_y) > 0:
-                y_vals.extend(act_y[::5])
+                xs.append(np.asarray(act_x, dtype=float))
+                ys.append(np.asarray(act_y, dtype=float))
         for prof, _ in self._dqv_history_curves:
-            y_data = prof.dq_dv if self._dqv_butterfly else np.abs(prof.dq_dv)
-            if len(y_data) > 0:
-                y_vals.extend(y_data[::5])
+            xs.append(np.asarray(prof.voltages, dtype=float))
+            ys.append(prof.dq_dv if self._dqv_butterfly else np.abs(prof.dq_dv))
 
-        valid_y = [y for y in y_vals if np.isfinite(y)]
-        if valid_y:
-            y_min = min(valid_y)
-            y_max = max(valid_y)
+        y_all = np.concatenate(ys) if ys else np.array([])
+        y_all = y_all[np.isfinite(y_all)]
+        if y_all.size:
+            # The zero line stays in view while only one lobe exists
+            y_min, y_max = min(0.0, float(y_all.min())), max(0.0, float(y_all.max()))
             pad = max(50.0, (y_max - y_min) * 0.1)
             self.plot_dqv.setYRange(y_min - pad, y_max + pad, padding=0.02)
         else:
             self.plot_dqv.setYRange(-500.0, 1500.0, padding=0.02)
 
-        self.plot_dqv.setXRange(2.5, 4.35, padding=0.02)
+        # Li-ion window by default, widened when the cell runs outside it
+        x_all = np.concatenate(xs) if xs else np.array([])
+        x_all = x_all[np.isfinite(x_all)]
+        x_lo = min(2.5, float(x_all.min()) - 0.05) if x_all.size else 2.5
+        x_hi = max(4.35, float(x_all.max()) + 0.05) if x_all.size else 4.35
+        self.plot_dqv.setXRange(x_lo, x_hi, padding=0.02)
 
     def _update_axis_styling(self, v_col: str, i_col: str) -> None:
         """Dynamically style axes lines, text, and titles to match active cell curve colors."""
@@ -1899,7 +1958,7 @@ class LivePlotWidget(QWidget):
         self.plot_aging_cap.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
         self.plot_aging_cap.plotItem.getAxis("left").setTickPen(pg.mkPen("#334155", width=1))
         self.plot_aging_cap.setLabel("left", "<span style='color:#38bdf8; font-weight:bold; font-size:12px;'>Capacity (mAh)</span>")
-        self.plot_aging_cap.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Cycle Number</span>")
+        # No axis title here: the linked efficiency chart below carries "Cycle Number"
 
         # Curves
         self.curve_aging_q_dis = self.plot_aging_cap.plot(
@@ -2215,18 +2274,15 @@ class LivePlotWidget(QWidget):
         """Auto-frame V-Q curve view with proper battery operating window."""
         if not hasattr(self, "plot_vq"):
             return
-        v_points: List[float] = list(self._vq_volt)
-        q_points: List[float] = list(self._vq_cap)
-        for _, _, caps, volts in self._vq_history_curves:
-            q_points.extend(caps[::10])
-            v_points.extend(volts[::10])
+        # Live trace plus the extents of the archived curves (kept by _restyle_vq_history)
+        q_max, v_min, v_max = self._vq_hist_qmax, self._vq_hist_vmin, self._vq_hist_vmax
+        caps, volts = self._vq_cap.view(), self._vq_volt.view()
+        if len(caps) > 0:
+            q_max = max(q_max, float(np.nanmax(caps)))
+            v_min = min(v_min, float(np.nanmin(volts)))
+            v_max = max(v_max, float(np.nanmax(volts)))
 
-        valid_v = [v for v in v_points if np.isfinite(v)]
-        valid_q = [q for q in q_points if np.isfinite(q)]
-        if valid_v and valid_q:
-            v_min = min(valid_v)
-            v_max = max(valid_v)
-            q_max = max(valid_q)
+        if v_max >= v_min:
             y_low = max(0.0, v_min - 0.15)
             y_high = min(6.0, v_max + 0.15)
             self.plot_vq.setYRange(y_low, y_high, padding=0.03)

@@ -95,8 +95,16 @@ class KPICard(QFrame):
     def set_title(self, title: str) -> None:
         self.lbl_title.setText(title.upper())
 
-    def set_value(self, val_str: str, sub_str: str | None = None, color: str | None = None) -> None:
+    def set_value(
+        self,
+        val_str: str,
+        sub_str: str | None = None,
+        color: str | None = None,
+        unit_str: str | None = None,
+    ) -> None:
         self.lbl_value.setText(val_str)
+        if unit_str is not None:
+            self.lbl_unit.setText(unit_str)
         if sub_str is not None:
             self.lbl_sub.setText(sub_str)
         if color is not None:
@@ -138,8 +146,8 @@ class KPIDashboard(QWidget):
         self.card_temp = KPICard("Cell Temp", "25.0", "°C", "Term: 25.0 °C | Amb: 25.0 °C", "#f97316")
         layout.addWidget(self.card_temp, 0, 2)
 
-        # Card 4: SoC (User Requirement: rename OCV to CC and CC to OCV)
-        self.card_soc = KPICard("State of Charge", "50.0", "%", "CC: 50.0% | OCV: 50.0%", "#10b981")
+        # Card 4: SoC (Displays all three SoCs: EKF, CC, OCV; diagnostics logged)
+        self.card_soc = KPICard("State of Charge", "--", "%", "CC: --%  │  OCV: --%", "#10b981")
         layout.addWidget(self.card_soc, 0, 3)
 
         # Card 5: Step Capacity
@@ -174,19 +182,29 @@ class KPIDashboard(QWidget):
         self.card_voltage.set_title(f"Cell {cell} Voltage")
         self.card_current.set_title(f"Cell {cell} Current")
         self.card_temp.set_title(f"Cell {cell} Temp")
+        self.card_cycle_kpi.set_title(f"Cell {cell} · Cycle / Step")
 
     def set_telemetry_age(self, age_s: float | None) -> None:
         """Show freshness without overwriting the metric-specific subtitle."""
         for card in self._cards:
             card.set_age(age_s)
 
-    def set_run_context(self, cell_num: int, recipe: str, step_name: str, elapsed_s: float) -> None:
+    def set_run_context(
+        self,
+        cell_num: int,
+        recipe: str,
+        step_name: str,
+        elapsed_s: float,
+        cycle_idx: int | None = None,
+    ) -> None:
+        cell = 2 if int(cell_num) == 2 else 1
+        self.card_cycle_kpi.set_title(f"Cell {cell} · Cycle / Step")
+        val_str = f"Cycle {cycle_idx}" if cycle_idx is not None else self.card_cycle_kpi.lbl_value.text()
+        st_text = f"Step: {step_name}" if step_name else "Step: Idle"
+        self.card_cycle_kpi.set_value(val_str, st_text)
         minutes, seconds = divmod(int(max(0.0, elapsed_s)), 60)
-        current = self.card_cycle_kpi.lbl_value.text()
-        self.card_cycle_kpi.set_title(f"Cell {int(cell_num)} · Cycle / Step")
-        self.card_cycle_kpi.set_value(
-            current,
-            f"{recipe} · {step_name} · {minutes:02d}:{seconds:02d}",
+        self.card_cycle_kpi.setToolTip(
+            f"Recipe: {recipe}\nStep: {step_name}\nElapsed: {minutes:02d}:{seconds:02d}"
         )
 
     def resizeEvent(self, event) -> None:
@@ -273,12 +291,37 @@ class KPIDashboard(QWidget):
         self.card_bus.set_value(f"{primary_v:.2f}", sub, color=bus_color)
 
     def update_fault_soc(self, fault_soc: FaultSoCTelemetry) -> None:
-        # Requirement: "the values are correct. Just rename OCV to CC and CC to OCV"
-        # Swapped labels: OCV value is displayed under CC, CC value under OCV
-        self.card_soc.set_value(
-            f"{fault_soc.soc_ocv:.1f}",
-            f"CC: {fault_soc.soc_ocv:.1f}% | OCV: {fault_soc.soc_cc:.1f}%",
-        )
+        # Check if 17-byte EKF frame is present (indicated by non-zero soc_ekf or vr1/vr2/p_diag)
+        if fault_soc.soc_ekf > 0.0 or fault_soc.vr1 != 0.0 or fault_soc.vr2 != 0.0:
+            self.card_soc.set_title("State of Charge (EKF · CC · OCV)")
+            self.card_soc.set_value(
+                val_str=f"{fault_soc.soc_ekf:.1f}",
+                sub_str=f"CC: {fault_soc.soc_cc:.1f}%  │  OCV: {fault_soc.soc_ocv:.1f}%",
+                unit_str="% EKF",
+            )
+            self.card_soc.setToolTip(
+                f"State of Charge Sources:\n"
+                f"  • EKF (Main / Recipe Cutoff): {fault_soc.soc_ekf:.2f}%\n"
+                f"  • Coulomb Counting (CC): {fault_soc.soc_cc:.2f}%\n"
+                f"  • Open-Circuit Voltage (OCV): {fault_soc.soc_ocv:.2f}%\n\n"
+                f"Logged Diagnostics:\n"
+                f"  • Polarization VR1: {fault_soc.vr1:.4f} V\n"
+                f"  • Polarization VR2: {fault_soc.vr2:.4f} V\n"
+                f"  • Covariance P_diag: ({fault_soc.p_diag[0]:.4f}, {fault_soc.p_diag[1]:.4f}, {fault_soc.p_diag[2]:.4f})"
+            )
+        else:
+            # Legacy 5-byte payload (swapped labels: OCV value displayed under CC, CC under OCV)
+            self.card_soc.set_title("State of Charge (CC · OCV)")
+            self.card_soc.set_value(
+                val_str=f"{fault_soc.soc_ocv:.1f}",
+                sub_str=f"CC: {fault_soc.soc_ocv:.1f}%  │  OCV: {fault_soc.soc_cc:.1f}%",
+                unit_str="%",
+            )
+            self.card_soc.setToolTip(
+                f"State of Charge Sources:\n"
+                f"  • Coulomb Counting (CC): {fault_soc.soc_ocv:.2f}%\n"
+                f"  • Open-Circuit Voltage (OCV): {fault_soc.soc_cc:.2f}%"
+            )
 
     def update_metrics(
         self,
@@ -294,5 +337,6 @@ class KPIDashboard(QWidget):
         self.card_step_cap.set_value(f"{abs(step_mah):.1f}", f"Step Energy: {abs(step_mwh):.1f} mWh")
         net_ah = (tot_chg_mah + tot_dis_mah) / 1000.0
         net_wh = (tot_chg_mwh + tot_dis_mwh) / 1000.0
-        self.card_tot_cap.set_value(f"{net_ah:.3f}", f"Net Energy: {net_wh:.2f} Wh")
-        self.card_cycle_kpi.set_value(f"Cycle {cycle_idx}", f"Step: {step_name}")
+        self.card_tot_cap.set_value(f"{net_ah:.3f}", f"Total Energy: {net_wh:.2f} Wh")
+        st_text = f"Step: {step_name}" if step_name else "Step: Idle"
+        self.card_cycle_kpi.set_value(f"Cycle {cycle_idx}", st_text)

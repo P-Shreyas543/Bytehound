@@ -249,11 +249,53 @@ QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QLineEdit:focus {{
 
 QTableWidget {{
     background-color: {BG_PANEL};
+    /* Without this, alternating rows use the system's white and hide the light text */
+    alternate-background-color: {BG_CARD};
     border: 1px solid {BORDER_COLOR};
     border-radius: 6px;
     gridline-color: {BORDER_COLOR};
     color: {TEXT_PRIMARY};
     selection-background-color: #334155;
+    selection-color: {TEXT_PRIMARY};
+}}
+QTableCornerButton::section {{
+    background-color: {BG_CARD};
+    border: 1px solid {BORDER_COLOR};
+}}
+
+QScrollBar:vertical {{
+    background: {BG_DARK};
+    width: 12px;
+    margin: 0;
+}}
+QScrollBar:horizontal {{
+    background: {BG_DARK};
+    height: 12px;
+    margin: 0;
+}}
+QScrollBar::handle {{
+    background: #3b4763;
+    border-radius: 5px;
+    margin: 2px;
+}}
+QScrollBar::handle:vertical {{
+    min-height: 28px;
+}}
+QScrollBar::handle:horizontal {{
+    min-width: 28px;
+}}
+QScrollBar::handle:hover {{
+    background: {TEXT_MUTED};
+}}
+QScrollBar::add-line, QScrollBar::sub-line {{
+    width: 0;
+    height: 0;
+}}
+QScrollBar::add-page, QScrollBar::sub-page {{
+    background: transparent;
+}}
+QAbstractScrollArea::corner {{
+    background: {BG_DARK};
 }}
 QHeaderView::section {{
     background-color: {BG_CARD};

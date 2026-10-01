@@ -55,7 +55,7 @@ from ..comm.protocol_defs import (
     RelayControlBits,
 )
 from ..comm.transceiver import SerialTransceiver, TransceiverState
-from ..config.cycler_config import DEFAULT_LOG_DIR
+from ..config.cycler_config import DEFAULT_LOG_DIR, load_logging_settings
 from ..core.cycler_engine import CyclerEngine, EngineState
 from ..core.metrics_tracker import CycleSummary, StepMetrics
 from ..core.profile_model import TestRecipe
@@ -127,7 +127,16 @@ class MainWindow(QMainWindow):
         # 1. Background Workers & Engines
         self.transceiver = SerialTransceiver(parent=self)
         self.engine = CyclerEngine(command_sender=self._on_command_dispatch, parent=self)
-        self.logger = AsyncTelemetryLogger(log_dir=DEFAULT_LOG_DIR)
+        # CSV rows are sampled by the logger's own fixed-rate thread (config/cycler_settings.json),
+        # not by the UI tick, so the cadence holds whatever the UI or the serial link is doing
+        log_cfg = load_logging_settings()
+        self.logger = AsyncTelemetryLogger(
+            log_dir=DEFAULT_LOG_DIR,
+            interval_s=log_cfg.interval_s,
+            thread_priority=log_cfg.thread_priority,
+            soc_decimals=log_cfg.soc_decimals,
+        )
+        self.logger.snapshot_provider = self._build_log_record
         self._last_board_params: Optional[BoardParamsTelemetry] = None
         self._last_fault_soc: Optional[FaultSoCTelemetry] = None
         self._last_cell_data: Optional[CellDataTelemetry] = None
@@ -887,10 +896,10 @@ class MainWindow(QMainWindow):
         self.engine.on_fault_soc_telemetry(fault_soc)
 
     def _on_ui_tick(self) -> None:
-        """Deterministic 10 Hz tick: update relay state, redraw plots, log if test active.
+        """10 Hz UI tick: update relay state and redraw plots.
 
-        Plotting and logging run continuously during active testing (both RUNNING and
-        STEP_TRANSITION), capturing Charge, Discharge, and Rest (OCV relaxation) smoothly.
+        CSV logging is not driven from here: the logger samples _build_log_record() on its
+        own fixed-rate thread.
         """
         # Read relay hardware echo
         rb = self.engine.transition_controller.control_readbacks
@@ -907,40 +916,55 @@ class MainWindow(QMainWindow):
         # Drive the plot redraw at 10 Hz
         self.live_plots.tick_update()
 
-        # Log one record per tick whenever test is active (including Rest, Charge, Discharge)
-        if is_test_active and self._last_cell_data is not None:
-            data = self._last_cell_data
-            bp = self._last_board_params
-            fs = self._last_fault_soc
-            mt = self.engine.metrics_tracker
-            step_m = mt.current_step_metrics
-
+        if is_test_active:
             self._tick_elapsed_s = self._current_test_elapsed_s()
 
-            self.logger.log_record({
-                "timestamp_iso": datetime.now(timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
-                "timestamp_epoch_s": round(time.time(), 3),
-                "elapsed_s": round(self._tick_elapsed_s, 2),
-                "cycle_index": self.engine.current_cycle,
-                "step_index": self.engine.current_step_idx + 1,
-                "step_name": self.engine.active_step.name if self.engine.active_step else "Transition",
-                "step_type": self.engine.active_step.step_type.value if self.engine.active_step else "transition",
-                "voltage_v": data.voltage,
-                "current_a": data.current,
-                "power_w": round(data.voltage * data.current, 3),
-                "terminal_temp_c": data.terminal_temp,
-                "body_temp_c": data.body_temp,
-                "ambient_temp_c": bp.ambient_temp if bp else 0.0,
-                "charge_bus_v": bp.charge_voltage if bp else 0.0,
-                "load_bus_v": bp.load_voltage if bp else 0.0,
-                "soc_ocv_pct": fs.soc_ocv if fs else 0.0,
-                "soc_cc_pct": fs.soc_cc if fs else 0.0,
-                "fault_byte": fs.fault_byte if fs else 0,
-                "step_capacity_mah": round(self._last_step_mah, 2),
-                "step_energy_mwh": round(step_m.energy_mwh if step_m else 0.0, 2),
-                "total_charge_mah": round(mt.cumulative_charge_mah, 2),
-                "total_discharge_mah": round(mt.cumulative_discharge_mah, 2),
-            })
+    def _build_log_record(self) -> Optional[dict]:
+        """Current telemetry snapshot as one CSV row, or None when no test is running.
+
+        Called from the logger's sampler thread at the configured interval (Rest, Charge,
+        Discharge and step transitions alike). It only reads: each shared object is taken
+        once into a local, and the latest values are repeated if no new frame has arrived.
+        """
+        data = self._last_cell_data
+        if data is None or self.engine.state not in (EngineState.RUNNING, EngineState.STEP_TRANSITION):
+            return None
+        bp = self._last_board_params
+        fs = self._last_fault_soc
+        mt = self.engine.metrics_tracker
+        step_m = mt.current_step_metrics
+        step = self.engine.active_step
+        now = time.time()
+        return {
+            "timestamp_iso": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
+            "timestamp_epoch_s": round(now, 3),
+            "elapsed_s": round(self._current_test_elapsed_s(), 2),
+            "cycle_index": self.engine.current_cycle,
+            "step_index": self.engine.current_step_idx + 1,
+            "step_name": step.name if step else "Transition",
+            "step_type": step.step_type.value if step else "transition",
+            "voltage_v": data.voltage,
+            "current_a": data.current,
+            "power_w": round(data.voltage * data.current, 3),
+            "terminal_temp_c": data.terminal_temp,
+            "body_temp_c": data.body_temp,
+            "ambient_temp_c": bp.ambient_temp if bp else 0.0,
+            "charge_bus_v": bp.charge_voltage if bp else 0.0,
+            "load_bus_v": bp.load_voltage if bp else 0.0,
+            "soc_ocv_pct": fs.soc_ocv if fs else 0.0,
+            "soc_cc_pct": fs.soc_cc if fs else 0.0,
+            "soc_ekf_pct": fs.soc_ekf if fs else 0.0,
+            "vr1_v": fs.vr1 if fs else 0.0,
+            "vr2_v": fs.vr2 if fs else 0.0,
+            "p_diag_0": fs.p_diag[0] if (fs and len(fs.p_diag) > 0) else 0.0,
+            "p_diag_1": fs.p_diag[1] if (fs and len(fs.p_diag) > 1) else 0.0,
+            "p_diag_2": fs.p_diag[2] if (fs and len(fs.p_diag) > 2) else 0.0,
+            "fault_byte": fs.fault_byte if fs else 0,
+            "step_capacity_mah": round(step_m.capacity_mah if step_m else 0.0, 2),
+            "step_energy_mwh": round(step_m.energy_mwh if step_m else 0.0, 2),
+            "total_charge_mah": round(mt.cumulative_charge_mah, 2),
+            "total_discharge_mah": round(mt.cumulative_discharge_mah, 2),
+        }
 
     def _on_stats_updated(self, rx: int, tx: int, err: int) -> None:
         self.lbl_status_stats.setText(f"RX: {rx} | TX: {tx} | Err: {err}")
@@ -1298,7 +1322,9 @@ class MainWindow(QMainWindow):
         self.lbl_run_context.setText(
             f"{state} | Cell {cell} | {connection} | {recipe} | Step: {step} | Elapsed: {minutes:02d}:{seconds:02d}"
         )
-        self.dashboard.set_run_context(cell, recipe, step, elapsed)
+        self.dashboard.set_run_context(
+            cell, recipe, step, elapsed, getattr(self.engine, "current_cycle", 1)
+        )
 
     def _collect_run_files(self) -> list:
         """Telemetry CSV (all rotated parts) + step / cycle / dQ-dV summaries of the last run."""

@@ -640,10 +640,31 @@ def test_plot_range_slice_is_bounded_and_keeps_extremes(qapp):
         v = 5.5 if k == 123_457 else 3.7   # one spike must survive decimation
         w._push_sample(k * 0.1, v, 1.0, 27.0, 26.0)
 
-    t, (v, i, _, _) = w._series_for_range(0.0, n * 0.1)
-    assert len(t) <= lp_mod._MAX_DRAW_POINTS + 1024
+    (t, v), (t_i, i), _, _ = w._series_for_range(0.0, n * 0.1)
+    assert len(t) <= lp_mod._MAX_DRAW_POINTS + max(lp_mod._ENVELOPE_BLOCKS)
     assert np.nanmax(v) == 5.5
     assert t[-1] == (n - 1) * 0.1               # newest sample always drawn
+    assert np.all(np.diff(t) > 0) and np.all(np.diff(t_i) > 0)
 
-    t2, (v2, _, _, _) = w._series_for_range(1000.0, 1100.0)   # zoomed in: raw samples
+    (t2, v2), _, _, _ = w._series_for_range(1000.0, 1100.0)   # zoomed in: raw samples
     assert np.all(np.diff(t2) > 0) and len(t2) >= 1000
+
+
+def test_decimated_plot_draws_no_sawtooth_on_ramps_and_steps(qapp):
+    """Zoomed-out curves are built from real samples in time order: a falling ramp stays
+    monotonic and a step stays one edge (min-at-block-start / max-at-block-end drew spikes)."""
+    import numpy as np
+    from single_cell_cycler.ui.widgets import live_plots as lp_mod
+    w = lp_mod.LivePlotWidget(max_buffer_points=400_000)
+    n = 200_000
+    for k in range(n):
+        current = 1.5 - 1.3 * k / n                      # CV taper: steadily falling
+        volts = 3.0 if k < n // 2 else 4.0               # one step edge
+        w._push_sample(k * 0.1, volts, current, 25.0 + 5.0 * k / n, 25.0)
+
+    (t_v, v), (t_i, i), (t_tt, tt), _ = w._series_for_range(0.0, n * 0.1)
+    assert len(t_i) < n // 10                            # really decimated
+    assert np.all(np.diff(i) <= 1e-12)                   # taper never jumps back up
+    assert np.all(np.diff(tt) >= -1e-12)                 # rising temperature never dips
+    assert np.count_nonzero(np.diff(v)) == 1             # exactly one edge
+    w.close()

@@ -61,6 +61,8 @@ def test_font_scale_and_kpi_reflow(qapp):
         assert dashboard._last_columns == 4
         dashboard.close()
     finally:
+        window.combo_font.setCurrentIndex(1)
+        qapp.processEvents()
         window.close()
 
 
@@ -114,3 +116,28 @@ def test_kpi_cards_have_no_stale_placeholder_or_label_blocks(qapp):
     qapp.processEvents()
     assert card.sizeHint().height() == h0
     dashboard.close()
+
+
+def test_kpi_cycle_card_subtitle_is_stable(qapp):
+    dashboard = KPIDashboard()
+    dashboard.show()
+    qapp.processEvents()
+
+    # When run context updates (e.g. from 1 Hz stats tick)
+    dashboard.set_run_context(cell_num=1, recipe="15-Cycle CCCV", step_name="CC Charge", elapsed_s=125.0, cycle_idx=2)
+    assert dashboard.card_cycle_kpi.lbl_value.text() == "Cycle 2"
+    assert dashboard.card_cycle_kpi.lbl_sub.text() == "Step: CC Charge"
+
+    # When telemetry arrives (e.g. at 10 Hz)
+    dashboard.update_metrics(
+        step_mah=100.0, step_mwh=350.0,
+        tot_chg_mah=500.0, tot_dis_mah=0.0,
+        tot_chg_mwh=1800.0, tot_dis_mwh=0.0,
+        cycle_idx=2, step_name="CC Charge",
+    )
+    # Subtitle must remain identical to prevent text flashing
+    assert dashboard.card_cycle_kpi.lbl_value.text() == "Cycle 2"
+    assert dashboard.card_cycle_kpi.lbl_sub.text() == "Step: CC Charge"
+
+    dashboard.close()
+

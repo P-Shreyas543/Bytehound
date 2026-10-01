@@ -94,22 +94,18 @@ class SafetyPanelWidget(QWidget):
 
         # 2. Watchdog & Trip Banner
         self.trip_frame = QFrame()
-        self.trip_frame.setStyleSheet(f"""
-            QFrame {{
-                background-color: {BG_CARD};
-                border: 1px solid {BORDER_COLOR};
-                border-radius: 8px;
-                padding: 10px;
-            }}
-        """)
+        self.trip_frame.setObjectName("trip_frame")
+        self._set_trip_frame_style(tripped=False)
         tf_layout = QHBoxLayout(self.trip_frame)
+        tf_layout.setContentsMargins(14, 10, 14, 10)
         self.lbl_trip_status = QLabel("SAFETY STATUS: ALL SYSTEMS NOMINAL")
         self.lbl_trip_status.setStyleSheet("color: #22c55e; font-weight: 700; font-size: 13px;")
-        tf_layout.addWidget(self.lbl_trip_status)
+        # A long trip reason wraps instead of pushing the panel wider than the window
+        self.lbl_trip_status.setWordWrap(True)
+        tf_layout.addWidget(self.lbl_trip_status, 1)
         self.lbl_last_fault = QLabel("Last telemetry: --")
         self.lbl_last_fault.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
         tf_layout.addWidget(self.lbl_last_fault)
-        tf_layout.addStretch()
 
         self.btn_reset = QPushButton("Reset Safety Interlock")
         self.btn_reset.clicked.connect(self._on_reset_clicked)
@@ -118,6 +114,14 @@ class SafetyPanelWidget(QWidget):
         layout.addWidget(self.trip_frame)
 
         layout.addStretch()
+
+    def _set_trip_frame_style(self, tripped: bool) -> None:
+        # Id selector: a bare rule would also box every label and button inside the frame
+        if tripped:
+            style = f"background-color: #450a0a; border: 2px solid {COLOR_DANGER};"
+        else:
+            style = f"background-color: {BG_CARD}; border: 1px solid {BORDER_COLOR};"
+        self.trip_frame.setStyleSheet(f"QFrame#trip_frame {{ {style} border-radius: 8px; }}")
 
     def update_faults(self, fault_soc: FaultSoCTelemetry) -> None:
         self.lbl_last_fault.setText(f"Last telemetry: {datetime.now().strftime('%H:%M:%S')}")
@@ -132,12 +136,12 @@ class SafetyPanelWidget(QWidget):
         self.lbl_last_fault.setText(f"Fault latched: {datetime.now().strftime('%H:%M:%S')}")
         self.lbl_trip_status.setText(f"SAFETY INTERLOCK TRIPPED: {reason}")
         self.lbl_trip_status.setStyleSheet(f"color: {COLOR_DANGER}; font-weight: 800; font-size: 13px;")
-        self.trip_frame.setStyleSheet(f"background-color: #450a0a; border: 2px solid {COLOR_DANGER}; border-radius: 8px; padding: 10px;")
+        self._set_trip_frame_style(tripped=True)
         self.btn_reset.setEnabled(True)
 
     def _on_reset_clicked(self) -> None:
         self._reset_callback()
         self.lbl_trip_status.setText("SAFETY STATUS: ALL SYSTEMS NOMINAL")
         self.lbl_trip_status.setStyleSheet("color: #22c55e; font-weight: 700; font-size: 13px;")
-        self.trip_frame.setStyleSheet(f"background-color: {BG_CARD}; border: 1px solid {BORDER_COLOR}; border-radius: 8px; padding: 10px;")
+        self._set_trip_frame_style(tripped=False)
         self.btn_reset.setEnabled(False)

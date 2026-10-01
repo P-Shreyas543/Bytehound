@@ -82,3 +82,46 @@ def test_duration_and_capacity_cutoffs():
     res = detector.evaluate(step, CellDataTelemetry(3.80, 0.0, 25.0, 25.0), 601.0, 0.0)
     assert res.is_triggered
     assert "Step duration" in res.trigger_reason
+
+
+def test_soc_max_and_min_cutoffs():
+    detector = CutoffDetector()
+
+    # Step with SOC_MAX (e.g. Charge to 80%)
+    step_max = TestStep(
+        step_index=1,
+        name="Charge to 80%",
+        step_type=StepType.CHARGE,
+        cutoffs=[CutoffCondition(CutoffType.SOC_MAX, 80.0, True)],
+    )
+
+    # 1. No SoC telemetry available -> not triggered
+    res = detector.evaluate(step_max, CellDataTelemetry(4.10, 1.0, 25.0, 25.0), 10.0, 50.0, current_soc=None)
+    assert not res.is_triggered
+
+    # 2. SoC below target -> not triggered
+    res = detector.evaluate(step_max, CellDataTelemetry(4.10, 1.0, 25.0, 25.0), 20.0, 100.0, current_soc=79.5)
+    assert not res.is_triggered
+
+    # 3. SoC at / above target -> triggered!
+    res = detector.evaluate(step_max, CellDataTelemetry(4.15, 1.0, 25.0, 25.0), 30.0, 150.0, current_soc=80.2)
+    assert res.is_triggered
+    assert "SoC reached 80.2% >= target 80.0%" in res.trigger_reason
+
+    # Step with SOC_MIN (e.g. Discharge to 20%)
+    step_min = TestStep(
+        step_index=2,
+        name="Discharge to 20%",
+        step_type=StepType.DISCHARGE,
+        cutoffs=[CutoffCondition(CutoffType.SOC_MIN, 20.0, True)],
+    )
+
+    # 4. SoC above target -> not triggered
+    res = detector.evaluate(step_min, CellDataTelemetry(3.20, -1.0, 25.0, 25.0), 40.0, 200.0, current_soc=20.5)
+    assert not res.is_triggered
+
+    # 5. SoC at / below target -> triggered!
+    res = detector.evaluate(step_min, CellDataTelemetry(3.15, -1.0, 25.0, 25.0), 50.0, 250.0, current_soc=19.9)
+    assert res.is_triggered
+    assert "SoC reached 19.9% <= target 20.0%" in res.trigger_reason
+

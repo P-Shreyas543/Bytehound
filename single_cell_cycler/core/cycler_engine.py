@@ -99,6 +99,7 @@ class CyclerEngine(QObject):
         self.active_step: Optional[TestStep] = None
         self._loop_counters: Dict[int, int] = {}  # step_idx -> remaining loops
         self._last_telemetry: Optional[CellDataTelemetry] = None
+        self._last_fault_soc: Optional[FaultSoCTelemetry] = None
         self._step_activated_time: float = 0.0
 
         # Atomic State Journaling for Crash Recovery (IMP-08)
@@ -266,11 +267,13 @@ class CyclerEngine(QObject):
             elapsed_s = step_m.duration_s if step_m else 0.0
             cap_mah = step_m.capacity_mah if step_m else 0.0
 
+            soc_val = self._last_fault_soc.soc_main if self._last_fault_soc else None
             result = self.cutoff_detector.evaluate(
                 step=self.active_step,
                 telemetry=telemetry,
                 step_elapsed_time_s=elapsed_s,
                 step_capacity_mah=cap_mah,
+                current_soc=soc_val,
             )
 
             if result.is_triggered:
@@ -283,6 +286,7 @@ class CyclerEngine(QObject):
 
     def on_fault_soc_telemetry(self, fault_soc: FaultSoCTelemetry) -> None:
         """Driven by incoming 0x3000 frames."""
+        self._last_fault_soc = fault_soc
         stype = self.active_step.step_type.value if self.active_step else None
         v_cell = self._last_telemetry.voltage if self._last_telemetry else None
         is_trans = (self.state == EngineState.STEP_TRANSITION)
@@ -320,6 +324,28 @@ class CyclerEngine(QObject):
                 self._safe_idle_hardware()
                 self._set_state(EngineState.SAFETY_STOP, fault_reason)
                 self.safety_tripped.emit(fault_reason)
+            return
+
+        # Check SoC cut-off conditions when new fault/SoC telemetry arrives during active run
+        if self.state == EngineState.RUNNING and self.active_step and self._last_telemetry:
+            step_m = self.metrics_tracker.current_step_metrics
+            elapsed_s = step_m.duration_s if step_m else 0.0
+            cap_mah = step_m.capacity_mah if step_m else 0.0
+
+            result = self.cutoff_detector.evaluate(
+                step=self.active_step,
+                telemetry=self._last_telemetry,
+                step_elapsed_time_s=elapsed_s,
+                step_capacity_mah=cap_mah,
+                current_soc=fault_soc.soc_main,
+            )
+            if result.is_triggered:
+                logger.info(f"SoC Cut-off Triggered for {self.active_step.name}: {result.trigger_reason}")
+                finished_step = self.metrics_tracker.complete_step(result.trigger_reason)
+                self.step_completed.emit(finished_step)
+                self.current_step_idx += 1
+                self._sync_journal()
+                self._execute_next_step()
 
     def _handle_step_fault(self, fault_reason: str) -> None:
         """Handle a fault raised while a step is running.

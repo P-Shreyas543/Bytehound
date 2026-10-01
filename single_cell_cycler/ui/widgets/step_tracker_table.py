@@ -104,8 +104,10 @@ class StepTrackerTableWidget(QWidget):
         # Live Progress Banner                                                 #
         # ------------------------------------------------------------------ #
         self.banner = QFrame()
+        self.banner.setObjectName("tracker_banner")
+        # Id selector: a bare QFrame rule also draws a box around every label inside the banner
         self.banner.setStyleSheet(
-            f"QFrame {{ background-color: {BG_CARD}; border: 1px solid {BORDER_COLOR}; border-radius: 8px; }}"
+            f"QFrame#tracker_banner {{ background-color: {BG_CARD}; border: 1px solid {BORDER_COLOR}; border-radius: 8px; }}"
         )
         b_layout = QHBoxLayout(self.banner)
         b_layout.setContentsMargins(14, 8, 14, 8)
@@ -178,16 +180,12 @@ class StepTrackerTableWidget(QWidget):
         hdr.setSectionResizeMode(_COL_NAME,   QHeaderView.ResizeMode.Stretch)
         hdr.setSectionResizeMode(_COL_CUTOFF, QHeaderView.ResizeMode.Stretch)
 
-        self.table.setColumnWidth(_COL_CYCLE,   52)
-        self.table.setColumnWidth(_COL_STEP,    48)
-        self.table.setColumnWidth(_COL_TYPE,    82)
-        self.table.setColumnWidth(_COL_DUR,     80)
-        self.table.setColumnWidth(_COL_START_V, 74)
-        self.table.setColumnWidth(_COL_END_V,   74)
-        self.table.setColumnWidth(_COL_PEAK_I,  80)
-        self.table.setColumnWidth(_COL_CAP,    102)
-        self.table.setColumnWidth(_COL_ENERGY,  92)
-        self.table.setColumnWidth(_COL_DCIR,    80)
+        self._base_widths = {
+            _COL_CYCLE: 52, _COL_STEP: 48, _COL_TYPE: 82, _COL_DUR: 80,
+            _COL_START_V: 74, _COL_END_V: 74, _COL_PEAK_I: 80,
+            _COL_CAP: 102, _COL_ENERGY: 92, _COL_DCIR: 80,
+        }
+        self._fit_fixed_columns()
 
         layout.addWidget(self.table)
 
@@ -207,6 +205,21 @@ class StepTrackerTableWidget(QWidget):
         self._timer.setInterval(500)
         self._timer.timeout.connect(self._update_clocks)
         self._timer.start()
+
+    def _fit_fixed_columns(self) -> None:
+        """Fixed columns are at least as wide as their header text at the current font size."""
+        hdr = self.table.horizontalHeader()
+        for col, base in self._base_widths.items():
+            self.table.setColumnWidth(col, max(base, hdr.sectionSizeHint(col) + 4))
+
+    def showEvent(self, event) -> None:
+        self._fit_fixed_columns()
+        super().showEvent(event)
+
+    def changeEvent(self, event) -> None:
+        if event.type() in (event.Type.FontChange, event.Type.StyleChange) and hasattr(self, "_base_widths"):
+            self._fit_fixed_columns()
+        super().changeEvent(event)
 
     # ----------------------------------------------------------------------- #
     # Public API                                                               #

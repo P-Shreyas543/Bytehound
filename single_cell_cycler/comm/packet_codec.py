@@ -23,11 +23,15 @@ from .protocol_defs import (
     PAYLOAD_LEN_CELL_DATA,
     PAYLOAD_LEN_CMD,
     PAYLOAD_LEN_FAULT_SOC,
+    PAYLOAD_LEN_FAULT_SOC_EXT,
     SCALE_BOARD_VOLTAGE,
     SCALE_CELL_CURRENT,
     SCALE_CELL_VOLTAGE,
+    SCALE_EKF_SOC,
+    SCALE_P_DIAG,
     SCALE_SOC,
     SCALE_TEMPERATURE,
+    SCALE_VR,
 )
 
 
@@ -76,9 +80,22 @@ class BoardParamsTelemetry:
         )
 
 
+def _decode_soc_pct(raw: int) -> float:
+    """Decode raw SoC uint16 into percentage (0.0 - 100.0%).
+
+    The MCU sends SoC as a fraction (0.0 - 1.05) scaled by 1000 (i.e. tenths of
+    percent / 0.1% resolution, e.g. 994 -> 99.4%, 1000 -> 100.0%).
+    If raw is scaled by 100 (> 1050, e.g. 8250 for 82.5%), fallback to / 100.0.
+    """
+    frac = raw / 1000.0
+    if frac <= 1.05:
+        return round(frac * 100.0, 2)
+    return round(raw * 0.01, 2)
+
+
 @dataclass(slots=True)
 class FaultSoCTelemetry:
-    """Frame 0x3000 - 5 bytes."""
+    """Frame 0x3000 - 5 bytes (legacy) or 17 bytes (EKF extended)."""
     fault_byte: int
     cov: bool               # Cell Over Voltage
     cuv: bool               # Cell Under Voltage
@@ -89,28 +106,79 @@ class FaultSoCTelemetry:
     soc_ocv: float          # State of Charge from OCV (%)
     soc_cc: float           # State of Charge from Coulomb Counting (%)
     timestamp: float = 0.0
+    soc_ekf: float = 0.0    # EKF / Main SoC (%)
+    vr1: float = 0.0        # Polarization overpotential VR1 (V)
+    vr2: float = 0.0        # Polarization overpotential VR2 (V)
+    p_diag: tuple[float, float, float] = (0.0, 0.0, 0.0) # Covariance matrix diagonal P_diag
 
     @property
     def has_any_fault(self) -> bool:
         return (self.fault_byte & 0x3F) != 0
 
+    @property
+    def soc_main(self) -> float:
+        """Return primary SoC (EKF if available and > 0, otherwise CC, otherwise OCV)."""
+        if self.soc_ekf > 0.0:
+            return self.soc_ekf
+        if self.soc_cc > 0.0:
+            return self.soc_cc
+        return self.soc_ocv
+
     @classmethod
     def from_payload(cls, payload: bytes, timestamp: float | None = None) -> FaultSoCTelemetry:
         if len(payload) < PAYLOAD_LEN_FAULT_SOC:
-            raise ValueError(f"Payload too short for Fault/SoC: expected {PAYLOAD_LEN_FAULT_SOC}, got {len(payload)}")
-        raw_fault, raw_soc_ocv, raw_soc_cc = struct.unpack("<BHH", payload[:PAYLOAD_LEN_FAULT_SOC])
-        return cls(
-            fault_byte=raw_fault,
-            cov=bool(raw_fault & BMSFaultFlags.COV),
-            cuv=bool(raw_fault & BMSFaultFlags.CUV),
-            occ=bool(raw_fault & BMSFaultFlags.OCC),
-            ocd=bool(raw_fault & BMSFaultFlags.OCD),
-            cot=bool(raw_fault & BMSFaultFlags.COT),
-            cut=bool(raw_fault & BMSFaultFlags.CUT),
-            soc_ocv=round(raw_soc_ocv * SCALE_SOC, 2),
-            soc_cc=round(raw_soc_cc * SCALE_SOC, 2),
-            timestamp=timestamp if timestamp is not None else time.time(),
-        )
+            raise ValueError(f"Payload too short for Fault/SoC: expected at least {PAYLOAD_LEN_FAULT_SOC}, got {len(payload)}")
+
+        now = timestamp if timestamp is not None else time.time()
+
+        if len(payload) >= PAYLOAD_LEN_FAULT_SOC_EXT:
+            # 17-byte Extended Frame: 1-byte faults + 8 x 16-bit words.
+            # VR1 / VR2 are signed (int16, 0.001 V): the polarization voltages go negative on
+            # discharge, and read as unsigned they showed up as ~65.5 V. The rest are uint16.
+            raw_fault, raw_ekf, raw_vr1, raw_vr2, raw_p0, raw_p1, raw_p2, raw_soc_cc, raw_soc_ocv = struct.unpack(
+                "<BHhh5H", payload[:PAYLOAD_LEN_FAULT_SOC_EXT]
+            )
+
+            return cls(
+                fault_byte=raw_fault,
+                cov=bool(raw_fault & BMSFaultFlags.COV),
+                cuv=bool(raw_fault & BMSFaultFlags.CUV),
+                occ=bool(raw_fault & BMSFaultFlags.OCC),
+                ocd=bool(raw_fault & BMSFaultFlags.OCD),
+                cot=bool(raw_fault & BMSFaultFlags.COT),
+                cut=bool(raw_fault & BMSFaultFlags.CUT),
+                soc_ocv=_decode_soc_pct(raw_soc_ocv),
+                soc_cc=_decode_soc_pct(raw_soc_cc),
+                timestamp=now,
+                soc_ekf=_decode_soc_pct(raw_ekf),
+                vr1=round(raw_vr1 * SCALE_VR, 4),
+                vr2=round(raw_vr2 * SCALE_VR, 4),
+                p_diag=(
+                    round(raw_p0 * SCALE_P_DIAG, 4),
+                    round(raw_p1 * SCALE_P_DIAG, 4),
+                    round(raw_p2 * SCALE_P_DIAG, 4),
+                ),
+            )
+        else:
+            raw_fault, raw_soc_ocv, raw_soc_cc = struct.unpack("<BHH", payload[:PAYLOAD_LEN_FAULT_SOC])
+            soc_ocv = _decode_soc_pct(raw_soc_ocv)
+            soc_cc = _decode_soc_pct(raw_soc_cc)
+            return cls(
+                fault_byte=raw_fault,
+                cov=bool(raw_fault & BMSFaultFlags.COV),
+                cuv=bool(raw_fault & BMSFaultFlags.CUV),
+                occ=bool(raw_fault & BMSFaultFlags.OCC),
+                ocd=bool(raw_fault & BMSFaultFlags.OCD),
+                cot=bool(raw_fault & BMSFaultFlags.COT),
+                cut=bool(raw_fault & BMSFaultFlags.CUT),
+                soc_ocv=soc_ocv,
+                soc_cc=soc_cc,
+                timestamp=now,
+                soc_ekf=soc_cc,
+                vr1=0.0,
+                vr2=0.0,
+                p_diag=(0.0, 0.0, 0.0),
+            )
 
 
 @dataclass(slots=True)

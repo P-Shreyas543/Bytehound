@@ -25,6 +25,8 @@ class CutoffType(str, Enum):
     CAPACITY_MAX = "Step Capacity >="          # Maximum step capacity in mAh
     TEMP_MAX = "Temperature >="                # High temperature cutoff in °C
     COMPARATOR_TRIP = "Hardware Comparator Trip" # Trip from board comparator
+    SOC_MAX = "SoC >= Target"                  # Upper SoC cutoff (e.g., 80% or 100%)
+    SOC_MIN = "SoC <= Target"                  # Lower SoC cutoff (e.g., 20% or 10%)
 
 
 @dataclass
@@ -325,6 +327,12 @@ class TestRecipe:
                         f"Step {s.step_index} ('{s.name}'): Lower cutoff {c.threshold:.2f}V "
                         f"is below {chem.code} safe min ({chem.min_voltage:.2f}V)"
                     )
+                elif c.cutoff_type in (CutoffType.SOC_MAX, CutoffType.SOC_MIN):
+                    if c.threshold < 0.0 or c.threshold > 100.0:
+                        errors.append(
+                            f"Step {s.step_index} ('{s.name}'): SoC cutoff target {c.threshold:.1f}% "
+                            f"must be between 0.0% and 100.0%"
+                        )
 
         return errors
 
