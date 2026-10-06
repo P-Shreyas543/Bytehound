@@ -24,6 +24,7 @@ from PySide6.QtWidgets import (
 )
 
 from ...core.metrics_tracker import StepMetrics
+from ...core.profile_model import step_label
 from ..theme import (
     BG_CARD,
     BG_PANEL,
@@ -233,7 +234,7 @@ class StepTrackerTableWidget(QWidget):
         color = _type_color(t_lower)
         self.lbl_step_badge.setStyleSheet(f"color: {color}; font-size: 16px;")
         self.lbl_active_step.setText(
-            f"Cycle {cycle_idx}  \u203a  Step {step_idx}: {step_name}  [{step_type.upper()}]"
+            f"Cycle {cycle_idx}  \u203a  {step_label(step_idx, step_name)}  [{step_type.upper()}]"
         )
         self.lbl_active_step.setStyleSheet(
             f"font-size: 13px; font-weight: 700; color: {color};"

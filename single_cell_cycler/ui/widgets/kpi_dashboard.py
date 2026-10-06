@@ -202,9 +202,10 @@ class KPIDashboard(QWidget):
         val_str = f"Cycle {cycle_idx}" if cycle_idx is not None else self.card_cycle_kpi.lbl_value.text()
         st_text = f"Step: {step_name}" if step_name else "Step: Idle"
         self.card_cycle_kpi.set_value(val_str, st_text)
-        minutes, seconds = divmod(int(max(0.0, elapsed_s)), 60)
+        hours, rem = divmod(int(max(0.0, elapsed_s)), 3600)
+        minutes, seconds = divmod(rem, 60)
         self.card_cycle_kpi.setToolTip(
-            f"Recipe: {recipe}\nStep: {step_name}\nElapsed: {minutes:02d}:{seconds:02d}"
+            f"Recipe: {recipe}\nStep: {step_name}\nElapsed: {hours}:{minutes:02d}:{seconds:02d}"
         )
 
     def resizeEvent(self, event) -> None:
@@ -291,19 +292,23 @@ class KPIDashboard(QWidget):
         self.card_bus.set_value(f"{primary_v:.2f}", sub, color=bus_color)
 
     def update_fault_soc(self, fault_soc: FaultSoCTelemetry) -> None:
-        # Check if 17-byte EKF frame is present (indicated by non-zero soc_ekf or vr1/vr2/p_diag)
-        if fault_soc.soc_ekf > 0.0 or fault_soc.vr1 != 0.0 or fault_soc.vr2 != 0.0:
+        # EKF layout only when the firmware sent the 17-byte EKF frame
+        # An OCV estimate only holds at rest: at 1.15 A it read 23.5 % against 43.3 % EKF
+        under_load = self._is_charging or self._is_discharging
+        ocv_note = " (under load)" if under_load else ""
+        if fault_soc.has_ekf:
             self.card_soc.set_title("State of Charge (EKF · CC · OCV)")
             self.card_soc.set_value(
                 val_str=f"{fault_soc.soc_ekf:.1f}",
-                sub_str=f"CC: {fault_soc.soc_cc:.1f}%  │  OCV: {fault_soc.soc_ocv:.1f}%",
+                sub_str=f"CC: {fault_soc.soc_cc:.1f}%  │  OCV: {fault_soc.soc_ocv:.1f}%{ocv_note}",
                 unit_str="% EKF",
             )
             self.card_soc.setToolTip(
                 f"State of Charge Sources:\n"
                 f"  • EKF (Main / Recipe Cutoff): {fault_soc.soc_ekf:.2f}%\n"
                 f"  • Coulomb Counting (CC): {fault_soc.soc_cc:.2f}%\n"
-                f"  • Open-Circuit Voltage (OCV): {fault_soc.soc_ocv:.2f}%\n\n"
+                f"  • Open-Circuit Voltage (OCV): {fault_soc.soc_ocv:.2f}%"
+                f"{' - not valid while current flows' if under_load else ''}\n\n"
                 f"Logged Diagnostics:\n"
                 f"  • Polarization VR1: {fault_soc.vr1:.4f} V\n"
                 f"  • Polarization VR2: {fault_soc.vr2:.4f} V\n"
@@ -314,7 +319,7 @@ class KPIDashboard(QWidget):
             self.card_soc.set_title("State of Charge (CC · OCV)")
             self.card_soc.set_value(
                 val_str=f"{fault_soc.soc_ocv:.1f}",
-                sub_str=f"CC: {fault_soc.soc_ocv:.1f}%  │  OCV: {fault_soc.soc_cc:.1f}%",
+                sub_str=f"CC: {fault_soc.soc_ocv:.1f}%  │  OCV: {fault_soc.soc_cc:.1f}%{ocv_note}",
                 unit_str="%",
             )
             self.card_soc.setToolTip(

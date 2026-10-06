@@ -279,10 +279,55 @@ class ManualControlWidget(QWidget):
         layout.addLayout(grid)
         layout.addStretch()
 
+        # The controls follow the hardware readback until the operator starts editing them. They
+        # used to keep whatever was last ticked: "Cell Enable" unticked and "Wire 0x00" while the
+        # board read 0x01 (connected), so a Send after a test would have written stale values.
+        self._mirroring = False
+        self._edited = False
+        for chk in (self.chk_relay_en, self.chk_curr_1, self.chk_curr_2, self.chk_chg_en, self.chk_dis_en,
+                    self.chk_load_1, self.chk_load_2, self.chk_load_3, self.chk_load_4):
+            chk.stateChanged.connect(self._mark_edited)
+        for combo in (self.combo_cell_sel, self.combo_chg_voltage, self.combo_dis_preset):
+            combo.currentIndexChanged.connect(self._mark_edited)
+
         # Initial summaries
         self._update_relay_summary()
         self._update_chg_sel_summary()
         self.set_connection_available(False)
+
+    def _mark_edited(self, *_args) -> None:
+        if not self._mirroring:
+            self._edited = True
+
+    def _commands_available(self) -> bool:
+        return getattr(self, "_connected", False) and not getattr(self, "_test_active", False)
+
+    def _mirror_readback(self, frame_id: int, val: int) -> None:
+        """Set the controls of one register to its hardware readback."""
+        self._mirroring = True
+        try:
+            if frame_id == FRAME_RELAY_CTRL:
+                self.chk_relay_en.setChecked(bool(val & RelayControlBits.CELL_ENABLE))
+                self.combo_cell_sel.setCurrentIndex(1 if val & RelayControlBits.CELL_SELECT else 0)
+            elif frame_id == FRAME_CHARGE_SEL:
+                self.combo_chg_voltage.setCurrentIndex(
+                    self.combo_chg_voltage.findData(1 if val & ChargeSelectBits.MAX_CHARGE_VOLTAGE else 0)
+                )
+                self.chk_curr_1.setChecked(bool(val & ChargeSelectBits.MAX_CHARGE_CURRENT_1))
+                self.chk_curr_2.setChecked(bool(val & ChargeSelectBits.MAX_CHARGE_CURRENT_2))
+            elif frame_id == FRAME_CHARGE_CTRL:
+                self.chk_chg_en.setChecked(bool(val & ChargeControlBits.CHARGE_ENABLE))
+            elif frame_id == FRAME_DISCHARGE_CTRL:
+                self.chk_dis_en.setChecked(bool(val & DischargeControlBits.DISCHARGE_ENABLE))
+            elif frame_id == FRAME_DISCHARGE_SEL:
+                self.combo_dis_preset.setCurrentIndex(val & 0x0F)
+        finally:
+            self._mirroring = False
+
+    def _mirror_all_readbacks(self) -> None:
+        for fid, val in self.control_readbacks.items():
+            self._mirror_readback(fid, val)
+        self._edited = False
 
     def set_connection_available(self, connected: bool) -> None:
         """Gate manual commands while preserving readback/status labels."""
@@ -298,6 +343,10 @@ class ManualControlWidget(QWidget):
         connected = getattr(self, "_connected", False)
         test_active = getattr(self, "_test_active", False)
         available = connected and not test_active
+        if available and not getattr(self, "_was_available", False) and hasattr(self, "_mirroring"):
+            # Unlocked (test ended / connected): start from what the hardware reads now
+            self._mirror_all_readbacks()
+        self._was_available = available
         if test_active:
             text, color = "Manual commands locked: a test is running (use Stop or E-STOP)", "#fbbf24"
         elif connected:
@@ -322,6 +371,8 @@ class ManualControlWidget(QWidget):
         """Handle incoming 0x6000 - 0x6004 readback from hardware."""
         self.control_readbacks[echo.frame_id] = echo.payload_byte
         val = echo.payload_byte
+        if not self._commands_available() or not self._edited:
+            self._mirror_readback(echo.frame_id, val)
 
         if echo.frame_id == FRAME_RELAY_CTRL:
             cell_str = "Cell 2" if (val & RelayControlBits.CELL_SELECT) else "Cell 1"
@@ -378,12 +429,12 @@ class ManualControlWidget(QWidget):
 
     def _clear_unwanted_flags(self) -> None:
         """Immediately clear all 5 control registers to zero (Safe Idle)."""
-        # 1. Disable active drives
+        # 1. Disable active drives (discharge: load off before Discharge Enable off)
         self._command_sender(FRAME_CHARGE_CTRL, 0x00, 0)
-        self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 0)
-        # 2. De-select parameters & load switches
-        self._command_sender(FRAME_CHARGE_SEL, 0x00, 0)
         self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 0)
+        self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 0)
+        # 2. De-select charge parameters
+        self._command_sender(FRAME_CHARGE_SEL, 0x00, 0)
         # 3. Disconnect cell relay
         self._command_sender(FRAME_RELAY_CTRL, 0x00, 0)
 
@@ -394,6 +445,7 @@ class ManualControlWidget(QWidget):
         self.combo_dis_preset.setCurrentIndex(0)
         self.chk_curr_1.setChecked(False)
         self.chk_curr_2.setChecked(False)
+        self._edited = False      # sent: follow the readback again
 
     # --- Relay Helpers ---
     def _update_relay_summary(self) -> None:
@@ -416,6 +468,7 @@ class ManualControlWidget(QWidget):
         if val & RelayControlBits.CELL_ENABLE and not self._confirm_energy_action("connect the selected cell relay"):
             return
         self._command_sender(FRAME_RELAY_CTRL, val, 1)
+        self._edited = False      # sent: follow the readback again
 
     def _confirm_energy_action(self, action: str) -> bool:
         choice = QMessageBox.question(
@@ -455,12 +508,14 @@ class ManualControlWidget(QWidget):
         if self.chk_curr_2.isChecked():
             val |= ChargeSelectBits.MAX_CHARGE_CURRENT_2
         self._command_sender(FRAME_CHARGE_SEL, val, 1)
+        self._edited = False      # sent: follow the readback again
 
     def _send_chg_ctrl(self) -> None:
         val = ChargeControlBits.CHARGE_ENABLE if self.chk_chg_en.isChecked() else 0
         if val and not self._confirm_energy_action("energize the charge control"):
             return
         self._command_sender(FRAME_CHARGE_CTRL, val, 1)
+        self._edited = False      # sent: follow the readback again
 
     def _pulse_chg_comp(self) -> None:
         """Pulse charge comparator reset high, then low (0 -> 1 -> 0)."""
@@ -479,6 +534,7 @@ class ManualControlWidget(QWidget):
         if val and not self._confirm_energy_action("energize the discharge control"):
             return
         self._command_sender(FRAME_DISCHARGE_CTRL, val, 1)
+        self._edited = False      # sent: follow the readback again
 
     def _pulse_dis_comp(self) -> None:
         """Pulse discharge comparator reset high, then low (0 -> 1 -> 0)."""
@@ -535,3 +591,4 @@ class ManualControlWidget(QWidget):
         if val and not self._confirm_energy_action("enable discharge loads"):
             return
         self._command_sender(FRAME_DISCHARGE_SEL, val, 1)
+        self._edited = False      # sent: follow the readback again

@@ -169,8 +169,8 @@ Every write below waits for its readback before the next write is sent:
 | # | Write | Confirm |
 |:---:|---|---|
 | 1 | `0x6002 = 0` | readback `0` |
-| 2 | `0x6003 = 0` | readback `0` |
-| 3 | `0x6004 = 0` | readback `0` |
+| 2 | `0x6004 = 0`: load off first | readback `0`, then wait **0.5 s** if a load was on |
+| 3 | `0x6003 = 0`: then Discharge Enable off | readback `0` |
 | 4 | Check Cell Select. If `0x6000` does not read Cell 2, write `0x6000 = 2`. | readback `2` |
 | 5 | `0x6000 = 3`: Cell Enable **on** | readback `3`, then wait **1.5 s** for the measurements to settle |
 | 6 | `0x6001 = 1`: 4.2 V | readback `1` |
@@ -187,26 +187,31 @@ Every write below waits for its readback before the next write is sent:
 | # | Write | Confirm |
 |:---:|---|---|
 | 1–5 | Same as charge rows 1–5 | |
-| 6 | `0x6003 = 2`: comparator reset set | `2` seen in the readback |
-| 7 | `0x6003 = 0`: comparator reset cleared | readback `0` |
-| 8 | Check that `0x6000` still reads `3` | if not, restart from row 1 |
-| 9 | `0x6003 = 1`: **Discharge Enable** | readback `1` |
+| 6 | Check that `0x6000` still reads `3` | if not, restart from row 1 |
+| 7 | `0x6003 = 1`: **Discharge Enable** | readback `1`, then wait **0.5 s** |
+| 8 | `0x6003 = 3`: comparator reset set, Enable kept on | `3` seen in the readback |
+| 9 | No write: wait for the board to clear the reset bit | readback returns to `1` (about 0.3 s; written as `1` if not seen within 3 s), then wait **0.5 s** |
 | 10 | Check that `0x6000` still reads `3` | if not, `0x6003 = 0` and restart from row 1 |
 | 11 | `0x6004 = 5`: loads L1 + L3 = 1.0 A | readback `5` |
 | 12 | Final check of all readbacks | then the test goes to **Running** |
+
+The reset must be pulsed **after** Discharge Enable. Bench result on the board: the earlier
+order (`0x6003 = 2` → `0` → `1`) leaves the discharge comparator latched after a previous
+discharge — `0x6003` reads `1` but the load bus stays at 0 V and no current flows. Pulsing the
+reset with Enable already on (`1` → `3`) releases it; the load bus rises to the cell voltage.
 
 ### Rest step (example: Cell 2)
 
 | # | Write | Confirm |
 |:---:|---|---|
-| 1–3 | `0x6002 = 0`, `0x6003 = 0`, `0x6004 = 0` | each reads back `0` |
+| 1–3 | `0x6002 = 0`, `0x6004 = 0` (wait 0.5 s if a load was on), `0x6003 = 0` | each reads back `0` |
 | 4 | `0x6000 = 2`: Cell Enable **off**, Cell Select stays on Cell 2 | readback `2` |
 
 ### Pause and Resume (example: Cell 2)
 
 | # | Write | Confirm |
 |:---:|---|---|
-| 1 | `0x6002 = 0`, `0x6003 = 0`, `0x6001 = 0`, `0x6004 = 0` | each reads back `0` |
+| 1 | `0x6002 = 0`, `0x6004 = 0` (wait 0.5 s if a load was on), `0x6003 = 0`, `0x6001 = 0` | each reads back `0` |
 | 2 | `0x6000 = 2`: Cell Enable **off**, Cell Select **stays on Cell 2** | readback `2` |
 
 **Resume** runs the step sequence again. Cell Select already reads Cell 2, so only Cell Enable closes (`0x6000 = 3`, then the 1.5 s settle) before the step's own settings.
@@ -221,15 +226,15 @@ Every write below waits for its readback before the next write is sent:
 | # | Write | Confirm |
 |:---:|---|---|
 | 1 | `0x6002 = 0`: charging off | readback `0` |
-| 2 | `0x6003 = 0`: discharging off | readback `0` |
-| 3 | `0x6001 = 0` | readback `0` |
-| 4 | `0x6004 = 0`: all loads off | readback `0` |
+| 2 | `0x6004 = 0`: all loads off first | readback `0`, then wait **0.5 s** if a load was on |
+| 3 | `0x6003 = 0`: then discharging off | readback `0` |
+| 4 | `0x6001 = 0` | readback `0` |
 | 5 | `0x6000 = 2`: Cell Enable **off**, Cell Select stays on Cell 2 | readback `2` |
 | 6 | `0x6000 = 0`: Cell Select back to Cell 1 | readback `0` |
 
 End state: **every register is 0**. From Cell 1 connected (`0x6000 = 1`), row 5 is skipped and row 6 writes `0` directly, since only Cell Enable changes.
 
-- **Emergency Stop** and the automatic safety trips (voltage, current, temperature, BMS fault, watchdog) first send `0x6002 = 0`, `0x6003 = 0`, `0x6001 = 0`, `0x6004 = 0` and `0x6000` with Cell Enable off and Cell Select unchanged, **at once, without waiting**. The confirmed sequence above then runs and brings `0x6000` to `0`.
+- **Emergency Stop** and the automatic safety trips (voltage, current, temperature, BMS fault, watchdog) first send `0x6002 = 0`, `0x6004 = 0`, `0x6003 = 0`, `0x6001 = 0` and `0x6000` with Cell Enable off and Cell Select unchanged, **at once, without waiting**. The confirmed sequence above then runs and brings `0x6000` to `0`.
 - The automatic safety trips send these writes **only while a test is Running**. When the app is Idle, Paused, Aborted or Completed, the registers are already zero and nothing is sent. **Emergency Stop always sends them.**
 - If the BMS stops answering during a Stop, the remaining shutdown writes (except the Cell Select move in row 6) are sent immediately; each is still confirmed afterwards.
 - **Disconnect** and **closing the app** wait up to 4 s for this sequence to finish before the serial port closes.

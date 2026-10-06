@@ -189,7 +189,7 @@ def test_crosshair_and_hud_readout(qapp):
     assert abs(widget.crosshair_v_vi.getPos()[0] - 20.0) < 0.1
 
     hud_text = widget.lbl_hud_vi.text()
-    assert "20.0s" in hud_text
+    assert "0:00:20.0" in hud_text
     assert "3.400 V" in hud_text
     assert "+1.500 A" in hud_text
 
@@ -202,7 +202,7 @@ def test_crosshair_and_hud_readout(qapp):
     widget._on_mouse_moved_temp(scene_pt_temp)
 
     hud_temp_text = widget.lbl_hud_temp.text()
-    assert "20.0s" in hud_temp_text
+    assert "0:00:20.0" in hud_temp_text
     assert "24.0 °C" in hud_temp_text
     assert "25.0 °C" in hud_temp_text
 

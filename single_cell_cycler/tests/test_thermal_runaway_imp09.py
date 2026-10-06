@@ -116,3 +116,79 @@ def test_reset_safety_clears_rate_of_rise_state():
     assert monitor.trip_reason == ""
     assert len(monitor._temp_history) == 0
     assert monitor.last_rate_of_rise_c_per_min == 0.0
+
+
+def _feed(monitor, temps, gaps=None, start=1000.0, dt=0.1):
+    """Feed one 10 Hz temperature series; returns the time of the first trip, or None."""
+    t = start
+    for i, temp in enumerate(temps):
+        t += dt + (gaps or {}).get(i, 0.0)
+        data = CellDataTelemetry(timestamp=t, voltage=3.7, current=1.0, terminal_temp=temp, body_temp=temp)
+        if not monitor.check_telemetry(data):
+            return t - start
+    return None
+
+
+def test_settling_readings_right_after_connect_do_not_trip():
+    """15-cycle run, 2026-10-01: 24 s after connecting, an idle cell 'rose' 7.1 °C/min. The old
+    check compared two samples after only 5 s; the first readings settle by ~0.6 °C."""
+    monitor = SafetyMonitor(command_sender=lambda f, d, p: None)
+    temps = [min(27.0, 26.4 + i * 0.1 * 0.12) for i in range(400)]   # 26.4 -> 27.0 over 5 s, then steady
+    assert _feed(monitor, temps) is None
+
+
+def test_single_outlier_and_reconnect_gap_do_not_trip():
+    monitor = SafetyMonitor(command_sender=lambda f, d, p: None)
+    assert _feed(monitor, [27.6 if i == 100 else 27.0 for i in range(400)]) is None
+
+    monitor = SafetyMonitor(command_sender=lambda f, d, p: None)
+    # 3 s telemetry gap (reconnect) with readings 0.6 °C higher afterwards
+    assert _feed(monitor, [27.0 if i < 150 else 27.6 for i in range(400)], gaps={150: 3.0}) is None
+
+
+def test_rate_check_waits_for_a_full_window_and_still_catches_a_slow_runaway():
+    monitor = SafetyMonitor(command_sender=lambda f, d, p: None)          # default 15 s window
+    tripped_at = _feed(monitor, [25.0 + i * 0.1 * 1.6 / 60 for i in range(600)])   # 1.6 °C/min
+    assert tripped_at is not None and 15.0 + 2.5 <= tripped_at < 18.0
+    assert "1.60 °C/min" in monitor.trip_reason
+
+
+def _feed_probes(monitor, samples, start=1000.0, dt=0.1):
+    """samples: (terminal, body) pairs; returns the first sample index that tripped, else None."""
+    for i, (term, body) in enumerate(samples):
+        data = CellDataTelemetry(timestamp=start + i * dt, voltage=3.7, current=1.0,
+                                 terminal_temp=term, body_temp=body)
+        if not monitor.check_telemetry(data):
+            return i
+    return None
+
+
+def test_one_glitching_probe_does_not_trip():
+    # Field data (2026-10-01): at steady current the terminal probe flipped between 26.6 and
+    # 27.5 °C every few samples while the body probe held 26.4-26.5 °C
+    import random
+    rng = random.Random(7)
+    level = 26.6
+    samples = []
+    for _ in range(1800):
+        if rng.random() < 0.3:
+            level = 27.5 if level == 26.6 else 26.6
+        samples.append((level, 26.4 + rng.choice((0.0, 0.1))))
+    # Dwell longer on the high level for 15 s: on its own this fits several °C/min
+    samples += [(27.5, 26.4)] * 150
+    monitor = SafetyMonitor(command_sender=lambda *a: None, limits=SafetyLimits(max_temp_c=60.0))
+    assert _feed_probes(monitor, samples) is None
+    assert not monitor.is_tripped
+
+
+def test_runaway_seen_by_both_probes_trips_despite_glitches():
+    monitor = SafetyMonitor(command_sender=lambda *a: None, limits=SafetyLimits(max_temp_c=60.0))
+    samples = []
+    temp = 30.0
+    for i in range(600):
+        temp += 3.0 / 600.0                                  # 3 °C/min real heating
+        glitch = 0.9 if (i // 37) % 2 else 0.0               # terminal flips on top
+        samples.append((temp + glitch, temp - 0.3))
+    tripped_at = _feed_probes(monitor, samples)
+    assert tripped_at is not None and tripped_at * 0.1 < 25.0
+    assert monitor.trip_kind == "thermal"

@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional
 
+from ..config.cycler_config import DEFAULT_LOG_DIR
 from ..core.metrics_tracker import CycleSummary, MetricsTracker
 from ..core.profile_model import TestRecipe
 
@@ -169,7 +170,7 @@ def generate_html_report(
 ) -> Path:
     """Generate self-contained, publication-grade HTML battery certification report."""
     if not output_html_path or isinstance(output_html_path, bool):
-        output_html_path = Path("single_cell_cycler/reports") / f"Certificate_Cell{cell_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
+        output_html_path = DEFAULT_LOG_DIR.parent / "reports" / f"Certificate_Cell{cell_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.html"
     target_path = Path(output_html_path)
     target_path.parent.mkdir(parents=True, exist_ok=True)
 

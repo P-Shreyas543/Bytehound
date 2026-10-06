@@ -176,8 +176,11 @@ def test_partial_cycle_is_off_the_efficiency_trend_and_axis(plots):
     x, y = plots.curve_aging_ce.getData()
     assert 1.0 not in list(x) and max(y) <= 100.0
     px, py = plots.scatter_aging_partial_eff.getData()
-    assert list(px) == [1.0, 1.0] and 110.6 in list(py)
-    assert plots.plot_aging_eff.viewRange()[1][1] >= 110.6  # still visible, as a hollow labelled marker
+    assert list(px) == [1.0, 1.0]
+    # The axis follows full cycles; the partial marker is pinned inside it and labelled with its value
+    top = plots.plot_aging_eff.viewRange()[1][1]
+    assert top < 110.6 and max(py) <= top
+    assert any("CE 111%" in lbl.toPlainText() for lbl in plots._partial_labels)
     assert "partial" in plots.lbl_aging_data_state.text()
     plots.reset_all()
     assert plots._partial_labels == [] and len(plots.scatter_aging_partial_eff.getData()[0]) == 0

@@ -266,6 +266,14 @@ def _legend_bar(*items) -> QHBoxLayout:
     return row
 
 
+def _fmt_hms(t_s: float) -> str:
+    """Elapsed seconds as H:MM:SS.s (the hover readout used to print e.g. 35534.3s)."""
+    t_s = max(0.0, float(t_s))
+    h, rem = divmod(t_s, 3600.0)
+    m, s = divmod(rem, 60.0)
+    return f"{int(h)}:{int(m):02d}:{s:04.1f}"
+
+
 class VoltageAxisItem(pg.AxisItem):
     """Left Y-Axis explicitly formatted for Cell Voltage (0.0 to 6.0 V)."""
 
@@ -277,10 +285,11 @@ class VoltageAxisItem(pg.AxisItem):
         self.setStyle(tickFont=pg.QtGui.QFont("Segoe UI", 9, pg.QtGui.QFont.Weight.Bold))
         self.sync_ticks()
 
-    def sync_ticks(self) -> None:
-        """Establish synchronized ticks aligned 1:1 with Current axis across 6.0 units span."""
-        major = [(float(v), f"{v}.0 V") for v in range(7)]
-        minor = [(float(v) + 0.5, f"{v}.5 V") for v in range(6)]
+    def sync_ticks(self, lo: float = 0.0, hi: float = 6.0, step: float = 1.0) -> None:
+        """Ticks every `step` volts (minor halfway), aligned with the Current axis divisions."""
+        n = int(round((hi - lo) / step))
+        major = [(lo + k * step, f"{lo + k * step:.1f} V") for k in range(n + 1)]
+        minor = [(lo + (k + 0.5) * step, f"{lo + (k + 0.5) * step:.2f} V") for k in range(n)]
         self.setTicks([major, minor])
 
     def tickStrings(self, values, scale, spacing):
@@ -303,10 +312,15 @@ class CurrentAxisItem(pg.AxisItem):
         self.setStyle(tickFont=pg.QtGui.QFont("Segoe UI", 9, pg.QtGui.QFont.Weight.Bold))
         self.sync_ticks()
 
-    def sync_ticks(self) -> None:
-        """Establish synchronized ticks aligned 1:1 with Voltage axis across 6.0 units span."""
-        major = [(float(i - 3), f"{i - 3:+.1f} A" if (i - 3) != 0 else "0.0 A") for i in range(7)]
-        minor = [(float(i - 3) + 0.5, f"{i - 3 + 0.5:+.1f} A") for i in range(6)]
+    def sync_ticks(self, lo: float = -3.0, hi: float = 3.0, step: float = 1.0) -> None:
+        """Ticks every `step` amps (minor halfway), aligned with the Voltage axis divisions."""
+        n = int(round((hi - lo) / step))
+
+        def _lbl(v: float) -> str:
+            return "0.0 A" if abs(v) < 1e-9 else f"{v:+.1f} A"
+
+        major = [(lo + k * step, _lbl(lo + k * step)) for k in range(n + 1)]
+        minor = [(lo + (k + 0.5) * step, _lbl(lo + (k + 0.5) * step)) for k in range(n)]
         self.setTicks([major, minor])
 
     def tickStrings(self, values, scale, spacing):
@@ -568,9 +582,7 @@ class LivePlotWidget(QWidget):
             self.curve_voltage.setData(*series[_S_V])
             self.curve_current.setData(*series[_S_I])
             self._rendered_xrange = (x0, x1)
-            # Fixed Y-ranges: 0-6V for voltage, -3 to 3A for current (aligned 6.0 unit spans)
-            self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
-            self.view_current.setYRange(-3.0, 3.0, padding=0.0)
+            self._apply_vi_y_range(series[_S_V][1], series[_S_I][1])
 
         elif tab_idx == 1:
             # Tab 1 – Temperature (convert only temperature buffers)
@@ -638,7 +650,10 @@ class LivePlotWidget(QWidget):
         """Record a bounded event trail for long-running chart sessions."""
         self._event_markers.append(label)
         if hasattr(self, "lbl_event_strip"):
-            self.lbl_event_strip.setText("Events: " + "  ·  ".join(self._event_markers))
+            # Newest first: the strip is elided on narrow screens, and oldest-first left only
+            # "Events: St..." visible. The tooltip keeps the whole trail.
+            self.lbl_event_strip.setText("Events: " + "  ·  ".join(reversed(self._event_markers)))
+            self.lbl_event_strip.setToolTip("\n".join(self._event_markers))
 
     def set_zoom_mode(self, mode: ZoomMode) -> None:
         """Update zoom framing mode and synchronize UI button active states."""
@@ -659,6 +674,36 @@ class LivePlotWidget(QWidget):
 
         # Immediately execute view framing
         self._apply_zoom_framing()
+
+    # (voltage lo, hi, step), (current lo, hi, step): the same number of divisions on both axes,
+    # so their gridlines coincide. Compact puts 0 A on 3.5 V and gives 2.8-4.2 V data over half
+    # the height (it used about a quarter of a fixed 0-6 V axis); full covers LTO / Na-ion.
+    _VI_COMPACT = ((2.0, 4.5, 0.5), (-3.0, 2.0, 1.0))
+    _VI_FULL = ((0.0, 6.0, 1.0), (-3.0, 3.0, 1.0))
+
+    def _apply_vi_y_range(self, v_vals=None, i_vals=None) -> None:
+        """Compact voltage/current window while the visible data fits it, otherwise the full one."""
+        if not hasattr(self, "plot_vi"):
+            return
+        if v_vals is not None:
+            v = np.asarray(v_vals, dtype=float)
+            i = np.asarray(i_vals, dtype=float) if i_vals is not None else np.zeros(0)
+            v, i = v[np.isfinite(v)], i[np.isfinite(i)]
+            (vlo, vhi, _), (ilo, ihi, _) = self._VI_COMPACT
+            self._vi_compact = bool(
+                v.size == 0
+                or (v.min() >= vlo + 0.05 and v.max() <= vhi - 0.05
+                    and (i.size == 0 or (i.min() >= ilo and i.max() <= ihi)))
+            )
+        (vlo, vhi, vstep), (ilo, ihi, istep) = (
+            self._VI_COMPACT if getattr(self, "_vi_compact", True) else self._VI_FULL
+        )
+        if getattr(self, "_vi_axes_applied", None) != (vlo, vhi):
+            self.ax_voltage.sync_ticks(vlo, vhi, vstep)
+            self.ax_current.sync_ticks(ilo, ihi, istep)
+            self._vi_axes_applied = (vlo, vhi)
+        self.plot_vi.setYRange(vlo, vhi, padding=0.0)
+        self.view_current.setYRange(ilo, ihi, padding=0.0)
 
     def _fit_temp_y(self, t_term: Optional[np.ndarray] = None, t_body: Optional[np.ndarray] = None) -> None:
         """Frame the temperature axis on the visible data: >= 6 °C span, 1.5 °C margin."""
@@ -689,8 +734,7 @@ class LivePlotWidget(QWidget):
         if self._zoom_mode == ZoomMode.FIT_ALL:
             self.plot_vi.setXRange(0.0, max(10.0, latest_t), padding=0.01)
             self.plot_temp.setXRange(0.0, max(10.0, latest_t), padding=0.01)
-            self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
-            self.view_current.setYRange(-3.0, 3.0, padding=0.0)
+            self._apply_vi_y_range()
             self._fit_temp_y()
         elif self._zoom_mode == ZoomMode.CURRENT_STEP:
             s_t = max(0.0, self._current_step_start_t)
@@ -821,7 +865,7 @@ class LivePlotWidget(QWidget):
             v_col = _C1_V if self._cell_num == 1 else _C2_V
             i_col = _C1_I if self._cell_num == 1 else _C2_I
             self.lbl_hud_vi.setText(
-                f"<span style='color:#94a3b8;'>⏱</span> <b style='color:#f8fafc;'>{t_s:.1f}s</b>  "
+                f"<span style='color:#94a3b8;'>⏱</span> <b style='color:#f8fafc;'>{_fmt_hms(t_s)}</b>  "
                 f"<span style='color:{v_col};'>●</span> <b style='color:{v_col};'>V: {v_txt}</b>  "
                 f"<span style='color:{i_col};'>●</span> <b style='color:{i_col};'>I: {i_txt}</b>"
             )
@@ -857,7 +901,7 @@ class LivePlotWidget(QWidget):
             term_txt = f"{term_s:.1f} °C" if not np.isnan(term_s) else "---"
             body_txt = f"{body_s:.1f} °C" if not np.isnan(body_s) else "---"
             self.lbl_hud_temp.setText(
-                f"<span style='color:#94a3b8;'>⏱</span> <b style='color:#f8fafc;'>{t_s:.1f}s</b>  "
+                f"<span style='color:#94a3b8;'>⏱</span> <b style='color:#f8fafc;'>{_fmt_hms(t_s)}</b>  "
                 f"<span style='color:{_TERM_COLOR};'>●</span> <b style='color:{_TERM_COLOR};'>Term: {term_txt}</b>  "
                 f"<span style='color:{_BODY_COLOR};'>●</span> <b style='color:{_BODY_COLOR};'>Body: {body_txt}</b>"
             )
@@ -1067,8 +1111,8 @@ class LivePlotWidget(QWidget):
         self.curve_current.setData([], [])
         self.curve_term_temp.setData([], [])
         self.curve_body_temp.setData([], [])
-        self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
-        self.view_current.setYRange(-3.0, 3.0, padding=0.0)
+        self._vi_compact = True
+        self._apply_vi_y_range()
         self.plot_temp.setYRange(15.0, 40.0, padding=0.0)
         self.set_zoom_mode(ZoomMode.FIT_ALL)
 
@@ -1186,7 +1230,9 @@ class LivePlotWidget(QWidget):
         legend_row.addWidget(_legend_label(_C2_V, "Cell 2 V"))
         legend_row.addWidget(_legend_label(_C1_I, "Cell 1 I"))
         legend_row.addWidget(_legend_label(_C2_I, "Cell 2 I"))
-        note = QLabel("(gap = relay OFF)")
+        # A NaN break is inserted only when the cell selection switches (see set_relay_state);
+        # rests with the relay open draw as a continuous 0 A line
+        note = QLabel("(gap = cell switched)")
         note.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; background: transparent;")
         legend_row.addWidget(note)
         top_bar.addLayout(legend_row)
@@ -1211,12 +1257,17 @@ class LivePlotWidget(QWidget):
 
         self.ax_voltage = VoltageAxisItem(orientation="left")
         self.ax_current = CurrentAxisItem(orientation="right")
-        self.plot_vi = pg.PlotWidget(axisItems={"left": self.ax_voltage, "right": self.ax_current})
+        # Same h:mm time axis as the Temperature tab (this one showed raw seconds up to 55,000)
+        self.plot_vi = pg.PlotWidget(axisItems={
+            "left": self.ax_voltage,
+            "right": self.ax_current,
+            "bottom": ElapsedTimeAxisItem(orientation="bottom"),
+        })
         self.plot_vi.showGrid(x=True, y=True, alpha=0.20)
         self.plot_vi.plotItem.getAxis("bottom").setTickPen(pg.mkPen("#334155", width=1))
         self.ax_voltage.setTickPen(pg.mkPen("#334155", width=1))
         self.ax_current.setTickPen(pg.mkPen("#334155", width=1))
-        self.plot_vi.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Elapsed Time (s)</span>")
+        self.plot_vi.setLabel("bottom", "<span style='color:#94a3b8; font-weight:600;'>Elapsed Time</span>")
 
         # Fixed Y-axis: 0.0 to 6.0 V (aligned 1:1 with Current -3 to +3 A over 6.0 units)
         self.plot_vi.setYRange(0.0, 6.0, padding=0.0)
@@ -1250,6 +1301,7 @@ class LivePlotWidget(QWidget):
         self.view_current.addItem(self.curve_current)
         self.plot_vi.plotItem.getViewBox().sigResized.connect(self._sync_current_view)
         self._update_axis_styling(_C1_V, _C1_I)
+        self._apply_vi_y_range()
 
         # Crosshair vertical marker (IMP-01)
         self.crosshair_v_vi = pg.InfiniteLine(
@@ -1435,10 +1487,12 @@ class LivePlotWidget(QWidget):
         legend_row = QHBoxLayout()
         legend_row.setContentsMargins(0, 0, 0, 0)
         legend_row.setSpacing(4)
-        # Curves are coloured by cycle; charge is the upper lobe, discharge the lower one
-        legend_row.addWidget(_legend_label(_DQV_CHARGE_COLOR, "Charge (+, above 0)"))
-        legend_row.addWidget(_legend_label(_DQV_DISCHARGE_COLOR, "Discharge (−, below 0)"))
-        legend_row.addWidget(_legend_label("#64748b", "Colour = cycle"))
+        # The live step uses the charge / discharge colours; finished steps take their cycle's
+        # colour (cycle 1 keeps charge / discharge), with discharge dashed. The old legend read
+        # "Charge = blue" while finished charges were drawn orange.
+        legend_row.addWidget(_legend_label(_DQV_CHARGE_COLOR, "Live charge (+)"))
+        legend_row.addWidget(_legend_label(_DQV_DISCHARGE_COLOR, "Live discharge (−)"))
+        legend_row.addWidget(_legend_label("#64748b", "Earlier steps: colour = cycle, dashed = discharge"))
         legend_row.addWidget(_legend_label(_PEAK_MARKER_COLOR, "Phase Peaks (◆)"))
         top_bar.addLayout(legend_row)
 
@@ -1585,8 +1639,12 @@ class LivePlotWidget(QWidget):
                 y_data = dqdv if self._dqv_butterfly else np.abs(dqdv)
                 self.curve_dqv_active.setData(v_grid, y_data)
 
-                # Peak detection
-                pks = find_dqv_peaks(v_grid, dqdv)
+                # Peak detection, minus the still-growing end of the curve: the smoothing bends
+                # it there (screenshot 2026-10-06: a "peak" at 3.61 V, 35 mV from the live end
+                # at 3.575 V, that the finished cycle-3 curve does not have)
+                live_end = float(v_grid.min() if is_dis else v_grid.max())
+                edge_v = self._dqv_window * self._dqv_dv
+                pks = [p for p in find_dqv_peaks(v_grid, dqdv) if abs(p.voltage - live_end) > edge_v]
                 self._latest_dqv_peaks = list(pks)
                 self._update_dqv_peak_scatter(pks)
                 return
@@ -1727,26 +1785,55 @@ class LivePlotWidget(QWidget):
             self.crosshair_v_dqv.setPos(v_mouse)
             self.crosshair_v_dqv.setVisible(True)
 
+            # Read the curve that actually passes under the cursor. Snapping to the nearest live
+            # point regardless of distance showed 3.575 V with the cursor at 3.22 V.
+            tol_v = max(0.02, 2.0 * self._dqv_dv)
+            hit = None   # (|dV|, v, dq/dV, label, colour)
             v_act, y_act = self.curve_dqv_active.getData()
             if v_act is not None and len(v_act) > 0:
-                idx = int(np.clip(np.searchsorted(v_act, v_mouse), 0, len(v_act) - 1))
-                if idx > 0 and abs(v_act[idx - 1] - v_mouse) < abs(v_act[idx] - v_mouse):
-                    idx -= 1
-                v_pt = v_act[idx]
-                dq_pt = y_act[idx]
-                col = _DQV_DISCHARGE_COLOR if "discharge" in self._current_step_type.lower() else _DQV_CHARGE_COLOR
+                is_dis = "discharge" in self._current_step_type.lower()
+                hit = self._nearest_dqv_point(
+                    v_act, y_act, v_mouse, tol_v,
+                    f"{self._current_step_type.title()} (C{self._current_cycle_idx}, live)",
+                    _DQV_DISCHARGE_COLOR if is_dis else _DQV_CHARGE_COLOR,
+                )
+            if hit is None:
+                for prof, item in reversed(self._dqv_history_curves):
+                    v_h, y_h = item.getData()
+                    if v_h is None or len(v_h) == 0:
+                        continue
+                    cand = self._nearest_dqv_point(
+                        v_h, y_h, v_mouse, tol_v,
+                        f"{prof.step_type.title()} (C{prof.cycle_index})",
+                        item.opts["pen"].color().name(),
+                    )
+                    if cand is not None and (hit is None or cand[0] < hit[0]):
+                        hit = cand
+            if hit is not None:
+                _, v_pt, dq_pt, label, col = hit
                 self.lbl_hud_dqv.setText(
                     f"<span style='color:#94a3b8;'>V:</span> <b style='color:#f8fafc;'>{v_pt:.3f} V</b>  "
                     f"<span style='color:{col};'>●</span> <b style='color:{col};'>dQ/dV: {dq_pt:+.1f} mAh/V</b>  "
-                    f"<span style='color:#64748b;'>| {self._current_step_type.title()} (C{self._current_cycle_idx})</span>"
+                    f"<span style='color:#64748b;'>| {label}</span>"
                 )
             else:
                 self.lbl_hud_dqv.setText(
-                    f"<span style='color:#94a3b8;'>V:</span> <b style='color:#f8fafc;'>{v_mouse:.3f} V</b>"
+                    f"<span style='color:#94a3b8;'>V:</span> <b style='color:#f8fafc;'>{v_mouse:.3f} V</b>  "
+                    f"<span style='color:#64748b;'>| no curve at this voltage</span>"
                 )
         else:
             self.crosshair_v_dqv.setVisible(False)
             self.lbl_hud_dqv.setText("<span style='color:#64748b; font-style:italic;'>Hover over chart to inspect</span>")
+
+    @staticmethod
+    def _nearest_dqv_point(v_arr, y_arr, v_mouse: float, tol_v: float, label: str, colour: str):
+        """(|dV|, v, dQ/dV, label, colour) of the curve point nearest v_mouse, or None beyond tol_v."""
+        v_arr = np.asarray(v_arr, dtype=float)
+        idx = int(np.argmin(np.abs(v_arr - v_mouse)))
+        dist = abs(float(v_arr[idx]) - v_mouse)
+        if dist > tol_v:
+            return None
+        return dist, float(v_arr[idx]), float(np.asarray(y_arr)[idx]), label, colour
 
     def set_dqv_mode(self, butterfly: bool) -> None:
         """Toggle between Butterfly (+/-) mode and Overlay Absolute (|dQ/dV|) mode."""
@@ -2130,18 +2217,26 @@ class LivePlotWidget(QWidget):
         self.curve_aging_q_chg.setData(c_arr[full], q_chg_arr[full])
         self.curve_aging_ce.setData(c_arr[full], ce_arr[full])
         self.curve_aging_ee.setData(c_arr[full], ee_arr[full])
+        # Partial-cycle efficiencies (e.g. 370 % when cycle 1 charged only 676 mAh) used to set the
+        # axis and squash every real cycle (99 %, 94 %) into one line. The axis now follows full
+        # cycles; a partial marker beyond it is pinned to the edge and its label gives the value.
+        eff_lo, eff_hi = self._aging_eff_range()
+        edge = eff_hi - (eff_hi - eff_lo) * 0.06
+        ce_shown = np.minimum(ce_arr[partial], edge)
+        ee_shown = np.minimum(ee_arr[partial], edge)
         self.scatter_aging_partial_eff.setData(
             np.concatenate((c_arr[partial], c_arr[partial])),
-            np.concatenate((ce_arr[partial], ee_arr[partial])),
+            np.concatenate((ce_shown, ee_shown)),
         )
         self.scatter_aging_partial_cap.setData(c_arr[partial], q_chg_arr[partial])
         for item in self._partial_labels:
             if item.getViewBox() is not None:
                 item.getViewBox().removeItem(item)
         self._partial_labels = []
-        for c, ce, ee in zip(c_arr[partial], ce_arr[partial], ee_arr[partial]):
-            lbl = pg.TextItem("partial", color="#94a3b8", anchor=(0.5, 1.4))
-            lbl.setPos(float(c), float(max(ce, ee)))
+        for c, ce, ee, y in zip(c_arr[partial], ce_arr[partial], ee_arr[partial], np.maximum(ce_shown, ee_shown)):
+            text = "partial" if max(ce, ee) <= edge else f"partial ▲ CE {ce:.0f}% · EE {ee:.0f}%"
+            lbl = pg.TextItem(text, color="#94a3b8", anchor=(0.0, 0.5))
+            lbl.setPos(float(c) + 0.08, float(y))
             self.plot_aging_eff.addItem(lbl)
             self._partial_labels.append(lbl)
 
@@ -2180,9 +2275,19 @@ class LivePlotWidget(QWidget):
         else:
             b_bg, b_col, b_border = "#7f1d1d", "#fca5a5", "#dc2626"
 
-        eol_txt = f"Cycle {forecast.projected_eol_cycle}" if forecast.projected_eol_cycle else (
-            "> 3,000 cyc" if len(c_arr) >= 2 else "Calculating..."
-        )
+        # A forecast needs a trend: with fewer than 3 cycles, or capacity not falling (+2.43 mAh/cyc
+        # over 3 cycles in the 15-cycle run), "EOL > 3,000 cyc" was a number with nothing behind it
+        no_fade = forecast.slope_mah_per_cycle >= 0.0
+        if len(c_arr) < self._AGING_MIN_FORECAST_CYCLES:
+            eol_txt = f"needs {self._AGING_MIN_FORECAST_CYCLES} cycles"
+        elif forecast.projected_eol_cycle:
+            eol_txt = f"Cycle {forecast.projected_eol_cycle}"
+        elif no_fade:
+            eol_txt = "no fade detected"
+        else:
+            eol_txt = "> 3,000 cyc"
+        if len(c_arr) < self._AGING_MIN_FORECAST_CYCLES or no_fade:
+            self.curve_aging_q_proj.setData([], [])
         self.lbl_aging_health_badge.setText(f"● Retention: {ret:.1f}% | EOL (80%): {eol_txt}")
         self.lbl_aging_health_badge.setStyleSheet(
             f"background-color: {b_bg}; color: {b_col}; border: 1px solid {b_border}; "
@@ -2190,9 +2295,29 @@ class LivePlotWidget(QWidget):
         )
 
         r2_txt = f" (R²: {forecast.r_squared:.3f})" if len(c_arr) >= 2 else ""
-        self.lbl_aging_fade_badge.setText(
-            f"Fade: {forecast.slope_mah_per_cycle:+.2f} mAh/cyc ({forecast.decay_pct_per_cycle:.3f}%/cyc){r2_txt}"
-        )
+        if len(c_arr) >= 2 and no_fade:
+            self.lbl_aging_fade_badge.setText(
+                f"Fade: none detected (capacity {forecast.slope_mah_per_cycle:+.2f} mAh/cyc){r2_txt}"
+            )
+        else:
+            self.lbl_aging_fade_badge.setText(
+                f"Fade: {forecast.slope_mah_per_cycle:+.2f} mAh/cyc ({forecast.decay_pct_per_cycle:.3f}%/cyc){r2_txt}"
+            )
+
+    _AGING_MIN_FORECAST_CYCLES = 3
+
+    def _aging_eff_range(self) -> tuple[float, float]:
+        """Efficiency axis from full cycles; 80-102 % unless a full cycle falls outside it."""
+        vals = [
+            e
+            for ce, ee, part in zip(self._cycle_ce, self._cycle_ee, self._cycle_partial)
+            if not part
+            for e in (ce, ee)
+            if e > 0 and np.isfinite(e)
+        ]
+        if not vals:
+            return 80.0, 102.0
+        return min(80.0, max(0.0, min(vals) - 5.0)), max(102.0, max(vals) + 5.0)
 
     def fit_aging_view(self) -> None:
         """Auto-frame capacity and efficiency views with proper scaling and clipping protection."""
@@ -2228,18 +2353,9 @@ class LivePlotWidget(QWidget):
             self.plot_aging_cap.setXRange(0.5, 10.0, padding=0.03)
             self.plot_aging_cap.setYRange(0.0, 3000.0, padding=0.03)
 
-        # 2. Efficiency View (Coulombic & Energy Efficiency)
-        # Partial markers stay visible (hollow, labelled), so they are part of the view range
-        eff_vals = [e for e in (self._cycle_ce + self._cycle_ee) if e > 0 and np.isfinite(e)]
-        if eff_vals:
-            e_min = min(eff_vals)
-            e_max = max(eff_vals)
-            # Default window is 80% to 102%. Dynamically expand if unconditioned Cycle 1 (e.g. 260%) or low efficiency
-            y_eff_low = min(80.0, max(0.0, e_min - 5.0))
-            y_eff_high = max(102.0, e_max + 5.0)
-            self.plot_aging_eff.setYRange(y_eff_low, y_eff_high, padding=0.02)
-        else:
-            self.plot_aging_eff.setYRange(80.0, 102.0, padding=0.02)
+        # 2. Efficiency View (Coulombic & Energy Efficiency): full cycles only (see _aging_eff_range)
+        eff_lo, eff_hi = self._aging_eff_range()
+        self.plot_aging_eff.setYRange(eff_lo, eff_hi, padding=0.02)
 
         # 3. DCIR Right-Axis View (protect against zero-width range when 1 cycle has DCIR)
         if hasattr(self, "view_aging_dcir"):

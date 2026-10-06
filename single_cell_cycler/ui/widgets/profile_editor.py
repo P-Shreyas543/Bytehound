@@ -652,8 +652,9 @@ class RecipeTimelinePreview(QWidget):
                 self.plot.addItem(line)
                 self.step_lines.append(line)
 
-            txt = pg.TextItem(f"S{step_num}", color="#94a3b8", anchor=(0.0, 1.0))
-            txt.setPos(step_start_t + 2.0, chem.max_voltage)
+            # Hung below the top edge of the view: anchored above it, the labels were clipped
+            txt = pg.TextItem(f"S{step_num}", color="#94a3b8", anchor=(0.0, 0.0))
+            txt.setPos(step_start_t + 2.0, chem.max_voltage + 0.4)
             self.plot.addItem(txt)
             self.step_labels.append(txt)
 
@@ -774,6 +775,8 @@ class ProfileEditorWidget(QWidget):
         hdr.setSectionResizeMode(4, QHeaderView.ResizeMode.Stretch)
         # Rows grow to their combo / spin boxes instead of clipping them
         self.table_steps.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # The Step # column already numbers the rows
+        self.table_steps.verticalHeader().setVisible(False)
         self.table_steps.setAlternatingRowColors(True)
         self.table_steps.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table_steps.itemChanged.connect(self._on_table_item_changed)
@@ -942,8 +945,19 @@ class ProfileEditorWidget(QWidget):
         self.combo_presets.clear()
         if RECIPES_DIR.exists():
             for p in sorted(RECIPES_DIR.glob("*.json")):
-                self.combo_presets.addItem(p.stem.replace("_", " ").title(), str(p))
+                # The recipe's own name: title-casing the file name gave "Cccv Cycling 15X"
+                self.combo_presets.addItem(self._recipe_display_name(p), str(p))
         self.combo_presets.blockSignals(False)
+
+    @staticmethod
+    def _recipe_display_name(path: Path) -> str:
+        try:
+            import json
+
+            name = str(json.loads(path.read_text(encoding="utf-8")).get("recipe_name", "")).strip()
+        except Exception:
+            name = ""
+        return name or path.stem.replace("_", " ")
 
     def _on_preset_selected(self, index: int) -> None:
         file_path = self.combo_presets.currentData()
@@ -1029,19 +1043,27 @@ class ProfileEditorWidget(QWidget):
             cutoff_summary = ", ".join(parts)
             self.table_steps.setItem(row, 4, QTableWidgetItem(cutoff_summary or "--"))
 
-            # Loop Target
-            spin_target = QSpinBox()
-            spin_target.setRange(1, max(1, len(self.current_recipe.steps)))
-            spin_target.setValue(s.loop_target_step)
-            spin_target.valueChanged.connect(lambda val, stp=s: setattr(stp, "loop_target_step", val))
-            self.table_steps.setCellWidget(row, 5, spin_target)
+            if s.step_type == StepType.LOOP:
+                # Loop Target
+                spin_target = QSpinBox()
+                spin_target.setRange(1, max(1, len(self.current_recipe.steps)))
+                spin_target.setValue(s.loop_target_step)
+                spin_target.valueChanged.connect(lambda val, stp=s: setattr(stp, "loop_target_step", val))
+                self.table_steps.setCellWidget(row, 5, spin_target)
 
-            # Loop Count
-            spin_count = QSpinBox()
-            spin_count.setRange(1, 10000)
-            spin_count.setValue(s.loop_count)
-            spin_count.valueChanged.connect(lambda val, stp=s: setattr(stp, "loop_count", val))
-            self.table_steps.setCellWidget(row, 6, spin_count)
+                # Loop Count
+                spin_count = QSpinBox()
+                spin_count.setRange(1, 10000)
+                spin_count.setValue(s.loop_count)
+                spin_count.valueChanged.connect(lambda val, stp=s: setattr(stp, "loop_count", val))
+                self.table_steps.setCellWidget(row, 6, spin_count)
+            else:
+                # Loop fields mean nothing on Charge / Discharge / Rest steps
+                for col in (5, 6):
+                    dash = QTableWidgetItem("—")
+                    dash.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+                    dash.setFlags(dash.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    self.table_steps.setItem(row, col, dash)
 
             # Check if this step violates active chemistry guardrails
             has_error = False
@@ -1079,18 +1101,36 @@ class ProfileEditorWidget(QWidget):
         if not self.current_recipe:
             self.lbl_recipe_summary.setText("Recipe summary: no steps")
             return
-        duration_s = 0.0
-        for step in self.current_recipe.steps:
-            duration_s += next(
-                (c.threshold for c in step.cutoffs if c.enabled and c.cutoff_type == CutoffType.DURATION_MAX and c.threshold > 0),
-                0.0,
-            )
+        duration_s = sum(self._estimated_step_s(step) for step in self.current_recipe.steps)
         cycles = next((s.loop_count for s in self.current_recipe.steps if s.step_type == StepType.LOOP), 1)
         self.lbl_recipe_summary.setText(
             f"Recipe: {self.current_recipe.recipe_name} · Chemistry: {self.active_chemistry.code} · "
-            f"{len(self.current_recipe.steps)} steps · ~{duration_s / 60.0:.1f} min/cycle · {cycles} cycle(s) · "
+            f"{len(self.current_recipe.steps)} steps · est. ~{duration_s / 60.0:.0f} min/cycle · {cycles} cycle(s) · "
             f"{'Modified' if self._dirty else 'Saved'}"
         )
+
+    def _estimated_step_s(self, step: TestStep) -> float:
+        """Rough step time: rests by their timer, charge / discharge by rated capacity / current.
+
+        Adding up the safety time limits (2 h + 3 h) gave "~320 min/cycle" for a cycle that runs
+        about 267 min; the limits are backstops, not durations. Capped by them all the same.
+        """
+        limit = next(
+            (c.threshold for c in step.cutoffs
+             if c.enabled and c.cutoff_type == CutoffType.DURATION_MAX and c.threshold > 0),
+            None,
+        )
+        if step.step_type == StepType.CHARGE:
+            current = step.charge_current_target
+        elif step.step_type == StepType.DISCHARGE:
+            current = step.discharge_current_target
+        else:
+            return limit or 0.0
+        capacity = getattr(self.current_recipe, "cell_nominal_capacity_mah", 0.0) or 0.0
+        if current <= 0.0 or capacity <= 0.0:
+            return limit or 0.0
+        est = capacity / (current * 1000.0) * 3600.0
+        return min(est, limit) if limit else est
 
     def _format_hw_summary(self, step: TestStep) -> str:
         cell_str = f"Cell {getattr(step, 'cell_select', 1)}"

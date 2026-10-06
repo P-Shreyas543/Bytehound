@@ -140,7 +140,12 @@ class SafetyPanelWidget(QWidget):
         self.btn_reset.setEnabled(True)
 
     def _on_reset_clicked(self) -> None:
-        self._reset_callback()
+        if self._reset_callback() is False:      # refused: a test is running
+            return
+        self.clear_trip()
+
+    def clear_trip(self) -> None:
+        """Back to the nominal banner with Reset disabled (after a reset, or when a test starts)."""
         self.lbl_trip_status.setText("SAFETY STATUS: ALL SYSTEMS NOMINAL")
         self.lbl_trip_status.setStyleSheet("color: #22c55e; font-weight: 700; font-size: 13px;")
         self._set_trip_frame_style(tripped=False)

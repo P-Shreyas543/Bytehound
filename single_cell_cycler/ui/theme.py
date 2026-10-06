@@ -187,17 +187,18 @@ QPushButton#btn_skip:pressed {{
 }}
 
 QPushButton#btn_stop {{
-    background-color: #92400e;
+    /* Deep crimson: was amber (#92400e) next to the amber Pause button and looked the same */
+    background-color: #991b1b;
     color: #ffffff;
     font-weight: 600;
-    border: 1px solid #f59e0b;
+    border: 1px solid #f87171;
 }}
 QPushButton#btn_stop:hover {{
-    background-color: #b45309;
-    border-color: #fbbf24;
+    background-color: #b91c1c;
+    border-color: #fca5a5;
 }}
 QPushButton#btn_stop:pressed {{
-    background-color: #d97706;
+    background-color: #7f1d1d;
     color: #ffffff;
     border: 2px solid #fca5a5;
     font-weight: 800;

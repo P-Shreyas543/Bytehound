@@ -49,8 +49,13 @@ An industrial-grade battery cell cycler and characterization workstation tailore
 ```text
 single_cell_cycler/
 ├── README.md                      # Complete system documentation
-├── improvements.md                # Strategic enhancement register & product roadmap (100% completed)
-├── main.py                        # GUI entry point (DWM dark title bar & app setup)
+├── REGISTER_MAP.md                # 0x1000-0x6004 frame and register reference
+├── docs/
+│   ├── manual/                    # Operator user manual (manual_standalone.html = single shareable file)
+│   ├── improvements.md            # Enhancement register & product roadmap
+│   ├── TRACKER.md                 # Development tracker
+│   └── bms_configurable_protocol_plan.md
+├── main.py                        # GUI entry point (DWM dark title bar, single-instance lock)
 ├── build.py                       # PyInstaller production build automation script
 ├── SingleCellCycler.spec          # PyInstaller packaging configuration
 ├── config/
@@ -90,7 +95,7 @@ single_cell_cycler/
 │       ├── manual_control.py      # Direct hardware switches (Relay, Loads, Charge)
 │       ├── safety_panel.py        # BMS fault LED status indicators
 │       └── step_tracker_table.py  # Real-time sequence execution table
-└── tests/                         # Pytest automated test suite (85 tests, 100% pass)
+└── tests/                         # Pytest automated test suite (209 tests)
 ```
 
 ---

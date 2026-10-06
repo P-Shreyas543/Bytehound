@@ -96,3 +96,29 @@ def test_logging_settings_file_is_created_read_and_sanitised(tmp_path):
 
     path.write_text("{ not json", encoding="utf-8")
     assert load_logging_settings(path) == LoggingSettings()
+
+
+def test_rotation_names_parts_from_the_first_file_and_resume_never_truncates(tmp_path):
+    """15-cycle run review: the 2nd rotation was named _part001_part002.csv, and crash-resume
+    appended to the full first file, rotating straight into (and truncating) _part001.csv."""
+    rot_dir = tmp_path / "rot"   # tmp_path also holds the conftest's logs/ and webhook_settings.json
+    rot_dir.mkdir()
+    lg = AsyncTelemetryLogger(log_dir=rot_dir)
+    lg.MAX_FILE_BYTES = 2000
+    lg.MIN_FREE_BYTES = 0
+    row = {k: "1" for k in AsyncTelemetryLogger.FIELDNAMES}
+    base = lg.start_session("run")
+    for _ in range(120):
+        lg.log_record(dict(row))
+    time.sleep(1.0)
+    lg.stop_session()
+    names = sorted(p.name for p in rot_dir.iterdir())
+    assert names == [base.name] + [f"{base.stem}_part{i:03d}.csv" for i in range(1, len(names))]
+    sizes = {p.name: p.stat().st_size for p in rot_dir.iterdir()}
+
+    lg.resume_session(base)
+    assert lg.current_log_path.name == names[-1]
+    lg.log_record(dict(row))
+    time.sleep(0.6)
+    lg.stop_session()
+    assert all((rot_dir / n).stat().st_size >= s for n, s in sizes.items())

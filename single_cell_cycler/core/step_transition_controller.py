@@ -9,7 +9,7 @@ Bit 0 = Cell Enable relay (1 = cell connected). The Cell Select relay is never m
 the Cell Enable relay is closed.
 
 Charge / Discharge step on Cell N:
-  1. Drives off: 0x6002=0, 0x6003=0, 0x6004=0 (each confirmed)
+  1. Drives off: 0x6002=0, 0x6003=0, 0x6004=0 (each confirmed); Discharge and Rest also 0x6001=0
   2. Cell Select relay confirmed on Cell N (rewritten with Enable open if not)
   3. Cell Enable relay closed (0x6000 = Select|Enable) confirmed, then analog settling.
      Skipped only when this test already closed it in an earlier step and it still reads closed.
@@ -22,7 +22,7 @@ Charge / Discharge step on Cell N:
   6. Relay still closed -> 0x6003 = Discharge Enable -> relay still closed
   7. 0x6004 = load bank
 Rest step on Cell N:
-  1. Drives off (0x6002, 0x6003, 0x6004)   2. Cell Enable relay opened, Cell Select kept
+  1. Drives off (0x6002, 0x6003, 0x6004, 0x6001)   2. Cell Enable relay opened, Cell Select kept
 Every step ends with a final audit of all five readbacks before the step is reported complete.
 
 Safe idle (stop / pause / safety stop): 0x6002=0, 0x6003=0, then 0x6001=0, 0x6004=0, then
@@ -99,6 +99,8 @@ class _Op:
     """One entry of a sequence plan.
 
     kind "write":  send value to frame_id and wait for the readback to confirm it.
+    kind "wait":   send nothing; wait for the board to bring frame_id's readback to value by
+                   itself (self-clearing comparator reset). If it does not, write it.
     kind "check":  run check(); a returned reason restarts the whole step setup.
     kind "expand": replaced at execution time by the ops returned from expand(), so the
                    plan can depend on readbacks confirmed by earlier ops.
@@ -135,6 +137,8 @@ class StepTransitionController(QObject):
     DEFAULT_CMD_WAIT_MS: int = 250             # 250ms command confirmation window (matches MCU loop)
     CONFIRM_POLL_MS: int = 100                 # readback re-check interval after the first window
     CONFIRM_POLLS: int = 3                     # re-checks before the write is resent
+    DISCHARGE_STAGE_WAIT_MS: int = 500         # pause after Discharge Enable and after its reset pulse
+    SELF_CLEAR_TIMEOUT_MS: int = 3000          # board clears the reset bit in ~0.3 s; then clear it ourselves
 
     def __init__(
         self,
@@ -230,7 +234,8 @@ class StepTransitionController(QObject):
         logger.info("[Transition] Step transition aborted")
 
     def safe_idle(self, selected_cell: int, priority: int = 0, keep_select: bool = False) -> None:
-        """De-energize hardware with confirmed writes: drives off, selects cleared, then Cell Enable opened.
+        """De-energize hardware with confirmed writes: charge off, discharge load off then
+        discharge off, charge select cleared, then Cell Enable opened.
 
         keep_select=True (Pause): only the Cell Enable relay opens; Cell Select is left as the
         board reports it. Otherwise (Stop / Safety Stop) 0x6000 ends at 0.
@@ -268,11 +273,13 @@ class StepTransitionController(QObject):
             return [self._write(ph, FRAME_RELAY_CTRL, sel,
                                 f"Cell Enable relay open (Cell {2 if sel else 1} Select kept)")]
 
+        # Discharge: load off first, pause, then Discharge Enable off (see _plan_drives_off)
         ops = [
             self._write(ph, FRAME_CHARGE_CTRL, 0x00, "Charge Control off"),
+            self._write(ph, FRAME_DISCHARGE_SEL, 0x00, "Discharge Load cleared",
+                        settle_ms=self._load_off_wait_ms()),
             self._write(ph, FRAME_DISCHARGE_CTRL, 0x00, "Discharge Control off"),
             self._write(ph, FRAME_CHARGE_SEL, 0x00, "Charge Select cleared"),
-            self._write(ph, FRAME_DISCHARGE_SEL, 0x00, "Discharge Load cleared"),
             _Op(kind="expand", phase=ph, expand=_enable_off_keep_select if keep_select else _relay_to_zero),
         ]
         self._run_ops(ops)
@@ -320,6 +327,11 @@ class StepTransitionController(QObject):
 
     def _plan_step(self, step: TestStep) -> List[_Op]:
         ops = self._plan_drives_off()
+        if step.step_type in (StepType.DISCHARGE, StepType.REST):
+            # Charge Select used to stay at the last charge's setting (0x07) through rest and
+            # discharge: one wrong 0x6002 bit would then have charged at 1.5 A
+            ops.append(self._write(TransitionPhase.CLEAR_UNWANTED, FRAME_CHARGE_SEL, 0x00,
+                                   "Step 1/4: Charge Select cleared"))
         if step.step_type == StepType.CHARGE:
             ops += [_Op(kind="expand", phase=TransitionPhase.CELL_SELECT, expand=self._plan_relay_connect)]
             ops += self._plan_charge(step)
@@ -334,16 +346,23 @@ class StepTransitionController(QObject):
         return ops
 
     def _plan_drives_off(self) -> List[_Op]:
+        # Discharge is switched off load first: the load is removed (current falls to zero),
+        # then, after a pause, Discharge Enable is turned off with nothing flowing.
         ph = TransitionPhase.CLEAR_UNWANTED
         return [
             self._write(ph, FRAME_CHARGE_CTRL, 0x00, "Step 1/4: Charge Control cleared"),
+            self._write(ph, FRAME_DISCHARGE_SEL, 0x00, "Step 1/4: Discharge Load cleared",
+                        settle_ms=self._load_off_wait_ms()),
             self._write(ph, FRAME_DISCHARGE_CTRL, 0x00, "Step 1/4: Discharge Control cleared"),
-            self._write(ph, FRAME_DISCHARGE_SEL, 0x00, "Step 1/4: Discharge Load cleared"),
         ]
+
+    def _load_off_wait_ms(self) -> int:
+        """Pause between removing the load and turning Discharge Enable off (only if a load was on)."""
+        return self.DISCHARGE_STAGE_WAIT_MS if self.control_readbacks.get(FRAME_DISCHARGE_SEL, 0) & 0x0F else 0
 
     @staticmethod
     def _drives_off_pairs() -> List[tuple]:
-        return [(FRAME_CHARGE_CTRL, 0x00), (FRAME_DISCHARGE_CTRL, 0x00), (FRAME_DISCHARGE_SEL, 0x00)]
+        return [(FRAME_CHARGE_CTRL, 0x00), (FRAME_DISCHARGE_SEL, 0x00), (FRAME_DISCHARGE_CTRL, 0x00)]
 
     def _plan_select(self, phase: TransitionPhase) -> List[_Op]:
         """Ops that put the Cell Select relay on the chosen cell without moving it under a closed Enable."""
@@ -427,18 +446,29 @@ class StepTransitionController(QObject):
         ]
 
     def _plan_discharge(self, step: TestStep) -> List[_Op]:
+        """Enable first, then pulse the comparator reset with Enable kept on, then select the load.
+
+        The discharge comparator can be left latched by an earlier discharge. Bench-tested on
+        the board: a reset pulsed before Enable (0x02 -> 0x00 -> 0x01) does not release the
+        latch (0x6003 reads 0x01 but the load bus stays at 0 V and no current flows); a reset
+        pulsed while Enable is already on (0x01 -> 0x03) does. The board clears the reset bit
+        by itself after ~0.3 s.
+        """
         reset = int(DischargeControlBits.DISCHARGE_COMPARATOR_RESET)
         enable = int(DischargeControlBits.DISCHARGE_ENABLE)
         load_dec = step.discharge_load_decimal & 0x0F
+        off = [(FRAME_DISCHARGE_CTRL, 0x00)]
         return [
-            self._write(TransitionPhase.DIS_RESET_HIGH, FRAME_DISCHARGE_CTRL, reset,
-                        "Step 3/4: Discharge Comparator Reset set", pulse=True),
-            self._write(TransitionPhase.DIS_RESET_LOW, FRAME_DISCHARGE_CTRL, 0x00,
-                        "Step 3/4: Discharge Comparator Reset cleared"),
             self._relay_check(TransitionPhase.DIS_ENABLE, []),
             self._write(TransitionPhase.DIS_ENABLE, FRAME_DISCHARGE_CTRL, enable,
-                        "Step 4/4: Discharge Enable (0x6003=0x01)"),
-            self._relay_check(TransitionPhase.DIS_ENABLE, [(FRAME_DISCHARGE_CTRL, 0x00)]),
+                        "Step 3/4: Discharge Enable (0x6003=0x01)",
+                        settle_ms=self.DISCHARGE_STAGE_WAIT_MS),
+            self._write(TransitionPhase.DIS_RESET_HIGH, FRAME_DISCHARGE_CTRL, enable | reset,
+                        "Step 3/4: Discharge Comparator Reset set with Enable on (0x6003=0x03)", pulse=True),
+            _Op(kind="wait", phase=TransitionPhase.DIS_RESET_LOW, frame_id=FRAME_DISCHARGE_CTRL, value=enable,
+                desc="Step 3/4: Discharge Comparator Reset cleared by the board (0x6003=0x01)",
+                settle_ms=self.DISCHARGE_STAGE_WAIT_MS),
+            self._relay_check(TransitionPhase.DIS_SET_LOADS, off),
             self._write(TransitionPhase.DIS_SET_LOADS, FRAME_DISCHARGE_SEL, load_dec,
                         f"Step 4/4: Discharge load bank state {load_dec} (0x6004)"),
         ]
@@ -476,6 +506,7 @@ class StepTransitionController(QObject):
         if step.step_type == StepType.DISCHARGE:
             return {
                 FRAME_RELAY_CTRL: sel_bit | int(RelayControlBits.CELL_ENABLE),
+                FRAME_CHARGE_SEL: 0x00,
                 FRAME_CHARGE_CTRL: 0x00,
                 FRAME_DISCHARGE_CTRL: int(DischargeControlBits.DISCHARGE_ENABLE),
                 FRAME_DISCHARGE_SEL: step.discharge_load_decimal & 0x0F,
@@ -483,6 +514,7 @@ class StepTransitionController(QObject):
         if step.step_type == StepType.REST:
             return {
                 FRAME_RELAY_CTRL: sel_bit,
+                FRAME_CHARGE_SEL: 0x00,
                 FRAME_CHARGE_CTRL: 0x00,
                 FRAME_DISCHARGE_CTRL: 0x00,
                 FRAME_DISCHARGE_SEL: 0x00,
@@ -579,7 +611,31 @@ class StepTransitionController(QObject):
         self._write_attempts = 0
         if self._mode == "transition":
             self.transition_status.emit(f"{op.desc}...")
+        if op.kind == "wait":
+            self._polls = 0
+            self._poll_wait(op)
+            return
         self._issue_write(op)
+
+    def _poll_wait(self, op: _Op) -> None:
+        """Wait for the board to bring a register to op.value by itself; write it if it does not."""
+        if self.auto_ack:
+            self.control_readbacks[op.frame_id] = op.value   # simulated board clears the bit too
+        if self.control_readbacks.get(op.frame_id, 0) == op.value:
+            logger.info(f"[Transition] Confirmed {op.desc}: 0x{op.frame_id:04X} = 0x{op.value:02X}")
+            self._op_idx += 1
+            self._schedule_next(op.settle_ms, self._next_op)
+            return
+        self._polls += 1
+        if self._polls * self.CONFIRM_POLL_MS < self.SELF_CLEAR_TIMEOUT_MS:
+            self._schedule_next(self.CONFIRM_POLL_MS, lambda: self._poll_wait(op))
+            return
+        logger.warning(
+            f"[Transition] 0x{op.frame_id:04X} did not return to 0x{op.value:02X} by itself "
+            f"(readback 0x{self.control_readbacks.get(op.frame_id, 0):02X}); writing it"
+        )
+        self._ops[self._op_idx] = self._write(op.phase, op.frame_id, op.value, op.desc, settle_ms=op.settle_ms)
+        self._next_op()
 
     def _issue_write(self, op: _Op) -> None:
         self._write_attempts += 1
@@ -599,7 +655,8 @@ class StepTransitionController(QObject):
         mask = _RELAY_MASK if op.frame_id == FRAME_RELAY_CTRL else 0xFF
         rb = self.control_readbacks.get(op.frame_id, 0) & mask
         if op.pulse:
-            return self._reset_saw_high or bool(rb & op.value)
+            # Bit 1 is the comparator reset in both 0x6002 and 0x6003; the value may also carry Enable
+            return self._reset_saw_high or bool(rb & op.value & 0x02)
         if op.confirm:
             return op.confirm(rb)
         return rb == (op.value & mask)

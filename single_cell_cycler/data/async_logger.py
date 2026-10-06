@@ -109,6 +109,8 @@ class AsyncTelemetryLogger:
         self._file = None
         self._csv_writer = None
         self.current_log_path: Optional[Path] = None
+        # First file of the session; rotated parts are named <base>_partNNN.csv from it
+        self._base_log_path: Optional[Path] = None
         self._session_prefix = "cycler_run"
         self._part_index = 0
         self._disk_warning_emitted = False
@@ -122,6 +124,7 @@ class AsyncTelemetryLogger:
         self._part_index = 0
         self._disk_warning_emitted = False
         self.current_log_path = self.log_dir / f"{session_prefix}_{timestamp_str}.csv"
+        self._base_log_path = self.current_log_path
         self._open_file(self.current_log_path, "w")
 
         self._is_running = True
@@ -132,9 +135,23 @@ class AsyncTelemetryLogger:
         return self.current_log_path
 
     def resume_session(self, log_path: str | Path) -> Path:
-        """Resume recording into an existing CSV session file (IMP-08)."""
+        """Resume recording into an existing CSV session file (IMP-08).
+
+        log_path is the session's first file. If the session had already rotated, recording
+        continues in its newest part: appending to the full first file would rotate straight
+        into _part001.csv and overwrite the rows already in it.
+        """
         self.stop_session()
-        p = Path(log_path)
+        base = Path(log_path)
+        self._base_log_path = base
+        self._part_index = 0
+        p = base
+        while True:
+            nxt = self._part_path(self._part_index + 1)
+            if not nxt.exists():
+                break
+            self._part_index += 1
+            p = nxt
         self.current_log_path = p
         file_exists = p.exists() and p.stat().st_size > 0
         self._open_file(p, "a", write_header=not file_exists)
@@ -313,8 +330,15 @@ class AsyncTelemetryLogger:
             return
         self._file.close()
         self._part_index += 1
-        path = self.current_log_path.with_name(
-            f"{self.current_log_path.stem}_part{self._part_index:03d}.csv"
-        )
+        path = self._part_path(self._part_index)
+        while path.exists():                     # never truncate a part that already holds rows
+            self._part_index += 1
+            path = self._part_path(self._part_index)
         self._open_file(path, "w")
         logger.info(f"Rotated telemetry log to {path}")
+
+    def _part_path(self, index: int) -> Path:
+        # Named from the session's first file, so the 2nd rotation gives _part002.csv,
+        # not _part001_part002.csv
+        base = self._base_log_path or self.current_log_path
+        return base.with_name(f"{base.stem}_part{index:03d}.csv")

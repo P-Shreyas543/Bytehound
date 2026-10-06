@@ -110,10 +110,16 @@ class FaultSoCTelemetry:
     vr1: float = 0.0        # Polarization overpotential VR1 (V)
     vr2: float = 0.0        # Polarization overpotential VR2 (V)
     p_diag: tuple[float, float, float] = (0.0, 0.0, 0.0) # Covariance matrix diagonal P_diag
+    extended: bool = False  # True when decoded from the 17-byte frame (EKF fields were sent)
 
     @property
     def has_any_fault(self) -> bool:
         return (self.fault_byte & 0x3F) != 0
+
+    @property
+    def has_ekf(self) -> bool:
+        """True when the firmware actually sent the EKF fields (SoC EKF, VR1/VR2, P_diag)."""
+        return self.extended or self.soc_ekf > 0.0 or self.vr1 != 0.0 or self.vr2 != 0.0
 
     @property
     def soc_main(self) -> float:
@@ -158,6 +164,7 @@ class FaultSoCTelemetry:
                     round(raw_p1 * SCALE_P_DIAG, 4),
                     round(raw_p2 * SCALE_P_DIAG, 4),
                 ),
+                extended=True,
             )
         else:
             raw_fault, raw_soc_ocv, raw_soc_cc = struct.unpack("<BHH", payload[:PAYLOAD_LEN_FAULT_SOC])
@@ -174,10 +181,8 @@ class FaultSoCTelemetry:
                 soc_ocv=soc_ocv,
                 soc_cc=soc_cc,
                 timestamp=now,
-                soc_ekf=soc_cc,
-                vr1=0.0,
-                vr2=0.0,
-                p_diag=(0.0, 0.0, 0.0),
+                # The 5-byte frame carries no EKF data: those fields stay unset. Values are
+                # reported as the firmware sent them, never filled in from another source.
             )
 
 

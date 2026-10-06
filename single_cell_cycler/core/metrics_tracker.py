@@ -75,10 +75,21 @@ class DCIRMeasurement:
 class MetricsTracker:
     """Manages integration of capacity, energy, efficiency, and resistance."""
 
+    # Readings below this magnitude are integrated as 0 A. With the cell idle the current sensor
+    # reads a steady +15..23 mA offset; integrated over a 30 min rest that added a phantom
+    # +7.5 mAh to every Rest step and to the cumulative charge total (15-cycle run, Oct 2026).
+    ZERO_CURRENT_DEADBAND_A = 0.025
+
     def __init__(self):
         self.reset_all()
 
+    def _integrable_current(self, current_a: float) -> float:
+        return 0.0 if abs(current_a) < self.ZERO_CURRENT_DEADBAND_A else current_a
+
     def reset_all(self) -> None:
+        # Set by the engine when cycle 1 starts from an unknown charge level: its dQ/dV curve
+        # then covers only part of the window and must not be the reference for peak shift
+        self.partial_first_cycle = False
         self.total_test_start_time = time.time()
         self.cumulative_charge_mah = 0.0
         self.cumulative_discharge_mah = 0.0
@@ -188,13 +199,15 @@ class MetricsTracker:
             if self._last_telemetry is not None and self._last_time is not None:
                 dt_s = now - self._last_time
                 if 0 < dt_s <= 3600.0:
+                    i0 = self._integrable_current(self._last_telemetry.current)
+                    i1 = self._integrable_current(telemetry.current)
                     # Trapezoidal integration for Current: (I0 + I1) / 2 * dt
-                    avg_i = (self._last_telemetry.current + telemetry.current) / 2.0
+                    avg_i = (i0 + i1) / 2.0
                     d_mah = (avg_i * dt_s / 3600.0) * 1000.0
 
                     # Trapezoidal integration for Power: (V0*I0 + V1*I1) / 2 * dt
-                    p0 = self._last_telemetry.voltage * self._last_telemetry.current
-                    p1 = telemetry.voltage * telemetry.current
+                    p0 = self._last_telemetry.voltage * i0
+                    p1 = telemetry.voltage * i1
                     avg_p = (p0 + p1) / 2.0
                     d_mwh = (avg_p * dt_s / 3600.0) * 1000.0
 
@@ -204,7 +217,7 @@ class MetricsTracker:
                     if d_mah > 0:
                         self.cumulative_charge_mah += d_mah
                         self.cumulative_charge_mwh += d_mwh
-                    else:
+                    elif d_mah < 0:
                         self.cumulative_discharge_mah += abs(d_mah)
                         self.cumulative_discharge_mwh += abs(d_mwh)
 
@@ -360,10 +373,14 @@ class MetricsTracker:
         coulombic_eff = (q_dis / q_chg * 100.0) if q_chg > 0 else 0.0
         energy_eff = (e_dis / e_chg * 100.0) if e_chg > 0 else 0.0
 
-        # Grab standard DCIR if measured in any step of this cycle
-        dcir_10s = next((s.dcir_10s_mohm for s in cycle_steps if s.dcir_10s_mohm is not None), None)
-        dcir_1s = next((s.dcir_1s_mohm for s in cycle_steps if s.dcir_1s_mohm is not None), None)
-        dcir_fallback = next((s.dcir_mohm for s in cycle_steps if s.dcir_mohm is not None), None)
+        # Standard DCIR for the cycle, from the discharge step first: it always starts from full
+        # charge, so cycles compare like for like. The charge step starts wherever the previous
+        # discharge or (cycle 1) the bench left the cell: 58 mOhm from 3.94 V vs 91 from 3.0 V in
+        # the 15-cycle run read as a 57 % resistance rise that never happened.
+        dcir_steps = sorted(cycle_steps, key=lambda s: s.step_type != StepType.DISCHARGE)
+        dcir_10s = next((s.dcir_10s_mohm for s in dcir_steps if s.dcir_10s_mohm is not None), None)
+        dcir_1s = next((s.dcir_1s_mohm for s in dcir_steps if s.dcir_1s_mohm is not None), None)
+        dcir_fallback = next((s.dcir_mohm for s in dcir_steps if s.dcir_mohm is not None), None)
         dcir_val = dcir_10s if dcir_10s is not None else (dcir_1s if dcir_1s is not None else dcir_fallback)
 
         # Extract primary dQ/dV peak for this cycle (prefer Charge step, fallback to Discharge)
@@ -380,15 +397,20 @@ class MetricsTracker:
             pk_v = primary_pk.voltage
             pk_h = primary_pk.dq_dv
 
-            # Reference Cycle 1 primary peak to track voltage shift (polarization/aging)
-            c1_dqv = [
+            # Reference = first full cycle's primary peak, to track voltage shift (polarization/aging).
+            # A partial cycle 1 (charge started mid-SoC) peaks on a different feature: the 15-cycle
+            # run reported a constant -88 mV "shift" against it. That cycle gets no shift value.
+            ref_cycle = 2 if self.partial_first_cycle else 1
+            ref_dqv = [
                 p for p in self.dqv_profiles
-                if p.cycle_index == 1 and p.peaks and p.step_type == selected_dqv.step_type
+                if p.cycle_index == ref_cycle and p.peaks and p.step_type == selected_dqv.step_type
             ]
-            if c1_dqv and c1_dqv[0].peaks:
-                c1_primary = max(c1_dqv[0].peaks, key=lambda pk: pk.prominence)
-                shift_mv = round((pk_v - c1_primary.voltage) * 1000.0, 1)
-            elif cycle_index == 1:
+            if cycle_index < ref_cycle:
+                shift_mv = None
+            elif ref_dqv and ref_dqv[0].peaks:
+                ref_primary = max(ref_dqv[0].peaks, key=lambda pk: pk.prominence)
+                shift_mv = round((pk_v - ref_primary.voltage) * 1000.0, 1)
+            elif cycle_index == ref_cycle:
                 shift_mv = 0.0
 
         summary = CycleSummary(

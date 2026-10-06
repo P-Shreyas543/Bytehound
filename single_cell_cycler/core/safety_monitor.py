@@ -32,10 +32,18 @@ class SafetyLimits:
     max_discharge_current_a: float = 25.0 # Max discharge current limit
     max_temp_c: float = 60.0              # Max safe temperature limit
 
+    # Outside [min_voltage_v, max_voltage_v] a step that cannot make it worse is allowed to run:
+    # a charge (or rest) below the minimum, a discharge (or rest) above the maximum. Past these
+    # hard limits the test stops and latches instead: charging a deeply over-discharged Li-ion
+    # cell at full current risks copper dissolution and internal shorts.
+    charge_floor_v: float = 2.0           # no charging below this (set per chemistry at START)
+    overvoltage_ceiling_margin_v: float = 0.10  # hard ceiling = max_voltage_v + margin
+
     # Rate-of-Rise Thermal Trigger (IMP-09)
     max_temp_rate_of_rise_c_per_min: float = 1.5  # Max safe rate of rise (dT/dt in °C/min)
     temp_rate_window_s: float = 15.0              # Moving window duration for slope calculation (s)
     temp_rate_sustain_s: float = 2.5              # Duration condition must be sustained before trip (s)
+    temp_rate_max_gap_s: float = 2.0              # Telemetry gap that restarts the window (connect, reconnect, stall)
 
     # Watchdog timeout: how long with no telemetry before triggering safety stop.
     # Set conservatively to 8 s to account for:
@@ -68,11 +76,17 @@ class SafetyMonitor:
         # When False, trips are recorded but no hardware writes are sent (engine not Running:
         # hardware is already zeroed and the confirmed sequences own the registers)
         self.armed: bool = True
-        # Class of the last trip: voltage | current | thermal | watchdog | manual
+        # Class of the last trip: voltage | voltage_hard | current | thermal | watchdog | manual
+        # ("voltage" ends the step and the test continues; every other class stops the test)
         self.trip_kind: str = ""
+        # Type of the step the engine is running ("charge" / "discharge" / "rest"), or None
+        self.active_step_type: Optional[str] = None
 
         # Rate-of-rise thermal runaway detection (IMP-09)
-        self._temp_history: collections.deque = collections.deque(maxlen=300)
+        # Bounded by the time purge; maxlen is only a backstop, large enough for one window at
+        # any realistic frame rate (300 would cover just 15 s at 20 Hz and the slope would never run)
+        self._temp_history: collections.deque = collections.deque(maxlen=5000)
+        self._rate_history_start: Optional[float] = None   # first sample since the last reset / gap
         self._rate_trip_start_time: Optional[float] = None
         self.last_rate_of_rise_c_per_min: float = 0.0
 
@@ -87,18 +101,33 @@ class SafetyMonitor:
         if self.is_tripped:
             return False
 
-        # 1. Overvoltage limit
-        if cell_data.voltage > self.limits.max_voltage_v:
+        # 1-2. Voltage limits. A step that moves the cell back into range is allowed to run;
+        # the hard floor / ceiling always stop the test (see SafetyLimits.charge_floor_v)
+        v = cell_data.voltage
+        step = (self.active_step_type or "").lower()
+        ceiling = self.limits.max_voltage_v + self.limits.overvoltage_ceiling_margin_v
+        if v > ceiling:
             self._trigger_shutdown(
-                f"SAFETY TRIP: Cell Voltage {cell_data.voltage:.3f} V exceeded safety limit {self.limits.max_voltage_v:.3f} V",
+                f"SAFETY TRIP: Cell Voltage {v:.3f} V above hard ceiling {ceiling:.3f} V",
+                kind="voltage_hard",
+            )
+            return False
+        if v > self.limits.max_voltage_v and step not in ("discharge", "rest"):
+            self._trigger_shutdown(
+                f"SAFETY TRIP: Cell Voltage {v:.3f} V exceeded safety limit {self.limits.max_voltage_v:.3f} V",
                 kind="voltage",
             )
             return False
-
-        # 2. Undervoltage limit
-        if cell_data.voltage < self.limits.min_voltage_v:
+        if v < self.limits.charge_floor_v:
             self._trigger_shutdown(
-                f"SAFETY TRIP: Cell Voltage {cell_data.voltage:.3f} V dropped below safety limit {self.limits.min_voltage_v:.3f} V",
+                f"SAFETY TRIP: Cell Voltage {v:.3f} V below hard floor {self.limits.charge_floor_v:.3f} V "
+                f"(over-discharged: needs operator inspection before any charge)",
+                kind="voltage_hard",
+            )
+            return False
+        if v < self.limits.min_voltage_v and step not in ("charge", "rest"):
+            self._trigger_shutdown(
+                f"SAFETY TRIP: Cell Voltage {v:.3f} V dropped below safety limit {self.limits.min_voltage_v:.3f} V",
                 kind="voltage",
             )
             return False
@@ -129,25 +158,34 @@ class SafetyMonitor:
 
         # 5. Temperature rate-of-rise limit (dT/dt) early runaway trigger (IMP-09)
         t_sample = cell_data.timestamp if cell_data.timestamp > 0 else now
-        self._temp_history.append((t_sample, max_temp))
+        window_s = self.limits.temp_rate_window_s
 
-        # Purge samples older than temp_rate_window_s * 1.5
-        min_cutoff = t_sample - (self.limits.temp_rate_window_s * 1.5)
-        while len(self._temp_history) > 1 and self._temp_history[0][0] < min_cutoff:
+        # A telemetry gap (connect, reconnect, stalled port) or a clock step restarts the window:
+        # readings from before and after it must never be compared
+        if self._temp_history:
+            gap = t_sample - self._temp_history[-1][0]
+            if gap > self.limits.temp_rate_max_gap_s or gap < 0.0:
+                logger.debug(f"[Rate-of-rise] {gap:.2f} s telemetry gap: restarting the dT/dt window")
+                self._clear_rate_history()
+        if self._rate_history_start is None:
+            self._rate_history_start = t_sample
+        self._temp_history.append((t_sample, cell_data.terminal_temp, cell_data.body_temp))
+
+        while len(self._temp_history) > 1 and self._temp_history[0][0] < t_sample - window_s:
             self._temp_history.popleft()
 
-        # Evaluate slope if we have at least 5.0 seconds of history in the window
-        earliest_t, earliest_temp = self._temp_history[0]
-        dt = t_sample - earliest_t
-        if dt >= 5.0 and dt > 0.0:  # Guard: dt > 0 prevents ZeroDivisionError
-            dT = max_temp - earliest_temp
-            rate_c_per_min = (dT / dt) * 60.0
+        # Evaluate only once a full window of uninterrupted data exists. It used to start after 5 s
+        # and compare just the oldest and newest samples, so one unsettled reading right after
+        # connecting (0.6 \u00b0C in 5 s) read as 7.1 \u00b0C/min (idle trip, 15-cycle run, 2026-10-01).
+        if t_sample - self._rate_history_start >= window_s and len(self._temp_history) >= 3:
+            rate_c_per_min = self._fitted_rate_c_per_min()
             self.last_rate_of_rise_c_per_min = rate_c_per_min
 
             if rate_c_per_min >= self.limits.max_temp_rate_of_rise_c_per_min:
                 if self._rate_trip_start_time is None:
                     self._rate_trip_start_time = t_sample
                 elif (t_sample - self._rate_trip_start_time) >= self.limits.temp_rate_sustain_s:
+                    self._log_rate_window(rate_c_per_min)
                     self._trigger_shutdown(
                         f"SAFETY TRIP: Rate of temperature rise exceeded limit: {rate_c_per_min:.2f} \u00b0C/min "
                         f"(limit: {self.limits.max_temp_rate_of_rise_c_per_min:.2f} \u00b0C/min sustained for {self.limits.temp_rate_sustain_s:.1f}s)",
@@ -158,6 +196,51 @@ class SafetyMonitor:
                 self._rate_trip_start_time = None
 
         return True
+
+    def _fitted_rate_c_per_min(self) -> float:
+        """Rate of rise that BOTH probes agree on: the lower of their least-squares slopes, in \u00b0C/min.
+
+        Runaway heats the whole cell, so terminal and body rise together. A single glitching
+        probe does not: in the 15-cycle run (2026-10-01) the terminal probe flipped between
+        readings 0.9 \u00b0C apart and the body probe had bursts of its own; either one alone fitted
+        4-5 \u00b0C/min for 12-39 s and would have tripped, while the agreed rate never passed 0.7.
+        The absolute temperature limit still uses the hotter probe on its own.
+        """
+        return min(self._probe_slope(1), self._probe_slope(2))
+
+    def _probe_slope(self, column: int) -> float:
+        """Least-squares slope of one probe over the window, in \u00b0C/min (1 = terminal, 2 = body)."""
+        hist = self._temp_history
+        n = len(hist)
+        t0 = hist[0][0]
+        mean_t = sum(s[0] - t0 for s in hist) / n
+        mean_y = sum(s[column] for s in hist) / n
+        sxx = sum((s[0] - t0 - mean_t) ** 2 for s in hist)
+        if sxx <= 0.0:
+            return 0.0
+        sxy = sum((s[0] - t0 - mean_t) * (s[column] - mean_y) for s in hist)
+        return sxy / sxx * 60.0
+
+    def _log_rate_window(self, rate_c_per_min: float) -> None:
+        """Record the readings behind a rate trip, so a false trip can be diagnosed from the log."""
+        span = self._temp_history[-1][0] - self._temp_history[0][0]
+        parts = []
+        for column, name in ((1, "terminal"), (2, "body")):
+            temps = [s[column] for s in self._temp_history]
+            tail = " ".join(f"{y:.1f}" for y in temps[-20:])
+            parts.append(
+                f"{name} {self._probe_slope(column):.2f} \u00b0C/min (first {temps[0]:.1f}, last {temps[-1]:.1f}, "
+                f"min {min(temps):.1f}, max {max(temps):.1f}; last 20: {tail})"
+            )
+        logger.warning(
+            f"[Rate-of-rise] agreed {rate_c_per_min:.2f} \u00b0C/min over {len(self._temp_history)} samples / "
+            f"{span:.1f} s: " + "; ".join(parts)
+        )
+
+    def _clear_rate_history(self) -> None:
+        self._temp_history.clear()
+        self._rate_history_start = None
+        self._rate_trip_start_time = None
 
     def check_bms_faults(
         self,
@@ -202,13 +285,19 @@ class SafetyMonitor:
 
                 # Handle comparator hysteresis during normal transitions
                 if flag == BMSFaultFlags.CUV:
-                    if step_type_str == "charge":
-                        continue  # Expected while recovering from low voltage
-                    if step_type_str == "rest" and (cell_voltage is None or cell_voltage >= self.limits.min_voltage_v):
-                        continue  # Expected post-discharge relaxation above 2.4V
+                    if step_type_str in ("charge", "rest") and (
+                        cell_voltage is None or cell_voltage >= self.limits.charge_floor_v
+                    ):
+                        continue  # Charging is the cure; resting does no harm (hard floor still applies)
                 elif flag == BMSFaultFlags.COV:
                     if step_type_str == "discharge":
                         continue  # Expected at start of discharge from 4.2V
+                    if step_type_str == "rest" and (
+                        cell_voltage is None or cell_voltage <= self.limits.max_voltage_v
+                    ):
+                        # Still flagged after an over-voltage ended the charge: it used to end the
+                        # post-charge rest at once (CUV in rest was already tolerated)
+                        continue
                 elif flag in (BMSFaultFlags.OCC, BMSFaultFlags.OCD):
                     if step_type_str == "rest":
                         continue  # Zero current in rest; ignore un-cleared comparator latches
@@ -248,6 +337,15 @@ class SafetyMonitor:
         """Manual Emergency Stop invoked by user."""
         self._trigger_shutdown("MANUAL EMERGENCY STOP TRIGGERED BY OPERATOR", kind="manual", force=True)
 
+    def latch_trip(self, reason: str, kind: str = "") -> None:
+        """Record a trip raised outside the monitor (no hardware writes: the caller idles it).
+
+        Latching makes START wait for an operator reset, as for every other trip.
+        """
+        self.is_tripped = True
+        self.trip_reason = reason
+        self.trip_kind = kind
+
     def reset_safety(self) -> None:
         """Clear tripped status after issue resolution."""
         self.is_tripped = False
@@ -255,8 +353,7 @@ class SafetyMonitor:
         self.trip_kind = ""
         self.active_faults.clear()
         self.last_telemetry_time = time.time()
-        self._temp_history.clear()
-        self._rate_trip_start_time = None
+        self._clear_rate_history()
         self.last_rate_of_rise_c_per_min = 0.0
 
     def _bms_fault_kind(self) -> str:
@@ -282,11 +379,12 @@ class SafetyMonitor:
         logger.critical(f"Executing Emergency Safety Shutdown: {reason}")
 
         try:
-            # Safely de-energize active charge/discharge controls with Priority 0
+            # Safely de-energize active charge/discharge controls with Priority 0.
+            # Discharge: load off before Discharge Enable off (sent back to back, no pause, in an emergency)
             self._command_sender(FRAME_CHARGE_CTRL, 0x00, 0)
+            self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 0)
             self._command_sender(FRAME_DISCHARGE_CTRL, 0x00, 0)
             self._command_sender(FRAME_CHARGE_SEL, 0x00, 0)
-            self._command_sender(FRAME_DISCHARGE_SEL, 0x00, 0)
             # De-energize cell enable while preserving selected cell position
             relay_idle = int(RelayControlBits.CELL_SELECT) if self.selected_cell == 2 else 0x00
             if self.relay_readback is not None:

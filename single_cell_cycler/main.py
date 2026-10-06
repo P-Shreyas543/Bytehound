@@ -18,6 +18,19 @@ from PySide6.QtWidgets import QApplication
 from single_cell_cycler.config.cycler_config import DEFAULT_LOG_DIR
 from single_cell_cycler.ui.main_window import MainWindow
 
+def acquire_single_instance_lock(lock_dir: Path):
+    """Return a held QLockFile, or None if another cycler window already runs on this PC.
+
+    Two windows would share the log folder, the crash-recovery journal and the settings file,
+    and could overwrite each other's data. A lock left by a crashed process is reclaimed.
+    """
+    from PySide6.QtCore import QLockFile
+
+    lock = QLockFile(str(lock_dir / "cycler_instance.lock"))
+    lock.setStaleLockTime(0)          # stale only when its process is gone, never by age
+    return lock if lock.tryLock(100) else None
+
+
 def main():
     # Ensure logs folder exists
     DEFAULT_LOG_DIR.mkdir(parents=True, exist_ok=True)
@@ -113,6 +126,20 @@ def main():
     app.setFont(QFont("Segoe UI", 10))
     app.setApplicationName("Bytehound Single-Cell Cycler")
     app.setOrganizationName("Bytehound")
+
+    instance_lock = acquire_single_instance_lock(DEFAULT_LOG_DIR)
+    if instance_lock is None:
+        from PySide6.QtWidgets import QMessageBox
+
+        logging.warning("Second cycler window refused: another instance is already running on this PC")
+        QMessageBox.warning(
+            None,
+            "Cycler Already Running",
+            "The Single-Cell BMS Cycler is already open on this PC.\n\n"
+            "Run only one window per PC: two windows would share the same log folder and "
+            "crash-recovery file and could overwrite each other's test data.",
+        )
+        sys.exit(1)
 
     # Locate and set Bytehound branding icon
     branding_dir = _REPO_ROOT / "branding"

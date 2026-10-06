@@ -311,3 +311,43 @@ def test_template_has_no_webhook_url():
     from pathlib import Path
     tmpl = Path(__file__).resolve().parent.parent / "config" / "webhook_settings.example.json"
     assert json.loads(tmpl.read_text(encoding="utf-8"))["url"] == ""
+
+
+def test_run_parts_go_out_in_time_order_and_each_fits_the_limit(tmp_path):
+    """15-cycle run review: parts were ordered by file size, so the rotated (later) telemetry
+    went out first, and a short last chunk could share an archive with a full one."""
+    import zipfile
+    from single_cell_cycler.comm.webhook_notifier import package_run_files
+
+    def tele(name, n, start):
+        f = tmp_path / name
+        f.write_text("t,v\n" + "".join(f"{start + k},{3.7 + (k % 97) / 1000:.3f},1.476\n" for k in range(n)), encoding="utf-8")
+        return f
+
+    first = tele("run.csv", 90_000, 0)
+    later = tele("run_part001.csv", 30_000, 90_000)
+    summary = tmp_path / "summary_cycles_1.csv"
+    summary.write_text("cycle\n1\n", encoding="utf-8")
+
+    parts = package_run_files([first, later, summary], tmp_path / "out", "lbl", part_limit=150_000)
+    order = []
+    for zp in parts:
+        assert zp.stat().st_size <= 150_000
+        with zipfile.ZipFile(zp) as z:
+            order.extend(z.namelist())
+    assert order[0] == "summary_cycles_1.csv"
+    chunks = [n for n in order if "chunk" in n]
+    assert chunks == sorted(chunks)                 # run_chunk* before run_part001_chunk*
+
+
+def test_completion_card_carries_the_per_cycle_results():
+    from types import SimpleNamespace as NS
+    from single_cell_cycler.comm.webhook_notifier import _cycle_table_fields
+
+    cycles = [NS(cycle_index=i, charge_capacity_mah=1376.0, discharge_capacity_mah=1370.0 + i,
+                 coulombic_efficiency_pct=99.7, energy_efficiency_pct=94.5, dcir_10s_mohm=60.0,
+                 dcir_mohm=None, partial_initial_charge=(i == 1)) for i in range(1, 16)]
+    fields = {f["name"]: f["value"] for f in _cycle_table_fields(cycles)}
+    assert fields["Capacity Retention"].startswith("100.95%")         # cycle 2 -> 15, partial cycle 1 excluded
+    table = fields["Per-cycle results"]
+    assert len(table) <= 1024 and "  1*" in table and " 15 " in table

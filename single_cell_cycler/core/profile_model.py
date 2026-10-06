@@ -3,10 +3,24 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+
+def step_label(step_number: int, name: str) -> str:
+    """'Step N: name', unless the name already carries that number.
+
+    Built-in recipes name steps "3. CC Discharge" and new steps are called "Step 3", so a plain
+    prefix read "Step 3: 3. CC Discharge" (tracker) and "Step 3: Step 3" (webhook next step).
+    """
+    text = (name or "").strip()
+    low = text.lower()
+    if re.match(rf"(step\s*)?{step_number}\s*[.):]?(\s|$)", low):
+        return text
+    return f"Step {step_number}: {text}" if text else f"Step {step_number}"
 
 
 class StepType(str, Enum):

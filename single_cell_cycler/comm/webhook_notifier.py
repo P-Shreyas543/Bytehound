@@ -211,13 +211,55 @@ def _block(lines: List[str]) -> str:
     return ("```\n" + text[:1000] + "\n```") if text else "—"
 
 
+def _cycle_table_fields(cycles: List[Any]) -> List[Dict[str, str]]:
+    """Run-level results for the completion card: retention, mean CE and a per-cycle table.
+
+    Takes CycleSummary-like objects. A partial first cycle (charge started mid-SoC) is marked
+    with * and left out of retention / mean CE. When there are too many cycles for one embed
+    field, the first and last rows are kept.
+    """
+    if not cycles:
+        return []
+    full = [c for c in cycles if not getattr(c, "partial_initial_charge", False)]
+    out: List[Dict[str, str]] = []
+    if len(full) >= 2 and full[0].discharge_capacity_mah > 0:
+        retention = full[-1].discharge_capacity_mah / full[0].discharge_capacity_mah * 100.0
+        out.append({"name": "Capacity Retention",
+                    "value": f"{retention:.2f}% (cycle {full[0].cycle_index} → {full[-1].cycle_index})"})
+    if full:
+        mean_ce = sum(c.coulombic_efficiency_pct for c in full) / len(full)
+        out.append({"name": "Mean CE (full cycles)", "value": f"{mean_ce:.2f}%"})
+
+    def _row(c: Any) -> str:
+        dcir = getattr(c, "dcir_10s_mohm", None) or getattr(c, "dcir_mohm", None)
+        mark = "*" if getattr(c, "partial_initial_charge", False) else " "
+        return (f"{c.cycle_index:>3}{mark} {c.charge_capacity_mah:>7.1f} {c.discharge_capacity_mah:>7.1f} "
+                f"{c.coulombic_efficiency_pct:>6.2f} {c.energy_efficiency_pct:>6.2f} "
+                + (f"{dcir:>6.1f}" if dcir else "     —"))
+
+    header = "Cyc   Chg mAh Dis mAh   CE %   EE % DCIR mΩ"
+    rows = [_row(c) for c in cycles]
+    budget = 1000 - len(header) - 60                 # room for the footnote and "..." line
+    per_row = len(rows[0]) + 1
+    max_rows = max(4, budget // per_row)
+    if len(rows) > max_rows:
+        head = 3
+        rows = rows[:head] + [f"  ... {len(rows) - max_rows + 1} cycles omitted ..."] + rows[-(max_rows - head - 1):]
+    lines = [header, *rows]
+    if any(getattr(c, "partial_initial_charge", False) for c in cycles):
+        lines.append("* partial first charge: CE/EE not comparable")
+    out.append({"name": "Per-cycle results", "value": _block(lines)})
+    return out
+
+
 def package_run_files(
     csv_paths: List[Path], out_dir: Path, run_label: str, part_limit: int = DISCORD_FILE_LIMIT_BYTES
 ) -> List[Path]:
     """Zip a run's CSV files into one or more archives, each under part_limit bytes.
 
-    Small files go into part 1 whole. A telemetry CSV too large for one archive is split by
-    rows, repeating the header line, so every part opens on its own in Excel / pandas.
+    Small files (the summaries) go into part 1 whole. Large telemetry CSVs follow in the order
+    given (the caller passes them oldest first), so part numbers run in time order. Each is split
+    by rows, repeating the header line, so every part opens on its own in Excel / pandas.
     """
     import zipfile
 
@@ -239,15 +281,41 @@ def package_run_files(
         current = out_dir / f"{safe}_part{part_no}.zip"
         zf = zipfile.ZipFile(current, "w", compression=zipfile.ZIP_DEFLATED, compresslevel=6)
 
-    # CSV compresses ~8-10x; budget raw bytes per archive conservatively at 5x the limit
-    raw_budget = part_limit * 5
-    for f in sorted(files, key=lambda x: x.stat().st_size):
-        size = f.stat().st_size
-        if size <= raw_budget // 2:
-            zf.write(f, arcname=f.name)
-            if current.stat().st_size > part_limit * 0.9:
-                _roll()
-            continue
+    # Chunks are sized from the measured compression ratio (a 1 MB sample of each file, then
+    # each written chunk), with 20 % headroom under the limit. The old fixed 5x guess filled each
+    # 8 MB part only to 3.3 MB (telemetry compresses ~12x: 9 uploads for a 15-cycle run), and
+    # would overshoot the limit on data that compresses worse than 5x.
+    import zlib
+
+    small_limit = part_limit * 5 // 2
+    ratio = 5.0
+    raw_budget = int(part_limit * 0.8 * ratio)
+
+    def _sample_ratio(path: Path) -> float:
+        with path.open("rb") as fh:
+            sample = fh.read(1 << 20)
+        return min(max(len(sample) / max(1, len(zlib.compress(sample, 6))), 2.0), 20.0)
+
+    def _write_chunk(name: str, text: str) -> None:
+        nonlocal raw_budget, ratio
+        # A file's last (short) chunk shares its archive with what follows; open a new archive
+        # when the next chunk would not fit beside it
+        if zf.namelist() and current.stat().st_size + len(text) / ratio > part_limit * 0.9:
+            _roll()
+        zf.writestr(name, text)
+        info = zf.getinfo(name)
+        ratio = min(max(info.file_size / max(1, info.compress_size), 2.0), 20.0)
+        raw_budget = int(part_limit * 0.8 * ratio)
+
+    small = [f for f in files if f.stat().st_size <= small_limit]
+    large = [f for f in files if f.stat().st_size > small_limit]
+    for f in small:
+        zf.write(f, arcname=f.name)
+        if current.stat().st_size > part_limit * 0.9:
+            _roll()
+    for f in large:
+        ratio = _sample_ratio(f)
+        raw_budget = int(part_limit * 0.8 * ratio)
         # large telemetry file: split by rows with the header repeated
         with f.open("r", encoding="utf-8", errors="replace") as src:
             header = src.readline()
@@ -258,12 +326,12 @@ def package_run_files(
                 buf.append(line)
                 buf_bytes += len(line)
                 if buf_bytes >= raw_budget:
-                    zf.writestr(f"{f.stem}_chunk{chunk_idx:03d}.csv", "".join(buf))
+                    _write_chunk(f"{f.stem}_chunk{chunk_idx:03d}.csv", "".join(buf))
                     chunk_idx += 1
                     buf, buf_bytes = [header], len(header)
                     _roll()
             if len(buf) > 1:
-                zf.writestr(f"{f.stem}_chunk{chunk_idx:03d}.csv", "".join(buf))
+                _write_chunk(f"{f.stem}_chunk{chunk_idx:03d}.csv", "".join(buf))
     zf.close()
     if zipfile.ZipFile(current).namelist():
         parts.append(current)
@@ -282,6 +350,7 @@ class WebhookNotifier:
         self._queue: queue.Queue = queue.Queue(maxsize=100)
         self._thread: Optional[threading.Thread] = None
         self._is_running = True
+        self._last_retry_after: Optional[float] = None   # set by the last failed POST (HTTP 429)
 
         self._start_worker()
 
@@ -293,17 +362,33 @@ class WebhookNotifier:
         while self._is_running:
             try:
                 item = self._queue.get(timeout=0.5)
-                if len(item) == 3:                       # ("files", url, (payload, [zip paths]))
-                    _, url, (payload, zips) = item
-                    self._post_files(url, payload, zips)
+            except queue.Empty:
+                continue
+            try:
+                if len(item) == 3:                       # ("files", url, (payload, csv paths, work dir, label))
+                    _, url, (payload, files, work_dir, run_label) = item
+                    self._package_and_post_files(url, payload, files, work_dir, run_label)
                 else:
                     url, payload = item
                     self._post_with_retry(url, payload)
-                self._queue.task_done()
-            except queue.Empty:
-                continue
             except Exception as exc:
                 logger.error(f"Unexpected worker error: {exc}")
+            finally:
+                self._queue.task_done()                  # always, so close() can wait for the queue
+
+    @staticmethod
+    def _retry_after_s(exc: Exception) -> Optional[float]:
+        """Seconds Discord / Slack ask us to wait after HTTP 429 (header or JSON body)."""
+        if not isinstance(exc, urllib.error.HTTPError) or exc.code != 429:
+            return None
+        try:
+            header = exc.headers.get("Retry-After") if exc.headers else None
+            if header:
+                return min(60.0, max(0.5, float(header)))
+            body = json.loads(exc.read().decode("utf-8", errors="replace") or "{}")
+            return min(60.0, max(0.5, float(body.get("retry_after", 2.0))))
+        except Exception:
+            return 2.0
 
     def _post_with_retry(self, url: str, payload: Dict[str, Any], attempts: int = 3) -> None:
         """Retry transient webhook failures without blocking the application thread."""
@@ -313,13 +398,15 @@ class WebhookNotifier:
             if success:
                 return
             if attempt < attempts and self._is_running:
-                logger.warning(f"Webhook attempt {attempt}/{attempts} failed; retrying in {delay_s:.1f}s: {message}")
-                time.sleep(delay_s)
+                wait_s = self._last_retry_after or delay_s
+                logger.warning(f"Webhook attempt {attempt}/{attempts} failed; retrying in {wait_s:.1f}s: {message}")
+                time.sleep(wait_s)
                 delay_s *= 2.0
         logger.error(f"Webhook notification abandoned after {attempts} attempts: {message}")
 
     def _post_http(self, url: str, payload: Dict[str, Any], timeout_s: float = 4.0) -> Tuple[bool, str]:
         """Synchronously dispatch HTTP POST request with short timeout."""
+        self._last_retry_after = None
         try:
             req_data = json.dumps(payload).encode("utf-8")
             req = urllib.request.Request(
@@ -343,6 +430,7 @@ class WebhookNotifier:
                     logger.warning(msg)
                     return False, msg
         except urllib.error.HTTPError as exc:
+            self._last_retry_after = self._retry_after_s(exc)
             msg = f"HTTP Error {exc.code}: {exc.reason}"
             logger.warning(f"Webhook dispatch failed: {msg}")
             return False, msg
@@ -359,6 +447,7 @@ class WebhookNotifier:
         """Discord webhook upload: multipart/form-data with payload_json + files[0]."""
         import uuid
 
+        self._last_retry_after = None
         boundary = f"----BytehoundBoundary{uuid.uuid4().hex}"
         data = Path(file_path).read_bytes()
         body = b"".join([
@@ -388,30 +477,57 @@ class WebhookNotifier:
                     return True, f"HTTP {resp.status} OK"
                 return False, f"HTTP {resp.status}"
         except urllib.error.HTTPError as exc:
+            self._last_retry_after = self._retry_after_s(exc)
             return False, f"HTTP Error {exc.code}: {exc.reason}"
         except Exception as exc:
             return False, f"Error: {exc}"
 
-    def _post_files(self, url: str, payload: Dict[str, Any], zips: List[Path]) -> None:
+    def _package_and_post_files(
+        self, url: str, payload: Dict[str, Any], files: List[Path], work_dir: Path, run_label: str
+    ) -> None:
+        """Runs on the worker thread: zipping a multi-day run (360 MB of CSV for 15 cycles) took
+        ~10 s and used to freeze the GUI at test end."""
+        try:
+            zips = package_run_files(files, Path(work_dir), run_label)
+        except Exception as exc:
+            logger.error(f"Could not package run files for webhook: {exc}")
+            return
+        self._post_files(url, payload, zips)
+
+    def _post_files(self, url: str, payload: Dict[str, Any], zips: List[Path], attempts: int = 5) -> None:
+        import zipfile
+
         n = len(zips)
+        failed: List[Path] = []
         for k, zp in enumerate(zips, start=1):
             part_payload = json.loads(json.dumps(payload))
             if n > 1:
-                part_payload["content"] = f"{part_payload.get('content', '')} (part {k}/{n})"
-            for attempt in range(1, 4):
+                try:
+                    with zipfile.ZipFile(zp) as z:
+                        names = ", ".join(z.namelist())
+                except Exception:
+                    names = ""
+                part_payload["content"] = f"{part_payload.get('content', '')} (part {k}/{n}: {names})"[:1900]
+            for attempt in range(1, attempts + 1):
                 ok, msg = self._post_multipart(url, part_payload, zp)
                 if ok:
+                    zp.unlink(missing_ok=True)       # the CSVs stay in the log folder; the zip was only a carrier
                     break
-                logger.warning(f"Webhook file upload {zp.name} attempt {attempt}/3 failed: {msg}")
-                time.sleep(2.0 * attempt)
+                wait_s = self._last_retry_after or 2.0 * attempt
+                logger.warning(f"Webhook file upload {zp.name} attempt {attempt}/{attempts} failed: {msg}; retrying in {wait_s:.1f}s")
+                time.sleep(wait_s)
             else:
-                logger.error(f"Webhook file upload abandoned: {zp.name}")
+                logger.error(f"Webhook file upload abandoned: {zp.name} (kept at {zp})")
+                failed.append(zp)
+        if n:
+            logger.info(f"Webhook run-file upload finished: {n - len(failed)}/{n} parts delivered.")
 
     def send_run_files(self, csv_paths: List[Path], end_status: str, work_dir: Path) -> None:
         """Queue the run's CSV files for upload when a test ends (Discord only).
 
-        Other platforms' incoming webhooks cannot carry files; they get a message listing where
-        the files are saved on the workstation instead.
+        Zipping and uploading both happen on the worker thread. Other platforms' incoming
+        webhooks cannot carry files; they get a message listing where the files are saved on
+        the workstation instead.
         """
         if not (self.settings.enabled and self.settings.send_csv_on_test_end and self.settings.url):
             return
@@ -438,12 +554,7 @@ class WebhookNotifier:
             self._queue_json(payload)
             return
         try:
-            zips = package_run_files(files, Path(work_dir), run_label)
-        except Exception as exc:
-            logger.error(f"Could not package run files for webhook: {exc}")
-            return
-        try:
-            self._queue.put_nowait(("files", self.settings.url, (payload, zips)))
+            self._queue.put_nowait(("files", self.settings.url, (payload, files, Path(work_dir), run_label)))
         except queue.Full:
             logger.warning("Webhook dispatch queue full; dropping file upload.")
 
@@ -524,12 +635,21 @@ class WebhookNotifier:
         self._decorate(payload)
         return self._post_http(self.settings.url, payload, timeout_s=8.0)
 
-    def set_bms_serial_number(self, serial_number: str) -> None:
-        """Set the identifier shown on subsequent alerts without forcing persistence."""
-        self.settings.bms_serial_number = str(serial_number or "").strip()
+    def set_fallback_identity(self, identity: str) -> None:
+        """Identity used when no BMS serial is configured (port / adapter), for this session only.
+
+        Kept apart from settings.bms_serial_number: writing it there made the first port's
+        fallback stick when reconnecting on another port, and the webhook dialog then saved
+        it to disk as if it had been typed in.
+        """
+        self._fallback_identity = str(identity or "").strip()
 
     def _bms_identity(self) -> str:
-        return self.settings.bms_serial_number.strip() or "Unknown / not configured"
+        return (
+            self.settings.bms_serial_number.strip()
+            or getattr(self, "_fallback_identity", "")
+            or "Unknown / not configured"
+        )
 
     def _add_bms_identity(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         """Add the BMS identifier consistently to all platform payloads."""
@@ -597,23 +717,34 @@ class WebhookNotifier:
         final_cap_mah: float,
         energy_wh: float,
         duration_s: float,
+        cycle_summaries: Optional[List[Any]] = None,
+        total_charge_mah: Optional[float] = None,
+        total_discharge_mah: Optional[float] = None,
     ) -> None:
         if not self.settings.enabled or not self.settings.notify_test_completed or not self.settings.url:
             return
         hours = duration_s / 3600.0
+        fields = [
+            {"name": "Recipe", "value": recipe_name},
+            {"name": "Cycles Completed", "value": str(cycles_count)},
+            {"name": "Final Capacity", "value": f"{final_cap_mah:.1f} mAh"},
+            {"name": "Total Energy", "value": f"{energy_wh:.2f} Wh"},
+            {"name": "Duration", "value": f"{hours:.2f} hours"},
+        ]
+        if total_charge_mah is not None and total_discharge_mah is not None:
+            fields.append({"name": "Charged / Discharged",
+                           "value": f"{total_charge_mah:.0f} / {total_discharge_mah:.0f} mAh"})
+        fields.extend(_cycle_table_fields(cycle_summaries or []))
         payload = build_universal_payload(
             event=NotificationEvent.TEST_COMPLETED,
             title=f"✓ Test Completed: Cell {cell_id}",
             description=f"Battery qualification cycling completed on **Cell {cell_id}**.",
-            fields=[
-                {"name": "Recipe", "value": recipe_name},
-                {"name": "Cycles Completed", "value": str(cycles_count)},
-                {"name": "Final Capacity", "value": f"{final_cap_mah:.1f} mAh"},
-                {"name": "Total Energy", "value": f"{energy_wh:.2f} Wh"},
-                {"name": "Duration", "value": f"{hours:.2f} hours"},
-            ],
+            fields=fields,
             color=0x38BDF8,  # Sky blue
         )
+        for f in payload["embeds"][0]["fields"]:
+            if f["name"].startswith("Per-cycle"):
+                f["inline"] = False
         self._enqueue(payload)
 
     def notify_step_completed(
@@ -684,6 +815,7 @@ class WebhookNotifier:
         energy_eff_pct: float,
         duration_s: float,
         dcir_mohm: Optional[float] = None,
+        partial: bool = False,
     ) -> None:
         """Dispatch cycle qualification summary card."""
         if not self.settings.enabled or not self.settings.notify_cycle_completed or not self.settings.url:
@@ -703,7 +835,8 @@ class WebhookNotifier:
         payload = build_universal_payload(
             event=NotificationEvent.CYCLE_COMPLETED,
             title=f"🔁 Cycle {cycle_idx} Summary: Cell {cell_id}",
-            description=f"Completed Cycle {cycle_idx} on **Cell {cell_id}** with CE = **{coulombic_eff_pct:.2f}%**.",
+            description=f"Completed Cycle {cycle_idx} on **Cell {cell_id}** with CE = **{coulombic_eff_pct:.2f}%**."
+            + (" First charge started from an unknown charge level, so CE / EE are not comparable." if partial else ""),
             fields=fields,
             color=0xF59E0B,  # Amber Gold
         )
@@ -793,5 +926,18 @@ class WebhookNotifier:
         except queue.Full:
             logger.warning("Webhook dispatch queue full; dropping notification.")
 
-    def close(self) -> None:
+    @property
+    def pending(self) -> int:
+        """Messages / file uploads queued or in progress."""
+        return self._queue.unfinished_tasks
+
+    def close(self, drain_timeout_s: float = 0.0) -> None:
+        """Stop the worker. With drain_timeout_s, first wait (up to that long) for queued messages
+        and uploads to finish: the worker is a daemon thread, so closing the app straight after a
+        test used to drop the end-of-test data upload silently."""
+        deadline = time.monotonic() + max(0.0, drain_timeout_s)
+        while self.pending and time.monotonic() < deadline:
+            time.sleep(0.1)
+        if self.pending:
+            logger.warning(f"Webhook closing with {self.pending} message(s)/upload(s) not delivered.")
         self._is_running = False

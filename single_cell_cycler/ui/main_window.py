@@ -58,7 +58,7 @@ from ..comm.transceiver import SerialTransceiver, TransceiverState
 from ..config.cycler_config import DEFAULT_LOG_DIR, load_logging_settings
 from ..core.cycler_engine import CyclerEngine, EngineState
 from ..core.metrics_tracker import CycleSummary, StepMetrics
-from ..core.profile_model import TestRecipe
+from ..core.profile_model import TestRecipe, step_label
 from ..core.state_journal import (
     TestJournalData,
     cycle_summary_from_dict,
@@ -157,6 +157,9 @@ class MainWindow(QMainWindow):
         # 2. UI Layout
         self._setup_ui()
         self._wire_signals()
+        # KPI titles name the cell from the start, not only after the selector is changed
+        # ("CELL VOLTAGE" next to "CELL 1 · CYCLE / STEP" in the field screenshots)
+        self.dashboard.set_cell_number(self.combo_active_cell.currentData())
         self._refresh_com_ports()
         self._update_window_title()
         self._update_start_gate()
@@ -325,15 +328,12 @@ class MainWindow(QMainWindow):
         )
         self.btn_report.clicked.connect(lambda: self.generate_test_report())
 
-        # Remote Webhook Alerts (IMP-13) — Initialized Active by default
-        self.btn_webhook = QPushButton("🔔 Webhook (Active)")
+        # Remote Webhook Alerts (IMP-13). The pill reflects the saved settings: it used to say
+        # "Active / Armed" at every start even with no URL, so a run could start with no alerts.
+        self.btn_webhook = QPushButton("🔔 Webhook")
         self.btn_webhook.setObjectName("btn_webhook")
-        self.btn_webhook.setToolTip("Remote Lab Webhook Active (Discord: Shreyas P) — Armed & Ready")
-        self.btn_webhook.setStyleSheet(
-            "background-color: #064e3b; color: #34d399; border: 1px solid #059669; "
-            "font-weight: 700; border-radius: 6px; padding: 4px 10px; font-size: 11px; margin-left: 6px;"
-        )
         self.btn_webhook.clicked.connect(lambda: self.show_webhook_settings())
+        self._update_webhook_button_ui()
 
         self.btn_event_log = QPushButton("Event Log")
         self.btn_event_log.setCheckable(True)
@@ -552,9 +552,9 @@ class MainWindow(QMainWindow):
             relay_sel = ctrl.control_readbacks.get(FRAME_RELAY_CTRL, 0) & int(RelayControlBits.CELL_SELECT)
             for frame_id, value in (
                 (FRAME_CHARGE_CTRL, 0x00),
+                (FRAME_DISCHARGE_SEL, 0x00),      # load off before Discharge Enable off
                 (FRAME_DISCHARGE_CTRL, 0x00),
                 (FRAME_CHARGE_SEL, 0x00),
-                (FRAME_DISCHARGE_SEL, 0x00),
                 (FRAME_RELAY_CTRL, relay_sel),
             ):
                 self._on_command_dispatch(frame_id, value, 0)
@@ -643,16 +643,20 @@ class MainWindow(QMainWindow):
         """Use configured BMS ID, otherwise identify the connected USB/serial endpoint."""
         configured = self.webhook_notifier.settings.bms_serial_number.strip()
         if configured:
-            self.webhook_notifier.set_bms_serial_number(configured)
             self.lbl_bms_identity.setText(f"BMS: {configured}")
             return
 
         port_info = next((item for item in serial.tools.list_ports.comports() if item.device == port), None)
-        fallback = ""
+        adapter_sn = ""
         if port_info is not None:
-            fallback = str(getattr(port_info, "serial_number", "") or "").strip()
-        identity = fallback or port or "Unknown / not configured"
-        self.webhook_notifier.set_bms_serial_number(identity)
+            adapter_sn = str(getattr(port_info, "serial_number", "") or "").strip()
+        # The port always leads: CP210x adapters ship with the same serial ("0001"), so the
+        # serial alone made two benches report the same ID (COM3 and COM9, 2026-10-06)
+        if port:
+            identity = f"{port} · SN {adapter_sn}" if adapter_sn else port
+        else:
+            identity = "Unknown / not configured"
+        self.webhook_notifier.set_fallback_identity(identity)
         self.lbl_bms_identity.setText(f"BMS: {identity}")
 
     def _on_connection_changed(self, state: str, msg: str) -> None:
@@ -932,17 +936,21 @@ class MainWindow(QMainWindow):
         bp = self._last_board_params
         fs = self._last_fault_soc
         mt = self.engine.metrics_tracker
-        step_m = mt.current_step_metrics
-        step = self.engine.active_step
+        pos = self.engine.log_position          # one consistent (cycle, step, name, type, metrics)
+        if pos is None:
+            pos = (self.engine.current_cycle, self.engine.current_step_idx + 1, "Transition", "transition", None)
+        cycle_idx, step_no, step_name, step_type, step_m = pos
+        # EKF columns stay empty unless the firmware sent the 17-byte EKF frame
+        ekf = fs if (fs is not None and fs.has_ekf) else None
         now = time.time()
         return {
             "timestamp_iso": datetime.fromtimestamp(now, timezone.utc).isoformat(timespec="milliseconds").replace("+00:00", "Z"),
             "timestamp_epoch_s": round(now, 3),
             "elapsed_s": round(self._current_test_elapsed_s(), 2),
-            "cycle_index": self.engine.current_cycle,
-            "step_index": self.engine.current_step_idx + 1,
-            "step_name": step.name if step else "Transition",
-            "step_type": step.step_type.value if step else "transition",
+            "cycle_index": cycle_idx,
+            "step_index": step_no,
+            "step_name": step_name,
+            "step_type": step_type,
             "voltage_v": data.voltage,
             "current_a": data.current,
             "power_w": round(data.voltage * data.current, 3),
@@ -953,12 +961,12 @@ class MainWindow(QMainWindow):
             "load_bus_v": bp.load_voltage if bp else 0.0,
             "soc_ocv_pct": fs.soc_ocv if fs else 0.0,
             "soc_cc_pct": fs.soc_cc if fs else 0.0,
-            "soc_ekf_pct": fs.soc_ekf if fs else 0.0,
-            "vr1_v": fs.vr1 if fs else 0.0,
-            "vr2_v": fs.vr2 if fs else 0.0,
-            "p_diag_0": fs.p_diag[0] if (fs and len(fs.p_diag) > 0) else 0.0,
-            "p_diag_1": fs.p_diag[1] if (fs and len(fs.p_diag) > 1) else 0.0,
-            "p_diag_2": fs.p_diag[2] if (fs and len(fs.p_diag) > 2) else 0.0,
+            "soc_ekf_pct": ekf.soc_ekf if ekf else "",
+            "vr1_v": ekf.vr1 if ekf else "",
+            "vr2_v": ekf.vr2 if ekf else "",
+            "p_diag_0": ekf.p_diag[0] if ekf else "",
+            "p_diag_1": ekf.p_diag[1] if ekf else "",
+            "p_diag_2": ekf.p_diag[2] if ekf else "",
             "fault_byte": fs.fault_byte if fs else 0,
             "step_capacity_mah": round(step_m.capacity_mah if step_m else 0.0, 2),
             "step_energy_mwh": round(step_m.energy_mwh if step_m else 0.0, 2),
@@ -1044,20 +1052,14 @@ class MainWindow(QMainWindow):
         logger.info(f"[Pre-Flight Handshake] {preflight.summary_text} - Verification OK.")
 
         try:
-            # Apply chemistry safety envelope to real-time SafetyMonitor (IMP-03)
-            chem = self.profile_editor.active_chemistry
-            self.engine.safety_monitor.limits.max_voltage_v = round(chem.max_voltage + 0.05, 3)
-            self.engine.safety_monitor.limits.min_voltage_v = round(max(0.5, chem.min_voltage - 0.05), 3)
-            logger.info(
-                f"[Safety Limits] Chemistry {chem.code} applied: V_min={self.engine.safety_monitor.limits.min_voltage_v:.3f}V, "
-                f"V_max={self.engine.safety_monitor.limits.max_voltage_v:.3f}V"
-            )
+            self._apply_chemistry_limits()
 
             # Start background logger
             rec_name = self.engine.recipe.recipe_name.lower().replace(" ", "_") if self.engine.recipe else "test"
             log_path = self.logger.start_session(session_prefix=rec_name)
             self.engine.csv_log_file = str(log_path)
             self._upload_run_files_on_end = True
+            self._zero_offset_reported = False
             self.lbl_status_log.setText(f"Logging: {log_path.name}")
 
             self._test_start_epoch = time.time()
@@ -1087,6 +1089,23 @@ class MainWindow(QMainWindow):
             logger.error(f"[Test Start Exception] Failed to start test profile: {exc}", exc_info=True)
             if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
                 QMessageBox.critical(self, "Start Error", str(exc))
+
+    def _apply_chemistry_limits(self) -> None:
+        """Chemistry safety envelope for the SafetyMonitor (IMP-03), at START and on crash resume.
+
+        Hard charge floor: 2.0 V for NMC / LFP, chemistry minimum - 0.3 V where that is lower
+        (LTO, Na-ion 1.2 V). Charging below it is refused and the test stops for inspection.
+        """
+        chem = self.profile_editor.active_chemistry
+        limits = self.engine.safety_monitor.limits
+        limits.max_voltage_v = round(chem.max_voltage + 0.05, 3)
+        limits.min_voltage_v = round(max(0.5, chem.min_voltage - 0.05), 3)
+        limits.charge_floor_v = round(max(0.0, min(2.0, chem.min_voltage - 0.3)), 3)
+        logger.info(
+            f"[Safety Limits] Chemistry {chem.code} applied: V_min={limits.min_voltage_v:.3f}V, "
+            f"V_max={limits.max_voltage_v:.3f}V, charge floor={limits.charge_floor_v:.3f}V, "
+            f"hard ceiling={limits.max_voltage_v + limits.overvoltage_ceiling_margin_v:.3f}V"
+        )
 
     def _toggle_start_stop(self) -> None:
         """Unified Start/Stop button handler for intuitive single-click test control."""
@@ -1124,6 +1143,9 @@ class MainWindow(QMainWindow):
             else "Active cell relay position (0x6000 Bit 1: 0=Cell 1, 1=Cell 2)"
         )
         self.manual_control.set_test_active(running)
+        if running:
+            # A trip banner left from an earlier run must not offer Reset during this one
+            self.safety_panel.clear_trip()
         self._update_run_context()
 
         # Force Qt stylesheet re-evaluation on dynamic objectName change
@@ -1164,10 +1186,10 @@ class MainWindow(QMainWindow):
         self._finish_ui_session("EMERGENCY STOP")
         self.webhook_notifier.notify_emergency_stop(cell_id, st_name, last_v, last_i)
 
-    def _on_reset_safety(self) -> None:
-        self.engine.safety_monitor.reset_safety()
-        self.engine._set_state(EngineState.IDLE, "Safety Interlock Reset")
+    def _on_reset_safety(self) -> bool:
+        cleared = self.engine.reset_safety_interlock()
         self._update_start_gate()
+        return cleared
 
     def _on_step_fault(self, detail: str) -> None:
         """Voltage fault ended a step (test continues): make it visible, not silent."""
@@ -1212,6 +1234,7 @@ class MainWindow(QMainWindow):
     def _on_step_completed(self, metrics: StepMetrics) -> None:
         self.tracker_table.add_completed_step(metrics)
         stype = metrics.step_type.value if hasattr(metrics.step_type, "value") else str(metrics.step_type)
+        self._report_current_zero_offset(stype)
         self.live_plots.reset_step_vq(
             step_type=stype,
             cycle_idx=metrics.cycle_index,
@@ -1226,10 +1249,13 @@ class MainWindow(QMainWindow):
             next_idx = metrics.step_index
             if next_idx < len(rec.steps):
                 ns = rec.steps[next_idx]
-                next_step_str = f"Step {next_idx + 1}: {ns.name} ({ns.step_type.value.upper()})"
+                next_step_str = f"{step_label(next_idx + 1, ns.name)} ({ns.step_type.value.upper()})"
             elif metrics.cycle_index < rec.cycles:
                 first_s = rec.steps[0]
-                next_step_str = f"Cycle {metrics.cycle_index + 1}, Step 1: {first_s.name} ({first_s.step_type.value.upper()})"
+                next_step_str = (
+                    f"Cycle {metrics.cycle_index + 1}, {step_label(1, first_s.name)} "
+                    f"({first_s.step_type.value.upper()})"
+                )
 
         stype_str = metrics.step_type.value if hasattr(metrics.step_type, "value") else str(metrics.step_type)
         dcir_val = metrics.dcir_10s_mohm if metrics.dcir_10s_mohm is not None else metrics.dcir_mohm
@@ -1250,6 +1276,27 @@ class MainWindow(QMainWindow):
             cutoff_reason=metrics.cutoff_reason,
             dcir_mohm=dcir_val,
         )
+
+    CURRENT_ZERO_OFFSET_WARN_A = 0.005
+
+    def _report_current_zero_offset(self, step_type: str) -> None:
+        """Once per test: the current read at the end of a rest, with the cell disconnected.
+
+        Nothing can flow then, so the reading is the sensor's zero error. The 15-cycle run read
+        +0.015 A in all 30 rests; the 0.025 A integration dead-band hid it from the capacity
+        figures, but it points to a board calibration error. It is not subtracted automatically:
+        applied to charge and discharge it would put coulombic efficiency at an impossible 101 %.
+        """
+        if step_type.lower() != "rest" or getattr(self, "_zero_offset_reported", False):
+            return
+        data = self._last_cell_data
+        if data is None or abs(data.current) < self.CURRENT_ZERO_OFFSET_WARN_A:
+            return
+        self._zero_offset_reported = True
+        msg = (f"Current sensor reads {data.current:+.3f} A with the cell disconnected (end of rest): "
+               f"zero offset - calibrate the board's current measurement")
+        logger.warning(f"[Calibration] {msg}")
+        self._append_event(msg, "warning")
 
     def _on_cycle_completed(self, summary: CycleSummary) -> None:
         self.live_plots.add_cycle_summary(
@@ -1276,6 +1323,7 @@ class MainWindow(QMainWindow):
             energy_eff_pct=summary.energy_efficiency_pct,
             duration_s=summary.duration_s,
             dcir_mohm=dcir_val,
+            partial=summary.partial_initial_charge,
         )
 
     def _on_recipe_completed(self, msg: str) -> None:
@@ -1285,9 +1333,10 @@ class MainWindow(QMainWindow):
         # Dispatch test completed card to remote webhook (IMP-13)
         cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
         rec_name = self.engine.recipe.recipe_name if self.engine.recipe else "Test"
-        cycles = len(self.engine.metrics_tracker.cycle_summaries)
-        final_cap = self.engine.metrics_tracker.cycle_summaries[-1].discharge_capacity_mah if self.engine.metrics_tracker.cycle_summaries else 0.0
-        tot_wh = self.engine.metrics_tracker.cumulative_discharge_mwh / 1000.0
+        mt = self.engine.metrics_tracker
+        cycles = len(mt.cycle_summaries)
+        final_cap = mt.cycle_summaries[-1].discharge_capacity_mah if mt.cycle_summaries else 0.0
+        tot_wh = mt.cumulative_discharge_mwh / 1000.0
         dur_s = self._current_test_elapsed_s()
         self.webhook_notifier.notify_test_completed(
             cell_id=cell_id,
@@ -1296,6 +1345,9 @@ class MainWindow(QMainWindow):
             final_cap_mah=final_cap,
             energy_wh=tot_wh,
             duration_s=dur_s,
+            cycle_summaries=list(mt.cycle_summaries),
+            total_charge_mah=mt.cumulative_charge_mah,
+            total_discharge_mah=mt.cumulative_discharge_mah,
         )
 
         if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
@@ -1317,10 +1369,13 @@ class MainWindow(QMainWindow):
         recipe = self.engine.recipe.recipe_name if self.engine.recipe else "No recipe"
         step = self.engine.active_step.name if self.engine.active_step else "Idle"
         elapsed = self._current_test_elapsed_s()
-        minutes, seconds = divmod(int(elapsed), 60)
+        # h:mm:ss: minutes:seconds read "930:37" fifteen hours into a run
+        hours, rem = divmod(int(elapsed), 3600)
+        minutes, seconds = divmod(rem, 60)
         connection = port if self.transceiver.isRunning() and port else "Disconnected"
         self.lbl_run_context.setText(
-            f"{state} | Cell {cell} | {connection} | {recipe} | Step: {step} | Elapsed: {minutes:02d}:{seconds:02d}"
+            f"{state} | Cell {cell} | {connection} | {recipe} | Step: {step} | "
+            f"Elapsed: {hours}:{minutes:02d}:{seconds:02d}"
         )
         self.dashboard.set_run_context(
             cell, recipe, step, elapsed, getattr(self.engine, "current_cycle", 1)
@@ -1466,7 +1521,9 @@ class MainWindow(QMainWindow):
         self._finish_safe_idle_before_disconnect()
         self.transceiver.disconnect_serial(send_safe_zero=False, timeout_s=1.5)
         self.logger.stop_session()
-        self.webhook_notifier.close()
+        if self.webhook_notifier.pending:
+            logger.info(f"Waiting up to 60 s for {self.webhook_notifier.pending} webhook message(s)/upload(s)...")
+        self.webhook_notifier.close(drain_timeout_s=60.0)
         event.accept()
 
     def check_and_prompt_crash_recovery(self) -> bool:
@@ -1524,6 +1581,8 @@ class MainWindow(QMainWindow):
             # 2. Restore recipe in profile editor
             rec = TestRecipe.from_dict(journal.recipe_dict)
             self.profile_editor.set_recipe(rec)
+            # The resumed test used to run on the generic defaults (2.40-4.25 V)
+            self._apply_chemistry_limits()
 
             # 3. Resume CSV logger if file was specified
             if journal.csv_log_file and Path(journal.csv_log_file).exists():
@@ -1632,7 +1691,7 @@ class MainWindow(QMainWindow):
         cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
         ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_filename = f"Run_Cell{cell_id}_{ts_str}.zip"
-        default_dest = Path("single_cell_cycler/exports") / default_filename
+        default_dest = DEFAULT_LOG_DIR.parent / "exports" / default_filename   # beside logs, not cwd-relative
 
         if target_zip is None:
             if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
@@ -1695,7 +1754,7 @@ class MainWindow(QMainWindow):
         cell_id = self.combo_active_cell.currentData() if hasattr(self, "combo_active_cell") else 1
         ts_str = datetime.now().strftime("%Y%m%d_%H%M%S")
         default_filename = f"Certificate_Cell{cell_id}_{ts_str}.html"
-        default_dest = Path("single_cell_cycler/reports") / default_filename
+        default_dest = DEFAULT_LOG_DIR.parent / "reports" / default_filename   # beside logs, not cwd-relative
 
         if target_html is None:
             if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":

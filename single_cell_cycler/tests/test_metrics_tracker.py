@@ -107,3 +107,32 @@ def test_dqv_curve_logging_and_cycle_peak_tracking(tmp_path):
     assert "dqv_peak_height_mah_v" in c_content
     assert "dqv_peak_shift_mv" in c_content
 
+
+
+def test_idle_current_offset_is_not_integrated():
+    """The sensor reads ~+15 mA with no current path: integrated over a 30 min rest it added a
+    phantom 7.5 mAh per Rest step and to the cumulative charge total."""
+    tracker = MetricsTracker()
+    tracker.start_step(1, 2, "Rest", StepType.REST,
+                       CellDataTelemetry(voltage=3.9, current=0.015, terminal_temp=25.0, body_temp=25.0, timestamp=0.1))
+    for k in range(2, 18000):
+        tracker.update(CellDataTelemetry(voltage=3.9, current=0.015, terminal_temp=25.0, body_temp=25.0, timestamp=k * 0.1))
+    step = tracker.complete_step("done")
+    assert step.capacity_mah == 0.0 and step.energy_mwh == 0.0
+    assert tracker.cumulative_charge_mah == 0.0
+
+
+def test_partial_first_cycle_is_not_the_dqv_shift_reference():
+    from single_cell_cycler.core.dqv_analysis import DQVPeak, DQVProfile
+
+    def profile(cycle, v):
+        pk = DQVPeak(voltage=v, dq_dv=100.0, prominence=1.0)
+        return DQVProfile(cycle_index=cycle, step_index=1, step_type="Charge",
+                          voltages=[v], dq_dv=[100.0], capacities=[0.0], peaks=[pk])
+
+    tracker = MetricsTracker()
+    tracker.partial_first_cycle = True
+    tracker.dqv_profiles = [profile(1, 3.785), profile(2, 3.696), profile(3, 3.692)]
+    assert tracker.compute_cycle_summary(1).dqv_peak_shift_mv is None
+    assert tracker.compute_cycle_summary(2).dqv_peak_shift_mv == 0.0
+    assert tracker.compute_cycle_summary(3).dqv_peak_shift_mv == -4.0

@@ -129,15 +129,20 @@ def test_discharge_transition_sequence():
     # 3. Cell 2 enable (bit 1=1, bit 0=1 -> 0x03)
     assert (FRAME_RELAY_CTRL, int(RelayControlBits.CELL_SELECT | RelayControlBits.CELL_ENABLE)) in commands_sent
 
-    # 4. Discharge comparator reset pulse (0x02 then 0x00)
-    assert (FRAME_DISCHARGE_CTRL, int(DischargeControlBits.DISCHARGE_COMPARATOR_RESET)) in commands_sent
+    # 4. Discharge Control cleared first, then Discharge Enable (0x01)
     assert (FRAME_DISCHARGE_CTRL, 0x00) in commands_sent
+    enable = (FRAME_DISCHARGE_CTRL, int(DischargeControlBits.DISCHARGE_ENABLE))
+    assert enable in commands_sent
 
-    # 5. Turn on Discharge enable (0x01)
-    assert (FRAME_DISCHARGE_CTRL, int(DischargeControlBits.DISCHARGE_ENABLE)) in commands_sent
+    # 5. Comparator reset pulsed with Enable kept on (0x03), after Enable
+    reset_on = (FRAME_DISCHARGE_CTRL, int(DischargeControlBits.DISCHARGE_ENABLE | DischargeControlBits.DISCHARGE_COMPARATOR_RESET))
+    assert reset_on in commands_sent
+    assert (FRAME_DISCHARGE_CTRL, int(DischargeControlBits.DISCHARGE_COMPARATOR_RESET)) not in commands_sent
 
-    # 6. Apply load changes (decimal 5: L1 + L3 = 1.0A)
+    # 6. Load applied last (decimal 5: L1 + L3 = 1.0A)
     assert (FRAME_DISCHARGE_SEL, 5) in commands_sent
+    assert commands_sent.index(enable) < commands_sent.index(reset_on) < commands_sent.index((FRAME_DISCHARGE_SEL, 5))
+    assert ctrl.control_readbacks[FRAME_DISCHARGE_CTRL] == int(DischargeControlBits.DISCHARGE_ENABLE)
 
 
 def test_misalignment_retry_mechanism():

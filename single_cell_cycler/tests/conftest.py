@@ -71,6 +71,7 @@ def _isolate_logs(tmp_path, monkeypatch):
         "single_cell_cycler.core.state_journal",
         "single_cell_cycler.data.async_logger",
         "single_cell_cycler.data.run_exporter",
+        "single_cell_cycler.data.report_generator",
         "single_cell_cycler.ui.main_window",
     ]
     for mod_name in modules_to_patch:

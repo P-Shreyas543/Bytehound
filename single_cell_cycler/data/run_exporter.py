@@ -44,7 +44,7 @@ def export_run_package(
     operator: str = "Lab Technician",
     test_status: str = "COMPLETED",
     notes: str = "",
-    export_dir: str | Path = "single_cell_cycler/exports",
+    export_dir: Optional[str | Path] = None,
 ) -> Path:
     """Bundle all run artifacts into an archival .zip package with a manifest.json.
 
@@ -72,19 +72,20 @@ def export_run_package(
         Execution status ("COMPLETED", "INTERRUPTED", "SAFETY_TRIP", "MANUAL_STOP").
     notes : str
         Optional engineering notes to include in manifest.
-    export_dir : str | Path
-        Directory to place archive if `output_zip_path` not specified.
+    export_dir : Optional[str | Path]
+        Directory to place archive if `output_zip_path` not specified
+        (default: "exports" beside the logs folder).
 
     Returns
     -------
     Path
         Absolute path to the created .zip archive.
     """
-    exp_dir = Path(export_dir)
-    exp_dir.mkdir(parents=True, exist_ok=True)
-
     timestamp_str = datetime.now().strftime("%Y%m%d_%H%M%S")
     if output_zip_path is None or isinstance(output_zip_path, bool):
+        # Only now is export_dir needed. It was created on every call, relative to the working
+        # directory, leaving empty "single_cell_cycler/exports" folders wherever the app ran.
+        exp_dir = Path(export_dir) if export_dir else DEFAULT_LOG_DIR.parent / "exports"
         target_path = exp_dir / f"Run_Cell{cell_id}_{timestamp_str}.zip"
     else:
         target_path = Path(output_zip_path)

@@ -101,6 +101,11 @@ class CyclerEngine(QObject):
         self._last_telemetry: Optional[CellDataTelemetry] = None
         self._last_fault_soc: Optional[FaultSoCTelemetry] = None
         self._step_activated_time: float = 0.0
+        # (cycle, step_number, step_name, step_type, StepMetrics | None) for the CSV sampler thread.
+        # Replaced as one tuple, never mutated, so a row can't mix the old and new step: reading
+        # current_step_idx / active_step / current_step_metrics separately produced rows with the
+        # new step number but the old step type and a zeroed capacity, and a phantom "step 5".
+        self.log_position: Optional[tuple] = None
 
         # Atomic State Journaling for Crash Recovery (IMP-08)
         self.journal_manager = StateJournalManager()
@@ -148,6 +153,7 @@ class CyclerEngine(QObject):
 
         self.safety_monitor.last_telemetry_time = time.time()
         self.metrics_tracker.reset_all()
+        self.metrics_tracker.partial_first_cycle = self._starts_with_charge()
         self._reset_execution_state()
         # A new test always closes the Cell Enable relay itself (confirmed + settled)
         self.transition_controller.relay_owned_by_test = False
@@ -422,20 +428,44 @@ class CyclerEngine(QObject):
                 self._execute_next_step()
                 return
 
+        # A charge is refused before any charge write if the cell is already below the hard floor
+        floor = self.safety_monitor.limits.charge_floor_v
+        if (
+            step.step_type == StepType.CHARGE
+            and self._last_telemetry is not None
+            and self._last_telemetry.voltage < floor
+        ):
+            reason = (
+                f"SAFETY TRIP: Charge refused: cell at {self._last_telemetry.voltage:.3f} V is below the "
+                f"hard floor {floor:.3f} V (over-discharged: needs operator inspection)"
+            )
+            logger.critical(f"[Fault Handling] {reason}")
+            self.active_step = None
+            self.safety_monitor.latch_trip(reason, kind="voltage_hard")
+            self.transition_controller.abort()
+            self._safe_idle_hardware()
+            self._set_state(EngineState.SAFETY_STOP, reason)
+            self.safety_tripped.emit(reason)
+            return
+
         # Regular step (Charge, Discharge, Rest)
         self.active_step = step
+        self.log_position = (self.current_cycle, self.current_step_idx + 1, step.name, step.step_type.value, None)
         self._set_state(EngineState.STEP_TRANSITION, f"Configuring hardware for {step.name}...")
         self.transition_controller.start_transition(step=step, selected_cell=self.selected_cell)
+
+    def _starts_with_charge(self) -> bool:
+        if not self.recipe:
+            return False
+        first_active = next(
+            (s for s in self.recipe.steps if s.step_type in (StepType.CHARGE, StepType.DISCHARGE)), None
+        )
+        return first_active is not None and first_active.step_type == StepType.CHARGE
 
     def _flag_partial_cycle(self, cycle_sum: CycleSummary) -> None:
         """Cycle 1 of a recipe whose first active step is a charge starts from an unknown charge
         level, so its charge capacity and efficiencies are partial."""
-        if cycle_sum.cycle_index != 1 or not self.recipe:
-            return
-        first_active = next(
-            (s for s in self.recipe.steps if s.step_type in (StepType.CHARGE, StepType.DISCHARGE)), None
-        )
-        if first_active is not None and first_active.step_type == StepType.CHARGE:
+        if cycle_sum.cycle_index == 1 and self._starts_with_charge():
             cycle_sum.partial_initial_charge = True
 
     def _on_transition_status(self, msg: str) -> None:
@@ -449,6 +479,7 @@ class CyclerEngine(QObject):
         # This prevents accumulated transition delays from eating into the step's budget.
         self.safety_monitor.last_telemetry_time = time.time()
         self.safety_monitor.reset_safety()
+        self.safety_monitor.active_step_type = step.step_type.value.lower()
         self._step_activated_time = time.time()
         self._set_state(EngineState.RUNNING, f"Executing: {step.name}")
         self.metrics_tracker.start_step(
@@ -458,13 +489,35 @@ class CyclerEngine(QObject):
             step_type=step.step_type,
             initial_telemetry=self._last_telemetry,
         )
+        self.log_position = (
+            self.current_cycle, self.current_step_idx + 1, step.name, step.step_type.value,
+            self.metrics_tracker.current_step_metrics,
+        )
         self.step_started.emit(self.current_cycle, self.current_step_idx + 1, step.name, step.step_type.value)
 
     def _on_transition_failed(self, error_msg: str) -> None:
         self._close_active_step(f"Step setup failed: {error_msg}")
         self._safe_idle_hardware()
+        # Latch like every other trip: otherwise START skips the reset and the trip panel's
+        # Reset button stays live into the next test
+        self.safety_monitor.latch_trip(f"Hardware misaligned: {error_msg}", kind="transition")
         self._set_state(EngineState.SAFETY_STOP, f"Step Transition Error: {error_msg}")
         self.safety_tripped.emit(f"Hardware misaligned: {error_msg}")
+
+    def reset_safety_interlock(self) -> bool:
+        """Operator reset after a trip. Refused while a test owns the hardware.
+
+        Returns True if the interlock was cleared. Forcing Idle mid-test would stop cut-off
+        and safety evaluation while the hardware stays energized.
+        """
+        if self.test_active:
+            logger.warning(
+                f"[Engine] Safety interlock reset ignored: a test is {self.state.value}"
+            )
+            return False
+        self.safety_monitor.reset_safety()
+        self._set_state(EngineState.IDLE, "Safety Interlock Reset")
+        return True
 
     def _apply_hardware_for_step(self, step: TestStep) -> None:
         """Translate step configuration into exact 0x6000 - 0x6004 TX commands via StepTransitionController."""
@@ -492,6 +545,7 @@ class CyclerEngine(QObject):
         self.current_cycle = 1
         self.current_step_idx = 0
         self.active_step = None
+        self.log_position = None
         self._loop_counters.clear()
         if self.recipe:
             for i, s in enumerate(self.recipe.steps):
@@ -505,6 +559,8 @@ class CyclerEngine(QObject):
         # The monitor may write hardware only while a step is running; otherwise registers
         # are zeroed or owned by a confirmed sequence (a burst there would undo it)
         self.safety_monitor.armed = new_state == EngineState.RUNNING
+        if new_state not in (EngineState.RUNNING, EngineState.STEP_TRANSITION):
+            self.safety_monitor.active_step_type = None
         logger.info(f"Engine State -> {new_state.value}: {msg}")
         self.state_changed.emit(new_state.value, msg)
 
@@ -571,6 +627,7 @@ class CyclerEngine(QObject):
             step_history=steps,
             cycle_summaries=cycles,
         )
+        self.metrics_tracker.partial_first_cycle = self._starts_with_charge()
 
         self.safety_monitor.last_telemetry_time = time.time()
         self.safety_monitor.reset_safety()

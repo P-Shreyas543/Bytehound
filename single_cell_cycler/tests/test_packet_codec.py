@@ -181,4 +181,39 @@ def test_decode_fault_soc_mcu_tenths_scale():
     assert pkts_5[0].soc_ocv == 99.4
     assert pkts_5[0].soc_cc == 99.4
     assert pkts_5[0].soc_main == 99.4
+    # The 5-byte frame has no EKF data: nothing is filled in from the CC value
+    assert pkts_5[0].soc_ekf == 0.0 and pkts_5[0].has_ekf is False
+    assert pkts_17[0].has_ekf is True
+
+
+def test_log_row_leaves_ekf_columns_empty_for_the_5_byte_frame():
+    """The CSV carries only what the firmware sent: no EKF / VR / P_diag values for old frames."""
+    import os
+    os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+    from PySide6.QtWidgets import QApplication
+    from single_cell_cycler.core.cycler_engine import EngineState
+    from single_cell_cycler.ui.main_window import MainWindow
+
+    app = QApplication.instance() or QApplication([])
+    window = MainWindow()
+    try:
+        window._last_cell_data = CellDataTelemetry(3.7, 1.0, 26.0, 25.0)
+        window.engine.state = EngineState.RUNNING
+        ekf_cols = ("soc_ekf_pct", "vr1_v", "vr2_v", "p_diag_0", "p_diag_1", "p_diag_2")
+
+        legacy, _ = decode_stream(bytearray(b"\xAA\x55\x00\x30\x05" + struct.pack("<BHH", 0, 285, 276)))
+        window._last_fault_soc = legacy[0]
+        row = window._build_log_record()
+        assert [row[c] for c in ekf_cols] == [""] * 6
+        assert (row["soc_ocv_pct"], row["soc_cc_pct"]) == (28.5, 27.6)
+
+        ext, _ = decode_stream(bytearray(b"\xAA\x55\x00\x30\x11"
+                                         + struct.pack("<BHhh5H", 0, 350, -1, 18, 0, 0, 0, 276, 285)))
+        window._last_fault_soc = ext[0]
+        row = window._build_log_record()
+        assert (row["soc_ekf_pct"], row["vr1_v"], row["vr2_v"], row["p_diag_0"]) == (35.0, -0.001, 0.018, 0.0)
+    finally:
+        window.engine.state = EngineState.IDLE
+        window.close()
+        app.processEvents()
 

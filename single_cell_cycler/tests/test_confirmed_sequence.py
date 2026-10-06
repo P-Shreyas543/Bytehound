@@ -85,8 +85,8 @@ def test_cell2_charge_follows_confirmed_sequence_exactly():
     assert len(done) == 1
     assert board.writes == [
         (FRAME_CHARGE_CTRL, 0x00),
-        (FRAME_DISCHARGE_CTRL, 0x00),
-        (FRAME_DISCHARGE_SEL, 0x00),
+        (FRAME_DISCHARGE_SEL, 0x00),       # load off first ...
+        (FRAME_DISCHARGE_CTRL, 0x00),      # ... then Discharge Enable off
         (FRAME_RELAY_CTRL, 0x03),       # Select already Cell 2 -> only Cell Enable closes
         (FRAME_CHARGE_SEL, 0x01),       # 4.2 V
         (FRAME_CHARGE_SEL, 0x07),       # 4.2 V + 1.5 A
@@ -205,16 +205,62 @@ def test_second_active_step_keeps_relay_closed_by_the_test():
 
     assert len(done) == 1
     assert all(f != FRAME_RELAY_CTRL for f, _ in board.writes)
-    assert board.writes[-3:] == [
-        (FRAME_DISCHARGE_CTRL, 0x02),
-        (FRAME_DISCHARGE_CTRL, 0x00),
+    # Enable first, reset pulsed with Enable kept on, then the load. This board model never
+    # clears the reset bit by itself, so the controller clears it with a write (0x01).
+    assert board.writes[-4:] == [
         (FRAME_DISCHARGE_CTRL, 0x01),
-    ] or board.writes[-4:-1] == [
-        (FRAME_DISCHARGE_CTRL, 0x02),
-        (FRAME_DISCHARGE_CTRL, 0x00),
+        (FRAME_DISCHARGE_CTRL, 0x03),
         (FRAME_DISCHARGE_CTRL, 0x01),
+        (FRAME_DISCHARGE_SEL, 5),
     ]
-    assert board.writes[-1] == (FRAME_DISCHARGE_SEL, 5)
+
+
+def test_discharge_waits_for_the_board_to_clear_the_reset_bit():
+    """Real board: 0x6003 = 0x03 reads back 0x03, then returns to 0x01 by itself. No extra write
+    is sent, the load is selected only after that, and the reset is never pulsed before Enable
+    (bench result: 0x02 -> 0x00 -> 0x01 leaves the comparator latched, 0x01 -> 0x03 releases it)."""
+    board = FakeBoard(relay=0x00)
+    ctrl = make_ctrl(board)
+
+    def self_clearing_reset(b):
+        b.echo_all()                               # readback shows 0x03 ...
+        b.regs[FRAME_DISCHARGE_CTRL] = 0x01        # ... then the board drops the reset bit
+
+    board.after[(FRAME_DISCHARGE_CTRL, 0x03)] = self_clearing_reset
+    dis = TestStep(step_index=1, name="Discharge", step_type=StepType.DISCHARGE,
+                   discharge_load_2=True, discharge_load_3=True)
+    done = []
+    ctrl.transition_completed.connect(done.append)
+    ctrl.start_transition(step=dis, selected_cell=1)
+
+    assert len(done) == 1
+    assert board.writes[-3:] == [
+        (FRAME_DISCHARGE_CTRL, 0x01),
+        (FRAME_DISCHARGE_CTRL, 0x03),
+        (FRAME_DISCHARGE_SEL, 6),
+    ]
+    assert (FRAME_DISCHARGE_CTRL, 0x02) not in board.writes
+    assert board.regs[FRAME_DISCHARGE_CTRL] == 0x01 and board.regs[FRAME_DISCHARGE_SEL] == 6
+
+
+def test_discharge_switch_off_removes_the_load_then_waits_before_enable_off():
+    """Load off first, a pause while the current falls to zero, then Discharge Enable off:
+    for a step change and for Stop / Safety Stop alike. No pause when no load was on."""
+    board = FakeBoard(relay=0x01)
+    board.regs.update({FRAME_DISCHARGE_CTRL: 0x01, FRAME_DISCHARGE_SEL: 0x06})
+    ctrl = make_ctrl(board)
+
+    ops = ctrl._plan_drives_off()
+    assert [(o.frame_id, o.value) for o in ops] == [
+        (FRAME_CHARGE_CTRL, 0x00), (FRAME_DISCHARGE_SEL, 0x00), (FRAME_DISCHARGE_CTRL, 0x00)]
+    assert [o.settle_ms for o in ops] == [0, ctrl.DISCHARGE_STAGE_WAIT_MS, 0]
+
+    ctrl.safe_idle(selected_cell=1)
+    order = [f for f, _ in board.writes]
+    assert order.index(FRAME_DISCHARGE_SEL) < order.index(FRAME_DISCHARGE_CTRL) < order.index(FRAME_RELAY_CTRL)
+    assert board.regs == {fid: 0 for fid in board.regs}
+
+    assert [o.settle_ms for o in ctrl._plan_drives_off()] == [0, 0, 0]     # load already off: no pause
 
 
 def test_rest_turns_drives_off_before_opening_cell_enable():
@@ -225,11 +271,32 @@ def test_rest_turns_drives_off_before_opening_cell_enable():
 
     assert board.writes == [
         (FRAME_CHARGE_CTRL, 0x00),
-        (FRAME_DISCHARGE_CTRL, 0x00),
-        (FRAME_DISCHARGE_SEL, 0x00),
+        (FRAME_DISCHARGE_SEL, 0x00),       # load off first ...
+        (FRAME_DISCHARGE_CTRL, 0x00),      # ... then Discharge Enable off
+        (FRAME_CHARGE_SEL, 0x00),          # charge setpoint not left armed through the rest
         (FRAME_RELAY_CTRL, 0x02),
     ]
     assert ctrl.relay_owned_by_test is False
+
+
+def test_discharge_after_charge_clears_charge_select():
+    """Field readback (2026-10-06): 0x6001 stayed 0x07 (4.2 V, 1.5 A) through rest and discharge."""
+    board = FakeBoard(relay=0x00)
+    ctrl = make_ctrl(board)
+    ctrl.start_transition(step=charge_step(), selected_cell=1)
+    assert board.regs[FRAME_CHARGE_SEL] == 0x07
+    board.writes.clear()
+
+    dis = TestStep(step_index=2, name="Discharge", step_type=StepType.DISCHARGE,
+                   discharge_load_2=True, discharge_load_3=True)
+    done = []
+    ctrl.transition_completed.connect(done.append)
+    ctrl.start_transition(step=dis, selected_cell=1)
+
+    assert len(done) == 1
+    assert board.regs[FRAME_CHARGE_SEL] == 0x00
+    # Cleared with the drives, before Discharge Enable comes on
+    assert board.writes.index((FRAME_CHARGE_SEL, 0x00)) < board.writes.index((FRAME_DISCHARGE_CTRL, 0x01))
 
 
 def test_safe_idle_order_and_unconfirmed_report():
@@ -244,10 +311,10 @@ def test_safe_idle_order_and_unconfirmed_report():
 
     assert board.writes[:5] == [
         (FRAME_CHARGE_CTRL, 0x00),
-        (FRAME_DISCHARGE_CTRL, 0x00),
+        (FRAME_DISCHARGE_SEL, 0x00),       # load off first ...
+        (FRAME_DISCHARGE_CTRL, 0x00),      # ... then Discharge Enable off
         (FRAME_CHARGE_SEL, 0x00),
-        (FRAME_DISCHARGE_SEL, 0x00),
-        # 0x6004 not confirmed -> the remaining write (Enable open) is sent at once, not after retries
+        # 0x6004 not confirmed -> the remaining writes (up to Enable open) are sent at once, not after retries
         (FRAME_RELAY_CTRL, 0x02),
     ]
     # ...the burst never moves Select; the confirmed sequence sees Enable open, then writes 0
@@ -335,9 +402,9 @@ def test_engine_stop_runs_confirmed_safe_idle_to_all_zero():
     engine.stop_test()
     assert board.writes == [
         (FRAME_CHARGE_CTRL, 0x00),
-        (FRAME_DISCHARGE_CTRL, 0x00),
+        (FRAME_DISCHARGE_SEL, 0x00),       # load off first ...
+        (FRAME_DISCHARGE_CTRL, 0x00),      # ... then Discharge Enable off
         (FRAME_CHARGE_SEL, 0x00),
-        (FRAME_DISCHARGE_SEL, 0x00),
         (FRAME_RELAY_CTRL, 0x02),
         (FRAME_RELAY_CTRL, 0x00),
     ]
@@ -374,9 +441,9 @@ def test_silent_board_during_shutdown_sends_remaining_writes_immediately():
     # before any resend of the first write
     assert board.writes[:5] == [
         (FRAME_CHARGE_CTRL, 0x00),
-        (FRAME_DISCHARGE_CTRL, 0x00),
+        (FRAME_DISCHARGE_SEL, 0x00),       # load off first ...
+        (FRAME_DISCHARGE_CTRL, 0x00),      # ... then Discharge Enable off
         (FRAME_CHARGE_SEL, 0x00),
-        (FRAME_DISCHARGE_SEL, 0x00),
         (FRAME_RELAY_CTRL, 0x02),  # Enable open, Cell 2 Select kept from readback
     ]
 
