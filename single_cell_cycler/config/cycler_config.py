@@ -102,6 +102,84 @@ def load_logging_settings(path: Path | None = None) -> LoggingSettings:
     return LoggingSettings()
 
 
+def _clamp(value, lo: float, hi: float, default: float) -> float:
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return default
+    return default if v != v else min(hi, max(lo, v))   # NaN -> default
+
+
+@dataclass
+class ThermalSafetySettings:
+    """Temperature protection, from the "safety" section of cycler_settings.json.
+
+    Out-of-range values are clamped to safe bounds, not rejected: the absolute limit can be
+    lowered but never raised above 80 °C.
+    """
+
+    rate_of_rise_enabled: bool = False      # dT/dt early-runaway trip (both probes must agree); off by
+                                            # default since v1.3.1, switch on in the Safety tab
+    rate_of_rise_c_per_min: float = 1.5     # trip threshold
+    rate_window_s: float = 15.0             # slope fitted over this window
+    rate_sustain_s: float = 2.5             # threshold must hold this long
+    max_temp_c: float = 60.0                # absolute trip (hotter probe)
+    warn_temp_c: float = 45.0               # warning alarm only
+
+    def __post_init__(self) -> None:
+        self.rate_of_rise_enabled = bool(self.rate_of_rise_enabled)
+        self.rate_of_rise_c_per_min = _clamp(self.rate_of_rise_c_per_min, 0.5, 10.0, 1.5)
+        self.rate_window_s = _clamp(self.rate_window_s, 5.0, 120.0, 15.0)
+        self.rate_sustain_s = _clamp(self.rate_sustain_s, 0.5, 60.0, 2.5)
+        self.max_temp_c = _clamp(self.max_temp_c, 30.0, 80.0, 60.0)
+        self.warn_temp_c = _clamp(self.warn_temp_c, 20.0, self.max_temp_c, min(45.0, self.max_temp_c))
+
+
+_SAFETY_KEYS = tuple(ThermalSafetySettings.__dataclass_fields__)
+
+
+def _read_settings_file(path: Path) -> dict:
+    import json
+
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def load_safety_settings(path: Path | None = None) -> ThermalSafetySettings:
+    """Read the safety section; a missing section is added to the file with the defaults so
+    operators can find and edit it (the logging section and anything else is kept)."""
+    from dataclasses import asdict
+
+    path = Path(path) if path is not None else SETTINGS_PATH
+    data = _read_settings_file(path) if path.exists() else {}
+    section = data.get("safety")
+    if isinstance(section, dict):
+        return ThermalSafetySettings(**{k: section[k] for k in _SAFETY_KEYS if k in section})
+    settings = ThermalSafetySettings()
+    try:
+        save_safety_settings(settings, path)
+    except Exception:
+        pass
+    return settings
+
+
+def save_safety_settings(settings: ThermalSafetySettings, path: Path | None = None) -> None:
+    """Write the safety section, keeping every other section of the file."""
+    import json
+    from dataclasses import asdict
+
+    path = Path(path) if path is not None else SETTINGS_PATH
+    data = _read_settings_file(path) if path.exists() else {}
+    if "logging" not in data:
+        data["logging"] = asdict(LoggingSettings())
+    data["safety"] = asdict(settings)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n", encoding="utf-8")
+
+
 @dataclass
 class CyclerAppConfig:
     default_port: str = "COM3"

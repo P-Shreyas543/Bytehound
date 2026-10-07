@@ -3,5 +3,13 @@
     "interval_s": 0.1,
     "thread_priority": "above_normal",
     "soc_decimals": 2
+  },
+  "safety": {
+    "rate_of_rise_enabled": false,
+    "rate_of_rise_c_per_min": 1.5,
+    "rate_window_s": 15.0,
+    "rate_sustain_s": 2.5,
+    "max_temp_c": 60.0,
+    "warn_temp_c": 45.0
   }
 }

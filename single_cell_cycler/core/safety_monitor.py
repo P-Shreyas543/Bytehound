@@ -39,7 +39,9 @@ class SafetyLimits:
     charge_floor_v: float = 2.0           # no charging below this (set per chemistry at START)
     overvoltage_ceiling_margin_v: float = 0.10  # hard ceiling = max_voltage_v + margin
 
-    # Rate-of-Rise Thermal Trigger (IMP-09)
+    # Rate-of-Rise Thermal Trigger (IMP-09); operator switch in cycler_settings.json "safety".
+    # Off leaves the absolute max_temp_c trip and the BMS COT flag.
+    temp_rate_enabled: bool = True
     max_temp_rate_of_rise_c_per_min: float = 1.5  # Max safe rate of rise (dT/dt in °C/min)
     temp_rate_window_s: float = 15.0              # Moving window duration for slope calculation (s)
     temp_rate_sustain_s: float = 2.5              # Duration condition must be sustained before trip (s)
@@ -157,6 +159,11 @@ class SafetyMonitor:
             return False
 
         # 5. Temperature rate-of-rise limit (dT/dt) early runaway trigger (IMP-09)
+        if not self.limits.temp_rate_enabled:
+            if self._temp_history:
+                self._clear_rate_history()     # switched back on later: start a fresh window
+            self.last_rate_of_rise_c_per_min = 0.0
+            return True
         t_sample = cell_data.timestamp if cell_data.timestamp > 0 else now
         window_s = self.limits.temp_rate_window_s
 

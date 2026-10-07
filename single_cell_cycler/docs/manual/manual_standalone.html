@@ -415,11 +415,26 @@ figcaption b{color:var(--text)}
 <tr><td>Voltage fault (COV/CUV, or voltage outside the chemistry limit) during a step</td><td>The step ends as if it had reached a cut-off, a warning is shown, and <b>the test continues</b> with the next step. Nothing latches: after under-voltage the next charge and rest still run, and after over-voltage the next rest and discharge still run.</td></tr>
 <tr><td>Cell below the hard charge floor (2.0 V for NMC/LFP, 1.2 V for LTO/Na-ion), or more than 0.10 V above the chemistry maximum</td><td><b>Safety trip, latched.</b> Charging is refused, because a deeply over-discharged cell must be inspected before it is charged. Reset the interlock only after checking the cell.</td></tr>
 <tr><td>Current or temperature fault, or any other BMS fault</td><td><b>Safety trip:</b> the test stops and all outputs are switched off.</td></tr>
-<tr><td>Cell temperature above 60 °C</td><td>Safety trip</td></tr>
-<tr><td>Temperature rising 1.5 °C/min or faster on <b>both</b> probes, sustained for 2.5 s</td><td>Safety trip (early warning of thermal runaway). Both probes must agree, so a glitch on one probe can't trip the test.</td></tr>
-<tr><td>Cell temperature at or above 45 °C</td><td>Warning alarm only</td></tr>
+<tr><td>Cell temperature above 60 °C (configurable)</td><td>Safety trip</td></tr>
+<tr><td>Temperature rising 1.5 °C/min or faster on <b>both</b> probes, sustained for 2.5 s</td><td>Safety trip (early warning of thermal runaway). Both probes must agree, so a glitch on one probe can't trip the test. <b>Off by default</b> since v1.3.1; switch it on in the Safety tab (see <i>Thermal protection settings</i> below).</td></tr>
+<tr><td>Cell temperature at or above 45 °C (configurable)</td><td>Warning alarm only</td></tr>
 <tr><td>No data from the board for 8 s during a test</td><td>Safety trip</td></tr>
 </table></div>
+
+<h3>Thermal protection settings</h3>
+<p>The <b>Thermal Protection</b> box on the <span class="ui">BMS Safety &amp; Diagnostics</span> tab shows the active temperature limits. Its checkbox turns the rate-of-rise trip on or off. It ships <b>off</b>. You'll be asked to confirm before it's switched off, and it's locked while a test runs. The change is saved and remembered.</p>
+<p>All temperature limits live in the <code>"safety"</code> section of <code>cycler_settings.json</code>, in <code>%LOCALAPPDATA%\Bytehound\SingleCellCycler\</code> (the same folder as the webhook settings). Edits take effect at the next <span class="ui">START</span>.</p>
+<div class="tablewrap"><table>
+<tr><th>Setting</th><th>Default</th><th>Allowed range</th></tr>
+<tr><td><code>rate_of_rise_enabled</code></td><td><code>false</code> (off)</td><td><code>true</code> / <code>false</code></td></tr>
+<tr><td><code>rate_of_rise_c_per_min</code></td><td>1.5</td><td>0.5 – 10 °C/min</td></tr>
+<tr><td><code>rate_window_s</code></td><td>15</td><td>5 – 120 s</td></tr>
+<tr><td><code>rate_sustain_s</code></td><td>2.5</td><td>0.5 – 60 s</td></tr>
+<tr><td><code>max_temp_c</code></td><td>60</td><td>30 – 80 °C (never higher)</td></tr>
+<tr><td><code>warn_temp_c</code></td><td>45</td><td>20 °C – <code>max_temp_c</code></td></tr>
+</table></div>
+<p>A value outside its range is pulled back to the nearest limit, and an unreadable value falls back to the default.</p>
+<div class="warn"><b>With the rate-of-rise trip off</b>Overheating is then caught only by the absolute limit and the BMS over-temperature flag (COT), which react later in a thermal runaway. Only switch it off for a known sensor problem, and watch the temperature chart.</div>
 
 <h3>Alarm banner</h3>
 <p>Important warnings appear in a banner under the run status row: orange for <b>WARNING</b> and red for <b>CRITICAL</b>. The banner stays until you click <span class="ui">Acknowledge</span>, so nothing is missed while you are away from the bench.</p>

@@ -60,6 +60,21 @@ def _isolate_webhook(tmp_path, monkeypatch):
     yield
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _real_settings_file_unchanged():
+    """Fail the run if any test rewrote the real cycler_settings.json (it holds safety switches)."""
+    import single_cell_cycler.config.cycler_config as _cfg
+
+    real = _cfg.SETTINGS_PATH
+    before = real.read_bytes() if real.exists() else None
+    yield
+    after = real.read_bytes() if real.exists() else None
+    if after != before:
+        if before is not None:
+            real.write_bytes(before)        # put the operator's settings back
+        pytest.fail(f"A test modified the real settings file {real}; restored it", pytrace=False)
+
+
 @pytest.fixture(autouse=True)
 def _isolate_logs(tmp_path, monkeypatch):
     test_logs = tmp_path / "logs"
@@ -86,6 +101,15 @@ def _isolate_logs(tmp_path, monkeypatch):
         monkeypatch.setattr(_main, "DEFAULT_LOG_DIR", test_logs)
     except (ImportError, AttributeError):
         pass
+
+    # cycler_settings.json: tests read a copy, so toggling a safety setting never rewrites the
+    # tracked file (or an installed app's LOCALAPPDATA file)
+    import shutil
+    import single_cell_cycler.config.cycler_config as _cfg
+    settings_copy = tmp_path / "cycler_settings.json"
+    if _cfg.SETTINGS_PATH.exists():
+        shutil.copyfile(_cfg.SETTINGS_PATH, settings_copy)
+    monkeypatch.setattr(_cfg, "SETTINGS_PATH", settings_copy)
 
     yield test_logs
 

@@ -7,6 +7,7 @@ from typing import Dict
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
     QGridLayout,
     QGroupBox,
@@ -63,9 +64,10 @@ class LEDIndicator(QFrame):
 class SafetyPanelWidget(QWidget):
     """Panel displaying 6 hardware fault LEDs, comm heartbeat, and trip banner."""
 
-    def __init__(self, reset_callback, parent: QWidget | None = None):
+    def __init__(self, reset_callback, parent: QWidget | None = None, rate_toggle_callback=None):
         super().__init__(parent)
         self._reset_callback = reset_callback
+        self._rate_toggle_callback = rate_toggle_callback
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -113,7 +115,50 @@ class SafetyPanelWidget(QWidget):
         tf_layout.addWidget(self.btn_reset)
         layout.addWidget(self.trip_frame)
 
+        # 3. Thermal protection settings (saved in cycler_settings.json, "safety" section)
+        box_thermal = QGroupBox("Thermal Protection")
+        th_layout = QVBoxLayout(box_thermal)
+        self.chk_rate = QCheckBox("Rate-of-rise thermal trip (dT/dt early runaway warning)")
+        self.chk_rate.setChecked(True)
+        self.chk_rate.toggled.connect(self._on_rate_toggled)
+        th_layout.addWidget(self.chk_rate)
+        self.lbl_thermal = QLabel("")
+        self.lbl_thermal.setWordWrap(True)
+        self.lbl_thermal.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
+        th_layout.addWidget(self.lbl_thermal)
+        layout.addWidget(box_thermal)
+        self._setting_rate = False
+
         layout.addStretch()
+
+    def set_thermal_settings(self, rate_enabled: bool, rate_c_per_min: float, window_s: float,
+                             sustain_s: float, max_temp_c: float, warn_temp_c: float, path: str) -> None:
+        """Show the active thermal settings without firing the toggle callback."""
+        self._setting_rate = True
+        self.chk_rate.setChecked(rate_enabled)
+        self._setting_rate = False
+        rate_txt = (
+            f"Trips when BOTH probes rise ≥ {rate_c_per_min:.1f} °C/min (fitted over {window_s:.0f} s) "
+            f"for {sustain_s:.1f} s."
+            if rate_enabled else
+            "<b style='color:#fbbf24;'>OFF</b>: only the absolute limit and the BMS COT flag protect against overheating."
+        )
+        self.lbl_thermal.setText(
+            f"{rate_txt}<br>Absolute trip: {max_temp_c:.0f} °C · warning alarm: {warn_temp_c:.0f} °C<br>"
+            f"<span style='color:#64748b;'>Settings file: {path}</span>"
+        )
+
+    def set_thermal_editable(self, editable: bool) -> None:
+        self.chk_rate.setEnabled(editable)
+        self.chk_rate.setToolTip("" if editable else "Locked while a test is running")
+
+    def _on_rate_toggled(self, checked: bool) -> None:
+        if self._setting_rate or self._rate_toggle_callback is None:
+            return
+        if self._rate_toggle_callback(bool(checked)) is False:   # refused: put the box back
+            self._setting_rate = True
+            self.chk_rate.setChecked(not checked)
+            self._setting_rate = False
 
     def _set_trip_frame_style(self, tripped: bool) -> None:
         # Id selector: a bare rule would also box every label and button inside the frame

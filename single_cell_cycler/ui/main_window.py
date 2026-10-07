@@ -55,7 +55,14 @@ from ..comm.protocol_defs import (
     RelayControlBits,
 )
 from ..comm.transceiver import SerialTransceiver, TransceiverState
-from ..config.cycler_config import DEFAULT_LOG_DIR, load_logging_settings
+from ..config.cycler_config import (
+    DEFAULT_LOG_DIR,
+    ThermalSafetySettings,
+    load_logging_settings,
+    load_safety_settings,
+    save_safety_settings,
+)
+from ..config import cycler_config as _cycler_config
 from ..core.cycler_engine import CyclerEngine, EngineState
 from ..core.metrics_tracker import CycleSummary, StepMetrics
 from ..core.profile_model import TestRecipe, step_label
@@ -157,6 +164,10 @@ class MainWindow(QMainWindow):
         # 2. UI Layout
         self._setup_ui()
         self._wire_signals()
+        # Bound once: every later read / save of this window uses the same file, even from a
+        # callback that runs after the path setting has changed (tests swap it per test)
+        self._settings_path = _cycler_config.SETTINGS_PATH
+        self._apply_thermal_settings()
         # KPI titles name the cell from the start, not only after the selector is changed
         # ("CELL VOLTAGE" next to "CELL 1 · CYCLE / STEP" in the field screenshots)
         self.dashboard.set_cell_number(self.combo_active_cell.currentData())
@@ -466,7 +477,9 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(self._scrollable(self.manual_control), "Manual Hardware Control")
 
         # Tab 5: Safety & BMS Fault Panel
-        self.safety_panel = SafetyPanelWidget(reset_callback=self._on_reset_safety)
+        self.safety_panel = SafetyPanelWidget(
+            reset_callback=self._on_reset_safety, rate_toggle_callback=self._on_rate_of_rise_toggled
+        )
         self.tabs.addTab(self._scrollable(self.safety_panel), "BMS Safety && Diagnostics")
 
         # Status Bar
@@ -831,10 +844,11 @@ class MainWindow(QMainWindow):
         self._last_rx_monotonic = time.monotonic()
         self._update_start_gate()
         max_temp = max(float(data.terminal_temp), float(data.body_temp))
-        if max_temp >= 60.0:
+        thermal = self._thermal_settings
+        if max_temp >= thermal.max_temp_c:
             self._set_alarm(f"Critical cell temperature: {max_temp:.1f} °C.", "critical")
             self._append_event(f"Critical cell temperature {max_temp:.1f} °C", "critical")
-        elif max_temp >= 45.0:
+        elif max_temp >= thermal.warn_temp_c:
             self._set_alarm(f"High cell temperature: {max_temp:.1f} °C.", "warning")
             self._append_event(f"High cell temperature {max_temp:.1f} °C", "warning")
         self.dashboard.update_cell_data(data)
@@ -1052,6 +1066,7 @@ class MainWindow(QMainWindow):
         logger.info(f"[Pre-Flight Handshake] {preflight.summary_text} - Verification OK.")
 
         try:
+            self._apply_thermal_settings()
             self._apply_chemistry_limits()
 
             # Start background logger
@@ -1089,6 +1104,59 @@ class MainWindow(QMainWindow):
             logger.error(f"[Test Start Exception] Failed to start test profile: {exc}", exc_info=True)
             if self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
                 QMessageBox.critical(self, "Start Error", str(exc))
+
+    def _apply_thermal_settings(self, settings: Optional[ThermalSafetySettings] = None) -> ThermalSafetySettings:
+        """Temperature protection from cycler_settings.json ("safety"), at startup and every START,
+        so an edited file takes effect on the next test without restarting the app."""
+        s = settings or load_safety_settings(self._settings_path)
+        self._thermal_settings = s
+        limits = self.engine.safety_monitor.limits
+        limits.temp_rate_enabled = s.rate_of_rise_enabled
+        limits.max_temp_rate_of_rise_c_per_min = s.rate_of_rise_c_per_min
+        limits.temp_rate_window_s = s.rate_window_s
+        limits.temp_rate_sustain_s = s.rate_sustain_s
+        limits.max_temp_c = s.max_temp_c
+        self.safety_panel.set_thermal_settings(
+            s.rate_of_rise_enabled, s.rate_of_rise_c_per_min, s.rate_window_s, s.rate_sustain_s,
+            s.max_temp_c, s.warn_temp_c, str(self._settings_path),
+        )
+        logger.info(
+            f"[Safety Limits] Thermal: rate-of-rise {'ON' if s.rate_of_rise_enabled else 'OFF'} "
+            f"({s.rate_of_rise_c_per_min:.1f} °C/min, {s.rate_window_s:.0f} s window, {s.rate_sustain_s:.1f} s sustain), "
+            f"max {s.max_temp_c:.0f} °C, warning {s.warn_temp_c:.0f} °C"
+        )
+        return s
+
+    def _on_rate_of_rise_toggled(self, enabled: bool) -> bool:
+        """Safety-tab switch for the dT/dt trip; saved to cycler_settings.json. False = refused."""
+        if self.engine.test_active:
+            return False
+        if not enabled and self.isVisible() and os.getenv("QT_QPA_PLATFORM") != "offscreen":
+            choice = QMessageBox.question(
+                self,
+                "Turn Off Rate-of-Rise Trip",
+                "Turn off the thermal rate-of-rise (dT/dt) trip?\n\n"
+                f"Overheating is then caught only by the absolute {self._thermal_settings.max_temp_c:.0f} °C "
+                "limit and the BMS COT flag, later in a thermal runaway.",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if choice != QMessageBox.StandardButton.Yes:
+                return False
+        from dataclasses import replace
+
+        settings = replace(self._thermal_settings, rate_of_rise_enabled=bool(enabled))
+        try:
+            save_safety_settings(settings, self._settings_path)
+        except OSError as exc:
+            logger.error(f"Could not save thermal settings: {exc}")
+            return False
+        self._apply_thermal_settings(settings)
+        self._append_event(
+            f"Rate-of-rise thermal trip turned {'ON' if enabled else 'OFF'} by operator",
+            "info" if enabled else "warning",
+        )
+        return True
 
     def _apply_chemistry_limits(self) -> None:
         """Chemistry safety envelope for the SafetyMonitor (IMP-03), at START and on crash resume.
@@ -1143,6 +1211,7 @@ class MainWindow(QMainWindow):
             else "Active cell relay position (0x6000 Bit 1: 0=Cell 1, 1=Cell 2)"
         )
         self.manual_control.set_test_active(running)
+        self.safety_panel.set_thermal_editable(not running)
         if running:
             # A trip banner left from an earlier run must not offer Reset during this one
             self.safety_panel.clear_trip()
@@ -1582,6 +1651,7 @@ class MainWindow(QMainWindow):
             rec = TestRecipe.from_dict(journal.recipe_dict)
             self.profile_editor.set_recipe(rec)
             # The resumed test used to run on the generic defaults (2.40-4.25 V)
+            self._apply_thermal_settings()
             self._apply_chemistry_limits()
 
             # 3. Resume CSV logger if file was specified

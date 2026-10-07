@@ -10,14 +10,14 @@
     "status": "production-ready",
     "category": "Engineering / Battery Testing & Characterization"
   },
-  "version": "1.3.0",
+  "version": "1.3.1",
   "version_info": {
     "major": 1,
     "minor": 3,
-    "patch": 0,
+    "patch": 1,
     "prerelease": null,
     "build_metadata": null,
-    "semver": "1.3.0",
+    "semver": "1.3.1",
     "min_compatible_version": "1.0.0"
   },
   "vcs": {
@@ -26,7 +26,7 @@
     "branch": "Migration_To_C++",
     "commit_hash": "",
     "commit_short": "",
-    "tag": "v1.3.0",
+    "tag": "v1.3.1",
     "dirty": false
   },
   "organization": {
@@ -43,8 +43,8 @@
     "copyright": "Copyright (c) 2026 Decibels Lab Private Limited & Shreyas P. All rights reserved."
   },
   "build": {
-    "build_date": "2026-10-06",
-    "build_timestamp": "2026-10-06T08:19:26Z",
+    "build_date": "2026-10-07",
+    "build_timestamp": "2026-10-07T08:06:11Z",
     "target_os": "windows",
     "target_architecture": "x86_64",
     "minimum_os_version": "Windows 10 Build 19041+ (64-bit)",
@@ -121,28 +121,20 @@
     }
   },
   "release_notes": {
-    "version": "1.3.0",
-    "title": "v1.3.0 — Field-review safety fixes (October 2026)",
-    "date": "2026-10-06",
-    "highlights": "Fixes from the 2026-10 field screenshots and the 46 h, 15-cycle run: a stale trip banner can no longer idle a running test, glitching thermistors no longer false-trip, voltage faults follow a recover-or-latch policy, and the charts and recipe tab read correctly.",
+    "version": "1.3.1",
+    "title": "v1.3.1 — Configurable thermal protection",
+    "date": "2026-10-07",
+    "highlights": "Rate-of-rise thermal trip is now an operator switch (Safety tab) and ships OFF; all temperature limits are configurable in cycler_settings.json.",
     "changelog": {
-      "safety": [
-        "Safety Reset refused while a test runs; step-setup failures latch the interlock like every other trip",
-        "Rate-of-rise thermal trip needs both probes to agree (a single glitching probe fitted 4-5 C/min on the 1 Oct run)",
-        "Voltage faults: CUV/under-voltage lets the next charge and rest run, COV/over-voltage lets the next rest and discharge run; below the hard charge floor (2.0 V NMC/LFP) or above max + 0.10 V the test stops and latches",
-        "Charge Select (0x6001) cleared and readback-confirmed for rest and discharge steps",
-        "Chemistry voltage limits re-applied on crash-recovery resume",
-        "Only one cycler window per PC"
+      "features": [
+        "Thermal Protection box on the BMS Safety tab: rate-of-rise trip on/off (confirmed, saved, locked during a test)",
+        "\"safety\" section in cycler_settings.json: rate-of-rise switch, threshold, window, sustain, absolute and warning temperatures, clamped to safe bounds (max never above 80 C); applied at every START and on crash resume"
       ],
-      "fixes": [
-        "Fallback BMS ID includes the COM port and is never saved as the configured ID",
-        "Ageing chart: efficiency axis follows full cycles, cycle DCIR from the discharge step, no EOL forecast without fade",
-        "dQ/dV readout follows the cursor; no false peak at the live end of the curve",
-        "OCV SoC marked under load; current-sensor zero offset reported once per test",
-        "V&I chart: compact aligned axes, h:mm time axis, newest-first event strip; elapsed shown as h:mm:ss",
-        "Recipe tab: real recipe names, realistic min/cycle estimate, loop fields only on Loop steps",
-        "Stop button crimson (was the same amber as Pause); no repeated step numbers; KPI titles name the cell at startup",
-        "Manual control follows the hardware readback; export/report defaults no longer relative to the working directory"
+      "changes": [
+        "Rate-of-rise (dT/dt) trip OFF by default; the absolute temperature limit and the BMS COT flag stay active"
+      ],
+      "test_infrastructure": [
+        "Tests use a copy of cycler_settings.json; the run fails and restores the file if any test modifies the real one"
       ]
     }
   }
