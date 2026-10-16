@@ -95,6 +95,7 @@ def test_udp_socket_wrapper():
         wrapper.open()
         assert wrapper.read(10) == b"test"
 
+        mock_sock.send.return_value = 3  # real sockets return the byte count
         wrapper.write(b"out")
         mock_sock.send.assert_called_with(b"out")
 
@@ -116,6 +117,7 @@ def test_tcp_socket_wrapper():
         wrapper.open()
         assert wrapper.read(10) == b"test_tcp"
 
+        mock_sock.send.return_value = 7  # real sockets return the byte count
         wrapper.write(b"out_tcp")
         mock_sock.send.assert_called_with(b"out_tcp")
 

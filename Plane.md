@@ -170,10 +170,20 @@ these loss points:
 | F10 | Decoded-log queue full (100k) | Drops rows (raw capture keeps bytes, rebuild recovers) | Raw capture on for every logging session (already); decoded drops counted in the manifest and the UI badge; rebuild offered automatically on Stop if any were dropped |
 | F11 | Reconnect | Logging stops on unplug (Part A fixes) | Continue the session; record the gap (start/end, reason) in the manifest |
 | F12 | Frames lost on the wire / in the device | Undetectable without protocol help | Optional per-frame **alive / sequence counter** signal in the config (E2E-style): gaps, repeats and resets counted per frame ID and logged |
+| F13 | `TcpSocketWrapper.write` / UDP write | `socket.send()` may write only part of a buffer — **the rest of a TX command was lost** without an error | Send until every byte is out (with timeout), else raise |
+| F14 | UDP on Windows | An ICMP "port unreachable" (device rebooting) arrives as `WSAECONNRESET` on the next read → treated as an unplug → **session ended** | Ignore the notice for UDP and keep reading |
+
+Progress (each with a test that fails on the old code):
+F1 ✅ F2 ✅ F3 ☐ F4 ✅ F5 ✅ F6 ☐ F7 ☐ F8 ☐ F9 ☐ F10 ☐ F11 ☐ (with Part A)
+F12 ☐ F13 ✅ F14 ✅ — tests in `tests/test_polling_worker.py`
+(`test_polling_start_delivers_waiting_frames_instead_of_discarding`,
+`test_polling_continues_while_gui_is_backpressured`) and
+`tests/test_frame_loss.py`. The UDP burst test shows the old code really
+lost datagrams to the OS.
 
 Done when:
 
-- [ ] F1–F12 implemented, each with a regression test that would have failed
+- [ ] F1–F14 implemented, each with a regression test that would have failed
       before the fix
 - [ ] Integrity counters per session and per segment in `session.json`:
       bytes received, frames OK per ID, CRC errors, discarded bytes + reason,

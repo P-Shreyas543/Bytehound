@@ -69,6 +69,58 @@ def auto_detect_primary_port() -> Optional[str]:
         return None
 
 
+# Socket receive buffer requested from the OS. The default (64 KiB on
+# Windows) overflows during bursts and the OS then drops UDP datagrams
+# silently (Plane.md F5). 4 MiB holds ~20 s at 2 Mbaud-equivalent rates.
+SOCKET_RCVBUF_BYTES = 4 * 1024 * 1024
+# Largest possible UDP payload; a smaller recv() size truncates (or on
+# Windows errors on) bigger datagrams (Plane.md F4).
+_UDP_MAX_DATAGRAM = 65535
+_TCP_RECV_CHUNK = 65536
+_SEND_TIMEOUT_S = 2.0
+
+
+def _enlarge_rcvbuf(sock: socket.socket) -> int:
+    """Ask for a large receive buffer; return the size the OS granted."""
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, SOCKET_RCVBUF_BYTES)
+    except OSError:
+        _LOG.warning("Could not enlarge socket receive buffer", exc_info=True)
+    try:
+        granted = int(sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF))
+    except (OSError, TypeError, ValueError):
+        _LOG.warning("Could not read socket receive buffer size", exc_info=True)
+        return 0
+    if granted < SOCKET_RCVBUF_BYTES // 2:
+        _LOG.warning(
+            "Socket receive buffer is %d bytes (requested %d); bursts may be dropped by the OS",
+            granted, SOCKET_RCVBUF_BYTES,
+        )
+    return granted
+
+
+def _send_all(sock: socket.socket, data: bytes, kind: str) -> int:
+    """Write every byte on a non-blocking socket, or raise.
+
+    ``socket.send`` may write only part of ``data``; the remainder of a
+    command would be lost without an error.
+    """
+    view = memoryview(data)
+    deadline = time.monotonic() + _SEND_TIMEOUT_S
+    while view:
+        try:
+            sent = sock.send(view)
+            view = view[sent:]
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise serial.SerialException(
+                    f"{kind} socket write timed out with {len(view)} of {len(data)} bytes unsent"
+                ) from None
+            select.select([], [sock], [], remaining)
+    return len(data)
+
+
 class TcpSocketWrapper:
     def __init__(self, host: str, port: int, timeout: float = 0.05):
         self.host = host
@@ -77,10 +129,12 @@ class TcpSocketWrapper:
         self._socket = None
         self._is_open = False
         self._buffer = bytearray()
+        self.rcvbuf_bytes = 0  # receive buffer granted by the OS, set on open()
 
     def open(self):
         try:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.rcvbuf_bytes = _enlarge_rcvbuf(self._socket)
             self._socket.settimeout(2.0)  # connection timeout
             self._socket.connect((self.host, self.port))
             self._socket.setblocking(False)
@@ -100,7 +154,9 @@ class TcpSocketWrapper:
         if not self._is_open or not self._socket:
             raise serial.SerialException("Socket not open")
         try:
-            return self._socket.send(data)
+            return _send_all(self._socket, data, "TCP")
+        except serial.SerialException:
+            raise
         except Exception as e:
             raise serial.SerialException(f"TCP socket write error: {e}") from e
 
@@ -156,7 +212,7 @@ class TcpSocketWrapper:
                 r, _, _ = select.select([self._socket], [], [], 0)
                 if not r:
                     break
-                data = self._socket.recv(4096)
+                data = self._socket.recv(_TCP_RECV_CHUNK)
                 if not data:
                     raise serial.SerialException("TCP connection closed by remote peer")
                 self._buffer.extend(data)
@@ -179,10 +235,12 @@ class UdpSocketWrapper:
         self._socket = None
         self._is_open = False
         self._buffer = bytearray()
+        self.rcvbuf_bytes = 0  # receive buffer granted by the OS, set on open()
 
     def open(self):
         try:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.rcvbuf_bytes = _enlarge_rcvbuf(self._socket)
             if self.local_port > 0:
                 self._socket.bind(("", self.local_port))
             self._socket.connect((self.host, self.port))
@@ -203,7 +261,9 @@ class UdpSocketWrapper:
         if not self._is_open or not self._socket:
             raise serial.SerialException("Socket not open")
         try:
-            return self._socket.send(data)
+            return _send_all(self._socket, data, "UDP")
+        except serial.SerialException:
+            raise
         except Exception as e:
             raise serial.SerialException(f"UDP socket write error: {e}") from e
 
@@ -259,8 +319,15 @@ class UdpSocketWrapper:
                 r, _, _ = select.select([self._socket], [], [], 0)
                 if not r:
                     break
-                data = self._socket.recv(4096)
+                data = self._socket.recv(_UDP_MAX_DATAGRAM)
                 self._buffer.extend(data)
+            except ConnectionResetError:
+                # Windows reports an ICMP "port unreachable" (device port
+                # briefly closed, e.g. rebooting) as WSAECONNRESET on the
+                # next recv. For UDP that is only a notice — treating it as an
+                # unplug would end the session. Skip it and keep reading.
+                _LOG.debug("UDP: ignored ICMP port-unreachable notice")
+                continue
             except BlockingIOError:
                 break
             except socket.timeout:
@@ -442,8 +509,9 @@ class PollingWorker(QThread):
     def set_backpressure(self, throttled: bool) -> None:
         """Signal downstream consumer backpressure status (e.g. from UI).
 
-        When throttled=True, scheduled polling is suspended and the batching
-        window is slightly lengthened to let downstream consumers drain.
+        When throttled=True the batching window is lengthened so the GUI
+        receives fewer, larger batches. Polling and reading are never paused:
+        that would leave gaps in the log (Plane.md F2).
         """
         changed = False
         with QMutexLocker(self._mutex):
@@ -881,16 +949,19 @@ class PollingWorker(QThread):
         return extracted
 
     def _reset_rx_state_for_polling_start(self) -> None:
-        """Drop stale bytes/parser fragments when Auto-Fetch is started."""
-        self._parser = create_parser(self.protocol)
-        self._batch.clear()
+        """Prepare for Auto-Fetch without discarding any received data.
+
+        Bytes already waiting are real device data: they are decoded and
+        delivered *before* the first poll is sent, so they can never be
+        mistaken for that poll's response. The parser keeps a partial frame
+        (it completes with the next bytes) and undelivered batch items stay
+        queued. Only in-flight poll bookkeeping is reset. (This used to call
+        ``reset_input_buffer()`` and clear the parser and batch, which threw
+        away frames — Plane.md Part F, F1.)
+        """
         self._in_flight.clear()
         if self._serial is not None:
-            try:
-                self._serial.reset_input_buffer()
-            except (AttributeError, serial.SerialException, OSError):
-                # Some test doubles or drivers may not expose/reset this.
-                self._drain_pending_rx()
+            self._drain_pending_rx()
         self._last_rx_time = time.monotonic()
         self._watchdog_fired = False
 
@@ -938,7 +1009,6 @@ class PollingWorker(QThread):
                     pipelining = self._pipelining_enabled
                     pipe_depth = self._pipeline_depth
                     flush_rx_before_polling = self._flush_rx_before_polling
-                    backpressured = self._backpressure_throttled
                     if flush_rx_before_polling:
                         self._flush_rx_before_polling = False
 
@@ -976,9 +1046,11 @@ class PollingWorker(QThread):
                 # only still get polled). Hammering polls during an Arduino
                 # bootloader window leaves the link stuck — the device cannot
                 # answer, timeouts accumulate, and we never get out.
-                # Also pause when backpressure is active from downstream UI/consumers.
+                # Polling never pauses for GUI backpressure: a paused poll is
+                # a gap in the log (Plane.md F2). The GUI copes by coalescing
+                # what it displays; logging does not depend on GUI speed.
                 grace_expired = (time.monotonic() - self._open_time) > POLLING_BOOT_GRACE
-                if polling_enabled and not backpressured and (self._rx_bytes > 0 or grace_expired):
+                if polling_enabled and (self._rx_bytes > 0 or grace_expired):
                     if pipelining:
                         # Pipelined: fire as many due polls as the depth budget
                         # allows; responses are matched by frame_id in the RX
