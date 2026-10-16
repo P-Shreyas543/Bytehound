@@ -384,11 +384,17 @@ class LoggingSessionMixin:
             return
         default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
         raw, _ = QFileDialog.getOpenFileName(
-            self, "Select raw capture", str(default_dir), "Raw capture (*.bhraw);;All files (*)"
+            self,
+            "Select a raw capture, or a session's session.json to rebuild every segment",
+            str(default_dir),
+            "Raw capture or session (*.bhraw session.json);;All files (*)",
         )
         if not raw:
             return
         raw_path = Path(raw)
+        if raw_path.name == "session.json":
+            self._rebuild_whole_session(raw_path.parent)
+            return
         try:
             meta = read_metadata(raw_path)
         except (OSError, ValueError) as exc:
@@ -432,6 +438,43 @@ class LoggingSessionMixin:
 
         self._set_status(f"Rebuilding {out_path.name}…")
         threading.Thread(target=_worker, name="RebuildDecodedLog", daemon=False).start()
+
+    def _rebuild_whole_session(self, folder: Path) -> None:
+        """Rebuild every segment's event log of a session from its raw captures."""
+        import threading
+        from ..serial_logging.session import read_manifest, rebuild_session_event_logs
+
+        try:
+            manifest = read_manifest(folder)
+        except (OSError, ValueError) as exc:
+            self._popup_critical("Rebuild Decoded Log", str(exc))
+            return
+        if manifest.get("status") == "recording":
+            self._popup_warning(
+                "Rebuild Decoded Log", "This session is still recording. Stop logging first."
+            )
+            return
+        config, n_segs = self._config, len(manifest.get("segments", []))
+        notifier = _RecoveryNotifier(self)
+
+        def _on_done(msg: str, ok: bool) -> None:
+            self._log_activity(f"[SESSION] {msg}")
+            self._set_status(msg)
+            self._toast(msg) if ok else self._popup_critical("Rebuild Decoded Log", msg)
+            notifier.deleteLater()
+
+        notifier.done.connect(_on_done)
+
+        def _worker() -> None:
+            try:
+                n = rebuild_session_event_logs(folder, config)
+                notifier.done.emit(f"Rebuilt {n} of {n_segs} segment(s) in {folder.name}", True)
+            except Exception as exc:
+                logging.getLogger("bytehound").error("Session rebuild failed", exc_info=True)
+                notifier.done.emit(f"Rebuild failed: {exc}", False)
+
+        self._set_status(f"Rebuilding {n_segs} segment(s) of {folder.name}…")
+        threading.Thread(target=_worker, name="RebuildSession", daemon=False).start()
 
     def _check_and_recover_temp_logs(self) -> None:
         """Recover logging sessions and single-file logs that were still being

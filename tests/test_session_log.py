@@ -323,3 +323,111 @@ def test_recovery_after_a_crash_keeps_all_rows(tmp_path, config, monkeypatch):
     assert find_unfinished_sessions(tmp_path) == []
     assert recover_session(folder) is False            # idempotent
     json.loads((folder / "session.json").read_text(encoding="utf-8"))
+
+
+def test_fixed_step_values_match_the_event_log_at_each_tick(tmp_path, config):
+    """At every tick the fixed-step value equals the newest event-log value
+    received at or before that instant (Plane.md Part H)."""
+
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock, fixed_step_s=1.0)
+    s.start()
+    fid = next(iter(config.frames))
+    length = config.frames[fid].payload_length
+    sent = []                                          # (elapsed_s, decoded) as logged
+    for i in range(40):
+        clock.advance(0.35 if i % 3 else 0.6)          # irregular arrivals, never on a tick
+        payload = bytes([(i * 13) & 0xFF] * length)
+        d = decode_frame(config, fid, payload, {})
+        s.log_frame(d, clock.perf)
+        sent.append((clock.perf - s.session_perf0, d))
+        s.tick()
+    clock.advance(2.0)
+    s.tick()
+    s.stop()
+    assert s.await_finished(30)
+
+    folder = tmp_path / "sess"
+    fixed = _csv_rows(folder / "seg_0001_fixed.csv")
+    header = fixed[0]
+    sig = next(sig for sig in sent[0][1].signals if sig.status == "ok")
+    col = next(i for i, h in enumerate(header) if h.startswith(f"0x{fid:X}.{sig.signal_name}"))
+    checked = 0
+    for row in fixed[1:]:
+        t = float(row[3])
+        before = [d for (at, d) in sent if at <= t]
+        if not before:
+            assert row[col] == ""
+            continue
+        expect = next(x for x in before[-1].signals if x.signal_name == sig.signal_name).scaled_value
+        assert float(row[col]) == pytest.approx(expect)
+        checked += 1
+    assert checked >= 10
+
+
+def test_whole_session_rebuild_from_raw_captures(tmp_path, config):
+    """Tools → Rebuild with a session.json rebuilds every segment from its
+    .bhraw, and the rebuilt event rows match what was logged live."""
+    from app.protocol.packet_builder import build_packet
+    from app.serial_logging.raw_capture import RX, RawCapture
+    from app.serial_logging.session import rebuild_session_event_logs
+
+    class RealRaw:
+        cap = None
+
+        def start(self, path, metadata):
+            self.cap = RawCapture(path, metadata)
+
+        def stop(self):
+            cap, self.cap = self.cap, None
+            if cap is not None:
+                cap.close()
+                return cap.error
+            return None
+
+    clock = Clock()
+    raw = RealRaw()
+    s = SessionLog(
+        tmp_path / "sess", config, SessionSettings(segment_seconds=30), raw_capture=raw,
+        clock=lambda: clock.wall, perf=lambda: clock.perf, disk_free=lambda p: 1 << 40,
+    )
+    s.start()
+    for i in range(70):
+        for fid, f in config.frames.items():
+            payload = bytes(((i + fid) & 0xFF,) * f.payload_length)
+            pkt = build_packet(config.protocol, fid, payload)
+            raw.cap.write(RX, clock.perf, pkt)
+            s.log_frame(decode_frame(config, fid, payload, {}), clock.perf)
+        clock.advance(1.0)
+        s.tick()
+    s.stop()
+    assert s.await_finished(30)
+
+    folder = tmp_path / "sess"
+    live = read_manifest(folder)["segments"]
+    assert len(live) >= 2
+    assert rebuild_session_event_logs(folder, config) == len(live)
+    m = read_manifest(folder)
+    for seg in m["segments"]:
+        wb = load_workbook(folder / seg["files"]["event_rebuilt_xlsx"], read_only=True)
+        rebuilt_rows = sum(1 for _ in wb["Data"].iter_rows()) - 1
+        wb.close()
+        assert rebuilt_rows == seg["rows"]["event"]
+    assert any("rebuilt" in e["text"] for e in m["events"])
+
+
+def test_finished_segment_threads_are_released(tmp_path, config):
+    """Retained finisher threads leaked ~2 OS handles per segment on Windows
+    (found by tools/soak_session.py); only live finishers may be kept."""
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock, segment_seconds=5)
+    s.start()
+    f = _frames(config)[0]
+    for _ in range(200):                     # ~40 rotations
+        s.log_frame(f, clock.perf)
+        clock.advance(1.0)
+        s.tick()
+        time.sleep(0.002)
+    assert len(s._finishers) <= 5
+    s.stop()
+    assert s.await_finished(60)

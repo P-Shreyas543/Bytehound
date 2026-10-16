@@ -682,6 +682,10 @@ class SessionLog:
             target=self._finish_segment, args=(seg, entry), name=f"SegmentFinisher[{seg.index}]", daemon=False
         )
         t.start()
+        # Drop finished threads: on Windows every retained Thread object keeps
+        # ~2 OS handles (its locks are semaphores), which grew without bound
+        # over a months-long session (found by tools/soak_session.py).
+        self._finishers = [f for f in self._finishers if f.is_alive()]
         self._finishers.append(t)
 
     def _finish_segment(self, seg: _Segment, entry: Dict[str, Any]) -> None:

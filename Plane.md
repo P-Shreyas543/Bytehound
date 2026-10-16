@@ -79,12 +79,16 @@ each also converted to `.xlsx` when it closes.**
       choices were lost with the old worker), so a polled BMS went silent;
       the exact polling setup is now restored. Stop Logging stays usable
       during the gap. End-to-end test: `tests/test_session_gui.py`
-- [ ] Soak test: time-compressed multi-day run checks rotation, manifest,
-      disk guard, flat memory, no file-handle leaks (unit tests cover
-      rotation / gaps / disk guard / recovery with simulated clocks; the
-      long soak itself is still to do)
-- [ ] Session `.bhraw` raw captures need a session-aware **Rebuild** in the
-      Tools menu (the automatic F10 rebuild on Stop already works per segment)
+- [x] Soak test `tools/soak_session.py` (time-compressed, real files and
+      threads): 3 simulated days, 73 segments, 518,400 cycles, 259,202
+      fixed-step rows — all rows present, grid unbroken, every segment
+      closed and hashed, no temp files. **It found a handle leak** (finished
+      segment threads were retained: +2 OS handles per segment, ~1,300 per
+      month); fixed, and now flat: 265 handles on days 1–3, memory
+      43.7 → 44.2 MB. Regression test added. A real multi-week run on lab
+      hardware is still needed (see 0.11)
+- [x] **Tools → Rebuild Decoded Log** accepts a session's `session.json` and
+      rebuilds every segment from its `.bhraw` (rows match the live log, tested)
 
 ### 0.4 Part B — Analysis Suite for months of data
 
@@ -316,7 +320,7 @@ chamber log). Today the decoded log is event-driven (one row per poll cycle).
 - [x] Tests: grid exactness over a simulated week (no drift), hold/age/stale
       behaviour, catch-up after a stall, grid continuity across rotations and
       across a disconnect gap (`tests/test_session_log.py`)
-- [ ] Test: fixed-step values equal the event log's values at the same instants
+- [x] Test: fixed-step values equal the event log's values at the same instants
 
 ### 0.11 Known gaps and follow-ups (don't lose these)
 
