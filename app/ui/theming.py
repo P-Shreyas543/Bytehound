@@ -935,16 +935,21 @@ class ThemingMixin:
 
         repolish_tree(self)
         # Cover dialogs/popups Qt has spawned that aren't descendants of self.
+        # Parented popups (every QMenu, dock title frames: ~50 of them) are
+        # already in self's tree and inherit its stylesheet, so they are
+        # skipped. Setting the full card QSS on each of them took ~2 s per
+        # theme switch, and also at startup.
         app = QApplication.instance()
         if app is not None:
             raw_theme = str(self._settings.value("ui/theme", "dark"))
             effective = resolve_theme(raw_theme)
             card_qss = build_card_qss(effective)
             for tlw in app.topLevelWidgets():
-                if isinstance(tlw, QWidget):
-                    if tlw is not self:
-                        tlw.setStyleSheet(card_qss)
-                    repolish_tree(tlw)
+                if not isinstance(tlw, QWidget) or tlw is self or tlw.parent() is not None:
+                    continue
+                if tlw.styleSheet() != card_qss:
+                    tlw.setStyleSheet(card_qss)
+                repolish_tree(tlw)
 
     def _apply_card_qss(self, theme: str) -> None:
         """Install card + dock QSS.  Called on startup and on every theme switch.

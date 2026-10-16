@@ -1,6 +1,6 @@
 """Logging-session methods extracted from MainWindow.
 
-LoggingSessionMixin holds the six methods that control raw/decoded log
+LoggingSessionMixin holds the six methods that control decoded log
 recording: settings dialog, start/stop toggle, log-level apply, error
 handler, and the drain-on-shutdown helper. Designed to be mixed into
 MainWindow.
@@ -13,17 +13,20 @@ import os
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Optional
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFileDialog, QInputDialog, QProgressDialog,
+    QApplication, QDialog, QFileDialog, QProgressDialog,
 )
 
-from ..serial_logging.raw_logger import RawLogger
 from ..serial_logging.decoded_logger import DecodedLogger
 from .dialogs import LoggingSettingsDialog
 from .widgets import _BTN_PINK, _BTN_YELLOW
+
+
+class _RecoveryNotifier(QObject):
+    """Carries the temp-log recovery result from its worker thread to the GUI thread."""
+    done = Signal(str, bool)   # message, show a toast
 
 
 class LoggingSessionMixin:
@@ -39,8 +42,6 @@ class LoggingSessionMixin:
             return
         level_name, flush_interval = dlg.get_values()
         self._apply_logging_level(level_name)
-        if self._raw_logger:
-            self._raw_logger.set_flush_interval(flush_interval)
         if self._decoded_logger:
             self._decoded_logger.set_flush_interval(flush_interval)
         self._set_status(
@@ -63,19 +64,6 @@ class LoggingSessionMixin:
             )
             return
 
-        choice, ok = QInputDialog.getItem(
-            self,
-            "Logging mode",
-            "What do you want to log?",
-            ["Raw + Decoded", "Raw only", "Decoded only"],
-            0,
-            False,
-        )
-        if not ok:
-            return
-        log_raw = choice in ("Raw + Decoded", "Raw only")
-        log_decoded = choice in ("Raw + Decoded", "Decoded only")
-
         default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
         default_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -90,84 +78,37 @@ class LoggingSessionMixin:
         if not target:
             return
 
-        self._start_logging_file(target, choice=choice)
+        self._start_logging_file(target)
 
-    def _start_logging_file(self, target: Path | str, choice: str = "Raw + Decoded") -> bool:
+    def _start_logging_file(self, target: Path | str) -> bool:
+        """Start recording the decoded log (the only log the app writes) to *target*."""
         if self._logging or self._serial is None:
             return False
-        log_raw = choice in ("Raw + Decoded", "Raw only")
-        log_decoded = choice in ("Raw + Decoded", "Decoded only")
+        if self._config is None:
+            self._popup_critical("Start Logging", "No configuration loaded.")
+            return False
 
-        base = Path(target)
-        base_stem = base.stem
-        for suffix in ("_raw", "_decoded"):
-            if base_stem.endswith(suffix):
-                base_stem = base_stem[: -len(suffix)]
-                break
-
-        raw_path: Optional[Path] = None
-        decoded_path: Optional[Path] = None
-        if log_raw and log_decoded:
-            raw_path = base.with_name(f"{base_stem}_raw.xlsx")
-            decoded_path = base.with_name(f"{base_stem}_decoded.xlsx")
-        elif log_raw:
-            raw_path = base.with_name(f"{base_stem}.xlsx")
-        else:
-            decoded_path = base.with_name(f"{base_stem}.xlsx")
-
+        decoded_path = Path(target).with_suffix(".xlsx")
         self._log_started = datetime.now()
         self._log_started_perf = time.perf_counter()
-        flush_interval = self._log_flush_interval()
-        metadata = self._build_log_metadata(choice, raw_path, decoded_path)
-        self._raw_logger = (
-            RawLogger(
-                raw_path,
-                flush_interval=flush_interval,
-                metadata=metadata,
-                on_error=self._on_logger_error,
-                on_warning=self._log_activity,
-                hex_format=self._config.protocol.raw_log_format if self._config else "hex",
-            )
-            if raw_path
-            else None
+        polling_active = hasattr(self, "_polling_action") and self._polling_action.isChecked()
+        self._decoded_logger = DecodedLogger(
+            decoded_path,
+            self._config,
+            flush_interval=self._log_flush_interval(),
+            metadata=self._build_log_metadata(decoded_path),
+            on_error=self._on_logger_error,
+            on_warning=self._log_activity,
+            polling_mode=polling_active,
         )
-        if decoded_path:
-            if self._config is None:
-                self._popup_critical("Start Logging", "No configuration loaded.")
-                return False
-            polling_active = False
-            if hasattr(self, "_polling_action") and self._polling_action.isChecked():
-                polling_active = True
-
-            self._decoded_logger = DecodedLogger(
-                decoded_path,
-                self._config,
-                flush_interval=flush_interval,
-                metadata=metadata,
-                on_error=self._on_logger_error,
-                on_warning=self._log_activity,
-                polling_mode=polling_active,
-            )
-        else:
-            self._decoded_logger = None
 
         try:
-            if self._raw_logger:
-                self._raw_logger.open()
-            if self._decoded_logger:
-                self._decoded_logger.open()
+            self._decoded_logger.open()
         except (ValueError, OSError) as exc:
-            if self._raw_logger:
-                try:
-                    self._raw_logger.close()
-                except Exception:
-                    pass
-            if self._decoded_logger:
-                try:
-                    self._decoded_logger.close()
-                except Exception:
-                    pass
-            self._raw_logger = None
+            try:
+                self._decoded_logger.close()
+            except Exception:
+                pass
             self._decoded_logger = None
             self._popup_critical("Start Logging", str(exc))
             return False
@@ -176,24 +117,18 @@ class LoggingSessionMixin:
         self._logging_action.setText("Stop Logging")
         self._style_action_btn(self._logging_action, _BTN_PINK)   # active → pink
 
-        label_parts = []
-        if raw_path:
-            label_parts.append(f"raw → {raw_path.name}")
-        if decoded_path:
-            label_parts.append(f"decoded → {decoded_path.name}")
-        summary = ", ".join(label_parts)
-        self._logging_label.setText(f"Logging: {summary}")
-        self._set_status(f"Logging started ({choice}): {summary}")
-        self._log_activity(f"Logging started ({choice}): {summary}")
+        self._logging_label.setText(f"Logging: {decoded_path.name}")
+        self._set_status(f"Logging started: {decoded_path.name}")
+        self._log_activity(f"Logging started: {decoded_path}")
         return True
 
-    def _start_logging_auto(self, choice: str = "Raw + Decoded") -> bool:
+    def _start_logging_auto(self) -> bool:
         from .main_window import APP_NAME
         default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
         default_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         base = default_dir / f"auto_log_{timestamp}.xlsx"
-        return self._start_logging_file(base, choice=choice)
+        return self._start_logging_file(base)
 
     def _apply_logging_level(self, level_name: str) -> None:
         raw_level = getattr(logging, str(level_name).upper(), logging.INFO)
@@ -213,22 +148,12 @@ class LoggingSessionMixin:
 
     def _stop_logging(self, title: str = "Saving Log") -> None:
         was_logging = self._logging
-        loggers = []
-        if self._raw_logger:
-            loggers.append(("raw log", self._raw_logger))
-        if self._decoded_logger:
-            loggers.append(("decoded log", self._decoded_logger))
+        logger = self._decoded_logger
+        if logger is not None:
+            logger.close(timeout=0.0)
+            if logger.is_draining():
+                self._wait_for_logger_drain([("decoded log", logger)], title=title)
 
-        if self._raw_logger:
-            self._raw_logger.close(timeout=0.0)
-        if self._decoded_logger:
-            self._decoded_logger.close(timeout=0.0)
-
-        drainers = [(name, lg) for name, lg in loggers if lg.is_draining()]
-        if drainers:
-            self._wait_for_logger_drain(drainers, title=title)
-
-        self._raw_logger = None
         self._decoded_logger = None
         self._logging = False
         self._log_started = None
@@ -346,16 +271,21 @@ class LoggingSessionMixin:
                     except Exception as fallback_exc:
                         logging.getLogger("bytehound").error("CSV fallback preservation failed for %s: %s", tmp_data.name, fallback_exc)
 
+            # Widgets may only be touched on the GUI thread: hand the result
+            # back through a queued signal instead of calling _log_activity /
+            # _toast from here (that could crash the app at startup).
             if recovered_count > 0:
-                msg = f"Recovered {recovered_count} unsaved log file(s) from previous session."
-                if hasattr(self, "_toast"):
-                    from PySide6.QtCore import QMetaObject, Q_ARG, Qt
-                    QMetaObject.invokeMethod(self, "_toast", Qt.ConnectionType.QueuedConnection, Q_ARG(str, msg))
-                if hasattr(self, "_log_activity"):
-                    self._log_activity(f"[SESSION] {msg}")
+                notifier.done.emit(f"Recovered {recovered_count} unsaved log file(s) from previous session.", True)
             elif cleaned_count > 0:
-                if hasattr(self, "_log_activity"):
-                    self._log_activity(f"[SESSION] Cleaned up {cleaned_count} stale temporary log file(s).")
+                notifier.done.emit(f"Cleaned up {cleaned_count} stale temporary log file(s).", False)
+
+        def _on_done(msg: str, toast: bool) -> None:
+            self._log_activity(f"[SESSION] {msg}")
+            if toast:
+                self._toast(msg)
+
+        notifier = _RecoveryNotifier(self)
+        notifier.done.connect(_on_done)
 
         # Spawn background recovery thread to prevent blocking main UI loop on startup
         thread = threading.Thread(target=_recovery_worker, name="TempLogRecoveryThread", daemon=True)

@@ -18,6 +18,63 @@ class TelemetryPipelineMixin:
     BACKPRESSURE_HIGH_WATERMARK = 4000
     BACKPRESSURE_LOW_WATERMARK = 1000
 
+    # ------------------------------------------------------------------
+    # Session / log clocks. Everything runs on time.perf_counter(), the
+    # clock the worker stamps each read with, so plot X values and log
+    # elapsed_ms reflect when bytes arrived, not when the UI got to them.
+    # ------------------------------------------------------------------
+
+    def _reset_session_clock(self) -> None:
+        self._session_started = datetime.now()
+        self._session_started_perf = time.perf_counter()
+
+    def _session_elapsed_s(self, t_perf: Optional[float] = None) -> float:
+        start = getattr(self, "_session_started_perf", None)
+        if start is None:
+            self._reset_session_clock()
+            start = self._session_started_perf
+        return (time.perf_counter() if t_perf is None else t_perf) - start
+
+    def _log_elapsed_ms(self, t_perf: Optional[float] = None) -> int:
+        now = time.perf_counter() if t_perf is None else t_perf
+        if getattr(self, "_log_started_perf", None) is not None:
+            return int((now - self._log_started_perf) * 1000)
+        return int(self._session_elapsed_s(now) * 1000)
+
+    @staticmethod
+    def _unpack_item(item) -> Tuple[ParsedPacket, Optional[DecodedFrame], Optional[float]]:
+        """Worker items are (packet, decoded, rx_perf); older callers send
+        (packet, decoded) or a bare packet."""
+        if isinstance(item, tuple):
+            if len(item) >= 3:
+                return item[0], item[1], item[2]
+            return item[0], item[1], None
+        return item, None, None
+
+    def _log_batch(self, batch: list) -> list:
+        """Write a batch to the decoded log as soon as it arrives.
+
+        Logging used to happen in the 60 Hz UI flush, after the bounded
+        pending-packet queue: whenever the UI fell behind, the dropped packets
+        were missing from the log too. Frames decoded here are passed on so
+        the flush doesn't decode them again.
+        """
+        logger = getattr(self, "_decoded_logger", None)
+        config = getattr(self, "_config", None)
+        if logger is None or config is None:
+            return batch
+        out = []
+        for item in batch:
+            packet, decoded, rx_perf = self._unpack_item(item)
+            if getattr(packet, "ok", False) and packet.frame_id is not None:
+                if decoded is None:
+                    if not hasattr(self, "_signal_state"):
+                        self._signal_state = {}
+                    decoded = decode_frame(config, packet.frame_id, packet.payload, self._signal_state)
+                logger.log_frame(decoded, self._log_elapsed_ms(rx_perf))
+            out.append((packet, decoded, rx_perf))
+        return out
+
     def _on_packets_received(self, batch: list) -> None:
         """Slot called by the worker's batch signal. Queues for the 60Hz UI timer.
 
@@ -25,6 +82,7 @@ class TelemetryPipelineMixin:
         loop cannot cause an OOM crash. When near capacity, backpressure throttling
         is signaled to the worker to pause autonomous polling.
         """
+        batch = self._log_batch(batch)
         current_len = len(self._pending_packets)
         space_left = (self._pending_packets.maxlen - current_len) if self._pending_packets.maxlen else 10_000
         if len(batch) > space_left:
@@ -64,7 +122,7 @@ class TelemetryPipelineMixin:
         """Actual flush implementation, called by _flush_ui with protection."""
         # Update the session elapsed clock unconditionally (cheap string op).
         if self._session_started is not None and hasattr(self, '_session_clock_label'):
-            elapsed = int((datetime.now() - self._session_started).total_seconds())
+            elapsed = int(self._session_elapsed_s())
             h, rem = divmod(elapsed, 3600)
             m, s = divmod(rem, 60)
             self._session_clock_label.setText(f"\u23f1 {h}:{m:02d}:{s:02d}")
@@ -91,16 +149,24 @@ class TelemetryPipelineMixin:
         # appendPlainText per flush instead of one per packet. At 1 kHz RX
         # this drops the Qt block-layout cost by ~50x.
         self._console_buffer: List[str] = []
-        # Worker pushes (ParsedPacket, DecodedFrame|None) tuples; legacy
-        # bare-ParsedPacket items are normalised here so _handle_packet
-        # doesn't have to branch.
+        console_dock = getattr(self, "_console_dock", None)
+        console_visible = console_dock is not None and console_dock.isVisible()
+        if console_visible:
+            # perf_counter → wall clock, once per flush
+            wall_offset = time.time() - time.perf_counter()
+        # Worker pushes (ParsedPacket, DecodedFrame|None, rx_perf) tuples;
+        # shorter legacy items are normalised so _handle_packet doesn't branch.
         for item in packets:
-            if isinstance(item, tuple):
-                packet, pre_decoded = item
-            else:
-                packet, pre_decoded = item, None
+            packet, pre_decoded, rx_perf = self._unpack_item(item)
+            if console_visible and hasattr(packet, "raw"):
+                ts = datetime.fromtimestamp(
+                    (rx_perf if rx_perf is not None else time.perf_counter()) + wall_offset
+                )
+                self._console_buffer.append(
+                    f"{ts.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, RX, {packet.raw.hex(' ').upper()}"
+                )
             try:
-                self._handle_packet(packet, pre_decoded=pre_decoded)
+                self._handle_packet(packet, pre_decoded=pre_decoded, rx_perf=rx_perf)
             except Exception:
                 import logging
                 logging.getLogger("bytehound.ui").exception(
@@ -181,6 +247,7 @@ class TelemetryPipelineMixin:
         self,
         packet: ParsedPacket,
         pre_decoded: Optional[DecodedFrame] = None,
+        rx_perf: Optional[float] = None,
     ) -> None:
         if hasattr(self, "_polling_action") and not self._polling_action.isChecked():
             self._unsolicited_detected = True
@@ -189,12 +256,6 @@ class TelemetryPipelineMixin:
         if self._last_packet_perf is not None:
             self._delta_t_ms = (now - self._last_packet_perf) * 1000.0
         self._last_packet_perf = now
-        # Buffer the console line. _flush_ui appends them all in one shot.
-        # Skip the whole console pipeline when the dock is hidden: the
-        # datetime.strftime + hex.upper formatting is ~10 µs per packet
-        # which dominates the per-packet UI cost at 1 kHz. Same UX
-        # contract as the plot — re-opening shows fresh content from
-        # re-open time forward.
         if not packet.ok:
             # Worker is the single source of truth for the CRC error count
             # and pushes it via metrics_updated → _on_metrics_updated.
@@ -222,14 +283,8 @@ class TelemetryPipelineMixin:
         decoded = pre_decoded if pre_decoded is not None else decode_frame(
             self._config, packet.frame_id, packet.payload, self._signal_state
         )
-        self._apply_decoded(decoded)
-        if self._decoded_logger:
-            if self._log_started_perf is not None:
-                elapsed_ms = int((time.perf_counter() - self._log_started_perf) * 1000)
-            else:
-                t0 = self._log_started or self._session_started or datetime.now()
-                elapsed_ms = int((datetime.now() - t0).total_seconds() * 1000)
-            self._decoded_logger.log_frame(decoded, elapsed_ms)
+        # The decoded log was already written on arrival (_log_batch)
+        self._apply_decoded(decoded, rx_perf=rx_perf)
 
     def _add_signal_row(
         self,
@@ -265,7 +320,7 @@ class TelemetryPipelineMixin:
             is_calculated=is_calculated,
         )
 
-    def _apply_decoded(self, decoded: DecodedFrame) -> None:
+    def _apply_decoded(self, decoded: DecodedFrame, rx_perf: Optional[float] = None) -> None:
         if decoded.error is not None:
             self._console.appendPlainText(f"[decode] {decoded.error}")
             return
@@ -352,11 +407,10 @@ class TelemetryPipelineMixin:
                         self._console.appendPlainText(f"[FAULT ALARM] {sig.signal_name}: {sig.display_value}")
                         self._log_activity(f"[ALARM] Fault detected on {sig.signal_name}: {sig.display_value}")
 
-        plot_visible = getattr(self, "_plot_dock", None) is None or self._plot_dock.isVisible()
-        if plot_visible:
-            if self._session_started is None:
-                self._session_started = datetime.now()
-            elapsed = (datetime.now() - self._session_started).total_seconds()
+        # History is recorded even while the Live Plot dock is hidden, so the
+        # graph has no holes for the time it was tabbed away or collapsed.
+        # Only the redraw is skipped when hidden.
+        elapsed = self._session_elapsed_s(rx_perf)
         for signal in [*decoded.signals, *decoded.calculations]:
             key = ("calc", signal.signal_name) if signal.is_calculated else (signal.frame_id, signal.signal_name)
             # If the key isn't in the model yet, add it (calculated / late-arriving signals)
@@ -402,7 +456,7 @@ class TelemetryPipelineMixin:
             if hasattr(self, "_staged_signals_for_ui"):
                 self._staged_signals_for_ui[key] = signal
 
-            if plot_visible and signal.scaled_value is not None and signal.status == "ok":
+            if signal.scaled_value is not None and signal.status == "ok":
                 self._plot_history[key].append(elapsed, signal.scaled_value)
 
     def _status_text(self, signal: DecodedSignal) -> str:

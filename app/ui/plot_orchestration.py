@@ -60,7 +60,7 @@ class PlotOrchestrationMixin:
         window = getattr(self, "_plot_window_seconds", None)
         if not window:
             return None
-        current_t = (datetime.now() - self._session_started).total_seconds()
+        current_t = self._session_elapsed_s()
         return max(0.0, current_t - float(window))
 
     def _plot_time_axis_label(self) -> str:
@@ -649,11 +649,7 @@ class PlotOrchestrationMixin:
         )
         palette = self._current_plot_palette()
         for local_idx, key in enumerate(panel.assigned_keys):
-            custom_color = self._settings.value(f"plot/colors/{key[1]}")
-            if custom_color:
-                color = str(custom_color)
-            else:
-                color = palette[(color_offset + local_idx) % len(palette)]
+            color = self._custom_plot_color(key[1]) or palette[(color_offset + local_idx) % len(palette)]
             row = self._build_panel_signal_menu_row(panel_idx, key, color, menu)
             action = QWidgetAction(menu)
             action.setDefaultWidget(row)
@@ -674,6 +670,7 @@ class PlotOrchestrationMixin:
             if chosen_color.isValid():
                 chosen_hex = chosen_color.name()
                 self._settings.setValue(f"plot/colors/{key[1]}", chosen_hex)
+                self.__dict__.get("_plot_color_cache", {}).pop(key[1], None)
                 menu.close()
                 self._rebuild_panel_strips()
                 self._redraw_plot()
@@ -1087,6 +1084,16 @@ class PlotOrchestrationMixin:
         self._curve_icon_cache[cache_key] = icon
         return icon
 
+    def _custom_plot_color(self, signal_name: str) -> Optional[str]:
+        """User-chosen curve colour, cached: the redraw asks for every curve 30
+        times a second, and a QSettings read each time showed up in profiles.
+        select_color() drops the entry it changes."""
+        cache = self.__dict__.setdefault("_plot_color_cache", {})
+        if signal_name not in cache:
+            value = self._settings.value(f"plot/colors/{signal_name}")
+            cache[signal_name] = str(value) if value else None
+        return cache[signal_name]
+
     def _refresh_plot_indicators(self) -> None:
         # Intentional no-op: plot-color feedback is provided by the plot
         # legend, and the table-cell dot indicator was never wired up
@@ -1103,7 +1110,7 @@ class PlotOrchestrationMixin:
         if hasattr(self, "_plot_dock") and self._plot_dock is not None and not self._plot_dock.isVisible():
             return
 
-        current_t = (datetime.now() - self._session_started).total_seconds()
+        current_t = self._session_elapsed_s()
         palette = self._current_plot_palette()
         # Sliding-window lower bound (None = show entire session).
         # Only honoured in Live mode — Explore means the user has panned
@@ -1138,7 +1145,11 @@ class PlotOrchestrationMixin:
             panel.left_unit = left_unit
             panel.right_unit = right_unit
 
-            pi.setLabel('left', text=left_unit if left_unit else "")
+            # setLabel re-lays-out the axis; only call it when the unit changes
+            left_label = left_unit if left_unit else ""
+            if getattr(panel, "_bh_left_label", None) != left_label:
+                pi.setLabel('left', text=left_label)
+                panel._bh_left_label = left_label  # type: ignore[attr-defined]
 
             if right_unit is not None:
                 if panel.right_vb is None:
@@ -1168,7 +1179,9 @@ class PlotOrchestrationMixin:
                     pi.getViewBox().sigResized.connect(updateViews)
                     updateViews()
 
-                panel.right_axis.setLabel(text=right_unit)
+                if getattr(panel, "_bh_right_label", None) != right_unit:
+                    panel.right_axis.setLabel(text=right_unit)
+                    panel._bh_right_label = right_unit  # type: ignore[attr-defined]
                 panel.right_axis.show()
 
                 # Sync geometry of the overlayed right ViewBox with the main ViewBox on every redraw
@@ -1215,11 +1228,7 @@ class PlotOrchestrationMixin:
                     if first_x is not None and (oldest_x is None or first_x < oldest_x):
                         oldest_x = first_x
 
-                custom_color = self._settings.value(f"plot/colors/{key[1]}")
-                if custom_color:
-                    color = str(custom_color)
-                else:
-                    color = palette[(color_offset + local_idx) % len(palette)]
+                color = self._custom_plot_color(key[1]) or palette[(color_offset + local_idx) % len(palette)]
                 fid_str = f"0x{key[0]:04X}" if isinstance(key[0], int) else str(key[0])
                 label = f"{fid_str} {key[1]}"
 
@@ -1285,10 +1294,13 @@ class PlotOrchestrationMixin:
 
                 # Skip setData when this curve hasn't changed since the last
                 # redraw. Signature mixes length, right-most timestamp, and
-                # the window lower bound — so widening the window after a
-                # long quiet period still re-renders the older samples.
+                # the window *setting* (not window_t_min: that moves with the
+                # clock, so every curve was re-sent 30 times a second and the
+                # skip never fired). Samples that scroll off the left are
+                # hidden by the X range and clipToView; they are trimmed from
+                # the curve data on its next real update.
                 last_x = buf.last_x() if (buf is not None and xs_len) else None
-                signature = (xs_len, last_x, window_t_min)
+                signature = (xs_len, last_x, window_t_min is None, self._plot_window_seconds)
                 if getattr(curve, "_bh_last_sig", None) == signature:
                     continue
 

@@ -710,14 +710,22 @@ class PollingWorker(QThread):
         this reset, ~half the responses would arrive after their
         in-flight deadline expired and the schedule would auto-disable
         even though the device is actually answering.
+
+        Each item carries ``rx_perf`` (``time.perf_counter()`` when the bytes
+        were read; callers parse straight after reading). The GUI uses it for
+        plot X values, log ``elapsed_ms`` and console timestamps, so they show
+        when data arrived rather than when the 60 Hz UI flush got to it.
+        RX bytes reach the console through these batches too; there is no
+        per-packet ``wire_recorded`` emit for RX, which flooded the GUI event
+        queue at high frame rates.
         """
         cfg = self._decode_config
+        rx_perf = time.perf_counter()
         for p in packets:
-            self.wire_recorded.emit("RX", p.raw, datetime.now())
             if not p.ok:
                 self._crc_errors += 1
                 self._consecutive_frame_errors += 1
-                self._batch.append((p, None))
+                self._batch.append((p, None, rx_perf))
                 if p.error:
                     self._emit_frame_error_throttled(p.error)
                 continue
@@ -736,7 +744,7 @@ class PollingWorker(QThread):
                     # via the existing path).
                     _LOG.exception("decode_frame raised on frame_id=0x%04X", p.frame_id)
                     decoded = None
-            self._batch.append((p, decoded))
+            self._batch.append((p, decoded, rx_perf))
         if self._should_flush():
             self._flush_batch()
 

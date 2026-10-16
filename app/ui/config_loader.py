@@ -184,7 +184,7 @@ class ConfigLoaderMixin:
         self._config_path = path
         self._parser = create_parser(self._config.protocol)
         self._tx_logger_parser = create_parser(self._config.protocol)
-        self._session_started = datetime.now()
+        self._reset_session_clock()
         self._apply_plot_time_mode(self._plot_time_mode, persist=False)
         self._plot_history.clear()
         if hasattr(self, "_tx_frame_payload_cache"):

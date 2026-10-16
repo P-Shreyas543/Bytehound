@@ -179,7 +179,6 @@ from .dialogs import ConnectionDialog, AboutDialog
 from ..decoder.template_io import export_excel_template
 from ..decoder.types import FrameConfig
 from ..serial_logging.decoded_logger import DecodedLogger
-from ..serial_logging.raw_logger import RawLogger
 from ..protocol.packet_parser import ParserProtocol
 from ..serial_io.serial_worker import PollingWorker, SerialSettings
 
@@ -284,7 +283,6 @@ class MainWindow(
         self._rx_bytes = 0
         self._tx_bytes = 0
         self._logging = False
-        self._raw_logger: Optional[RawLogger] = None
         self._decoded_logger: Optional[DecodedLogger] = None
         self._settings = QSettings(APP_ORG, APP_NAME)
         _migrate_settings(self._settings)
@@ -323,7 +321,7 @@ class MainWindow(
         self._wire_recorded_connected = False
         self._plot_keys: List[Tuple[int, str]] = []  # union of all panel keys
         self._curve_icon_cache: Dict[Tuple[int, str, str], QIcon] = {}
-        self._session_started = datetime.now()
+        self._reset_session_clock()
         self._plot_time_mode = str(self._settings.value("plot/time_mode", "elapsed"))
         if self._plot_time_mode not in ("elapsed", "clock"):
             self._plot_time_mode = "elapsed"
@@ -1145,9 +1143,13 @@ class MainWindow(
             self._serial.device_timeout.connect(self._on_device_timeout)
             self._serial.open()
             self._serial.set_polling_global(self._polling_action.isChecked())
-            self._session_started = datetime.now()
-            for buf in self._plot_history.values():
-                buf.clear()
+            if not is_retry:
+                # A new connection starts a new session. An auto-reconnect
+                # keeps the clock and plot history: the outage shows as a
+                # gap instead of wiping the graph and restarting at 0.
+                self._reset_session_clock()
+                for buf in self._plot_history.values():
+                    buf.clear()
             self._ui_timer.start()
 
             self._set_connection_ui(True)
@@ -1306,35 +1308,39 @@ class MainWindow(
     def _on_tx_recorded(self, packet: bytes) -> None:
         self._tx_bytes += len(packet)
         self._refresh_counts_label()
+        if self._decoded_logger and self._config:
+            self._log_tx_decoded(packet)
+
+    def _log_tx_decoded(self, packet: bytes) -> None:
+        """Add a sent command's values to the decoded log.
+
+        Runs from tx_recorded, which is always connected; it used to hang off the
+        Raw Console's wire signal, so TX rows were only logged while that panel
+        was on screen. Payload-less poll requests are skipped: they carry no
+        values, and in polling mode they share the response's frame ID, so
+        logging them split every cycle row in two.
+        """
+        from ..decoder.frame_decoder import decode_frame
+        try:
+            parser = self._tx_logger_parser
+            if parser is None:
+                from ..protocol.packet_parser import create_parser
+                parser = create_parser(self._config.protocol)
+            parser.feed(packet)
+            if not hasattr(self, "_tx_signal_state"):
+                self._tx_signal_state = {}
+            for p in parser.extract_all():
+                if not (p.ok and p.frame_id is not None and p.payload):
+                    continue
+                decoded = decode_frame(self._config, p.frame_id, p.payload, self._tx_signal_state)
+                self._decoded_logger.log_frame(decoded, self._log_elapsed_ms())
+        except Exception as e:
+            import logging
+            logging.getLogger("bytehound.ui").exception("Failed to parse/decode TX packet: %s", e)
 
     def _on_wire_recorded(self, direction: str, packet: bytes, timestamp: datetime) -> None:
+        """Raw Console display only (connected while the console is visible)."""
         direction = direction.upper()
-        if self._raw_logger:
-            self._raw_logger.log(direction, packet, timestamp=timestamp)
-        if direction == "TX" and self._decoded_logger and self._config:
-            import time
-            from ..decoder.frame_decoder import decode_frame
-            try:
-                parser = self._tx_logger_parser
-                if parser is None:
-                    from ..protocol.packet_parser import create_parser
-                    parser = create_parser(self._config.protocol)
-                parser.feed(packet)
-                parsed = parser.extract_all()
-                if not hasattr(self, "_tx_signal_state"):
-                    self._tx_signal_state = {}
-                for p in parsed:
-                    if p.ok and p.frame_id is not None:
-                        decoded = decode_frame(self._config, p.frame_id, p.payload, self._tx_signal_state)
-                        if self._log_started_perf is not None:
-                            elapsed_ms = int((time.perf_counter() - self._log_started_perf) * 1000)
-                        else:
-                            t0 = self._log_started or self._session_started or datetime.now()
-                            elapsed_ms = int((datetime.now() - t0).total_seconds() * 1000)
-                        self._decoded_logger.log_frame(decoded, elapsed_ms)
-            except Exception as e:
-                import logging
-                logging.getLogger("bytehound.ui").exception("Failed to parse/decode TX packet: %s", e)
         if hasattr(self, "_console_dock") and self._console_dock is not None and self._console_dock.isVisible():
             formatted_line = (
                 f"{timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, "
@@ -1370,22 +1376,14 @@ class MainWindow(
         return interval
 
 
-    def _build_log_metadata(
-        self,
-        choice: str,
-        raw_path: Optional[Path],
-        decoded_path: Optional[Path],
-    ) -> Dict[str, str]:
+    def _build_log_metadata(self, decoded_path: Path) -> Dict[str, str]:
         metadata: Dict[str, str] = {
             "app": APP_NAME,
             "app_version": _read_version(),
             "session_started": (self._log_started or self._session_started).strftime("%Y-%m-%d %H:%M:%S"),
-            "logging_mode": choice,
+            "logging_mode": "Decoded",
+            "decoded_file": decoded_path.name,
         }
-        if raw_path is not None:
-            metadata["raw_file"] = raw_path.name
-        if decoded_path is not None:
-            metadata["decoded_file"] = decoded_path.name
         if self._config_path is not None:
             metadata["config_source"] = str(self._config_path)
         if self._serial is not None:
@@ -1692,12 +1690,7 @@ class MainWindow(
         # may still be draining a slow disk — we own the only handle that
         # lets us wait for it before the interpreter kills the daemon
         # thread mid-flush.
-        loggers = [
-            (name, lg) for name, lg in (
-                ("raw log", self._raw_logger),
-                ("decoded log", self._decoded_logger),
-            ) if lg is not None
-        ]
+        loggers = [("decoded log", self._decoded_logger)] if self._decoded_logger is not None else []
         # _disconnect() guarantees: stop timer → flush logs → stop worker → null.
         self._disconnect(reason="Application closed")
         # Block on any logger writer threads that didn't drain within their

@@ -1245,7 +1245,7 @@
         <ul>
             <li><strong>Pause Plot</strong>: Automatically freezes the plot (switches to Explore mode) so you don't lose
                 the event off the left edge of the screen.</li>
-            <li><strong>Start Logging</strong>: Automatically begins recording a Raw + Decoded telemetry session,
+            <li><strong>Start Logging</strong>: Automatically begins recording a decoded telemetry session,
                 capturing the event as it happens without manual intervention.</li>
         </ul>
         <p>The trigger disarms automatically after firing once. A <span
@@ -1579,15 +1579,8 @@
                 intervals defined in the <code>polling_schedule</code> sheet.
             </li>
             <li><strong>Start / Stop Logging (<code>Ctrl+L</code>)</strong>
-                <br><em>What it does:</em> Opens the session recording dialog and begins logging data.
-                <br><em>Modes:</em>
-                <ul>
-                    <li><em>Raw only:</em> Records raw incoming and outgoing hexadecimal bytes with timestamps directly
-                        to a <code>*_raw.csv</code> file. Safest for deep diagnostics.</li>
-                    <li><em>Decoded only:</em> Buffers decoded variables into memory and formats them as a wide Excel
-                        spreadsheet (<code>*_decoded.xlsx</code>) with metadata, written on Stop.</li>
-                    <li><em>Raw + Decoded:</em> Records both files simultaneously (highly recommended).</li>
-                </ul>
+                <br><em>What it does:</em> Asks for a file name and begins recording decoded variables as a wide
+                Excel spreadsheet (<code>.xlsx</code>) with metadata, written on Stop.
                 <div class="note">
                     <strong>Note:</strong> Logging works passively. You do <strong>not</strong> need to enable Auto-Fetch to log data if your device already streams it continuously. Enabling Auto-Fetch on a continuous streamer will cause collisions.
                 </div>
@@ -1855,17 +1848,12 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         <p>To save your telemetry session for later review:</p>
         <ol>
             <li>Ensure you are connected and receiving data.</li>
-            <li>Click <strong>Device → Start Logging</strong> (or use the toolbar). Choose <strong>Raw +
-                    Decoded</strong>, <strong>Raw only</strong>, or <strong>Decoded only</strong>, then pick the base
+            <li>Click <strong>Device → Start Logging</strong> (or use the toolbar). Pick the
                 filename. The button turns <span style="color:#e91e8c"><strong>pink</strong></span> while logging is
                 active.</li>
-            <li>The default folder is <code>~/Documents/Bytehound/</code>. Depending on the selected mode, the app
-                writes:
+            <li>The default folder is <code>~/Documents/Bytehound/</code>. The app writes:
                 <ul>
-                    <li><code>*_raw.csv</code> — timestamped RX/TX hex frames with <code>timestamp</code>,
-                        <code>direction</code>, <code>hex</code>, and <code>delta_t_ms</code> columns. The byte-level
-                        capture of the session.</li>
-                    <li><code>*_decoded.xlsx</code> — Excel workbook with two sheets: <code>Metadata</code> (app,
+                    <li><code>*.xlsx</code> — Excel workbook with two sheets: <code>Metadata</code> (app,
                         version, port, baud, config path, session start, logging mode, etc.) and <code>Data</code> (one
                         wide row per complete poll cycle, with a per-frame block of <code>elapsed_ms</code> +
                         <code>frame_id</code> + signals). Group calculations configured in the <code>CalcGroups</code> sheet are written without a frame ID prefix (e.g., <code>Cell Voltages min (V)</code> instead of <code>0x0100.Cells avg (V)</code>) so that they are clean and easy to identify.</li>
@@ -1875,9 +1863,10 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         </ol>
         <img src="images/logging_dialog.png" alt="Start Logging Session Configuration Dialog" class="mockup-img img-medium" />
         <div class="note">
-            The raw CSV is flushed periodically (default 0.5 s, configurable under <strong>Tools → Logging
-                Settings</strong>) and once more on close. The decoded <code>.xlsx</code> is buffered in memory and
-            saved on <strong>Stop Logging</strong> — if the app crashes before Stop, the decoded workbook is lost. A
+            Rows are streamed to a temporary file beside the log, flushed periodically (default 0.5 s, configurable
+            under <strong>Tools → Logging Settings</strong>), and compiled into the <code>.xlsx</code> on
+            <strong>Stop Logging</strong>. If the app crashes before Stop, the workbook is rebuilt from the temporary
+            file the next time Bytehound starts. A
             session config snapshot is saved beside the log so the same decoder can be re-applied later.
         </div>
 
