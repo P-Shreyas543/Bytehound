@@ -201,8 +201,19 @@ Module boundary rules:
 ### Threading model
 
 - **Main thread:** Qt event loop, all widgets.
+- **Capture process (default):** `CaptureClient`
+  ([capture_process.py](app/serial_io/capture_process.py)) runs a
+  `PollingWorker` in a child process, so reading, parsing and decoding never
+  compete with the GUI for the GIL. It has the same signals and methods as
+  `PollingWorker`; batches and commands cross a pipe. One child is spawned
+  shortly after launch and reused across connections. A dead child surfaces
+  as `connection_lost`. Turn it off with *Capture in a separate process* in
+  the Connect dialog (`capture/mode = thread`); the app also falls back to
+  the thread automatically if the child can't start.
+  `Bytehound --selftest-capture` checks it end to end (frozen builds too).
 - **Worker thread (`PollingWorker(QThread)`):** owns the `serial.Serial`
-  handle, runs the polling/TX/RX loop, emits signals back to the UI.
+  handle, runs the polling/TX/RX loop, emits signals back to the UI. Runs
+  inside the capture process, or in the GUI process in thread mode.
 - **UpdateChecker / UpdateDownloader:** transient `QThread`s for the updater.
 - **AnalysisLoader (in analysis_suite):** `QThread` for Excel ingestion so the
   live test is never blocked.
@@ -213,15 +224,15 @@ signals/slots.
 ### RX path (incoming bytes)
 
 ```
-serial.Serial.read(in_waiting)
-    └─> ParserProtocol.feed(bytes)              # FramedParser or ModbusRtuParser
+serial.Serial.read(in_waiting)                       # capture process / worker thread
+    ├─> RawCapture.write(RX, t_perf, bytes)          # while logging: lossless .bhraw
+    └─> ParserProtocol.feed(bytes)                   # FramedParser or ModbusRtuParser
          └─> ParsedPacket  (raw, frame_id, payload, ok, error)
-              └─> PollingWorker.packet_received signal
-                   └─> MainWindow._on_packet_received
-                        ├─> RawLogger.log("RX", raw, delta_t_ms)
-                        ├─> decode_frame(config, frame_id, payload) -> DecodedFrame
-                        ├─> DecodedLogger.log_frame(frame_no, decoded)
-                        └─> update table / bitfield / enum widgets / plot history
+              └─> decode_frame(config, ...) -> DecodedFrame
+                   └─> packets_received([(packet, decoded, rx_perf), ...])   # batched
+                        └─> MainWindow._on_packets_received                  # GUI thread
+                             ├─> DecodedLogger.log_frame(decoded, elapsed_ms)
+                             └─> 60 Hz _flush_ui: table / bitfield / enum widgets / plot history
 ```
 
 ### TX path (outgoing bytes)
@@ -658,6 +669,21 @@ Header: `timestamp,direction,hex,delta_t_ms`
 - `hex` is space-separated, uppercase.
 - `delta_t_ms` is the request-to-response latency for polled responses (else 0.0).
 
+### `*.bhraw` — `RawCapture` (lossless wire capture)
+
+Written next to the decoded log whenever logging is on, by the capture
+worker itself ([raw_capture.py](app/serial_logging/raw_capture.py)). Every
+RX read and TX write is stored exactly as it crossed the wire with its
+`perf_counter` stamp, so it stays complete even if the GUI falls behind and
+the decoded log drops frames. Layout: 8-byte magic, `uint32` length + JSON
+metadata (`log_started_perf`, `polling_mode`, `config_source`,
+`log_metadata`), then records `<B direction><d t_perf><I length><bytes>`.
+A crash-truncated tail is ignored by the reader.
+
+**Tools → Rebuild Decoded Log** (`rebuild_decoded_log`) re-runs the same
+parser, decoder and `DecodedLogger` over a capture and produces the same
+rows the live logger would have written.
+
 ### `*_decoded.xlsx` — `DecodedLogger`
 
 Excel workbook with two sheets:
@@ -719,11 +745,11 @@ For rugged laboratory or field use where physical USB cables can be bumped, the 
 - **Backoff Interval**: Retry events occur on a timer sequence starting at 1.0 s, doubling every failed attempt up to a maximum interval of 16.0 s (e.g., 1s, 2s, 4s, 8s, 16s).
 - **Manual Control**: Toggling the connection button or disabling the "Auto-reconnect on disconnect" option in [ConnectionDialog](file:///c:/Users/Shreyas/Documents/Python/Bytehound/app/ui/dialogs.py) clears the timer and aborts the backoff schedule. Auto-reconnect re-establishes the port only; logging and active fetching are left stopped to prevent incomplete file writes or unexpected command streams.
 
-### 13.2 Live Plot Memory Cap (`TimeSeriesBuffer`)
+### 13.2 Live Plot Memory Budget (`TimeSeriesBuffer`)
 
 To prevent memory bloat and UI lag on multi-hour high-speed telemetry runs, the Live Plot utilizes `TimeSeriesBuffer` (defined in [plot_panel.py](file:///c:/Users/Shreyas/Documents/Python/Bytehound/app/ui/plot_panel.py)) instead of standard unbounded buffers:
-- **Chunked Layout**: Samples are stored in contiguous memory blocks of size 16,384 (`CHUNK_SIZE`). This drastically reduces the overhead of Python object allocations.
-- **Soft Cap Limit**: A user-configurable `max_samples` (configured under *Plot Settings*) triggers O(1) oldest chunk-dropping when exceeded.
+- **Contiguous Layout**: Each signal keeps one float64 `x`/`y` array pair that grows on demand (x1.5). Nothing is allocated until a signal has data, and reads are zero-copy views; data a view covers is never overwritten (growth and trimming move to a new array).
+- **Shared Memory Budget**: *Plot Settings → Plot history memory* (`plot/history_budget_mb`, default 512 MB) is split across all signals. Each buffer is capped at `budget / (signals × 18 bytes)` samples; adding a signal rebalances every cap. Past its cap a buffer drops its oldest samples in batches of `cap/8`.
 - **Render Optimization**: Instead of fetching the entire history, the plot panel requests only visible data using `arrays_since(t_min)`. Along with setting `setClipToView(True)` and `setDownsampling(auto=True, method='peak')`, this guarantees that plotting paint cost remains proportional to the visible width, not total session length.
 
 ### 13.3 Queue Saturation Warning Badge
@@ -977,7 +1003,7 @@ Frame | Group | Variable | Start B. | Data Type | Raw | Value | Unit | Status | 
 
 The `Variable` cell carries a small checkbox; checking it adds the signal to
 the Live Plot. Plot history is a `TimeSeriesBuffer` of `(t_seconds, value)`
-per signal (configured and capped in *Plot Settings*).
+per signal (memory budget shared by all signals, set in *Plot Settings*).
 
 ### Dockable panels (all `QDockWidget`)
 
@@ -1227,7 +1253,8 @@ update check.
 | `plot/layout`          | str     | Grid layout name, e.g. `"2×1"`                |
 | `plot/panel/{i}/keys`  | list    | `[[frame_id, signal_name], …]` per panel      |
 | `conn/auto_reconnect`  | bool    | Auto-reconnect enabled/disabled state         |
-| `plot/history_max_samples` | int | Soft limit capacity cap for Live Plot history |
+| `plot/history_budget_mb` | int  | Live Plot history memory, shared by all signals (default 512) |
+| `capture/mode`         | str     | `"process"` (default) or `"thread"`           |
 | `plot/window_seconds`  | int     | Live Plot default time window in seconds      |
 | `analysis/math_channels` | dict  | Custom math channel formulas by name          |
 | `import/sheet_names`   | str     | Import sheet list overrides (comma-separated) |

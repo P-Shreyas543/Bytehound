@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
     QGridLayout, QScrollArea, QGroupBox, QLineEdit, QProgressBar, QComboBox
@@ -132,7 +131,7 @@ class SignalCardWidget(QFrame):
                 self.val_label.setProperty("value_state", "inactive")
                 self.status_pill.setText("OFF")
                 self.status_pill.setProperty("status_type", "inactive")
-            
+
             self.val_label.style().unpolish(self.val_label)
             self.val_label.style().polish(self.val_label)
             self.status_pill.style().unpolish(self.status_pill)
@@ -160,7 +159,7 @@ class SignalCardWidget(QFrame):
             self.status_pill.setText("OK")
             self.status_pill.setProperty("status_type", "ok")
             self.val_label.setProperty("value_state", "ok")
-            
+
         self.val_label.style().unpolish(self.val_label)
         self.val_label.style().polish(self.val_label)
         self.status_pill.style().unpolish(self.status_pill)
@@ -313,7 +312,7 @@ class TelemetryCardsView(QWidget):
             grp_box.setVisible(visible_count > 0)
             if visible_count > 0:
                 any_visible = True
-                
+
         self.empty_label.setVisible(not any_visible and bool(self._cards))
         self.scroll_area.setVisible(any_visible or not bool(self._cards))
 

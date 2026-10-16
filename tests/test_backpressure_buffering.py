@@ -3,7 +3,6 @@
 from collections import deque
 from unittest.mock import MagicMock
 
-import pytest
 
 from app.protocol.packet_builder import build_packet
 from app.protocol.packet_parser import FramedParser, WaveshareCanParser

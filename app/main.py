@@ -21,18 +21,15 @@ from datetime import datetime
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
-import qdarktheme
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-
-from PySide6.QtCore import QSettings
-from PySide6.QtGui import QFont, QIcon
-from PySide6.QtWidgets import QApplication
-
-from app.ui.main_window import MainWindow, APP_ORG, APP_NAME, APP_DISPLAY_NAME, _find_logo
-from app.ui.widgets import TitleBarThemeFilter
+# GUI modules are imported inside _run_app(), not here. Capture processes are
+# started with multiprocessing "spawn", which re-imports this script in every
+# child (and a frozen build runs it before freeze_support()); module-level GUI
+# imports would load all of Qt Widgets, pyqtgraph and the main window into
+# each capture process for nothing.
 
 _LOG_MAX_BYTES = 5 * 1024 * 1024
 _LOG_BACKUP_COUNT = 3
@@ -41,6 +38,7 @@ _CRASH_DIALOG_OPEN = False
 
 
 def _fallback_log_dir() -> Path:
+    from app.ui.main_window import APP_NAME
     if sys.platform == "win32":
         base = Path(os.getenv("APPDATA") or Path.home())
         return base / APP_NAME / "logs"
@@ -134,6 +132,7 @@ def _show_crash_dialog(exc_type, exc, tb) -> None:
     import traceback
     try:
         from PySide6.QtWidgets import QApplication, QMessageBox
+        from app.ui.main_window import APP_NAME
     except Exception:
         return
     app = QApplication.instance()
@@ -176,7 +175,13 @@ def _run_app() -> int:
     os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
     os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.*=false")
 
-    from PySide6.QtCore import Qt, qInstallMessageHandler, QtMsgType
+    import qdarktheme
+    from PySide6.QtCore import QSettings, Qt, qInstallMessageHandler, QtMsgType
+    from PySide6.QtGui import QFont, QIcon
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.main_window import MainWindow, APP_ORG, APP_NAME, APP_DISPLAY_NAME, _find_logo
+    from app.ui.widgets import TitleBarThemeFilter
 
     def _qt_message_handler(msg_type, context, message):
         # Filter benign Windows GDI display enumeration warnings
@@ -238,13 +243,18 @@ def main(argv: list[str] | None = None) -> int:
         metavar="CONFIG_FILE",
         help="Validate a config file without opening the GUI and exit. Returns 0 if valid, 1 otherwise.",
     )
+    parser.add_argument(
+        "--selftest-capture",
+        action="store_true",
+        help="Stream test frames through a capture process over loopback and exit. Returns 0 on success.",
+    )
     args, remaining = parser.parse_known_args(argv)
     # Strip our own flags so Qt sees a clean argv.
     sys.argv = [sys.argv[0], *remaining]
 
     configure_logging(
         level=logging.INFO,
-        console=bool(args.validate or args.profile)
+        console=bool(args.validate or args.profile or args.selftest_capture)
     )
 
     if args.validate:
@@ -257,6 +267,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as e:
             print(f"ERROR: Config validation failed for {args.validate}\n{e}", file=sys.stderr)
             return 1
+
+    if args.selftest_capture:
+        from app.serial_io.capture_process import selftest
+        return selftest()
 
     if not args.profile:
         return _run_app()

@@ -36,6 +36,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Callable, Mapping, Optional, TextIO
 
+from ._atomic import save_workbook_atomic
+
 _FLUSH_INTERVAL = 0.5  # seconds between explicit OS-level flushes
 _LOG = logging.getLogger("bytehound.serial_logging.raw")
 
@@ -353,7 +355,7 @@ class RawLogger:
                     current_sheet_rows += 1
 
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            wb.save(self.path)
+            save_workbook_atomic(wb, self.path)
             excel_success = True
         except Exception as exc:
             self._record_error("compile", exc)
@@ -444,7 +446,7 @@ class RawLogger:
                     current_sheet_rows += 1
 
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            wb.save(target_path)
+            save_workbook_atomic(wb, target_path)
             excel_success = True
         except Exception as exc:
             _LOG.error("Failed to recover raw log as Excel from %s: %s", data_path, exc, exc_info=True)

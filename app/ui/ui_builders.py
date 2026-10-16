@@ -59,8 +59,6 @@ from .plot_panel import GRID_LAYOUTS
 from .telemetry_model import TelemetryTableModel, COLUMNS as _MODEL_COLUMNS
 from .welcome_dashboard import WelcomeDashboardWidget
 from .telemetry_cards import TelemetryCardsView
-from .config_wizard import ProtocolWizardDialog
-from .diagnostics_assistant import SystemDiagnosticDialog, ToastNotification
 from .widgets import (
     _BTN_GREEN,
     _BTN_YELLOW,
@@ -207,6 +205,10 @@ class UIBuildersMixin:
         self._logging_settings_action = QAction(_icon("mdi6.tune-vertical", _ic), "Logging Settings...", self)
         self._logging_settings_action.triggered.connect(self._on_logging_settings)
 
+        self._rebuild_log_action = QAction(_icon("mdi6.file-restore", _ic), "Rebuild Decoded Log...", self)
+        self._rebuild_log_action.setToolTip("Regenerate a decoded log from a raw capture (.bhraw)")
+        self._rebuild_log_action.triggered.connect(self._on_rebuild_decoded_log)
+
         self._plot_settings_action = QAction(_icon("mdi6.chart-line", _ic), "Plot Settings...", self)
         self._plot_settings_action.triggered.connect(self._on_plot_settings)
 
@@ -253,6 +255,7 @@ class UIBuildersMixin:
         tools_menu.addAction(self._system_diagnostic_action)
         tools_menu.addAction(self._analysis_action)
         tools_menu.addAction(self._logging_settings_action)
+        tools_menu.addAction(self._rebuild_log_action)
         tools_menu.addAction(self._plot_settings_action)
         _add_sep()
 

@@ -4,8 +4,7 @@ from __future__ import annotations
 import struct
 from typing import Dict, List
 from PySide6.QtWidgets import QWidget, QHBoxLayout, QSpinBox, QDoubleSpinBox, QTableWidgetItem, QPushButton, QSizePolicy
-from PySide6.QtGui import QDoubleValidator, QIntValidator
-from PySide6.QtCore import QLocale, Qt
+from PySide6.QtCore import Qt
 
 
 class ParameterEditorMixin:

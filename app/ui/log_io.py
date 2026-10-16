@@ -184,7 +184,7 @@ class LogLoaderThread(QThread):
         sheet_candidates, col_candidates, scale_mapping = self._get_schema_settings()
         try:
             xls = pd.ExcelFile(self._path)
-            
+
             # Find all matching data sheets (e.g., Data, Data_2, Data_3 or Record, Record_2...)
             matching_sheets = []
             for cand in sheet_candidates:
@@ -192,7 +192,7 @@ class LogLoaderThread(QThread):
                 if matched:
                     matching_sheets = matched
                     break
-            
+
             if not matching_sheets:
                 matched_data = [s for s in xls.sheet_names if s == "Data" or s.startswith("Data_")]
                 if matched_data:

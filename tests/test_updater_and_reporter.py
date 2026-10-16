@@ -1,15 +1,11 @@
 """Unit tests for the auto-updater and issue reporter modules."""
 
-import base64
 import hashlib
 import json
-import os
-import tempfile
 import urllib.error
 from unittest.mock import MagicMock, patch
 
 import pytest
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from app.ui.dialogs import ReportIssueDialog

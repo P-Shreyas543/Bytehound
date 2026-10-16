@@ -1153,6 +1153,7 @@ class ThemingMixin:
             (getattr(self, "_info_action", None),             "mdi6.information-outline"),
             (getattr(self, "_analysis_action", None),         "mdi6.chart-multiple"),
             (getattr(self, "_logging_settings_action", None), "mdi6.tune-vertical"),
+            (getattr(self, "_rebuild_log_action", None),      "mdi6.file-restore"),
             (getattr(self, "_plot_settings_action", None),    "mdi6.chart-line"),
             (getattr(self, "_diagnostics_action", None),      "mdi6.clipboard-text-outline"),
             (getattr(self, "_report_issue_action", None),     "mdi6.bug"),

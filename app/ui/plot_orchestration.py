@@ -1373,12 +1373,11 @@ class PlotOrchestrationMixin:
         dlg = PlotSettingsDialog(self._settings, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        cap_val, window_s = dlg.get_values()
+        budget_mb, window_s = dlg.get_values()
 
-        # Apply cap to existing plot buffers
-        self._plot_history_max_samples = cap_val if cap_val > 0 else None
-        for buf in self._plot_history.values():
-            buf.set_max_samples(self._plot_history_max_samples)
+        # Re-split the memory budget across the existing plot buffers.
+        self._plot_history_budget_mb = budget_mb
+        per_signal = self._rebalance_history_caps()
 
         # Apply display window
         self._plot_window_seconds = window_s if window_s > 0 else None
@@ -1387,9 +1386,10 @@ class PlotOrchestrationMixin:
         self._redraw_plot()
 
         self._set_status(
-            f"Plot settings updated: memory cap {cap_val or 'Unlimited'}, display window {window_s or 'All'}"
+            f"Plot settings updated: history memory {budget_mb} MB, display window {window_s or 'All'}"
         )
         self._log_activity(
-            f"[INFO] Plot settings updated: max_samples={cap_val}, window_s={window_s}"
+            f"[INFO] Plot settings updated: budget={budget_mb} MB "
+            f"({per_signal} samples/signal), window_s={window_s}"
         )
 

@@ -630,17 +630,17 @@ def _phase_14_serial_defaults_priority(config, rep: Report) -> None:
 def _phase_15_memory_cap(rep: Report) -> None:
     print("\n=== Phase 15  Memory Cap (software) ===")
     from app.ui.plot_panel import TimeSeriesBuffer
-    buf = TimeSeriesBuffer(max_samples=25000)
+    cap = 25000
+    buf = TimeSeriesBuffer(max_samples=cap)
     for i in range(60000):
         buf.append(float(i), 1.0)
-    # Total samples = 60000. Chunk size = 16384.
-    # Frozen chunks = 3 (49152 samples) + current fill (10848).
-    # Since 3 * 16384 = 49152 > 25000, calling set_max_samples(25000) should drop oldest chunks.
-    # Frozen chunks remaining = 1. Total samples = 16384 + 10848 = 27232.
-    if len(buf) == 27232:
-        rep.ok("TimeSeriesBuffer memory cap limits sample count (got 27232)")
+    # Holds between cap and cap + slack samples, always the newest ones,
+    # within the memory the budget split assumes.
+    hi = cap + TimeSeriesBuffer._slack(cap)
+    if cap <= len(buf) <= hi and buf.last_x() == 59999.0 and buf.nbytes <= TimeSeriesBuffer.bytes_for(cap):
+        rep.ok(f"TimeSeriesBuffer memory cap limits sample count (got {len(buf)}, {buf.nbytes} bytes)")
     else:
-        rep.fail("TimeSeriesBuffer memory cap did not drop expected chunk count", f"got {len(buf)} want 27232")
+        rep.fail("TimeSeriesBuffer memory cap not honoured", f"got {len(buf)} want {cap}..{hi}")
 
 
 def _phase_16_auto_reconnect(rep: Report) -> None:

@@ -25,33 +25,30 @@ Cycle Buffer pattern
 --------------------
 Frames arrive one at a time and each is stashed in an in-memory buffer
 keyed by ``frame_id``. When the **trigger frame** (the last frame in the
-config order) arrives, the buffer is checked: if every configured frame
-has been seen since the previous emit, one wide row is appended to the
-Data sheet. The buffer is **always cleared on trigger arrival** so a
-later cycle never carries stale values forward; incomplete cycles are
-dropped silently.
+config order) arrives, the buffered frames are written as one wide row and
+the buffer is cleared, so a later cycle never carries stale values forward.
+A frame that repeats before the trigger (continuous streams) also closes the
+current row. Incomplete cycles are written with blank cells, not dropped.
 
-Persistence trade-off
----------------------
-openpyxl write-only mode streams rows into the workbook in memory but
-only persists to disk on :meth:`close`. A crash before Stop Logging
-loses the decoded workbook; the raw CSV (streamed) is unaffected.
+Persistence
+-----------
+Rows stream to ``<name>.xlsx.tmp_data`` (CSV) with session metadata in
+``<name>.xlsx.tmp_meta`` (JSON) while logging is on. :meth:`close` compiles
+them into the final ``.xlsx`` and deletes the temp files; if openpyxl fails,
+the CSV is kept next to the target instead. After a crash the temp files stay
+on disk and :meth:`recover_temp_files` builds the workbook on the next launch.
 
 Threading model
 ---------------
-``log_frame()`` runs on the caller's thread (typically the Qt event-loop
-thread inside ``MainWindow._handle_packet``). It mutates the cycle buffer
-synchronously and — when the trigger frame closes a cycle — queues the
-assembled wide-row list to a dedicated daemon writer thread. The writer
-thread is the sole owner of the openpyxl ``Workbook`` after :meth:`open`
-returns: it appends each queued row to the ``Data`` sheet, then saves the
-workbook to disk before the thread exits inside :meth:`close`.
+``log_frame()`` runs on the caller's thread (the Qt event-loop thread, via
+``MainWindow._log_batch``) and only enqueues ``(decoded, elapsed_ms)``. A
+dedicated writer thread owns the cycle buffer and the CSV file: it assembles
+wide rows, writes them, flushes every ``flush_interval`` seconds, and compiles
+the workbook on its way out inside :meth:`close`.
 
-Moving the per-row ``ws.append`` off the caller's thread is a large win in
-practice — measured at ~5x reduction in synchronous log_frame latency at
-1 kHz on the perf harness (see PERF_NOTES.md). At rates the writer cannot
-sustain, the bounded queue (``_WRITER_QUEUE_SIZE``) drops rows rather than
-blocking the GUI; the dropped count is logged on close().
+At rates the writer cannot sustain, the bounded queue (``_WRITER_QUEUE_SIZE``)
+drops frames rather than blocking the GUI; the dropped count is reported on
+close().
 """
 
 from __future__ import annotations
@@ -67,6 +64,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from openpyxl import Workbook
+
+from ._atomic import save_workbook_atomic
 
 from ..decoder.frame_decoder import DecodedFrame
 from ..decoder.types import BitfieldSpec, FrameConfig, SignalSpec
@@ -308,7 +307,11 @@ class DecodedLogger:
                     break
 
         if self._dropped_count:
-            msg = f"DecodedLogger dropped {self._dropped_count} row(s) at {self.path.name} — writer could not keep up."
+            msg = (
+                f"DecodedLogger dropped {self._dropped_count} frame(s) at {self.path.name} — writer could not keep up. "
+                f"Every frame is still in {self.path.with_suffix('.bhraw').name}; "
+                f"use Tools → Rebuild Decoded Log to regenerate a complete log."
+            )
             _LOG.warning(msg)
             if self._on_warning is not None:
                 self._on_warning(msg)
@@ -594,7 +597,7 @@ class DecodedLogger:
                     current_sheet_rows += 1
 
             self.path.parent.mkdir(parents=True, exist_ok=True)
-            wb.save(self.path)
+            save_workbook_atomic(wb, self.path)
             excel_success = True
         except Exception as exc:
             self._record_error("compile", exc)
@@ -686,7 +689,7 @@ class DecodedLogger:
                     current_sheet_rows += 1
 
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            wb.save(target_path)
+            save_workbook_atomic(wb, target_path)
             excel_success = True
         except Exception as exc:
             _LOG.error("Failed to recover decoded log as Excel from %s: %s", data_path, exc, exc_info=True)

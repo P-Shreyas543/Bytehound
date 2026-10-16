@@ -18,8 +18,6 @@ import socket
 import struct
 import threading
 from pathlib import Path
-from typing import List, Tuple
-from unittest.mock import MagicMock, patch
 
 # Ensure project root is in sys.path when executed directly as python test_xxx.py
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -33,7 +31,7 @@ from app.decoder.types import (
 from app.protocol.packet_builder import build_packet
 from app.serial_io.serial_worker import (
     PollingWorker, SerialSettings, TcpSocketWrapper, UdpSocketWrapper,
-    WATCHDOG_TIMEOUT, _BATCH_SIZE, _DISCONNECT_WINERRORS
+    WATCHDOG_TIMEOUT
 )
 
 
@@ -161,9 +159,10 @@ def test_high_throughput_burst_and_pre_decoding():
     assert total_packets == 100
 
     # Verify worker-side pre-decoding
-    first_pkt, first_dec = collected_batches[0][0]
+    first_pkt, first_dec, first_rx_perf = collected_batches[0][0]
     assert first_pkt.ok is True
     assert first_pkt.frame_id == 0x1000
+    assert isinstance(first_rx_perf, float)
     assert first_dec is not None
     assert first_dec.signals[0].signal_name == "Voltage"
     assert first_dec.signals[0].scaled_value == 10.0  # 100 * 0.1
@@ -291,7 +290,6 @@ def test_tcp_socket_loopback_streaming():
     port_num = server_sock.getsockname()[1]
 
     proto = _make_protocol()
-    cfg = _make_frame_config(proto)
 
     client_wrapper = TcpSocketWrapper(host="127.0.0.1", port=port_num, timeout=0.1)
 

@@ -159,8 +159,16 @@ class ConnectionDialog(QDialog):
         self._auto_reconnect_chk = QCheckBox("Auto-reconnect on disconnect", self)
         self._auto_reconnect_chk.setAccessibleName("Auto-reconnect on disconnect")
 
+        self._capture_process_chk = QCheckBox("Capture in a separate process (recommended)", self)
+        self._capture_process_chk.setAccessibleName("Capture in a separate process")
+        self._capture_process_chk.setToolTip(
+            "Read, parse and decode in a background process so heavy traffic\n"
+            "can't make the window stutter. Turn off only to troubleshoot."
+        )
+
         common_form.addRow("Timeout (ms)", self._timeout_combo)
         common_form.addRow("", self._auto_reconnect_chk)
+        common_form.addRow("", self._capture_process_chk)
         layout.addLayout(common_form)
 
         # 4. Action Buttons
@@ -227,7 +235,7 @@ class ConnectionDialog(QDialog):
                 self._port_combo.setCurrentIndex(i)
                 break
         cd = self._config_defaults
-        default_baud = str(cd.baud_rate) if (cd and cd.baud_rate) else str(s.value("conn/baud", "115200"))
+        default_baud = str(s.value("conn/baud", str(cd.baud_rate or 115200)))
         if self._baud_combo.findText(default_baud) == -1:
             self._baud_combo.addItem(default_baud)
         self._baud_combo.setCurrentText(default_baud)
@@ -248,6 +256,7 @@ class ConnectionDialog(QDialog):
         self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", str(cd.timeout_ms))))
         auto_rec_val = s.value("conn/auto_reconnect", "false")
         self._auto_reconnect_chk.setChecked(str(auto_rec_val).lower() == "true")
+        self._capture_process_chk.setChecked(str(s.value("capture/mode", "process")) == "process")
 
     def _on_accept(self) -> None:
         s = self._settings
@@ -272,6 +281,7 @@ class ConnectionDialog(QDialog):
         # Common settings
         s.setValue("conn/timeout_ms",     self._timeout_combo.currentText())
         s.setValue("conn/auto_reconnect", "true" if self._auto_reconnect_chk.isChecked() else "false")
+        s.setValue("capture/mode", "process" if self._capture_process_chk.isChecked() else "thread")
         self.accept()
 
     def get_settings(self) -> "SerialSettings":
@@ -664,6 +674,19 @@ class PlotTriggerDialog(QDialog):
         }
 
 
+PLOT_HISTORY_BUDGET_DEFAULT_MB = 512
+PLOT_HISTORY_BUDGET_MIN_MB = 64
+
+
+def read_plot_history_budget_mb(settings: QSettings) -> int:
+    """Plot-history memory budget from settings, clamped to a sane minimum."""
+    try:
+        mb = int(settings.value("plot/history_budget_mb", PLOT_HISTORY_BUDGET_DEFAULT_MB))
+    except (TypeError, ValueError):
+        mb = PLOT_HISTORY_BUDGET_DEFAULT_MB
+    return max(PLOT_HISTORY_BUDGET_MIN_MB, mb)
+
+
 class PlotSettingsDialog(QDialog):
     """Modal dialog for configuring live plot memory history and defaults."""
 
@@ -680,14 +703,15 @@ class PlotSettingsDialog(QDialog):
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        self._cap_chk = QCheckBox("Cap live plot memory history", self)
-        self._cap_spin = QSpinBox(self)
-        self._cap_spin.setRange(1000, 10_000_000)
-        self._cap_spin.setSingleStep(10000)
-        self._cap_spin.setSuffix(" samples")
-
-        # Link checkbox to spinbox enabled state
-        self._cap_chk.toggled.connect(self._cap_spin.setEnabled)
+        self._budget_spin = QSpinBox(self)
+        self._budget_spin.setRange(PLOT_HISTORY_BUDGET_MIN_MB, 16_384)
+        self._budget_spin.setSingleStep(64)
+        self._budget_spin.setSuffix(" MB")
+        self._budget_spin.setToolTip(
+            "Memory for live-plot history, shared by all signals.\n"
+            "When it is full the oldest plot samples are dropped.\n"
+            "Logs and raw captures are not affected."
+        )
 
         self._window_combo = QComboBox(self)
         self._window_combo.addItems([
@@ -695,8 +719,7 @@ class PlotSettingsDialog(QDialog):
             "10 minutes", "30 minutes", "All session"
         ])
 
-        form.addRow(self._cap_chk)
-        form.addRow("Memory cap limit", self._cap_spin)
+        form.addRow("Plot history memory", self._budget_spin)
         form.addRow("Default display window", self._window_combo)
         layout.addLayout(form)
 
@@ -713,20 +736,7 @@ class PlotSettingsDialog(QDialog):
 
     def _restore_from_settings(self) -> None:
         s = self._settings
-        raw_cap = s.value("plot/history_max_samples", 0)
-        try:
-            cap_val = int(raw_cap)
-        except (TypeError, ValueError):
-            cap_val = 0
-
-        if cap_val > 0:
-            self._cap_chk.setChecked(True)
-            self._cap_spin.setEnabled(True)
-            self._cap_spin.setValue(cap_val)
-        else:
-            self._cap_chk.setChecked(False)
-            self._cap_spin.setEnabled(False)
-            self._cap_spin.setValue(100_000)
+        self._budget_spin.setValue(read_plot_history_budget_mb(s))
 
         window_s = s.value("plot/window_seconds", 300)
         try:
@@ -739,8 +749,7 @@ class PlotSettingsDialog(QDialog):
 
     def _on_accept(self) -> None:
         s = self._settings
-        cap_val = self._cap_spin.value() if self._cap_chk.isChecked() else 0
-        s.setValue("plot/history_max_samples", cap_val)
+        s.setValue("plot/history_budget_mb", self._budget_spin.value())
 
         window_mapping = {0: 30, 1: 60, 2: 120, 3: 300, 4: 600, 5: 1800, 6: 0}
         w_val = window_mapping.get(self._window_combo.currentIndex(), 300)
@@ -749,10 +758,10 @@ class PlotSettingsDialog(QDialog):
         self.accept()
 
     def get_values(self) -> tuple[int, int]:
-        cap_val = self._cap_spin.value() if self._cap_chk.isChecked() else 0
+        """Return (plot history budget in MB, display window in seconds)."""
         window_mapping = {0: 30, 1: 60, 2: 120, 3: 300, 4: 600, 5: 1800, 6: 0}
         w_val = window_mapping.get(self._window_combo.currentIndex(), 300)
-        return cap_val, w_val
+        return self._budget_spin.value(), w_val
 
 
 class SchemaMapperDialog(QDialog):

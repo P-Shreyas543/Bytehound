@@ -193,7 +193,9 @@ class TelemetryPipelineMixin:
         # and _handle_packet only mutates the UI-side _packet_count. One
         # refresh per flush is plenty and saves ~50 string rebuilds/batch.
         self._refresh_counts_label()
-        # Commit all staged model cell updates in ONE dataChanged per row.
+        # Format the newest value per row once, then commit all staged model
+        # cell updates in ONE dataChanged per row.
+        self._stage_table_cells()
         self._table_model.commit_staged()
         # Redraw the plot once for the entire batch.
         now = time.monotonic()
@@ -333,7 +335,6 @@ class TelemetryPipelineMixin:
             self._log_activity(f"[DECODE WARN] {w.message}{tail}")
             self._console.appendPlainText(f"[decode warning] {w.message}")
 
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         # Evaluate Auto-Pause / Triggered Logging if armed
         trigger_hit = False
         if self._plot_trigger is not None:
@@ -411,6 +412,7 @@ class TelemetryPipelineMixin:
         # graph has no holes for the time it was tabbed away or collapsed.
         # Only the redraw is skipped when hidden.
         elapsed = self._session_elapsed_s(rx_perf)
+        pending_cells = self.__dict__.setdefault("_pending_table_cells", {})
         for signal in [*decoded.signals, *decoded.calculations]:
             key = ("calc", signal.signal_name) if signal.is_calculated else (signal.frame_id, signal.signal_name)
             # If the key isn't in the model yet, add it (calculated / late-arriving signals)
@@ -436,6 +438,24 @@ class TelemetryPipelineMixin:
             if signal.raw_value is None and not signal.is_calculated:
                 continue
 
+            # Only the newest value per row is shown, so formatting waits for
+            # the 60 Hz flush (_stage_table_cells) instead of running for
+            # every packet.
+            pending_cells[key] = signal
+
+            if hasattr(self, "_staged_signals_for_ui"):
+                self._staged_signals_for_ui[key] = signal
+
+            if signal.scaled_value is not None and signal.status == "ok":
+                self._plot_history[key].append(elapsed, signal.scaled_value)
+
+    def _stage_table_cells(self) -> None:
+        """Format and stage the newest decoded value for each table row."""
+        pending = getattr(self, "_pending_table_cells", None)
+        if not pending:
+            return
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        for key, signal in pending.items():
             raw_text = "-" if signal.raw_value is None else _format_number(signal.raw_value)
             value_text = "-" if signal.scaled_value is None else _format_number(signal.scaled_value)
             if signal.is_calculated:
@@ -444,7 +464,6 @@ class TelemetryPipelineMixin:
                 table_value = signal.display_value or value_text
                 if signal.unit and table_value.endswith(f" {signal.unit}"):
                     table_value = table_value[: -len(f" {signal.unit}")].strip()
-
             self._table_model.stage_live_cells(
                 key,
                 raw=raw_text,
@@ -452,12 +471,7 @@ class TelemetryPipelineMixin:
                 status=self._status_text(signal),
                 updated=timestamp,
             )
-
-            if hasattr(self, "_staged_signals_for_ui"):
-                self._staged_signals_for_ui[key] = signal
-
-            if signal.scaled_value is not None and signal.status == "ok":
-                self._plot_history[key].append(elapsed, signal.scaled_value)
+        pending.clear()
 
     def _status_text(self, signal: DecodedSignal) -> str:
         if signal.bit_values:

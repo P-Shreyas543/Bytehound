@@ -105,6 +105,8 @@ Recently used configs are stored and accessible via the dropdown in the Decoder 
 
 Data flows into the raw console and live table.
 
+By default the serial port is read in a separate background process so heavy traffic can't make the window stutter. If you need to troubleshoot, untick **Capture in a separate process** in the Connect dialog.
+
 ---
 
 ## Viewing and Visualizing Data
@@ -117,6 +119,7 @@ Updates in real time. Array variables expand into per-index rows. Use the search
 - Choose a rolling time **Window**.
 - **⏸ Pause / ▶ Live** (Space) freezes or resumes the rolling view; clicking ▶ Live also re-fits the Y axis and snaps X back to `0 → now`.
 - **Export** writes the visible series to CSV.
+- **Tools → Plot Settings → Plot history memory** sets how much memory the plot history may use, shared by all signals (default 512 MB). When it is full the oldest plot points are dropped; logs are not affected.
 
 ### Bitfields & Enums
 Tabs showing live ON/OFF state per named bit and the active enum label per variable.
@@ -126,12 +129,13 @@ Tabs showing live ON/OFF state per named bit and the active enum label per varia
 ## Logging
 
 ### Recording
-1. **Device → Start Logging** and choose a base filename.
-2. Three artifacts are produced alongside the chosen filename:
-   - `<name>_raw.csv` — raw timestamped hex log.
-   - `<name>_decoded.xlsx` — Excel workbook with a `Metadata` sheet (app, port, baud, config path, session start, etc.) and a `Data` sheet (decoded signals, one row per frame). Finalised on Stop Logging.
-   - `<name>_session/` — snapshot of the active configuration.
+1. **Device → Start Logging** and choose a filename.
+2. Two files are produced:
+   - `<name>.xlsx` — Excel workbook with a `Metadata` sheet (app, port, baud, config path, session start, etc.) and a `Data` sheet (decoded signals, one row per poll cycle). Finalised on Stop Logging; if the app closes unexpectedly it is rebuilt on the next launch.
+   - `<name>.bhraw` — a lossless capture of every byte sent and received, with timestamps. It is complete even if the PC was too busy to keep up with the decoded log.
 3. **Device → Stop Logging** to finalize.
+
+If the decoded log reports dropped frames, or you want to re-decode a run with a corrected configuration, load the configuration and use **Tools → Rebuild Decoded Log**, then pick the `.bhraw` file.
 
 The default log directory is `~/Documents/Bytehound` and a 📂 button next to the logging status opens it.
 

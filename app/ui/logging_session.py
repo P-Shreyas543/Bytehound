@@ -113,6 +113,25 @@ class LoggingSessionMixin:
             self._popup_critical("Start Logging", str(exc))
             return False
 
+        # Lossless raw capture next to the decoded log. Written by the
+        # capture worker, so it stays complete even if the GUI falls behind
+        # and the decoded log has to drop frames; the decoded log can be
+        # rebuilt from it with Tools → Rebuild Decoded Log.
+        self._raw_capture_path = decoded_path.with_suffix(".bhraw")
+        try:
+            self._serial.start_raw_capture(
+                self._raw_capture_path,
+                {
+                    "log_started_perf": self._log_started_perf,
+                    "polling_mode": polling_active,
+                    "config_source": str(self._config_path) if self._config_path else "",
+                    "log_metadata": self._build_log_metadata(decoded_path),
+                },
+            )
+        except OSError as exc:
+            self._raw_capture_path = None
+            self._log_activity(f"[WARN] Raw capture not started: {exc}")
+
         self._logging = True
         self._logging_action.setText("Stop Logging")
         self._style_action_btn(self._logging_action, _BTN_PINK)   # active → pink
@@ -148,6 +167,14 @@ class LoggingSessionMixin:
 
     def _stop_logging(self, title: str = "Saving Log") -> None:
         was_logging = self._logging
+        raw_path = getattr(self, "_raw_capture_path", None)
+        if raw_path is not None and self._serial is not None:
+            err = self._serial.stop_raw_capture()
+            if err:
+                self._log_activity(f"[ERROR] {err}")
+            else:
+                self._log_activity(f"Raw capture saved: {raw_path}")
+        self._raw_capture_path = None
         logger = self._decoded_logger
         if logger is not None:
             logger.close(timeout=0.0)
@@ -223,6 +250,67 @@ class LoggingSessionMixin:
         finally:
             dlg.close()
 
+    def _on_rebuild_decoded_log(self) -> None:
+        """Regenerate a decoded .xlsx from a raw capture using the loaded config."""
+        import threading
+        from .main_window import APP_NAME
+        from ..serial_logging.raw_capture import read_metadata, rebuild_decoded_log
+
+        self._log_activity("[ACTION] Rebuild Decoded Log")
+        if self._config is None:
+            self._popup_warning("Rebuild Decoded Log", "Load the configuration the capture was recorded with first.")
+            return
+        default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
+        raw, _ = QFileDialog.getOpenFileName(
+            self, "Select raw capture", str(default_dir), "Raw capture (*.bhraw);;All files (*)"
+        )
+        if not raw:
+            return
+        raw_path = Path(raw)
+        try:
+            meta = read_metadata(raw_path)
+        except (OSError, ValueError) as exc:
+            self._popup_critical("Rebuild Decoded Log", str(exc))
+            return
+        recorded_cfg = meta.get("config_source") or ""
+        if recorded_cfg and self._config_path is not None and Path(recorded_cfg) != Path(self._config_path):
+            self._log_activity(
+                f"[WARN] Capture was recorded with {recorded_cfg}; rebuilding with {self._config_path}"
+            )
+
+        target = raw_path.with_suffix(".xlsx")
+        if target.exists():
+            target = raw_path.with_name(f"{raw_path.stem}_rebuilt.xlsx")
+        out, _ = QFileDialog.getSaveFileName(self, "Save rebuilt log", str(target), "Log files (*.xlsx)")
+        if not out:
+            return
+        out_path = Path(out).with_suffix(".xlsx")
+        config = self._config
+
+        notifier = _RecoveryNotifier(self)
+
+        def _on_done(msg: str, ok: bool) -> None:
+            self._log_activity(f"[SESSION] {msg}")
+            self._set_status(msg)
+            if ok:
+                self._toast(msg)
+            else:
+                self._popup_critical("Rebuild Decoded Log", msg)
+            notifier.deleteLater()
+
+        notifier.done.connect(_on_done)
+
+        def _worker() -> None:
+            try:
+                n = rebuild_decoded_log(raw_path, config, out_path)
+                notifier.done.emit(f"Rebuilt {out_path.name} from {n} frame(s)", True)
+            except Exception as exc:  # surfaced to the user, never silent
+                logging.getLogger("bytehound").error("Rebuild failed for %s", raw_path, exc_info=True)
+                notifier.done.emit(f"Rebuild failed: {exc}", False)
+
+        self._set_status(f"Rebuilding {out_path.name}…")
+        threading.Thread(target=_worker, name="RebuildDecodedLog", daemon=False).start()
+
     def _check_and_recover_temp_logs(self) -> None:
         """Scan default log directory for orphaned .tmp_data files and recover/clean them asynchronously."""
         import threading
@@ -252,7 +340,7 @@ class LoggingSessionMixin:
                         continue
 
                     target_path = tmp_data.parent / tmp_data.name[:-9]
-                    
+
                     # DecodedLogger handles Excel creation or CSV fallback internally without losing data
                     DecodedLogger.recover_temp_files(tmp_data, tmp_meta, target_path)
                     recovered_count += 1

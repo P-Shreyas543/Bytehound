@@ -33,7 +33,7 @@ import pyqtgraph as pg
 pg.setConfigOptions(antialias=True, useOpenGL=False)
 from PySide6.QtCore import Qt, QSettings, QTimer, QThread, Signal
 from PySide6.QtGui import (
-    QAction, QColor, QFont, QKeySequence,
+    QAction, QColor, QKeySequence,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox,

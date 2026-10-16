@@ -1,10 +1,9 @@
 """Tests for the live-plot history buffer (``TimeSeriesBuffer``).
 
-The class lives in ``app.ui.plot_panel`` and replaces the old fixed-capacity
-ring buffer with append-only chunked storage so long sessions retain every
-sample. Tests cover: ordering, arrays_since() slicing, the optional soft
-cap that drops oldest chunks, and the legacy ``_RingBuffer`` alias still
-imports cleanly.
+The class lives in ``app.ui.plot_panel``: contiguous, append-only storage
+so long sessions retain every sample and reads are zero-copy. Tests cover:
+ordering, arrays_since() slicing, the optional soft cap, views staying valid
+across growth/trim/clear, and the legacy ``_RingBuffer`` alias.
 """
 
 from __future__ import annotations
@@ -32,8 +31,8 @@ def test_empty_buffer_has_no_first_or_last_x():
 
 def test_append_retains_all_samples_when_unbounded():
     buf = TimeSeriesBuffer()
-    # Exceed one full chunk so the seal + new-chunk path runs.
-    n = TimeSeriesBuffer.CHUNK_SIZE + 100
+    # Enough samples to force several capacity growths.
+    n = 50_000
     for i in range(n):
         buf.append(float(i), float(i) * 2)
     assert len(buf) == n
@@ -42,7 +41,7 @@ def test_append_retains_all_samples_when_unbounded():
     xs, ys = buf.arrays()
     assert list(xs[:3]) == [0.0, 1.0, 2.0]
     assert list(xs[-3:]) == [float(n - 3), float(n - 2), float(n - 1)]
-    # Y values stay paired with their X values across chunk boundaries.
+    # Y values stay paired with their X values across growths.
     assert list(ys[:3]) == [0.0, 2.0, 4.0]
     assert list(ys[-3:]) == [float((n - 3) * 2), float((n - 2) * 2), float((n - 1) * 2)]
 
@@ -92,51 +91,41 @@ def test_arrays_since_none_returns_full_series():
     assert list(xs) == [0.0, 1.0, 2.0, 3.0, 4.0]
 
 
-def test_arrays_since_skips_old_chunks():
-    """Window past every frozen chunk's last x → only touches partial chunk."""
+def test_arrays_since_window_at_the_end():
     buf = TimeSeriesBuffer()
-    # Two full chunks + a partial third.
-    chunk = TimeSeriesBuffer.CHUNK_SIZE
-    for i in range(2 * chunk + 50):
+    for i in range(50_000):
         buf.append(float(i), float(i))
-    # Pick t_min inside the partial (third) chunk.
-    t_min = float(2 * chunk + 10)
-    xs, ys = buf.arrays_since(t_min)
+    xs, ys = buf.arrays_since(49_990.0)
     # Includes the preceding sample (t_min - 1) to prevent visual gaps.
-    assert xs[0] == t_min - 1.0
-    assert xs[-1] == float(2 * chunk + 49)
-    assert len(xs) == 41
+    assert xs[0] == 49_989.0
+    assert xs[-1] == 49_999.0
+    assert len(xs) == 11
+    assert np.array_equal(xs, ys)
 
 
-def test_arrays_since_inside_middle_chunk():
-    """Window crosses chunk boundaries — must keep ordering oldest → newest."""
+def test_arrays_since_from_the_middle():
     buf = TimeSeriesBuffer()
-    chunk = TimeSeriesBuffer.CHUNK_SIZE
-    for i in range(2 * chunk + 5):
+    for i in range(50_000):
         buf.append(float(i), float(i))
-    # t_min in the FIRST chunk → result spans first chunk tail + full second
-    # chunk + partial third.
-    t_min = float(chunk - 3)
-    xs, _ = buf.arrays_since(t_min)
-    # Includes the preceding sample (t_min - 1) to prevent visual gaps.
-    assert xs[0] == t_min - 1.0
-    assert xs[-1] == float(2 * chunk + 4)
+    xs, _ = buf.arrays_since(10_000.0)
+    assert xs[0] == 9_999.0
+    assert xs[-1] == 49_999.0
     # Strictly increasing.
     assert np.all(np.diff(xs) == 1.0)
 
 
-def test_soft_cap_drops_oldest_chunks():
-    """A finite max_samples drops oldest chunks once frozen size exceeds cap."""
-    # Cap of 1 chunk: as soon as the second chunk seals, the first is dropped.
-    cap = TimeSeriesBuffer.CHUNK_SIZE
+def test_soft_cap_keeps_newest_samples():
+    cap = 1_000
     buf = TimeSeriesBuffer(max_samples=cap)
-    for i in range(2 * cap + 10):
+    for i in range(5_000):
         buf.append(float(i), float(i))
-    # We expect to have at most CHUNK_SIZE frozen samples + the partial chunk.
-    # i.e. samples 0..cap-1 dropped, samples cap..end retained.
-    assert buf.first_x() is not None
-    assert buf.first_x() >= float(cap)
-    assert buf.last_x() == float(2 * cap + 9)
+    # Holds between cap and cap + slack samples, always the newest ones.
+    assert cap <= len(buf) <= cap + TimeSeriesBuffer._slack(cap)
+    assert buf.last_x() == 4_999.0
+    xs, _ = buf.arrays()
+    assert np.all(np.diff(xs) == 1.0)
+    assert xs[0] == 4_999.0 - (len(buf) - 1)
+    assert buf.nbytes <= TimeSeriesBuffer.bytes_for(cap)
 
 
 def test_searchsorted_works_on_returned_arrays():
@@ -152,15 +141,17 @@ def test_searchsorted_works_on_returned_arrays():
 
 def test_set_max_samples_applies_retroactively():
     buf = TimeSeriesBuffer()
-    chunk = TimeSeriesBuffer.CHUNK_SIZE
-    for i in range(3 * chunk + 5):
+    for i in range(5_000):
         buf.append(float(i), float(i))
-    # No cap yet → everything retained.
     assert buf.first_x() == 0.0
-    # Tighten the cap: should drop oldest frozen chunks.
-    buf.set_max_samples(chunk)
-    assert buf.first_x() is not None and buf.first_x() >= float(chunk)
-    assert buf.last_x() == float(3 * chunk + 4)
+    # Tightening the cap trims to it immediately, keeping the newest.
+    buf.set_max_samples(1_000)
+    assert len(buf) == 1_000
+    assert buf.first_x() == 4_000.0
+    assert buf.last_x() == 4_999.0
+    # Loosening it keeps what is there.
+    buf.set_max_samples(None)
+    assert len(buf) == 1_000
 
 
 def test_append_time_reset_clears_buffer():
@@ -187,3 +178,26 @@ def test_append_minor_jitter_clamps_x():
     assert list(xs) == [10.0, 10.0]
     assert list(ys) == [100.0, 105.0]
 
+
+def test_empty_buffer_allocates_nothing():
+    """Signals that never receive data must not cost memory."""
+    assert TimeSeriesBuffer().nbytes == 0
+    assert TimeSeriesBuffer(max_samples=100_000).nbytes == 0
+
+
+def test_views_stay_valid_after_growth_trim_and_clear():
+    """pyqtgraph keeps the arrays it was given until the next setData();
+    later appends, trims and clears must never rewrite them."""
+    buf = TimeSeriesBuffer(max_samples=1_000)
+    for i in range(900):
+        buf.append(float(i), float(i))
+    xs, ys = buf.arrays()
+    snapshot = (xs.copy(), ys.copy())
+    for i in range(900, 3_000):          # forces growth and several trims
+        buf.append(float(i), -1.0)
+    assert np.array_equal(xs, snapshot[0]) and np.array_equal(ys, snapshot[1])
+    xs2, _ = buf.arrays()
+    snap2 = xs2.copy()
+    buf.clear()
+    buf.append(0.0, 0.0)
+    assert np.array_equal(xs2, snap2)

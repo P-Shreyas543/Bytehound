@@ -8,7 +8,6 @@ mixed into MainWindow.
 
 from __future__ import annotations
 
-from datetime import datetime
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -20,7 +19,6 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QLabel,
     QProgressDialog,
-    QPushButton,
     QVBoxLayout,
 )
 

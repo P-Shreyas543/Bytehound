@@ -69,7 +69,7 @@ _WINDOW_STATE_VERSION = 3
 # Bumped when default QSettings values change so users get migrated to
 # the new defaults without losing values they explicitly customised. The
 # migration runs once on launch; see _migrate_settings.
-_SETTINGS_MIGRATION_VERSION = 2
+_SETTINGS_MIGRATION_VERSION = 3
 
 
 def _migrate_settings(settings) -> None:
@@ -102,6 +102,11 @@ def _migrate_settings(settings) -> None:
                 old_gap = 30
             if old_gap == 30:
                 settings.setValue("poll/pipeline_tx_gap_ms", 100)
+
+    # v2 -> v3: the per-signal sample cap became a shared memory budget
+    # (plot/history_budget_mb). The old key is no longer read.
+    if stored_version < 3:
+        settings.remove("plot/history_max_samples")
 
     settings.setValue("settings/migration_version", _SETTINGS_MIGRATION_VERSION)
 
@@ -181,6 +186,7 @@ from ..decoder.types import FrameConfig
 from ..serial_logging.decoded_logger import DecodedLogger
 from ..protocol.packet_parser import ParserProtocol
 from ..serial_io.serial_worker import PollingWorker, SerialSettings
+from ..serial_io import capture_process
 
 
 
@@ -237,15 +243,28 @@ class MainWindow(
     ParameterEditorMixin,
     QMainWindow,
 ):
+    def _history_cap_per_signal(self, n_signals: int) -> int:
+        """Samples each signal may keep so all of them fit the memory budget."""
+        budget = self._plot_history_budget_mb * 1_000_000
+        per_signal = budget // max(1, n_signals)
+        # bytes_for(cap) = (cap + cap/8) * 16  →  cap ≈ per_signal / 18
+        cap = int(per_signal / (TimeSeriesBuffer.BYTES_PER_SAMPLE * 1.125))
+        return max(1_000, cap)
+
+    def _rebalance_history_caps(self, n_signals: Optional[int] = None) -> int:
+        cap = self._history_cap_per_signal(len(self._plot_history) if n_signals is None else n_signals)
+        self._plot_history_max_samples = cap
+        for buf in self._plot_history.values():
+            buf.set_max_samples(cap)
+        return cap
+
     def _make_history_buffer(self) -> "TimeSeriesBuffer":
         """Factory for per-signal entries in ``self._plot_history``.
 
-        Append-only chunked store. ``_plot_history_max_samples`` acts as a
-        soft cap (``None`` = unbounded — keep every sample for the whole
-        session). Existing buffers keep their cap until cleared; the cap
-        is reapplied when the user changes the display window.
+        The plot-history memory budget is shared by every signal, so adding a
+        signal lowers everyone's cap (and trims the longest histories).
         """
-        cap = getattr(self, "_plot_history_max_samples", None)
+        cap = self._rebalance_history_caps(len(self._plot_history) + 1)
         return TimeSeriesBuffer(cap)
 
 
@@ -293,17 +312,12 @@ class MainWindow(
 
         # Timer removed; using PollingWorker QThread
 
-        # Live-plot history. One TimeSeriesBuffer per signal.
-        # Default soft cap of 100,000 samples per signal acts as a marathon-run
-        # safety valve to prevent RAM exhaustion (OOM crashes) during 2-3 day runs.
-        raw_cap = self._settings.value("plot/history_max_samples", 100_000)
-        try:
-            cap_int = int(raw_cap)
-        except (TypeError, ValueError):
-            cap_int = 100_000
-        if cap_int <= 0:
-            cap_int = 100_000  # Enforce marathon-run safety cap
-        self._plot_history_max_samples: Optional[int] = cap_int
+        # Live-plot history. One TimeSeriesBuffer per signal, all sharing one
+        # memory budget (Tools → Plot Settings) so a marathon run with many
+        # signals can't exhaust RAM.
+        from .dialogs import read_plot_history_budget_mb
+        self._plot_history_budget_mb = read_plot_history_budget_mb(self._settings)
+        self._plot_history_max_samples: int = self._history_cap_per_signal(1)
         # Display window in seconds. 0 / None means "All session".
         raw_window = self._settings.value("plot/window_seconds", 300)  # default 5 min
         try:
@@ -391,6 +405,9 @@ class MainWindow(
         self._default_geometry = self.saveGeometry()
         self._restore_window_state()
         QTimer.singleShot(100, self._check_and_recover_temp_logs)
+        if self._capture_in_process():
+            # Spawn the capture process now so Connect doesn't wait for it.
+            QTimer.singleShot(500, capture_process.prewarm)
 
         if hasattr(self, "_welcome_dashboard") and self._welcome_dashboard is not None:
             from app.serial_io.serial_worker import list_available_ports
@@ -1118,17 +1135,27 @@ class MainWindow(
         if hasattr(self, "_reconnect_timer") and self._reconnect_timer.isActive():
             self._reconnect_timer.stop()
 
+    def _capture_in_process(self) -> bool:
+        """Run serial capture in a separate process (default) or on a QThread."""
+        if getattr(self, "_capture_forced_thread", False):
+            return False
+        return str(self._settings.value("capture/mode", "process")) == "process"
+
+    def _make_capture_worker(self, settings: SerialSettings):
+        cls = capture_process.CaptureClient if self._capture_in_process() else PollingWorker
+        return cls(
+            settings,
+            self._config.protocol,
+            self._config.polling_schedules,
+            decode_config=self._config,
+        )
+
     def _attempt_connect(self, settings: SerialSettings, is_retry: bool = False) -> bool:
         self._seen_decode_warnings.clear()
         if hasattr(self, "_warning_badge") and self._warning_badge is not None:
             self._warning_badge.setVisible(False)
         try:
-            self._serial = PollingWorker(
-                settings,
-                self._config.protocol,
-                self._config.polling_schedules,
-                decode_config=self._config,
-            )
+            self._serial = self._make_capture_worker(settings)
             self._serial.packets_received.connect(self._on_packets_received)
             self._serial.metrics_updated.connect(self._on_metrics_updated)
             self._serial.error_occurred.connect(self._on_serial_error)
@@ -1141,7 +1168,18 @@ class MainWindow(
                 self._wire_recorded_connected = False
             self._serial.connection_lost.connect(self._on_connection_lost)
             self._serial.device_timeout.connect(self._on_device_timeout)
-            self._serial.open()
+            try:
+                self._serial.open()
+            except capture_process.CaptureProcessError as exc:
+                # The capture process itself failed (not the port): use the
+                # in-thread worker for the rest of this session.
+                import logging
+                logging.getLogger("bytehound.ui").warning("Capture process unavailable: %s", exc)
+                self._log_activity(f"[WARN] Capture process unavailable ({exc}); using in-app capture thread")
+                self._serial.deleteLater()
+                self._serial = None
+                self._capture_forced_thread = True
+                return self._attempt_connect(settings, is_retry)
             self._serial.set_polling_global(self._polling_action.isChecked())
             if not is_retry:
                 # A new connection starts a new session. An auto-reconnect
@@ -1700,6 +1738,7 @@ class MainWindow(
         if drainers:
             self._wait_for_logger_drain(drainers)
         self._save_window_state()
+        capture_process.shutdown_pool()
         super().closeEvent(event)
 
     # ------------------------------------------------------------------

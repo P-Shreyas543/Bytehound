@@ -21,14 +21,13 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import pytest
-from PySide6.QtCore import Qt, QPoint, QSettings, QTimer
 from PySide6.QtWidgets import QApplication
 from PySide6.QtGui import QCloseEvent
 
-from app.ui.main_window import MainWindow, APP_ORG, APP_NAME
+from app.ui.main_window import MainWindow
 from app.decoder.types import (
     ProtocolConfig, FrameConfig, FrameDefinition, SignalSpec,
-    BitfieldSpec, EnumSpec, TxCommandSpec, TxCommandFieldSpec
+    BitfieldSpec, TxCommandSpec, TxCommandFieldSpec
 )
 from app.decoder.frame_decoder import DecodedFrame, DecodedSignal
 
@@ -313,7 +312,7 @@ def test_app_shutdown_and_cleanup_lifecycle(qapp, monkeypatch):
 
     with patch.object(w, "_disconnect") as mock_disc, \
          patch.object(w, "_save_window_state") as mock_save:
-        
+
         event = QCloseEvent()
         w.closeEvent(event)
 

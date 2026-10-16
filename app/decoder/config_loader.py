@@ -297,7 +297,6 @@ def _normalize_table_name(name: str) -> str:
 
 def _format_missing_columns(missing: set[str], available: set[str]) -> str:
     """Render a missing-columns list with did-you-mean hints."""
-    import difflib
     parts: List[str] = []
     for col in sorted(missing):
         match = difflib.get_close_matches(col, list(available), n=1, cutoff=0.6)
@@ -472,7 +471,7 @@ def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
         raise ConfigError("protocol: more than one enabled profile")
 
     row = enabled_rows[0]
-    parser_type_val = ParserType.parse(row.get("parser_type", "")).value
+    ParserType.parse(row.get("parser_type", ""))  # validates parser_type; raises on unknown values
     return rows
 
 

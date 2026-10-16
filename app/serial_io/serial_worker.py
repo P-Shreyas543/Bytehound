@@ -29,7 +29,7 @@ import socket
 import sys
 import threading
 import time
-from dataclasses import dataclass, replace as dataclass_replace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional
 
@@ -40,6 +40,7 @@ from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
 from ..protocol.packet_parser import ParsedPacket, create_parser
 from ..decoder.frame_decoder import decode_frame
 from ..decoder.types import FrameConfig, PollingScheduleSpec, ProtocolConfig
+from ..serial_logging.raw_capture import RX, TX, RawCapture
 
 _LOG = logging.getLogger("bytehound.serial_io.worker")
 
@@ -426,6 +427,10 @@ class PollingWorker(QThread):
         self._backpressure_throttled: bool = False
         self._backpressure_events: int = 0
 
+        # Lossless wire capture while logging is on. Written from this thread
+        # right after each read/write; the GUI only starts and stops it.
+        self._raw_capture: Optional[RawCapture] = None
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -534,12 +539,36 @@ class PollingWorker(QThread):
             self.terminate()
             self.wait(500)
         self._serial = None
+        self.stop_raw_capture()
         if sys.platform == "win32":
             try:
                 import ctypes
                 ctypes.windll.winmm.timeEndPeriod(1)
             except Exception:
                 pass
+
+    def start_raw_capture(self, path, metadata: Optional[dict] = None) -> None:
+        """Start recording every RX/TX byte to a ``.bhraw`` file."""
+        self.stop_raw_capture()
+        self._raw_capture = RawCapture(path, metadata)
+
+    def stop_raw_capture(self) -> Optional[str]:
+        """Stop recording and drain the file to disk. Returns a writer error, if any."""
+        cap, self._raw_capture = self._raw_capture, None
+        if cap is None:
+            return None
+        cap.close()
+        return cap.error
+
+    def _read_rx(self, size: int) -> tuple[bytes, float]:
+        """Read from the port and stamp the read once, for both the raw
+        capture and the decoded batch."""
+        data = self._serial.read(size)
+        t = time.perf_counter()
+        cap = self._raw_capture
+        if cap is not None and data:
+            cap.write(RX, t, data)
+        return data, t
 
     def enqueue_priority_tx(self, data: bytes) -> None:
         try:
@@ -695,7 +724,7 @@ class PollingWorker(QThread):
             or (time.monotonic() - self._last_emit_time) >= target_interval
         )
 
-    def _accumulate(self, packets: Iterable[ParsedPacket]) -> None:
+    def _accumulate(self, packets: Iterable[ParsedPacket], rx_perf: Optional[float] = None) -> None:
         """Add packets to the batch and flush when threshold is reached.
 
         When ``_decode_config`` is set, decode each good-CRC packet here on
@@ -720,7 +749,8 @@ class PollingWorker(QThread):
         queue at high frame rates.
         """
         cfg = self._decode_config
-        rx_perf = time.perf_counter()
+        if rx_perf is None:
+            rx_perf = time.perf_counter()
         for p in packets:
             if not p.ok:
                 self._crc_errors += 1
@@ -820,6 +850,9 @@ class PollingWorker(QThread):
         self._respect_inter_frame_delay(min_gap_ms)
         written = self._serial.write(data)
         self._last_tx_time = time.monotonic()
+        cap = self._raw_capture
+        if cap is not None:
+            cap.write(TX, time.perf_counter(), data)
         self.wire_recorded.emit("TX", data, datetime.now())
         return written
 
@@ -836,14 +869,14 @@ class PollingWorker(QThread):
         w = self._serial.in_waiting
         if w <= 0:
             return []
-        data = self._serial.read(w)
+        data, rx_perf = self._read_rx(w)
         self._rx_bytes += len(data)
         self._last_rx_time = time.monotonic()
         self._watchdog_fired = False
         self._parser.feed(data)
         extracted = self._parser.extract_all()
         if extracted:
-            self._accumulate(extracted)
+            self._accumulate(extracted, rx_perf)
             self._emit_metrics_throttled()
         return extracted
 
@@ -920,7 +953,7 @@ class PollingWorker(QThread):
                     try:
                         w = self._serial.in_waiting
                         if w > 0:
-                            data = self._serial.read(w)
+                            data, rx_perf = self._read_rx(w)
                             self._rx_bytes += len(data)
                             self._last_rx_time = time.monotonic()
                             self._watchdog_fired = False
@@ -928,7 +961,7 @@ class PollingWorker(QThread):
                             extracted = self._parser.extract_all()
                             if pipelining and self._in_flight and extracted:
                                 self._match_in_flight_responses(extracted)
-                            self._accumulate(extracted)
+                            self._accumulate(extracted, rx_perf)
                             self._emit_metrics_throttled()
                     except (TypeError, AttributeError):
                         if self._stop_event.is_set():
@@ -1344,7 +1377,7 @@ class PollingWorker(QThread):
 
             w = self._serial.in_waiting if self._serial else 0
             if w > 0:
-                data = self._serial.read(w)
+                data, rx_perf = self._read_rx(w)
                 self._rx_bytes += len(data)
                 self._last_rx_time = time.monotonic()
                 self._watchdog_fired = False
@@ -1354,7 +1387,7 @@ class PollingWorker(QThread):
                     # Emit every frame (matching or not) through batching —
                     # unrelated continuous-stream packets are still real
                     # data the UI needs to see.
-                    self._accumulate(extracted)
+                    self._accumulate(extracted, rx_perf)
                     # Only a *matching* packet ends the wait. This is the
                     # key correctness fix: previously any frame at all
                     # short-circuited the wait, so a streaming frame would

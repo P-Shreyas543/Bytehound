@@ -196,7 +196,7 @@ def test_frame_format_widget_boolean_blocks():
 
 def test_parameter_editor_boolean_bit_offset_write():
     from app.ui.parameter_editor import ParameterEditorMixin
-    from app.decoder.types import SignalSpec, ProtocolConfig, FrameConfig, FrameDefinition
+    from app.decoder.types import SignalSpec, ProtocolConfig, FrameConfig
     from unittest.mock import MagicMock
 
     class MockMainWindow(ParameterEditorMixin):
