@@ -42,7 +42,7 @@ _LOG = logging.getLogger("bytehound.serial_io.capture_process")
 _SIGNALS = (
     "packets_received", "metrics_updated", "error_occurred", "warning_occurred",
     "tx_recorded", "wire_recorded", "connection_lost", "device_timeout",
-    "backpressure_changed", "poll_latency",
+    "backpressure_changed", "poll_latency", "integrity_updated",
 )
 
 _OPEN_TIMEOUT_S = 20.0     # covers a cold spawn (interpreter + imports) on a slow PC
@@ -227,6 +227,7 @@ class CaptureClient(QObject):
     device_timeout = Signal()
     backpressure_changed = Signal(bool)
     poll_latency = Signal(int, float)
+    integrity_updated = Signal(object)
 
     def __init__(
         self,

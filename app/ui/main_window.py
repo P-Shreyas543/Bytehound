@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sys
+import time
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
@@ -1163,6 +1164,9 @@ class MainWindow(
             self._serial = self._make_capture_worker(settings)
             self._serial.packets_received.connect(self._on_packets_received)
             self._serial.metrics_updated.connect(self._on_metrics_updated)
+            self._serial.integrity_updated.connect(self._on_integrity_updated)
+            self._integrity = {}
+            self._integrity_baseline = None
             self._serial.error_occurred.connect(self._on_serial_error)
             self._serial.warning_occurred.connect(self._on_serial_warning)
             self._serial.tx_recorded.connect(self._on_tx_recorded)
@@ -1332,6 +1336,9 @@ class MainWindow(
         dropped = getattr(self, "_backpressure_dropped_count", 0)
         if dropped > 0:
             dropped_str = f"  |  Dropped: {dropped:>4d}"
+        lost = self._integrity_lost_bytes()
+        if lost:
+            dropped_str += f"  |  Discarded: {self._fmt_bytes(lost)}"
         self._counts_label.setText(
             f"Frames: {self._packet_count:>6d}"
             f"  |  Errors: {self._error_count:>4d}"
@@ -1341,6 +1348,50 @@ class MainWindow(
             f"  |  Lat: {self._delta_t_ms:>6.1f} ms"
             f"{dropped_str}"
         )
+
+    @staticmethod
+    def _lost_bytes(snap: dict) -> int:
+        return (
+            snap.get("discarded_bytes", 0)
+            + snap.get("overflow_bytes", 0)
+            + snap.get("unframer_dropped_bytes", 0)
+        )
+
+    def _integrity_lost_bytes(self) -> int:
+        return self._lost_bytes(getattr(self, "_integrity", {}) or {})
+
+    def _on_integrity_updated(self, snap: dict) -> None:
+        """Track byte accounting; warn when received bytes are discarded.
+
+        Bytes skipped before the first good frame are the tail of a frame
+        already in flight when we connected — normal, counted, not flagged.
+        Anything discarded after that is noise, corruption or a framing
+        problem and raises the warning badge (Plane.md F3).
+        """
+        prev = getattr(self, "_integrity", {}) or {}
+        self._integrity = snap
+        if getattr(self, "_integrity_baseline", None) is None:
+            if snap.get("frames_ok", 0) > 0:
+                self._integrity_baseline = self._lost_bytes(snap)
+            return
+        lost_now = self._lost_bytes(snap)
+        if lost_now > self._lost_bytes(prev) and lost_now > self._integrity_baseline:
+            msg = (
+                f"Received bytes discarded: {lost_now - self._integrity_baseline} B since the "
+                f"first valid frame (noise {snap.get('discarded_bytes', 0)} B, "
+                f"buffer overflow {snap.get('overflow_bytes', 0)} B, escape errors "
+                f"{snap.get('unframer_dropped_bytes', 0)} B). Check wiring, baud rate and "
+                f"protocol settings. While logging, every received byte is also kept in the "
+                f".bhraw raw capture."
+            )
+            now = time.monotonic()
+            if now - getattr(self, "_integrity_last_warn", 0.0) >= 10.0:
+                self._integrity_last_warn = now
+                self._log_activity(f"[WARN] {msg}")
+            if getattr(self, "_warning_badge", None) is not None:
+                self._warning_badge.setVisible(True)
+                self._warning_badge.setToolTip(msg)
+        self._refresh_counts_label()
 
     def _on_metrics_updated(self, timeouts: int, crc: int, rx_bytes: int) -> None:
         self._timeouts = timeouts

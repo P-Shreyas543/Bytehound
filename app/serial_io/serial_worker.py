@@ -367,6 +367,9 @@ class PollingWorker(QThread):
     # Batch of parsed packets (may include bad CRC frames)
     packets_received = Signal(list)
     metrics_updated = Signal(int, int, int)   # timeouts, crc_errors, rx_bytes
+    # Where every received byte went, cumulative for this connection and
+    # never reset by reset_metrics() (Plane.md F3). See integrity_snapshot().
+    integrity_updated = Signal(object)
     error_occurred = Signal(str)
     warning_occurred = Signal(str)
     tx_recorded = Signal(bytes)
@@ -856,6 +859,28 @@ class PollingWorker(QThread):
         else:
             self._watchdog_fired = False  # reset once data flows again
 
+    def integrity_snapshot(self) -> dict:
+        """Cumulative byte/frame accounting for this connection.
+
+        ``parser_bytes_in`` equals ``frame_bytes_ok + frame_bytes_rejected +
+        discarded_bytes + overflow_bytes + buffered_bytes`` for unescaped
+        protocols; escape-layer losses are in ``unframer_dropped_*``.
+        """
+        st = self._parser.stats
+        return {
+            "parser_bytes_in": st.bytes_in,
+            "frames_ok": st.frames_ok,
+            "frame_bytes_ok": st.frame_bytes_ok,
+            "frames_rejected": st.frames_rejected,
+            "frame_bytes_rejected": st.frame_bytes_rejected,
+            "discarded_bytes": st.discarded_bytes,
+            "overflow_bytes": st.overflow_bytes,
+            "unframer_dropped_frames": st.unframer_dropped_frames,
+            "unframer_dropped_bytes": st.unframer_dropped_bytes,
+            "buffered_bytes": self._parser.buffered_bytes,
+            "poll_timeouts": self._timeouts,
+        }
+
     def _emit_metrics_throttled(self, *, force: bool = False) -> None:
         """Emit metrics_updated at most once per ``_METRICS_INTERVAL``.
 
@@ -869,6 +894,7 @@ class PollingWorker(QThread):
         now = time.monotonic()
         if force or (now - self._last_metrics_emit) >= self._METRICS_INTERVAL:
             self.metrics_updated.emit(self._timeouts, self._crc_errors, self._rx_bytes)
+            self.integrity_updated.emit(self.integrity_snapshot())
             self._last_metrics_emit = now
 
     def _emit_frame_error_throttled(self, msg: str) -> None:
