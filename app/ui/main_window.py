@@ -184,7 +184,7 @@ def _format_serial_open_error(port: str, exc: BaseException) -> str:
 from .dialogs import ConnectionDialog, AboutDialog
 from ..decoder.template_io import export_excel_template
 from ..decoder.types import FrameConfig
-from ..serial_logging.decoded_logger import DecodedLogger
+from ..serial_logging.session import SessionLog
 from ..protocol.packet_parser import ParserProtocol
 from ..serial_io.serial_worker import PollingWorker, SerialSettings
 from ..serial_io import capture_process
@@ -303,7 +303,8 @@ class MainWindow(
         self._rx_bytes = 0
         self._tx_bytes = 0
         self._logging = False
-        self._decoded_logger: Optional[DecodedLogger] = None
+        # Active logging session (folder of rotated segments), or None.
+        self._session_log: Optional[SessionLog] = None
         self._settings = QSettings(APP_ORG, APP_NAME)
         _migrate_settings(self._settings)
         self._apply_logging_level(str(self._settings.value("logging/level", "INFO")))
@@ -371,6 +372,11 @@ class MainWindow(
         self._ui_timer = QTimer(self)
         self._ui_timer.setInterval(16)  # ~60 Hz
         self._ui_timer.timeout.connect(self._flush_ui)
+        # 1 Hz session housekeeping: rotation, disk guard, fixed-step rows
+        # for quiet periods. Runs during reconnect gaps too.
+        self._session_timer = QTimer(self)
+        self._session_timer.setInterval(1000)
+        self._session_timer.timeout.connect(self._on_session_tick)
 
         # Reconnect timer for exponential backoff on USB disconnect
         self._reconnect_timer = QTimer(self)
@@ -1098,7 +1104,7 @@ class MainWindow(
         self._set_status(f"Exported Excel template to {target}")
         self._log_activity(f"[ACTION] Exported Excel template: {target}")
 
-    def _disconnect(self, *, reason: str = "Disconnected") -> None:
+    def _disconnect(self, *, reason: str = "Disconnected", keep_logging: bool = False) -> None:
         """Single shutdown path for every disconnect scenario.
 
         Guarantees the safe sequence:
@@ -1110,12 +1116,22 @@ class MainWindow(
           6. Update the UI chrome
 
         Idempotent — safe to call even when already disconnected.
+
+        ``keep_logging`` (auto-reconnect after an unplug): the logging session
+        stays open — the current segment is closed, a gap is recorded and a
+        new segment starts when the device is back (Plane.md F11).
         """
         self._ui_timer.stop()
         self._wire_recorded_connected = False
         if hasattr(self, "_y_autofit_timer"):
             self._y_autofit_timer.stop()
-        if self._logging:
+        if self._logging and keep_logging and self._session_log is not None:
+            self._session_log.connection_lost(reason)
+            self._update_logging_label()
+            self._log_activity(
+                "[INFO] Logging continues: the gap is recorded and a new segment starts on reconnect"
+            )
+        elif self._logging:
             title = "Closing" if reason == "Application closed" else "Saving Log"
             self._stop_logging(title=title)
             self._log_activity("[INFO] Logging auto-stopped on disconnect")
@@ -1208,6 +1224,14 @@ class MainWindow(
                 self._log_activity(f"Connected to {settings.port} @ {settings.baud_rate}")
             self._saved_settings = settings
             self._reconnect_attempts = 0
+            if self._logging and self._session_log is not None and self._session_log.segment_index is None:
+                self._session_log.connection_restored()
+                self._update_logging_label()
+                self._log_activity("[INFO] Logging resumed in a new segment")
+            if is_retry:
+                self._restore_polling_after_reconnect()
+            else:
+                self._resume_polling = False
             if hasattr(self, "_reconnect_timer") and self._reconnect_timer.isActive():
                 self._reconnect_timer.stop()
             return True
@@ -1274,8 +1298,12 @@ class MainWindow(
 
     def _on_connection_lost(self) -> None:
         """Called when the worker detects a physical USB unplug."""
+        auto = bool(self._saved_settings and getattr(self._saved_settings, "auto_reconnect", False))
+        # Disconnecting un-ticks Auto-Fetch; remember it so the reconnect can
+        # restore polling instead of leaving a polled device silent.
+        self._resume_polling = auto and self._polling_action.isChecked()
         try:
-            self._disconnect(reason="USB device disconnected")
+            self._disconnect(reason="USB device disconnected", keep_logging=auto)
         except Exception:
             # _disconnect can fail if the serial port is in a bad state
             import logging
@@ -1377,6 +1405,8 @@ class MainWindow(
         """
         prev = getattr(self, "_integrity", {}) or {}
         self._integrity = snap
+        if self._session_log is not None:
+            self._session_log.set_integrity(snap)
         new_driver = self._driver_error_total(snap) - self._driver_error_total(prev)
         if new_driver > 0:
             # The serial driver / UART lost or mangled bytes before they
@@ -1422,7 +1452,7 @@ class MainWindow(
     def _on_tx_recorded(self, packet: bytes) -> None:
         self._tx_bytes += len(packet)
         self._refresh_counts_label()
-        if self._decoded_logger and self._config:
+        if self._session_log is not None and self._config:
             self._log_tx_decoded(packet)
 
     def _log_tx_decoded(self, packet: bytes) -> None:
@@ -1447,7 +1477,7 @@ class MainWindow(
                 if not (p.ok and p.frame_id is not None and p.payload):
                     continue
                 decoded = decode_frame(self._config, p.frame_id, p.payload, self._tx_signal_state)
-                self._decoded_logger.log_frame(decoded, self._log_elapsed_ms())
+                self._session_log.log_frame(decoded, time.perf_counter())
         except Exception as e:
             import logging
             logging.getLogger("bytehound.ui").exception("Failed to parse/decode TX packet: %s", e)
@@ -1675,7 +1705,7 @@ class MainWindow(
         self._clear_action.setEnabled(ready)
         # Logging requires an active connection; _set_connection_ui controls this.
         # Only set enabled=True here if we're currently connected.
-        self._logging_action.setEnabled(ready and self._serial is not None)
+        self._logging_action.setEnabled(ready and (self._serial is not None or self._logging))
         # Flip the central stack: empty-state when no config, table view
         # once one is loaded. Guarded for the brief window during __init__
         # where _refresh_action_state can fire before _build_main_layout
@@ -1692,13 +1722,14 @@ class MainWindow(
             self._connect_action,
             _BTN_PINK if connected else _BTN_GREEN,
         )
-        # Logging button: green = connected & ready, yellow = disabled (no device)
+        # Logging button: pink = recording, green = connected & ready,
+        # yellow = disabled (no device). A session waiting for a reconnect is
+        # still recording, so Stop Logging stays available during the gap.
         self._style_action_btn(
             self._logging_action,
-            _BTN_GREEN if connected else _BTN_YELLOW,
+            _BTN_PINK if self._logging else (_BTN_GREEN if connected else _BTN_YELLOW),
         )
-        # Logging action only enabled while connected
-        self._logging_action.setEnabled(connected)
+        self._logging_action.setEnabled(connected or self._logging)
         if not connected:
             # Reset polling button colour and state too when disconnecting
             self._style_action_btn(self._polling_action, _BTN_GREEN)
@@ -1799,12 +1830,10 @@ class MainWindow(
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-        # Capture logger refs BEFORE _disconnect() nulls them in
-        # _stop_logging(). After logger.close() returns, the writer thread
-        # may still be draining a slow disk — we own the only handle that
-        # lets us wait for it before the interpreter kills the daemon
-        # thread mid-flush.
-        loggers = [("decoded log", self._decoded_logger)] if self._decoded_logger is not None else []
+        # Capture the session BEFORE _disconnect() nulls it in
+        # _stop_logging(): its last segment may still be compiling / hashing,
+        # and we own the only handle that lets us wait for it.
+        loggers = [("logging session", self._session_log)] if self._session_log is not None else []
         # _disconnect() guarantees: stop timer → flush logs → stop worker → null.
         self._disconnect(reason="Application closed")
         # Block on any logger writer threads that didn't drain within their

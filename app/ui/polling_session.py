@@ -57,6 +57,9 @@ class PollingSessionMixin:
                 self._serial.toggle_schedule(sched.target_id, sched.target_id in enabled_ids)
             pipe_enabled, pipe_depth, pipe_gap_ms = dlg.get_pipelining()
             self._serial.set_pipelining(pipe_enabled, pipe_depth, gap_ms=pipe_gap_ms)
+            # Remembered so an auto-reconnect (which creates a new worker)
+            # can restore exactly this polling setup.
+            self._polling_setup = (set(enabled_ids), (pipe_enabled, pipe_depth, pipe_gap_ms))
             if pipe_enabled:
                 mode = f"pipelined, max in-flight {pipe_depth}, TX gap {pipe_gap_ms} ms"
             else:
@@ -74,9 +77,31 @@ class PollingSessionMixin:
         )
         if self._serial:
             self._serial.set_polling_global(enabled)
-        if getattr(self, "_decoded_logger", None) is not None:
-            self._decoded_logger.polling_mode = enabled
+        if getattr(self, "_session_log", None) is not None:
+            self._session_log.set_polling_mode(enabled)
         self._log_activity(f"[ACTION] Auto-Fetch {'started' if enabled else 'stopped'}")
+
+    def _restore_polling_after_reconnect(self) -> None:
+        """Re-apply the Auto-Fetch setup to the new worker after an automatic
+        reconnect. Without this a polled device would stay silent after a USB
+        glitch until someone noticed — a gap in a long-run log (Plane.md F11).
+        """
+        if not getattr(self, "_resume_polling", False) or self._serial is None:
+            return
+        self._resume_polling = False
+        setup = getattr(self, "_polling_setup", None)
+        if setup is not None and self._config is not None:
+            enabled_ids, (pipe_enabled, pipe_depth, pipe_gap_ms) = setup
+            for sched in self._config.polling_schedules:
+                self._serial.toggle_schedule(sched.target_id, sched.target_id in enabled_ids)
+            self._serial.set_pipelining(pipe_enabled, pipe_depth, gap_ms=pipe_gap_ms)
+        self._polling_action.setChecked(True)
+        self._polling_action.setText("Stop Auto-Fetch")
+        self._style_action_btn(self._polling_action, _BTN_PINK)
+        self._serial.set_polling_global(True)
+        if getattr(self, "_session_log", None) is not None:
+            self._session_log.set_polling_mode(True)
+        self._log_activity("[INFO] Auto-Fetch resumed after reconnect")
 
     def _open_poll_config_dialog(self) -> None:
         """Sidebar Configure… button — opens dialog without toggling the action."""

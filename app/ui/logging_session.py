@@ -16,10 +16,11 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
-    QApplication, QDialog, QFileDialog, QProgressDialog,
+    QApplication, QDialog, QFileDialog, QMessageBox, QProgressDialog,
 )
 
 from ..serial_logging.decoded_logger import DecodedLogger
+from ..serial_logging.session import SessionLog, SessionSettings, find_unfinished_sessions, recover_session
 from .dialogs import LoggingSettingsDialog
 from .widgets import _BTN_PINK, _BTN_YELLOW
 
@@ -27,6 +28,23 @@ from .widgets import _BTN_PINK, _BTN_YELLOW
 class _RecoveryNotifier(QObject):
     """Carries the temp-log recovery result from its worker thread to the GUI thread."""
     done = Signal(str, bool)   # message, show a toast
+
+
+class _WorkerRawCapture:
+    """Points a session's raw capture at whichever capture worker is current
+    (it changes on every reconnect)."""
+
+    def __init__(self, window) -> None:
+        self._window = window
+
+    def start(self, path: Path, metadata: dict) -> None:
+        worker = getattr(self._window, "_serial", None)
+        if worker is not None:
+            worker.start_raw_capture(path, metadata)
+
+    def stop(self):
+        worker = getattr(self._window, "_serial", None)
+        return worker.stop_raw_capture() if worker is not None else None
 
 
 class LoggingSessionMixin:
@@ -42,14 +60,47 @@ class LoggingSessionMixin:
             return
         level_name, flush_interval = dlg.get_values()
         self._apply_logging_level(level_name)
-        if self._decoded_logger:
-            self._decoded_logger.set_flush_interval(flush_interval)
-        self._set_status(
-            f"Logging settings updated: level {level_name}, flush {flush_interval:.2f}s"
-        )
+        self._set_status("Logging settings updated (applied to the next logging session)")
         self._log_activity(
-            f"[ACTION] Logging settings updated: level {level_name}, flush {flush_interval:.2f}s"
+            f"[ACTION] Logging settings updated: level {level_name}, flush {flush_interval:.2f}s, "
+            f"{self._session_settings_summary(self._session_settings_from_qsettings())}"
         )
+
+    # -- session settings ---------------------------------------------------
+
+    def _session_settings_from_qsettings(self) -> SessionSettings:
+        s = self._settings
+
+        def num(key: str, default: float) -> float:
+            try:
+                return float(s.value(key, default))
+            except (TypeError, ValueError):
+                return float(default)
+
+        def flag(key: str, default: bool) -> bool:
+            return str(s.value(key, "true" if default else "false")).lower() == "true"
+
+        fixed_on = flag("logging/fixed_step_enabled", False)
+        return SessionSettings(
+            segment_seconds=max(60.0, num("logging/segment_minutes", 60) * 60.0),
+            event_log=flag("logging/event_log", True) or not fixed_on,
+            fixed_step_s=max(0.01, num("logging/fixed_step_s", 1.0)) if fixed_on else None,
+            stale_steps=max(1, int(num("logging/stale_steps", 3))),
+            hold_stale=str(s.value("logging/stale_policy", "hold")) != "blank",
+            disk_warn_bytes=int(max(0.0, num("logging/disk_warn_gb", 10)) * 1024 ** 3),
+            disk_stop_bytes=int(max(0.0, num("logging/disk_stop_gb", 2)) * 1024 ** 3),
+        )
+
+    @staticmethod
+    def _session_settings_summary(st: SessionSettings) -> str:
+        parts = [f"segments {st.segment_seconds / 60:g} min"]
+        if st.event_log:
+            parts.append("event log")
+        if st.fixed_step_s:
+            parts.append(f"fixed step {st.fixed_step_s:g} s ({'hold' if st.hold_stale else 'blank'} stale)")
+        return ", ".join(parts)
+
+    # -- start / stop -------------------------------------------------------
 
     def _on_toggle_logging(self) -> None:
         from .main_window import APP_NAME  # late import to break cycle
@@ -67,13 +118,13 @@ class LoggingSessionMixin:
         default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
         default_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        default_file = default_dir / f"serial_log_{timestamp}.xlsx"
+        default_name = default_dir / f"session_{timestamp}"
 
         target, _ = QFileDialog.getSaveFileName(
             self,
-            "Select log file",
-            str(default_file),
-            "Log files (*.xlsx);;All files (*)",
+            "Name the logging session (a folder with this name is created)",
+            str(default_name),
+            "Logging session folder (*)",
         )
         if not target:
             return
@@ -81,64 +132,56 @@ class LoggingSessionMixin:
         self._start_logging_file(target)
 
     def _start_logging_file(self, target: Path | str) -> bool:
-        """Start recording the decoded log (the only log the app writes) to *target*."""
+        """Start a logging session in the folder *target* (created).
+
+        A session is a folder of hourly segments — event log, optional
+        fixed-step log, rejected frames and lossless raw capture — plus a
+        ``session.json`` manifest (see ``serial_logging/session.py``).
+        """
         if self._logging or self._serial is None:
             return False
         if self._config is None:
             self._popup_critical("Start Logging", "No configuration loaded.")
             return False
 
-        decoded_path = Path(target).with_suffix(".xlsx")
+        folder = Path(target)
+        if folder.suffix.lower() in (".xlsx", ".csv"):
+            folder = folder.with_suffix("")
         self._log_started = datetime.now()
         self._log_started_perf = time.perf_counter()
         polling_active = hasattr(self, "_polling_action") and self._polling_action.isChecked()
-        self._decoded_logger = DecodedLogger(
-            decoded_path,
+        settings = self._session_settings_from_qsettings()
+        session = SessionLog(
+            folder,
             self._config,
-            flush_interval=self._log_flush_interval(),
-            metadata=self._build_log_metadata(decoded_path),
-            on_error=self._on_logger_error,
-            on_warning=self._log_activity,
+            settings,
+            config_source=self._config_path,
+            metadata=self._build_log_metadata(folder),
+            app_version=self._version_info.get("version", "") if hasattr(self, "_version_info") else "",
             polling_mode=polling_active,
+            raw_capture=_WorkerRawCapture(self),
+            on_warning=lambda msg: self._log_activity(f"[WARN] {msg}"),
+            on_error=self._on_logger_error,
         )
-
         try:
-            self._decoded_logger.open()
-        except (ValueError, OSError) as exc:
-            try:
-                self._decoded_logger.close()
-            except Exception:
-                pass
-            self._decoded_logger = None
-            self._popup_critical("Start Logging", str(exc))
+            session.start()
+        except (OSError, ValueError) as exc:
+            self._popup_critical("Start Logging", f"Could not start the logging session:\n\n{exc}")
             return False
-
-        # Lossless raw capture next to the decoded log. Written by the
-        # capture worker, so it stays complete even if the GUI falls behind
-        # and the decoded log has to drop frames; the decoded log can be
-        # rebuilt from it with Tools → Rebuild Decoded Log.
-        self._raw_capture_path = decoded_path.with_suffix(".bhraw")
-        try:
-            self._serial.start_raw_capture(
-                self._raw_capture_path,
-                {
-                    "log_started_perf": self._log_started_perf,
-                    "polling_mode": polling_active,
-                    "config_source": str(self._config_path) if self._config_path else "",
-                    "log_metadata": self._build_log_metadata(decoded_path),
-                },
-            )
-        except OSError as exc:
-            self._raw_capture_path = None
-            self._log_activity(f"[WARN] Raw capture not started: {exc}")
+        self._session_log = session
+        self._remember_session_folder(folder)
+        if getattr(self, "_integrity", None):
+            session.set_integrity(self._integrity)
 
         self._logging = True
         self._logging_action.setText("Stop Logging")
         self._style_action_btn(self._logging_action, _BTN_PINK)   # active → pink
-
-        self._logging_label.setText(f"Logging: {decoded_path.name}")
-        self._set_status(f"Logging started: {decoded_path.name}")
-        self._log_activity(f"Logging started: {decoded_path}")
+        self._session_timer.start()
+        self._update_logging_label()
+        self._set_status(f"Logging started: {folder.name}")
+        self._log_activity(
+            f"Logging started: {folder} ({self._session_settings_summary(settings)})"
+        )
         return True
 
     def _start_logging_auto(self) -> bool:
@@ -146,8 +189,47 @@ class LoggingSessionMixin:
         default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
         default_dir.mkdir(parents=True, exist_ok=True)
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        base = default_dir / f"auto_log_{timestamp}.xlsx"
-        return self._start_logging_file(base)
+        return self._start_logging_file(default_dir / f"auto_session_{timestamp}")
+
+    def _remembered_session_folders(self) -> list:
+        raw = self._settings.value("logging/recent_sessions", []) or []
+        if isinstance(raw, str):
+            raw = [raw]
+        return [Path(p) for p in raw if p]
+
+    def _remember_session_folder(self, folder: Path) -> None:
+        """Remember sessions saved outside the default folder so crash
+        recovery can find them on the next launch."""
+        folders = [str(folder)] + [str(p) for p in self._remembered_session_folders() if p != folder]
+        self._settings.setValue("logging/recent_sessions", folders[:20])
+
+    def _on_session_tick(self) -> None:
+        """1 Hz session housekeeping: fixed-step rows for quiet periods,
+        segment rotation, disk guard, status label."""
+        session = getattr(self, "_session_log", None)
+        if session is None:
+            return
+        try:
+            session.tick()
+        except Exception as exc:
+            logging.getLogger("bytehound.logging").exception("Session housekeeping failed")
+            self._on_logger_error(f"Session housekeeping failed: {exc}")
+            return
+        if session.stopped_for_disk and self._logging:
+            self._stop_logging(title="Disk Full")
+            return
+        self._update_logging_label()
+
+    def _update_logging_label(self) -> None:
+        session = getattr(self, "_session_log", None)
+        if session is None:
+            self._logging_label.setText("Logging: stopped")
+            return
+        seg = session.segment_index
+        free = getattr(session, "disk_free_bytes", None)
+        free_txt = f" · {free / 1e9:.0f} GB free" if free is not None else ""
+        state = f"segment {seg}" if seg is not None else "waiting for reconnect"
+        self._logging_label.setText(f"Logging: {session.folder.name} · {state}{free_txt}")
 
     def _apply_logging_level(self, level_name: str) -> None:
         raw_level = getattr(logging, str(level_name).upper(), logging.INFO)
@@ -167,21 +249,17 @@ class LoggingSessionMixin:
 
     def _stop_logging(self, title: str = "Saving Log") -> None:
         was_logging = self._logging
-        raw_path = getattr(self, "_raw_capture_path", None)
-        if raw_path is not None and self._serial is not None:
-            err = self._serial.stop_raw_capture()
-            if err:
-                self._log_activity(f"[ERROR] {err}")
-            else:
-                self._log_activity(f"Raw capture saved: {raw_path}")
-        self._raw_capture_path = None
-        logger = self._decoded_logger
-        if logger is not None:
-            logger.close(timeout=0.0)
-            if logger.is_draining():
-                self._wait_for_logger_drain([("decoded log", logger)], title=title)
+        session = getattr(self, "_session_log", None)
+        self._session_log = None
+        if hasattr(self, "_session_timer"):
+            self._session_timer.stop()
+        if session is not None:
+            session.stop()
+            if session.is_finishing():
+                self._wait_for_logger_drain([("logging session", session)], title=title)
+            self._log_activity(f"Logging session saved: {session.folder}")
+            self._offer_rebuild_if_dropped(session)
 
-        self._decoded_logger = None
         self._logging = False
         self._log_started = None
         self._log_started_perf = None
@@ -191,6 +269,50 @@ class LoggingSessionMixin:
         self._set_status("Logging stopped")
         if was_logging:
             self._log_activity("Logging stopped")
+
+    def _offer_rebuild_if_dropped(self, session: SessionLog) -> None:
+        """F10: if the decoded log had to drop frames, rebuild it from the
+        lossless raw capture so the saved session is complete."""
+        dropped = session.decoded_dropped
+        if not dropped or self._config is None:
+            return
+        self._log_activity(
+            f"[WARN] {dropped} frame(s) were missing from the decoded log; every frame is in the raw capture."
+        )
+        answer = QMessageBox.question(
+            self,
+            "Rebuild Decoded Log",
+            f"{dropped} frame(s) could not be written to the decoded log in time "
+            f"(the PC was too busy).\n\nEvery frame is in the raw capture. Rebuild the "
+            f"decoded log for this session now? Rebuilt files are saved next to the originals "
+            f"as seg_NNNN_event_rebuilt.xlsx.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        import threading
+        from ..serial_logging.session import rebuild_session_event_logs
+
+        config, folder = self._config, session.folder
+        notifier = _RecoveryNotifier(self)
+
+        def _on_done(msg: str, ok: bool) -> None:
+            self._log_activity(f"[SESSION] {msg}")
+            self._toast(msg) if ok else self._popup_warning("Rebuild Decoded Log", msg)
+            notifier.deleteLater()
+
+        notifier.done.connect(_on_done)
+
+        def _worker() -> None:
+            try:
+                n = rebuild_session_event_logs(folder, config)
+                notifier.done.emit(f"Rebuilt the decoded log of {n} segment(s) in {folder.name}", True)
+            except Exception as exc:
+                logging.getLogger("bytehound").error("Session rebuild failed", exc_info=True)
+                notifier.done.emit(f"Rebuild failed: {exc}", False)
+
+        threading.Thread(target=_worker, name="RebuildSession", daemon=False).start()
 
     def _wait_for_logger_drain(self, drainers: list, title: str = "Closing") -> None:
         """Show a progress dialog and poll each logger until its writer
@@ -312,22 +434,32 @@ class LoggingSessionMixin:
         threading.Thread(target=_worker, name="RebuildDecodedLog", daemon=False).start()
 
     def _check_and_recover_temp_logs(self) -> None:
-        """Scan default log directory for orphaned .tmp_data files and recover/clean them asynchronously."""
+        """Recover logging sessions and single-file logs that were still being
+        written when the app stopped (crash, power loss), in the background."""
         import threading
         from .main_window import APP_NAME
 
         default_dir = Path(os.path.expanduser("~")) / "Documents" / APP_NAME
-        if not default_dir.exists():
-            return
-
-        tmp_files = [f for f in default_dir.glob("*.tmp_data") if f.exists()]
-        if not tmp_files:
+        tmp_files = [f for f in default_dir.glob("*.tmp_data") if f.exists()] if default_dir.exists() else []
+        sessions = find_unfinished_sessions(default_dir)
+        for remembered in self._remembered_session_folders():
+            if remembered.exists() and remembered not in sessions:
+                sessions += find_unfinished_sessions(remembered, max_depth=0)
+        if not tmp_files and not sessions:
             return
 
         def _recovery_worker():
             import shutil
             recovered_count = 0
             cleaned_count = 0
+
+            for folder in sessions:
+                try:
+                    if recover_session(folder):
+                        recovered_count += 1
+                        logging.getLogger("bytehound").info("Recovered logging session %s", folder)
+                except Exception as exc:
+                    logging.getLogger("bytehound").error("Failed to recover session %s: %s", folder, exc, exc_info=True)
 
             for tmp_data in tmp_files:
                 tmp_meta = tmp_data.with_suffix(".tmp_meta")

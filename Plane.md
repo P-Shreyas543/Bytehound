@@ -55,24 +55,36 @@ Excel caps a sheet at 1,048,576 rows (~29 h at 10 Hz); a month is ~26 M rows
 and the compile at Stop would take hours. **Decided: hourly CSV segments,
 each also converted to `.xlsx` when it closes.**
 
-- [ ] Session folder `<session>/seg_NNNN.csv` (+ `seg_NNNN.bhraw`), rotated
-      every hour (configurable 15 min – 24 h) and at a size cap
-- [ ] `session.json` manifest: app version, config fingerprint + config copy,
+- [x] Session folder with `seg_NNNN_event.csv/.xlsx`, `seg_NNNN.bhraw`,
+      optional `seg_NNNN_fixed.csv/.xlsx` and `seg_NNNN_rejected.csv`; rotated
+      every hour (Logging Settings: 15 min – 24 h) and before any file reaches
+      1,000,000 rows — `app/serial_logging/session.py`
+- [x] `session.json` manifest: app version, config fingerprint + config copy,
       start/end wall time, per-segment time range / rows / status / SHA-256;
       rewritten atomically after every rotation
-- [ ] Each closed segment converted to `.xlsx` in the background (≤1 M rows
+- [x] Each closed segment converted to `.xlsx` in the background (≤1 M rows
       by construction); never blocks capture or the next segment
-- [ ] Absolute timestamps (UTC + local) in rows, not only elapsed ms — runs
-      span DST changes and clock syncs
-- [ ] Disk guard: warn below 10 GB free, stop logging cleanly below 2 GB
+- [x] Absolute timestamps (UTC + local, ISO 8601 with offset) in rows, not
+      only elapsed ms — anchored to the monotonic clock per segment, so no
+      jumps on NTP/DST and a fresh anchor every hour
+- [x] Disk guard: warn below 10 GB free, stop logging cleanly below 2 GB
       (both configurable); never delete data automatically; free space in the
-      status bar
-- [ ] Crash / power-loss recovery per segment on next launch; manifest fixed
-- [ ] **Behaviour change:** logging continues across auto-reconnects (new
+      logging status label; events recorded in the manifest
+- [x] Crash / power-loss recovery per segment on next launch (default folder
+      and every recently used session folder); manifest fixed
+- [x] **Behaviour change:** logging continues across auto-reconnects (new
       segment, gap recorded) instead of stopping — a USB glitch at 3 a.m.
-      must not end a month-long log
+      must not end a month-long log. Found and fixed on the way: after an
+      auto-reconnect Auto-Fetch stayed **off** (and per-target / pipelining
+      choices were lost with the old worker), so a polled BMS went silent;
+      the exact polling setup is now restored. Stop Logging stays usable
+      during the gap. End-to-end test: `tests/test_session_gui.py`
 - [ ] Soak test: time-compressed multi-day run checks rotation, manifest,
-      disk guard, flat memory, no file-handle leaks
+      disk guard, flat memory, no file-handle leaks (unit tests cover
+      rotation / gaps / disk guard / recovery with simulated clocks; the
+      long soak itself is still to do)
+- [ ] Session `.bhraw` raw captures need a session-aware **Rebuild** in the
+      Tools menu (the automatic F10 rebuild on Stop already works per segment)
 
 ### 0.4 Part B — Analysis Suite for months of data
 
@@ -174,7 +186,7 @@ these loss points:
 | F14 | UDP on Windows | An ICMP "port unreachable" (device rebooting) arrives as `WSAECONNRESET` on the next read → treated as an unplug → **session ended** | Ignore the notice for UDP and keep reading |
 
 Progress (each with a test that fails on the old code):
-F1 ✅ F2 ✅ F3 ✅ F4 ✅ F5 ✅ F6 ✅ F7 ✅ F8 ✅ F9 ☐ F10 ☐ F11 ☐ (with Part A)
+F1 ✅ F2 ✅ F3 ✅ F4 ✅ F5 ✅ F6 ✅ F7 ✅ F8 ✅ F9 ✅ F10 ✅ F11 ✅
 F12 ☐ F13 ✅ F14 ✅ — tests in `tests/test_polling_worker.py`
 (`test_polling_start_delivers_waiting_frames_instead_of_discarding`,
 `test_polling_continues_while_gui_is_backpressured`) and
@@ -278,26 +290,33 @@ Labs often need one row every 0.1 s / 1 s exactly, regardless of when or how
 often the BMS sends each frame (e.g. to align with a cycler or climate
 chamber log). Today the decoded log is event-driven (one row per poll cycle).
 
-- [ ] Logging mode: **Event** (current) or **Fixed step**; both can run
+- [x] Logging mode: **Event** (current) or **Fixed step**; both can run
       together into separate files of the same session
-- [ ] Step options 10 ms – 60 s (presets 0.1 s, 0.5 s, 1 s, 10 s) in Preferences
-      and in the Start Logging dialog
-- [ ] Driftless timing: row *n* is stamped at `t0 + n × step` on the
-      monotonic clock, generated in the capture worker — never by a GUI
-      timer, never accumulated sleeps; late ticks are emitted on catch-up with
-      their exact grid time, never skipped
-- [ ] Value policy per row: latest value of every signal (sample-and-hold),
+- [x] Step 10 ms – 60 s in Logging Settings (Preferences consolidation and a
+      step choice in the Start Logging dialog come with Part G)
+- [x] Driftless timing: row *n* is stamped at `t0 + n × step` on the
+      monotonic receive clock. **Design change:** rows are derived from each
+      frame's receive timestamp rather than generated by a timer in the
+      worker — the values are then exact by construction (newest value at or
+      before each tick), independent of GUI load, and identical in thread
+      and process capture modes. A stall only delays when rows are written;
+      late ticks are emitted on catch-up, never skipped
+- [x] Value policy per row: latest value of every signal (sample-and-hold),
       plus per-signal **age** (ms since the value arrived) and a **stale**
       flag when older than N steps (configurable, default 3); option to leave
       stale cells blank instead of holding
-- [ ] Rows written even when nothing arrived (all stale) so the grid is
+- [x] Rows written even when nothing arrived (all stale) so the grid is
       complete; disconnects shown as stale rows + gap in the manifest
-- [ ] Same session folder, segments, rotation, `.xlsx` per segment, disk
-      guard and crash recovery as Part A; Analysis Suite opens it natively
-- [ ] Metrics: tick jitter p50/p99/max and late ticks recorded per segment
-- [ ] Tests: grid exactness over a simulated week (no drift), hold/age/stale
-      behaviour, catch-up after a stall, equivalence of values with the event
-      log at the same instants
+- [x] Same session folder, segments, rotation, `.xlsx` per segment, disk
+      guard and crash recovery as Part A
+- [ ] Analysis Suite opens fixed-step logs natively (Part B)
+- ~~Metrics: tick jitter p50/p99/max~~ — row times are exact by
+  construction, so there is no tick jitter to measure. (What can lag is
+  *writing*: bounded by the 1 s quiet margin, plus any GUI stall.)
+- [x] Tests: grid exactness over a simulated week (no drift), hold/age/stale
+      behaviour, catch-up after a stall, grid continuity across rotations and
+      across a disconnect gap (`tests/test_session_log.py`)
+- [ ] Test: fixed-step values equal the event log's values at the same instants
 
 ### 0.11 Known gaps and follow-ups (don't lose these)
 

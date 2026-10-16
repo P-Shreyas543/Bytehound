@@ -480,6 +480,16 @@ class SessionLog:
             t.join(None if deadline is None else max(0.0, deadline - time.monotonic()))
         return not self.is_finishing()
 
+    # Interface used by the GUI's "finishing log" progress dialog.
+    def is_draining(self) -> bool:
+        return self.is_finishing()
+
+    def await_drain(self, timeout: Optional[float] = None) -> bool:
+        return self.await_finished(timeout)
+
+    def pending_rows(self) -> int:
+        return sum(1 for t in self._finishers if t.is_alive())
+
     @property
     def manifest(self) -> Dict[str, Any]:
         with self._lock:
@@ -840,3 +850,31 @@ def find_unfinished_sessions(root: Path, max_depth: int = 2) -> List[Path]:
         except (OSError, ValueError):
             continue
     return out
+
+
+def rebuild_session_event_logs(folder: Path, config: FrameConfig) -> int:
+    """Regenerate every segment's event log from its raw capture (F10).
+
+    Writes ``seg_NNNN_event_rebuilt.xlsx`` next to each original, records it
+    in the manifest, and returns the number of segments rebuilt. Originals
+    are never modified.
+    """
+    from .raw_capture import rebuild_decoded_log
+
+    folder = Path(folder)
+    manifest = read_manifest(folder)
+    rebuilt = 0
+    for seg in manifest.get("segments", []):
+        raw_name = seg.get("files", {}).get("raw")
+        if not raw_name or not (folder / raw_name).exists():
+            continue
+        out = folder / f"seg_{int(seg['index']):04d}_event_rebuilt.xlsx"
+        frames = rebuild_decoded_log(folder / raw_name, config, out)
+        seg.setdefault("files", {})["event_rebuilt_xlsx"] = out.name
+        seg["rebuilt_frames"] = frames
+        rebuilt += 1
+    manifest.setdefault("events", []).append(
+        {"utc": iso_utc(time.time()), "text": f"Event logs rebuilt from raw capture for {rebuilt} segment(s)"}
+    )
+    write_manifest(folder, manifest)
+    return rebuilt

@@ -672,6 +672,37 @@ Header: `timestamp,direction,hex,delta_t_ms`
 - `hex` is space-separated, uppercase.
 - `delta_t_ms` is the request-to-response latency for polled responses (else 0.0).
 
+### Logging sessions — `SessionLog`
+
+The app always logs into a session folder ([session.py](app/serial_logging/session.py)):
+`session.json` + `config/` + per segment `seg_NNNN_event.csv/.xlsx`,
+`seg_NNNN_fixed.csv/.xlsx` (fixed-step, optional), `seg_NNNN_rejected.csv`
+(only if a frame failed CRC/framing) and `seg_NNNN.bhraw`.
+
+- **Rotation:** `segment_seconds` (QSettings `logging/segment_minutes`,
+  default 60) or before any file reaches `max_segment_rows` (1,000,000) so
+  every `.xlsx` fits one sheet. Closed segments are compiled and SHA-256
+  hashed on a background `SegmentFinisher` thread.
+- **Event rows** are the existing wide `DecodedLogger` rows with two leading
+  columns, `time_utc` / `time_local` (ISO 8601, ms, offset). Wall time is
+  anchored to the monotonic receive clock at each segment start.
+- **Fixed-step rows** (`FixedStepSampler`): `tick, time_utc, time_local,
+  elapsed_s`, then per signal `<signal>` + `<signal>.age_ms`, then
+  `stale_signals`. Tick *n* is `t0 + n × step`; the value is the newest one
+  received at or before that time. Generated from receive timestamps, so
+  exact regardless of GUI load.
+- **Manifest:** `format`, `format_version`, `status` (`recording` / `closed`
+  / `recovered`), config copy + `files_sha256`, settings, metadata, every
+  segment (files, rows, bytes, sha256, integrity counters, rejected frames,
+  decoded drops, close reason), `gaps` (disconnects) and `events` (disk).
+  Rewritten atomically (`.partial` + `fsync` + rename).
+- **Reconnect:** with auto-reconnect the segment closes on unplug, a gap is
+  recorded, and `connection_restored()` opens the next segment; Auto-Fetch
+  is restored with the same per-target and pipelining setup.
+- **Recovery:** `find_unfinished_sessions` / `recover_session` at startup
+  (default folder + `logging/recent_sessions`).
+- **Disk guard:** `logging/disk_warn_gb` (10) / `logging/disk_stop_gb` (2).
+
 ### `*.bhraw` — `RawCapture` (lossless wire capture)
 
 Written next to the decoded log whenever logging is on, by the capture

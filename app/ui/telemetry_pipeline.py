@@ -59,19 +59,24 @@ class TelemetryPipelineMixin:
         were missing from the log too. Frames decoded here are passed on so
         the flush doesn't decode them again.
         """
-        logger = getattr(self, "_decoded_logger", None)
+        session = getattr(self, "_session_log", None)
         config = getattr(self, "_config", None)
-        if logger is None or config is None:
+        if session is None or config is None:
             return batch
         out = []
         for item in batch:
             packet, decoded, rx_perf = self._unpack_item(item)
+            t = rx_perf if rx_perf is not None else time.perf_counter()
             if getattr(packet, "ok", False) and packet.frame_id is not None:
                 if decoded is None:
                     if not hasattr(self, "_signal_state"):
                         self._signal_state = {}
                     decoded = decode_frame(config, packet.frame_id, packet.payload, self._signal_state)
-                logger.log_frame(decoded, self._log_elapsed_ms(rx_perf))
+                session.log_frame(decoded, t)
+            elif not getattr(packet, "ok", True):
+                # Rejected frames (CRC / framing) are evidence, not noise: keep
+                # them per segment with the reason (Plane.md F9).
+                session.log_rejected(packet.raw, packet.frame_id, packet.error or "", t)
             out.append((packet, decoded, rx_perf))
         return out
 

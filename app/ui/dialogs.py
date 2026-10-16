@@ -464,7 +464,7 @@ class LoggingSettingsDialog(QDialog):
         super().__init__(parent)
         apply_dialog_theme(self)
         self.setWindowTitle("Logging Settings")
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(420)
         self._settings = settings
 
         layout = QVBoxLayout(self)
@@ -487,12 +487,62 @@ class LoggingSettingsDialog(QDialog):
         self._flush_spin.setSuffix(" s")
         self._flush_spin.setToolTip("0.0 = flush every write")
 
-        form.addRow("Log level", self._level_combo)
+        form.addRow("Application log level", self._level_combo)
         form.addRow("Flush interval", self._flush_spin)
+
+        # --- Logging sessions (long-duration recording) -------------------
+        self._segment_spin = QSpinBox(self)
+        self._segment_spin.setRange(15, 1440)
+        self._segment_spin.setSingleStep(15)
+        self._segment_spin.setSuffix(" min")
+        self._segment_spin.setToolTip(
+            "A new segment (CSV + .xlsx + raw capture) starts after this long. "
+            "Segments also rotate before any file reaches 1,000,000 rows."
+        )
+        self._event_chk = QCheckBox("Event log (one row per received cycle)", self)
+        self._fixed_chk = QCheckBox("Fixed-step log (one row every step, exactly)", self)
+        self._step_spin = QDoubleSpinBox(self)
+        self._step_spin.setRange(0.01, 60.0)
+        self._step_spin.setDecimals(2)
+        self._step_spin.setSingleStep(0.1)
+        self._step_spin.setSuffix(" s")
+        self._step_spin.setToolTip(
+            "Rows are stamped exactly every step on the receive clock and hold the newest value "
+            "of each signal at that instant, with its age in ms."
+        )
+        self._stale_spin = QSpinBox(self)
+        self._stale_spin.setRange(1, 1000)
+        self._stale_spin.setSuffix(" steps")
+        self._stale_spin.setToolTip("A value older than this many steps counts as stale.")
+        self._stale_combo = QComboBox(self)
+        self._stale_combo.addItems(["Hold last value", "Leave blank"])
+        self._fixed_chk.toggled.connect(self._step_spin.setEnabled)
+        self._fixed_chk.toggled.connect(self._stale_spin.setEnabled)
+        self._fixed_chk.toggled.connect(self._stale_combo.setEnabled)
+        self._disk_warn_spin = QSpinBox(self)
+        self._disk_warn_spin.setRange(1, 10_000)
+        self._disk_warn_spin.setSuffix(" GB")
+        self._disk_stop_spin = QSpinBox(self)
+        self._disk_stop_spin.setRange(1, 10_000)
+        self._disk_stop_spin.setSuffix(" GB")
+        self._disk_stop_spin.setToolTip(
+            "Logging stops cleanly below this much free space. Data is never deleted automatically."
+        )
+
+        form.addRow(QLabel("<b>Logging sessions</b>", self))
+        form.addRow("New segment every", self._segment_spin)
+        form.addRow("", self._event_chk)
+        form.addRow("", self._fixed_chk)
+        form.addRow("Step", self._step_spin)
+        form.addRow("Stale after", self._stale_spin)
+        form.addRow("Stale values", self._stale_combo)
+        form.addRow("Warn below free space", self._disk_warn_spin)
+        form.addRow("Stop below free space", self._disk_stop_spin)
         layout.addLayout(form)
 
         note = QLabel(
-            "Flush interval applies to the raw CSV logger. 0.0 flushes every write. (Decoded .xlsx logs are written on Stop.)",
+            "Each session is a folder: hourly segments (CSV + .xlsx), a lossless .bhraw raw "
+            "capture, rejected frames, and session.json. Changes apply to the next session.",
             self,
         )
         note.setWordWrap(True)
@@ -524,9 +574,44 @@ class LoggingSettingsDialog(QDialog):
             interval = 0.0
         self._flush_spin.setValue(interval)
 
+        s = self._settings
+
+        def num(key: str, default: float) -> float:
+            try:
+                return float(s.value(key, default))
+            except (TypeError, ValueError):
+                return float(default)
+
+        def flag(key: str, default: bool) -> bool:
+            return str(s.value(key, "true" if default else "false")).lower() == "true"
+
+        self._segment_spin.setValue(int(num("logging/segment_minutes", 60)))
+        self._event_chk.setChecked(flag("logging/event_log", True))
+        fixed_on = flag("logging/fixed_step_enabled", False)
+        self._fixed_chk.setChecked(fixed_on)
+        self._step_spin.setValue(num("logging/fixed_step_s", 1.0))
+        self._stale_spin.setValue(int(num("logging/stale_steps", 3)))
+        self._stale_combo.setCurrentIndex(1 if str(s.value("logging/stale_policy", "hold")) == "blank" else 0)
+        for w in (self._step_spin, self._stale_spin, self._stale_combo):
+            w.setEnabled(fixed_on)
+        self._disk_warn_spin.setValue(int(num("logging/disk_warn_gb", 10)))
+        self._disk_stop_spin.setValue(int(num("logging/disk_stop_gb", 2)))
+
     def _on_accept(self) -> None:
         self._settings.setValue("logging/level", self._level_combo.currentText())
         self._settings.setValue("logging/flush_interval_s", self._flush_spin.value())
+        if not self._event_chk.isChecked() and not self._fixed_chk.isChecked():
+            # A session with neither log would only keep the raw capture.
+            self._event_chk.setChecked(True)
+        s = self._settings
+        s.setValue("logging/segment_minutes", self._segment_spin.value())
+        s.setValue("logging/event_log", "true" if self._event_chk.isChecked() else "false")
+        s.setValue("logging/fixed_step_enabled", "true" if self._fixed_chk.isChecked() else "false")
+        s.setValue("logging/fixed_step_s", self._step_spin.value())
+        s.setValue("logging/stale_steps", self._stale_spin.value())
+        s.setValue("logging/stale_policy", "blank" if self._stale_combo.currentIndex() == 1 else "hold")
+        s.setValue("logging/disk_warn_gb", max(self._disk_warn_spin.value(), self._disk_stop_spin.value()))
+        s.setValue("logging/disk_stop_gb", self._disk_stop_spin.value())
         self.accept()
 
     def get_values(self) -> Tuple[str, float]:

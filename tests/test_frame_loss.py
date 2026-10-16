@@ -318,7 +318,7 @@ def test_ui_flags_discards_only_after_the_first_valid_frame():
     badge.setVisible = lambda v: setattr(badge, "visible", v)
     badge.setToolTip = lambda t: setattr(badge, "tip", t)
     host = SimpleNamespace(
-        _integrity={}, _integrity_baseline=None, _warning_badge=badge,
+        _integrity={}, _integrity_baseline=None, _warning_badge=badge, _session_log=None,
         _log_activity=activity.append, _refresh_counts_label=lambda: None,
     )
     host._lost_bytes = MainWindow._lost_bytes

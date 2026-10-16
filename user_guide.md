@@ -128,18 +128,40 @@ Tabs showing live ON/OFF state per named bit and the active enum label per varia
 
 ## Logging
 
+Logging is built for long tests — hours, days or months. Each recording is a **session folder** split into segments, so files stay a manageable size and Excel can open every one of them.
+
 ### Recording
-1. **Device → Start Logging** and choose a filename.
-2. Two files are produced:
-   - `<name>.xlsx` — Excel workbook with a `Metadata` sheet (app, port, baud, config path, session start, etc.) and a `Data` sheet (decoded signals, one row per poll cycle). Finalised on Stop Logging; if the app closes unexpectedly it is rebuilt on the next launch.
-   - `<name>.bhraw` — a lossless capture of every byte sent and received, with timestamps. It is complete even if the PC was too busy to keep up with the decoded log.
-3. **Device → Stop Logging** to finalize.
+1. **Device → Start Logging** and name the session. A folder with that name is created (default: `~/Documents/Bytehound/session_<date>_<time>`).
+2. **Device → Stop Logging** to finish. Data is written continuously; nothing waits for Stop.
 
-If the decoded log reports dropped frames, or you want to re-decode a run with a corrected configuration, load the configuration and use **Tools → Rebuild Decoded Log**, then pick the `.bhraw` file.
+### What a session folder contains
 
-The default log directory is `~/Documents/Bytehound` and a 📂 button next to the logging status opens it.
+| File | Contents |
+|---|---|
+| `seg_0001_event.csv` / `.xlsx` | Decoded signals, one row per received cycle, with `time_utc` and `time_local` |
+| `seg_0001_fixed.csv` / `.xlsx` | Fixed-step log (if enabled): one row every step, exactly |
+| `seg_0001.bhraw` | Lossless capture of every byte sent and received |
+| `seg_0001_rejected.csv` | Frames that failed the CRC / framing check, with the reason (only if any) |
+| `session.json` | Summary: settings, configuration fingerprint, every segment with row counts, sizes and checksums, disconnect gaps, disk warnings |
+| `config/` | Copy of the configuration used for the recording |
 
-To inspect a recorded run after the fact, open the matching `*_decoded.xlsx` in the **Analysis Suite** (*Tools → Analysis Suite*). It supports time cursors, statistics over an X-range, smoothing, and overlaying multiple runs.
+A new segment starts every hour (configurable) and before any file reaches 1,000,000 rows. Finished segments are converted to `.xlsx` in the background.
+
+### Fixed-step logging
+Enable it in **Tools → Logging Settings**. Each row is stamped exactly every step (for example 0.1 s or 1 s) regardless of when the BMS sends each frame, and holds the newest value of every signal at that instant plus its age in milliseconds. A value older than *N* steps counts as stale; you can keep it or leave the cell blank. Rows are written even when no data arrives, so the time grid is always complete.
+
+### Long tests: disconnects, crashes and disk space
+- **Disconnects:** with *Auto-reconnect* on, logging does not stop when the device drops. The gap is recorded in `session.json`, Auto-Fetch is resumed with the same settings, and a new segment starts when the device is back.
+- **Crash or power loss:** on the next start, unfinished sessions are completed automatically; everything written up to the moment of the crash is kept.
+- **Disk space:** a warning is shown below 10 GB free, and logging stops cleanly below 2 GB (both configurable). Data is never deleted automatically.
+- **Nothing lost silently:** if the PC was too busy to write every decoded frame, you are offered a rebuild from the raw capture when you stop logging. Discarded bytes and serial driver errors are shown in the status bar.
+
+### Rebuilding a decoded log
+To re-decode a recording (for example with a corrected configuration), load the configuration and use **Tools → Rebuild Decoded Log**, then pick a `.bhraw` file.
+
+The 📂 button next to the logging status opens the log folder.
+
+To inspect a recorded run, open the segment files in the **Analysis Suite** (*Tools → Analysis Suite*). It supports time cursors, statistics over an X-range, smoothing, and overlaying multiple runs.
 
 ---
 
