@@ -322,6 +322,7 @@ def test_ui_flags_discards_only_after_the_first_valid_frame():
         _log_activity=activity.append, _refresh_counts_label=lambda: None,
     )
     host._lost_bytes = MainWindow._lost_bytes
+    host._driver_error_total = MainWindow._driver_error_total
     handler = MainWindow._on_integrity_updated.__get__(host)
 
     handler({"frames_ok": 0, "discarded_bytes": 7})
@@ -331,3 +332,67 @@ def test_ui_flags_discards_only_after_the_first_valid_frame():
     handler({"frames_ok": 12, "discarded_bytes": 12})   # 5 bytes lost mid-stream
     assert badge.visible and "5 B since the first valid frame" in badge.tip
     assert len(activity) == 1
+
+
+# ---------------------------------------------------------------------------
+# F6 / F7 / F8 — connect purge, driver errors, thread priority
+# ---------------------------------------------------------------------------
+
+@pytest.mark.skipif(sys.platform != "win32", reason="ClearCommError is Windows-only")
+def test_driver_error_flags_are_counted_not_discarded(monkeypatch):
+    """F7: pyserial calls ClearCommError and throws the flags away, so UART
+    overruns were invisible. The tracking port records them."""
+    import app.serial_io.serial_worker as sw
+
+    reports = iter([0x0002 | 0x0008, 0x0000, 0x0001])
+
+    def fake_clear(handle, flags_ref, comstat_ref):
+        flags_ref._obj.value = next(reports)
+        comstat_ref._obj.cbInQue = 7
+        return True
+
+    monkeypatch.setattr(sw._win32, "ClearCommError", fake_clear)
+    port = sw.ErrorTrackingSerial.__new__(sw.ErrorTrackingSerial)
+    port.comm_errors = sw._empty_comm_errors()
+    port._port_handle = 1
+    port.is_open = True
+
+    assert port.in_waiting == 7
+    assert port.in_waiting == 7
+    assert port.in_waiting == 7
+    assert port.comm_errors["hardware_overrun"] == 1
+    assert port.comm_errors["framing_error"] == 1
+    assert port.comm_errors["rx_buffer_overflow"] == 1
+    assert port.comm_errors["parity_error"] == 0
+
+
+def test_open_records_purge_and_raises_thread_priority(monkeypatch):
+    """F6: bytes dropped at connect are counted; F8: the capture thread
+    starts at high priority."""
+    from unittest.mock import MagicMock
+
+    from PySide6.QtCore import QThread
+
+    import app.serial_io.serial_worker as sw
+
+    class FakePort:
+        def __init__(self, **kwargs):
+            self.is_open = True
+            self.in_waiting = 5
+
+        def set_buffer_size(self, **kwargs):
+            pass
+
+        def reset_input_buffer(self):
+            self.in_waiting = 0
+
+        def close(self):
+            self.is_open = False
+
+    monkeypatch.setattr(sw, "ErrorTrackingSerial", FakePort)
+    worker = sw.PollingWorker(sw.SerialSettings(port="COM_TEST"), dummy_protocol_config(), [])
+    worker.start = MagicMock()
+    worker.open()
+    worker.start.assert_called_once_with(QThread.Priority.HighestPriority)
+    assert worker.integrity_snapshot()["purged_at_connect"] == 5
+    worker._serial = None

@@ -174,7 +174,7 @@ these loss points:
 | F14 | UDP on Windows | An ICMP "port unreachable" (device rebooting) arrives as `WSAECONNRESET` on the next read → treated as an unplug → **session ended** | Ignore the notice for UDP and keep reading |
 
 Progress (each with a test that fails on the old code):
-F1 ✅ F2 ✅ F3 ✅ F4 ✅ F5 ✅ F6 ☐ F7 ☐ F8 ☐ F9 ☐ F10 ☐ F11 ☐ (with Part A)
+F1 ✅ F2 ✅ F3 ✅ F4 ✅ F5 ✅ F6 ✅ F7 ✅ F8 ✅ F9 ☐ F10 ☐ F11 ☐ (with Part A)
 F12 ☐ F13 ✅ F14 ✅ — tests in `tests/test_polling_worker.py`
 (`test_polling_start_delivers_waiting_frames_instead_of_discarding`,
 `test_polling_continues_while_gui_is_backpressured`) and

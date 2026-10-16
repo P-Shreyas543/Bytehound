@@ -336,6 +336,69 @@ class UdpSocketWrapper:
                 raise serial.SerialException(f"UDP socket read error: {e}") from e
 
 
+# Windows comm error flags reported by ClearCommError (Plane.md F7).
+COMM_ERROR_FLAGS = {
+    0x0001: "rx_buffer_overflow",  # CE_RXOVER: driver input buffer full, bytes lost
+    0x0002: "hardware_overrun",    # CE_OVERRUN: UART FIFO overrun, bytes lost
+    0x0004: "parity_error",        # CE_RXPARITY
+    0x0008: "framing_error",       # CE_FRAME: usually wrong baud rate or noise
+    0x0010: "break",               # CE_BREAK
+}
+
+
+def _empty_comm_errors() -> Dict[str, int]:
+    return {name: 0 for name in COMM_ERROR_FLAGS.values()}
+
+
+if sys.platform == "win32":
+    import ctypes
+
+    from serial import win32 as _win32
+    from serial.serialutil import PortNotOpenError
+
+    class ErrorTrackingSerial(serial.Serial):
+        """pyserial port that keeps the driver's error flags.
+
+        pyserial's ``in_waiting`` and ``read()`` call ``ClearCommError`` and
+        discard the flags, so receive-buffer overflows and UART overruns —
+        bytes lost before they ever reach us — were invisible. This calls
+        ``ClearCommError`` first and counts each flag in ``comm_errors``.
+        Residual gap: an error raised in the microseconds between our call
+        and pyserial's own call inside ``read()`` is still cleared unseen.
+        """
+
+        def __init__(self, *args, **kwargs) -> None:
+            self.comm_errors: Dict[str, int] = _empty_comm_errors()
+            super().__init__(*args, **kwargs)
+
+        def _poll_comm_errors(self) -> int:
+            flags = _win32.DWORD()
+            comstat = _win32.COMSTAT()
+            if not _win32.ClearCommError(self._port_handle, ctypes.byref(flags), ctypes.byref(comstat)):
+                raise serial.SerialException(f"ClearCommError failed ({ctypes.WinError()!r})")
+            value = flags.value
+            if value:
+                for bit, name in COMM_ERROR_FLAGS.items():
+                    if value & bit:
+                        self.comm_errors[name] += 1
+            return comstat.cbInQue
+
+        @property
+        def in_waiting(self) -> int:
+            if not self.is_open:
+                raise PortNotOpenError()
+            return self._poll_comm_errors()
+
+        def read(self, size: int = 1) -> bytes:
+            if self.is_open:
+                self._poll_comm_errors()
+            return super().read(size)
+else:
+    # pyserial exposes no line-status errors on POSIX; counts stay at zero
+    # and integrity_snapshot() reports them as unavailable.
+    ErrorTrackingSerial = serial.Serial
+
+
 # Tuning constants
 _BATCH_SIZE = 50          # emit after accumulating this many packets …
 _BATCH_INTERVAL = 0.016  # … or after this many seconds (≈ 60 Hz), whichever is first
@@ -496,6 +559,7 @@ class PollingWorker(QThread):
         # Backpressure state (PuTTY-inspired downstream consumer flow control)
         self._backpressure_throttled: bool = False
         self._backpressure_events: int = 0
+        self._open_purged_bytes: int = 0
 
         # Lossless wire capture while logging is on. Written from this thread
         # right after each read/write; the GUI only starts and stops it.
@@ -564,7 +628,7 @@ class PollingWorker(QThread):
             )
             self._serial.open()
         else:
-            self._serial = serial.Serial(
+            self._serial = ErrorTrackingSerial(
                 port=self.settings.port,
                 baudrate=self.settings.baud_rate,
                 bytesize=self.settings.data_bits,
@@ -581,7 +645,16 @@ class PollingWorker(QThread):
             except Exception:
                 pass
             try:
+                # Bytes left over from before this connection (cold-boot
+                # fragments). No session exists yet, so dropping them loses
+                # no logged data — but the amount is recorded (Plane.md F6).
+                self._open_purged_bytes = self._serial.in_waiting
                 self._serial.reset_input_buffer()
+                if self._open_purged_bytes:
+                    _LOG.info(
+                        "Discarded %d stale bytes waiting on %s at connect",
+                        self._open_purged_bytes, self.settings.port,
+                    )
             except Exception:
                 pass
         self._stop_event.clear()
@@ -589,7 +662,10 @@ class PollingWorker(QThread):
         self._last_emit_time = time.monotonic()
         # Used by the polling gate in _run_loop — see POLLING_BOOT_GRACE.
         self._open_time = time.monotonic()
-        self.start()
+        # Highest normal priority so other work on the PC cannot starve the
+        # reads (Plane.md F8). Not TimeCritical: the loop busy-polls while
+        # data flows and must not starve the rest of the system.
+        self.start(QThread.Priority.HighestPriority)
 
 
     def stop(self) -> None:
@@ -879,6 +955,9 @@ class PollingWorker(QThread):
             "unframer_dropped_bytes": st.unframer_dropped_bytes,
             "buffered_bytes": self._parser.buffered_bytes,
             "poll_timeouts": self._timeouts,
+            "purged_at_connect": self._open_purged_bytes,
+            # None = this transport cannot report driver errors (TCP/UDP, POSIX).
+            "driver_errors": dict(errs) if (errs := getattr(self._serial, "comm_errors", None)) else None,
         }
 
     def _emit_metrics_throttled(self, *, force: bool = False) -> None:

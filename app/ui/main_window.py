@@ -1339,6 +1339,9 @@ class MainWindow(
         lost = self._integrity_lost_bytes()
         if lost:
             dropped_str += f"  |  Discarded: {self._fmt_bytes(lost)}"
+        driver_errs = self._driver_error_total(getattr(self, "_integrity", {}) or {})
+        if driver_errs:
+            dropped_str += f"  |  Driver errors: {driver_errs}"
         self._counts_label.setText(
             f"Frames: {self._packet_count:>6d}"
             f"  |  Errors: {self._error_count:>4d}"
@@ -1357,6 +1360,10 @@ class MainWindow(
             + snap.get("unframer_dropped_bytes", 0)
         )
 
+    @staticmethod
+    def _driver_error_total(snap: dict) -> int:
+        return sum((snap.get("driver_errors") or {}).values())
+
     def _integrity_lost_bytes(self) -> int:
         return self._lost_bytes(getattr(self, "_integrity", {}) or {})
 
@@ -1370,6 +1377,19 @@ class MainWindow(
         """
         prev = getattr(self, "_integrity", {}) or {}
         self._integrity = snap
+        new_driver = self._driver_error_total(snap) - self._driver_error_total(prev)
+        if new_driver > 0:
+            # The serial driver / UART lost or mangled bytes before they
+            # reached us (Plane.md F7): always worth flagging.
+            errs = {k: v for k, v in (snap.get("driver_errors") or {}).items() if v}
+            msg = (
+                f"Serial driver reported errors: {errs}. Bytes were lost or corrupted before "
+                f"reaching Bytehound — check baud rate, cable and USB power settings."
+            )
+            self._log_activity(f"[WARN] {msg}")
+            if getattr(self, "_warning_badge", None) is not None:
+                self._warning_badge.setVisible(True)
+                self._warning_badge.setToolTip(msg)
         if getattr(self, "_integrity_baseline", None) is None:
             if snap.get("frames_ok", 0) > 0:
                 self._integrity_baseline = self._lost_bytes(snap)
