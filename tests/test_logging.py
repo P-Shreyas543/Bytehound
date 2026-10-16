@@ -264,7 +264,8 @@ def test_decoded_logger_writes_metadata_sheet(tmp_path):
 
 
 def test_decoded_logger_writes_incomplete_cycles(tmp_path):
-    """Only FrameA arrives, never FrameB (the trigger). It emits incomplete cycles when FrameA repeats."""
+    """Only FrameA arrives, never FrameB (the trigger). It emits incomplete cycles when FrameA repeats,
+    and the last incomplete cycle is written on close instead of being dropped."""
     config = _make_test_config()
     path = tmp_path / "decoded.xlsx"
 
@@ -294,8 +295,11 @@ def test_decoded_logger_writes_incomplete_cycles(tmp_path):
     data_rows = list(wb[DecodedLogger.DATA_SHEET].iter_rows(values_only=True))
     wb.close()
 
-    # The header row + 2 incomplete cycle rows (emitted when the duplicate 2000 and 3000 frames arrive)
-    assert len(data_rows) == 3
+    # Header + one row per frame: 1000 and 2000 are emitted when FrameA repeats,
+    # 3000 is flushed on close. (This used to be 3 rows: the frame at 3000 was
+    # silently lost in streaming mode — Plane.md Part F.)
+    assert len(data_rows) == 4
+    assert [r[0] for r in data_rows[1:]] == [1000, 2000, 3000]
 
 
 def test_snapshot_config_copies_csv_templates(resources_dir, tmp_path):

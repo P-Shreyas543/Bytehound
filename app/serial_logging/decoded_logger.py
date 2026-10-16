@@ -56,10 +56,12 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import os
 import queue
+import shutil
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
@@ -132,9 +134,19 @@ class DecodedLogger:
         on_error: ErrorCallback | None = None,
         on_warning: Callable[[str], None] | None = None,
         polling_mode: bool = False,
+        keep_csv: bool = False,
+        time_columns: bool = False,
     ) -> None:
+        """``keep_csv`` keeps the streamed CSV next to the compiled ``.xlsx``
+        (session segments); ``time_columns`` prepends ``time_utc`` /
+        ``time_local`` (ISO 8601, ms, with offset) to every row. Both are off
+        for the legacy single-file log so its format is unchanged."""
         self.path = Path(path)
         self._config = config
+        self._keep_csv = keep_csv
+        self._time_columns = time_columns
+        self.rows_written = 0
+        self._row_wall: Optional[float] = None
         self._workbook: Optional[Workbook] = None
         self._data_ws = None
         self._metadata = dict(metadata) if metadata else {}
@@ -173,6 +185,7 @@ class DecodedLogger:
         self._error_lock = threading.Lock()
         self._pending_error: Optional[str] = None
         self._dropped_count = 0  # rows dropped because the queue was full
+        self.total_dropped = 0   # same, but never reset (session manifests)
         self._last_drop_warning_time = 0.0
 
     @property
@@ -366,7 +379,11 @@ class DecodedLogger:
         decoded: DecodedFrame,
         elapsed_ms: int,
         timestamp: datetime | None = None,
+        *,
+        wall: Optional[float] = None,
     ) -> None:
+        """Queue one decoded frame. ``wall`` (epoch seconds) stamps the row's
+        ``time_utc`` / ``time_local`` columns when ``time_columns`` is on."""
         # Surface any writer-thread error to the on_error callback before
         # accepting more data. Mirrors RawLogger's two-thread error pattern.
         self._pump_pending_error()
@@ -377,11 +394,12 @@ class DecodedLogger:
                 self.open()
             if self._writer_thread is None:
                 return
-            self._queue.put_nowait((decoded, elapsed_ms))
+            self._queue.put_nowait((decoded, elapsed_ms, wall))
         except queue.Full:
             # Writer is wedged or saturated. Drop rather than block the GUI
             # thread; the dropped count is logged on close().
             self._dropped_count += 1
+            self.total_dropped += 1
             now = time.monotonic()
             if now - self._last_drop_warning_time > 2.0:
                 self._last_drop_warning_time = now
@@ -392,7 +410,9 @@ class DecodedLogger:
         except Exception as exc:
             self._handle_error("write", exc)
 
-    def _process_frame_on_writer(self, decoded: DecodedFrame, elapsed_ms: int) -> None:
+    def _process_frame_on_writer(
+        self, decoded: DecodedFrame, elapsed_ms: int, wall: Optional[float] = None
+    ) -> None:
         block = self._block_by_frame.get(decoded.frame_id)
         if block is None:
             # Frame not represented in the schema — nothing to do.
@@ -404,6 +424,8 @@ class DecodedLogger:
             self._maybe_emit_row_on_writer(force=True)
             self._cycle_buffer.clear()
 
+        if wall is not None:
+            self._row_wall = wall  # the row is stamped with its newest frame
         slot = self._cycle_buffer.setdefault(decoded.frame_id, {})
         # Each frame has its own elapsed_ms and frame_id columns.
         if _SLOT_ELAPSED in block:
@@ -459,6 +481,12 @@ class DecodedLogger:
         flat: Dict[int, Any] = {}
         for slot in self._cycle_buffer.values():
             flat.update(slot)
+        if self._time_columns:
+            wall = self._row_wall
+            if wall is not None:
+                flat[0] = datetime.fromtimestamp(wall, timezone.utc).isoformat(timespec="milliseconds")
+                flat[1] = datetime.fromtimestamp(wall).astimezone().isoformat(timespec="milliseconds")
+            self._row_wall = None
         row = [flat.get(i, "") for i in range(len(self._columns))]
         self._write_one(self._writer, row)
 
@@ -467,6 +495,7 @@ class DecodedLogger:
             return False
         try:
             writer.writerow(row)
+            self.rows_written += 1
             return True
         except Exception as exc:
             self._record_error("write", exc)
@@ -484,8 +513,8 @@ class DecodedLogger:
                     continue
                 if item is _WRITER_STOP:
                     break
-                decoded, elapsed_ms = item
-                self._process_frame_on_writer(decoded, elapsed_ms)
+                decoded, elapsed_ms, wall = item
+                self._process_frame_on_writer(decoded, elapsed_ms, wall)
                 self._maybe_periodic_flush(fp)
             # Drain anything still buffered between the stop signal and the
             # join() — even if rows arrived after the sentinel they were
@@ -497,11 +526,15 @@ class DecodedLogger:
                     break
                 if item is _WRITER_STOP:
                     continue
-                decoded, elapsed_ms = item
-                self._process_frame_on_writer(decoded, elapsed_ms)
+                decoded, elapsed_ms, wall = item
+                self._process_frame_on_writer(decoded, elapsed_ms, wall)
                 self._maybe_periodic_flush(fp)
         finally:
-            if self.polling_mode and self._cycle_buffer:
+            # Frames of the last, incomplete cycle are real data: write them
+            # (blank cells for frames that never arrived) in every mode.
+            # Streaming mode used to drop them, losing data at every Stop and,
+            # with segment rotation, at every rotation (Plane.md Part F).
+            if self._cycle_buffer:
                 self._maybe_emit_row_on_writer(force=True)
                 self._cycle_buffer.clear()
             self._save_and_close_workbook(writer, fp)
@@ -541,178 +574,25 @@ class DecodedLogger:
     def _compile_workbook(self) -> None:
         if not hasattr(self, "_tmp_data_path") or not self._tmp_data_path.exists():
             return
-
-        import shutil
-        MAX_ROWS_PER_SHEET = 1_000_000
-        excel_success = False
-
-        wb = Workbook(write_only=True)
-        try:
-            meta_ws = wb.create_sheet(title=self.METADATA_SHEET)
-            meta_ws.append(["Key", "Value"])
-            metadata = {}
-            if self._tmp_meta_path.exists():
-                try:
-                    with self._tmp_meta_path.open("r", encoding="utf-8") as f:
-                        metadata = json.load(f)
-                except Exception:
-                    metadata = self._metadata
-            for key in sorted(metadata):
-                value = str(metadata[key]).replace("\n", " ").strip()
-                meta_ws.append([key, value])
-
-            sheet_index = 1
-            data_ws = wb.create_sheet(title=self.DATA_SHEET)
-            header_row = None
-            current_sheet_rows = 0
-
-            with self._tmp_data_path.open("r", encoding="utf-8", newline="") as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if header_row is None:
-                        header_row = row
-                        data_ws.append(row)
-                        current_sheet_rows += 1
-                        continue
-
-                    if current_sheet_rows >= MAX_ROWS_PER_SHEET:
-                        sheet_index += 1
-                        data_ws = wb.create_sheet(title=f"{self.DATA_SHEET}_{sheet_index}")
-                        data_ws.append(header_row)
-                        current_sheet_rows = 1
-
-                    typed_row = []
-                    for cell in row:
-                        if cell == "":
-                            typed_row.append("")
-                        else:
-                            try:
-                                if "." in cell or "e" in cell.lower():
-                                    typed_row.append(float(cell))
-                                else:
-                                    typed_row.append(int(cell))
-                            except ValueError:
-                                typed_row.append(cell)
-                    data_ws.append(typed_row)
-                    current_sheet_rows += 1
-
-            self.path.parent.mkdir(parents=True, exist_ok=True)
-            save_workbook_atomic(wb, self.path)
-            excel_success = True
-        except Exception as exc:
+        metadata = _read_metadata(self._tmp_meta_path, fallback=self._metadata)
+        exc = finalize_temp_log(
+            self._tmp_data_path, self._tmp_meta_path, self.path, metadata, keep_csv=self._keep_csv
+        )
+        if exc is not None:
             self._record_error("compile", exc)
-        finally:
-            try:
-                wb.close()
-            except Exception:
-                pass
-
-        if excel_success and self.path.exists() and self.path.stat().st_size > 0:
-            try:
-                self._tmp_data_path.unlink(missing_ok=True)
-                self._tmp_meta_path.unlink(missing_ok=True)
-            except Exception:
-                pass
-        else:
-            # Fallback to preserving raw CSV if openpyxl compilation failed
-            try:
-                csv_target = self.path.with_suffix(".csv")
-                shutil.copy2(self._tmp_data_path, csv_target)
-                _LOG.info("Preserved raw temp log as CSV fallback: %s", csv_target)
-                self._tmp_data_path.unlink(missing_ok=True)
-                self._tmp_meta_path.unlink(missing_ok=True)
-            except Exception as copy_exc:
-                _LOG.error("Failed to copy CSV fallback for %s: %s", self.path, copy_exc)
 
     @classmethod
-    def recover_temp_files(cls, data_path: Path, meta_path: Path, target_path: Path) -> None:
+    def recover_temp_files(
+        cls, data_path: Path, meta_path: Path, target_path: Path, *, keep_csv: bool = False
+    ) -> None:
         """Build the final xlsx file from leftover temp files with multi-sheet support and CSV fallback."""
         if not data_path.exists() or data_path.stat().st_size == 0:
             return
-
-        import json
-        import csv
-        import shutil
-        from openpyxl import Workbook
-
-        MAX_ROWS_PER_SHEET = 1_000_000
-        excel_success = False
-
-        wb = Workbook(write_only=True)
-        try:
-            meta_ws = wb.create_sheet(title="Metadata")
-            meta_ws.append(["Key", "Value"])
-            metadata = {}
-            if meta_path.exists():
-                try:
-                    with meta_path.open("r", encoding="utf-8") as f:
-                        metadata = json.load(f)
-                except Exception:
-                    pass
-            for key in sorted(metadata):
-                value = str(metadata[key]).replace("\n", " ").strip()
-                meta_ws.append([key, value])
-
-            sheet_index = 1
-            data_ws = wb.create_sheet(title="Data")
-            header_row = None
-            current_sheet_rows = 0
-
-            with data_path.open("r", encoding="utf-8", newline="") as f:
-                reader = csv.reader(f)
-                for row in reader:
-                    if header_row is None:
-                        header_row = row
-                        data_ws.append(row)
-                        current_sheet_rows += 1
-                        continue
-
-                    if current_sheet_rows >= MAX_ROWS_PER_SHEET:
-                        sheet_index += 1
-                        data_ws = wb.create_sheet(title=f"Data_{sheet_index}")
-                        data_ws.append(header_row)
-                        current_sheet_rows = 1
-
-                    typed_row = []
-                    for cell in row:
-                        if cell == "":
-                            typed_row.append("")
-                        else:
-                            try:
-                                if "." in cell or "e" in cell.lower():
-                                    typed_row.append(float(cell))
-                                else:
-                                    typed_row.append(int(cell))
-                            except ValueError:
-                                typed_row.append(cell)
-                    data_ws.append(typed_row)
-                    current_sheet_rows += 1
-
-            target_path.parent.mkdir(parents=True, exist_ok=True)
-            save_workbook_atomic(wb, target_path)
-            excel_success = True
-        except Exception as exc:
-            _LOG.error("Failed to recover decoded log as Excel from %s: %s", data_path, exc, exc_info=True)
-        finally:
-            try:
-                wb.close()
-            except Exception:
-                pass
-
-        if excel_success and target_path.exists() and target_path.stat().st_size > 0:
-            data_path.unlink(missing_ok=True)
-            meta_path.unlink(missing_ok=True)
-        else:
-            # Fallback to preserving raw CSV if openpyxl recovery failed
-            try:
-                csv_target = target_path.with_suffix(".csv")
-                shutil.copy2(data_path, csv_target)
-                _LOG.info("Recovered raw temp log as CSV fallback: %s", csv_target)
-                data_path.unlink(missing_ok=True)
-                meta_path.unlink(missing_ok=True)
-            except Exception as copy_exc:
-                _LOG.error("Failed to copy raw temp log to CSV fallback %s: %s", target_path, copy_exc)
-                # DO NOT UNLINK data_path or meta_path if fallback fails! Keep raw temp file safe!
+        exc = finalize_temp_log(
+            data_path, meta_path, target_path, _read_metadata(meta_path), keep_csv=keep_csv
+        )
+        if exc is not None:
+            _LOG.error("Failed to recover decoded log as Excel from %s: %s", data_path, exc)
 
     def _record_error(self, context: str, exc: Exception) -> None:
         _LOG.error("DecodedLogger %s error (writer thread)", context, exc_info=True)
@@ -763,7 +643,7 @@ class DecodedLogger:
         # signal/bit/enum columns. Slots are keyed by column POSITION so
         # duplicate header text from cross-frame collisions still maps to
         # independent cells.
-        columns: List[str] = []
+        columns: List[str] = ["time_utc", "time_local"] if self._time_columns else []
         column_by_key: Dict[Tuple[int, str], int] = {}
         bit_columns_by_key: Dict[Tuple[int, str], Dict[str, int]] = {}
         enum_label_col_by_key: Dict[Tuple[int, str], int] = {}
@@ -859,3 +739,108 @@ class DecodedLogger:
         _LOG.error("DecodedLogger %s error", context, exc_info=True)
         if self._on_error is not None:
             self._on_error(f"Decoded log {context} error for {self.path.name}: {exc}")
+
+
+
+MAX_ROWS_PER_SHEET = 1_000_000
+
+
+def _read_metadata(meta_path: Path, fallback: Optional[Mapping[str, Any]] = None) -> Dict[str, Any]:
+    if meta_path.exists():
+        try:
+            with meta_path.open("r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception:
+            _LOG.warning("Unreadable log metadata %s", meta_path, exc_info=True)
+    return dict(fallback or {})
+
+
+def _typed_cell(cell: str) -> Any:
+    if cell == "":
+        return ""
+    try:
+        if "." in cell or "e" in cell.lower():
+            return float(cell)
+        return int(cell)
+    except ValueError:
+        return cell
+
+
+def compile_csv_to_xlsx(
+    data_path: Path, metadata: Mapping[str, Any], target_path: Path
+) -> Optional[Exception]:
+    """Write ``data_path`` (CSV with a header row) to ``target_path`` as an
+    xlsx with a ``Metadata`` sheet and ``Data`` / ``Data_2`` … sheets of at
+    most ``MAX_ROWS_PER_SHEET`` rows each. Saved atomically. Returns the
+    exception on failure instead of raising."""
+    from openpyxl import Workbook as _Workbook
+
+    wb = _Workbook(write_only=True)
+    try:
+        meta_ws = wb.create_sheet(title=DecodedLogger.METADATA_SHEET)
+        meta_ws.append(["Key", "Value"])
+        for key in sorted(metadata):
+            meta_ws.append([key, str(metadata[key]).replace("\n", " ").strip()])
+
+        sheet_index = 1
+        data_ws = wb.create_sheet(title=DecodedLogger.DATA_SHEET)
+        header_row = None
+        current_sheet_rows = 0
+        with data_path.open("r", encoding="utf-8", newline="") as f:
+            for row in csv.reader(f):
+                if header_row is None:
+                    header_row = row
+                    data_ws.append(row)
+                    current_sheet_rows += 1
+                    continue
+                if current_sheet_rows >= MAX_ROWS_PER_SHEET:
+                    sheet_index += 1
+                    data_ws = wb.create_sheet(title=f"{DecodedLogger.DATA_SHEET}_{sheet_index}")
+                    data_ws.append(header_row)
+                    current_sheet_rows = 1
+                data_ws.append([_typed_cell(c) for c in row])
+                current_sheet_rows += 1
+        save_workbook_atomic(wb, target_path)
+        return None
+    except Exception as exc:  # reported to the caller, never swallowed
+        return exc
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
+
+
+def finalize_temp_log(
+    data_path: Path,
+    meta_path: Path,
+    target_path: Path,
+    metadata: Mapping[str, Any],
+    *,
+    keep_csv: bool = False,
+) -> Optional[Exception]:
+    """Compile a streamed temp CSV into its final ``.xlsx``.
+
+    On success the temp data is deleted, or kept as ``<target>.csv`` when
+    ``keep_csv``. If the xlsx cannot be built the data is preserved as
+    ``<target>.csv`` instead; the temp files are only removed once the data
+    is safely in place. Returns the compile error, if any.
+    """
+    exc = compile_csv_to_xlsx(data_path, metadata, target_path)
+    csv_target = target_path.with_suffix(".csv")
+    ok = exc is None and target_path.exists() and target_path.stat().st_size > 0
+    try:
+        if ok and not keep_csv:
+            data_path.unlink(missing_ok=True)
+        elif ok or keep_csv:
+            os.replace(data_path, csv_target)
+        else:
+            shutil.copy2(data_path, csv_target)
+            _LOG.info("Preserved decoded log as CSV fallback: %s", csv_target)
+            data_path.unlink(missing_ok=True)
+        meta_path.unlink(missing_ok=True)
+    except Exception as move_exc:
+        # Keep the temp files: they are the only copy of the data.
+        _LOG.error("Could not finalise %s: %s", data_path, move_exc)
+        return exc or move_exc
+    return exc
