@@ -159,11 +159,11 @@ class ConnectionDialog(QDialog):
         self._auto_reconnect_chk = QCheckBox("Auto-reconnect on disconnect", self)
         self._auto_reconnect_chk.setAccessibleName("Auto-reconnect on disconnect")
 
-        self._capture_process_chk = QCheckBox("Capture in a separate process (recommended)", self)
+        self._capture_process_chk = QCheckBox("Capture in a separate process (experimental)", self)
         self._capture_process_chk.setAccessibleName("Capture in a separate process")
         self._capture_process_chk.setToolTip(
-            "Read, parse and decode in a background process so heavy traffic\n"
-            "can't make the window stutter. Turn off only to troubleshoot."
+            "Read, parse and decode in a background process instead of a thread.\n"
+            "Experimental: currently slower than the default at high frame rates."
         )
 
         common_form.addRow("Timeout (ms)", self._timeout_combo)
@@ -256,7 +256,7 @@ class ConnectionDialog(QDialog):
         self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", str(cd.timeout_ms))))
         auto_rec_val = s.value("conn/auto_reconnect", "false")
         self._auto_reconnect_chk.setChecked(str(auto_rec_val).lower() == "true")
-        self._capture_process_chk.setChecked(str(s.value("capture/mode", "process")) == "process")
+        self._capture_process_chk.setChecked(str(s.value("capture/mode", "thread")) == "process")
 
     def _on_accept(self) -> None:
         s = self._settings

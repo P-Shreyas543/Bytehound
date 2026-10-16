@@ -201,15 +201,18 @@ Module boundary rules:
 ### Threading model
 
 - **Main thread:** Qt event loop, all widgets.
-- **Capture process (default):** `CaptureClient`
+- **Capture process (opt-in, experimental):** `CaptureClient`
   ([capture_process.py](app/serial_io/capture_process.py)) runs a
   `PollingWorker` in a child process, so reading, parsing and decoding never
   compete with the GUI for the GIL. It has the same signals and methods as
   `PollingWorker`; batches and commands cross a pipe. One child is spawned
   shortly after launch and reused across connections. A dead child surfaces
-  as `connection_lost`. Turn it off with *Capture in a separate process* in
-  the Connect dialog (`capture/mode = thread`); the app also falls back to
-  the thread automatically if the child can't start.
+  as `connection_lost`. Enable it with *Capture in a separate process* in
+  the Connect dialog (`capture/mode = process`); the app falls back to the
+  thread automatically if the child can't start. It is off by default: the
+  GUI process still unpickles every decoded batch, which costs more than the
+  decode it saves, so at ≥3000 frames/s it is slower than the thread (see
+  `fix.md`).
   `Bytehound --selftest-capture` checks it end to end (frozen builds too).
 - **Worker thread (`PollingWorker(QThread)`):** owns the `serial.Serial`
   handle, runs the polling/TX/RX loop, emits signals back to the UI. Runs
@@ -1254,7 +1257,7 @@ update check.
 | `plot/panel/{i}/keys`  | list    | `[[frame_id, signal_name], …]` per panel      |
 | `conn/auto_reconnect`  | bool    | Auto-reconnect enabled/disabled state         |
 | `plot/history_budget_mb` | int  | Live Plot history memory, shared by all signals (default 512) |
-| `capture/mode`         | str     | `"process"` (default) or `"thread"`           |
+| `capture/mode`         | str     | `"thread"` (default) or `"process"`           |
 | `plot/window_seconds`  | int     | Live Plot default time window in seconds      |
 | `analysis/math_channels` | dict  | Custom math channel formulas by name          |
 | `import/sheet_names`   | str     | Import sheet list overrides (comma-separated) |

@@ -13,7 +13,7 @@ reason is noted next to them.
 - [x] Repeatable high-rate benchmark with no hardware (TCP loopback source → real
       `MainWindow` offscreen): GUI-thread stall (p50/p99/max), packets/s shown,
       packets dropped, process RSS — `tools/bench_capture.py`
-- [ ] Record baseline benchmark numbers in this file
+- [x] Record baseline benchmark numbers in this file (see Results, `head` rows)
 
 ## Phase 1 — Corrections to the original review
 
@@ -54,7 +54,13 @@ reason is noted next to them.
       processes left behind. `app/main.py` now imports the GUI lazily so each
       spawned child doesn't load Qt Widgets / the main window.
 - [x] Tests
-- [ ] Benchmark vs baseline
+- [x] Benchmark vs baseline — **process mode did not pay off; it is now
+      opt-in and thread mode is the default.** At ≥3000 frames/s the GUI
+      process spends more time unpickling every decoded batch than it saved
+      on decode (3000 fps: p99 stall 195 ms vs 34 ms in thread mode; 6000 fps:
+      falls behind). The code, tests and frozen-build support stay, behind
+      *Capture in a separate process (experimental)*. Making it worthwhile
+      means sending compact array batches instead of objects — follow-up.
 
 ## Phase 4 — Memory
 
@@ -65,7 +71,11 @@ reason is noted next to them.
 - [x] Plot history cap as a memory budget (MB) across all signals instead of a
       per-signal sample count (Plot Settings; default 512 MB; settings
       migration v3 drops the old key)
-- [ ] Shared time column per frame — decide from benchmark/RSS numbers
+- [x] Shared time column per frame — **not doing.** After the buffer
+      rewrite plot memory equals the raw samples and is bounded by the
+      budget; a shared x column would only lengthen history within the same
+      budget, at the cost of gap/NaN handling in every plot, hover and export
+      path. GUI RSS in the benchmark is dominated by Qt/pyqtgraph, not history.
 - [x] Columnar (numpy) decode — **not doing.** Profiling the GUI process in
       capture-process mode shows decode is gone from it; what remains is
       per-packet UI bookkeeping. Fixed that instead: table cells are now
@@ -84,7 +94,49 @@ reason is noted next to them.
 
 ## Phase 6 — Verify
 
-- [ ] `ruff check app tests` clean
-- [ ] Full `pytest` green
-- [ ] `smoke_headless.py --skip-device` and offscreen launch smoke green
-- [ ] Final benchmark table in this file
+- [x] `ruff check app tests` clean
+- [x] Full `pytest` green: 565 passed, 0 failed (34–37 min, run twice).
+      The process then exits with code 139 — an access violation in the final
+      garbage collection at interpreter shutdown (PySide teardown, no Python
+      frame). Pre-existing: the same suite on 11b7527 exits 139 too. Tracked
+      in Plane.md §0.11.
+- [x] `smoke_headless.py --skip-device` 26/26 and offscreen launch smoke 7/7 green
+- [x] Final benchmark table in this file
+
+## Results
+
+`python tools/bench_capture.py --rate N --seconds 10 [--log] --mode thread|process`,
+TCP loopback device in a separate process, real `MainWindow` offscreen, 3 runs
+each (frame counts summed, other columns median). Stall = how late a 5 ms GUI
+timer fires. `head` = commit 11b7527 before this work; `new_thread` = current
+default; `new_process` = opt-in capture process. Windows 11, 8 logical cores.
+
+| fps | log | build | shown/sent | UI dropped | stall p50 | stall p99 | stall max | GUI RSS |
+|---|---|---|---|---|---|---|---|---|
+| 1000 | off | head | 29990/29990 | 0 | 10.53 ms | 37 ms | 129 ms | 221 MB |
+| 1000 | off | new_thread | 30000/30000 | 0 | 0.01 ms | 11 ms | 22 ms | 171 MB |
+| 1000 | off | new_process | 29970/29970 | 0 | 0.00 ms | 9 ms | 21 ms | 172 MB |
+| 1000 | on | head | 29990/29990 | 0 | 10.74 ms | 43 ms | 338 ms | 222 MB |
+| 1000 | on | new_thread | 29990/29990 | 0 | 0.01 ms | 8 ms | 305 ms | 173 MB |
+| 1000 | on | new_process | 29980/29980 | 0 | 0.02 ms | 15 ms | 624 ms | 172 MB |
+| 3000 | off | head | 90000/90000 | 0 | 0.57 ms | 61 ms | 190 ms | 224 MB |
+| 3000 | off | new_thread | 89970/89970 | 0 | 6.40 ms | 34 ms | 118 ms | 176 MB |
+| 3000 | off | new_process | 90000/90000 | 0 | 10.84 ms | 195 ms | 232 ms | 180 MB |
+| 3000 | on | head | 89970/89970 | 0 | 0.17 ms | 189 ms | 2230 ms | 230 MB |
+| 3000 | on | new_thread | 89940/89940 | 0 | 10.56 ms | 35 ms | 1467 ms | 177 MB |
+| 3000 | on | new_process | 89940/89940 | 0 | 11.92 ms | 95 ms | 2705 ms | 177 MB |
+| 6000 | off | head | 129340/179940 | 620 | 40.58 ms | 1368 ms | 1368 ms | 327 MB |
+| 6000 | off | new_thread | 179940/179940 | 0 | 14.24 ms | 454 ms | 496 ms | 202 MB |
+| 6000 | off | new_process | 147460/179220 | 2740 | 18.13 ms | 2150 ms | 2150 ms | 291 MB |
+| 6000 | on | head | 138280/180000 | 6080 | 32.10 ms | 2626 ms | 2626 ms | 364 MB |
+| 6000 | on | new_thread | 180000/180000 | 0 | 30.99 ms | 1618 ms | 1618 ms | 219 MB |
+| 6000 | on | new_process | 172860/179880 | 0 | 15.12 ms | 1142 ms | 2264 ms | 255 MB |
+
+Shown < sent with 0 UI drops means the run ended with frames still in flight
+(the app had fallen behind). Main take-aways: at 6000 fps `head` failed to
+show 28 % (log off) / 23 % (log on) of frames and stalled up to 2.6 s;
+`new_thread` showed every frame with lower worst-case stalls and ~110–145 MB
+less memory. At 1000 fps the median GUI stall went from 10.5 ms to 0.01 ms.
+Not every column improved: at 3000 fps the *median* stall of `new_thread` is
+higher than `head` (6.4 vs 0.6 ms) while its p99/max are much lower.
+Single-machine numbers with run-to-run noise (max stall varies most).

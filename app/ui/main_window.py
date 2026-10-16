@@ -1136,10 +1136,15 @@ class MainWindow(
             self._reconnect_timer.stop()
 
     def _capture_in_process(self) -> bool:
-        """Run serial capture in a separate process (default) or on a QThread."""
+        """Run serial capture on a QThread (default) or in a separate process.
+
+        Process mode is opt-in: benchmarks (fix.md) show the GUI process
+        spends more time unpickling decoded batches than it saves on decode,
+        so it is slower than the thread at high frame rates.
+        """
         if getattr(self, "_capture_forced_thread", False):
             return False
-        return str(self._settings.value("capture/mode", "process")) == "process"
+        return str(self._settings.value("capture/mode", "thread")) == "process"
 
     def _make_capture_worker(self, settings: SerialSettings):
         cls = capture_process.CaptureClient if self._capture_in_process() else PollingWorker

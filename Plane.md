@@ -1,5 +1,349 @@
 # Bytehound C++ Migration Plan
 
+> **Read §0 first.** It is the single checklist of everything planned, in
+> progress, blocked or deliberately dropped, so nothing gets lost. The C++
+> plan proper starts at *Objective* below.
+
+## 0. Master status and roadmap (updated 2026-10-16)
+
+Bytehound is used by BMS manufacturers and test labs that log continuously
+for **days, months or years** at high frame rates. Every item is ticked only
+when implemented, tested and verified; dropped items say why. Detailed
+evidence for finished threading/memory work lives in [fix.md](fix.md).
+
+### 0.1 Release blockers (current Python release, v1.2.3)
+
+From the production check — must be fixed before shipping:
+
+- [x] Connection dialog ignored the saved baud (config default won) — fixed,
+      `test_connection_dialog_qsettings_wins_over_config_defaults` passes
+- [x] Ruff lint findings (90) — fixed; `ruff check app tests` clean
+- [ ] `installer_url` (`Bytehound_Setup_1.2.3.exe`) returns HTTP 404 — upload
+      the installer to the Cloudflare worker. (Homepage, `version.json` and
+      `LICENSE` return 200; `report_issue` is POST-only and answers 422 to an
+      empty POST, i.e. it is live.)
+- [ ] `dist/Bytehound` has no `Bytehound.exe`; `Bytehound_1.2.3.zip` is from
+      2026-09-12 and predates all fixes — rebuild with `build.py`, rebuild the
+      installer, update `sha256` in `version.json`
+- [ ] Decide which branch ships: the release fixes are on `Migration_To_C++`
+      together with the threading/memory rework below
+
+### 0.2 Done — threading, capture and memory (details in fix.md)
+
+- [x] Lossless raw wire capture (`.bhraw`) while logging, written by the
+      capture worker; **Tools → Rebuild Decoded Log** regenerates the decoded
+      log from it (byte-identical rows to the live log, tested)
+- [x] `TimeSeriesBuffer` rewritten (contiguous, zero-copy, no duplicate
+      cache): 200 signals × 100k samples 682 → 360 MB, full read 34.5 → 0.4 ms
+- [x] Plot history = one memory budget shared by all signals (default 512 MB)
+- [x] Table cells formatted once per 60 Hz flush, not per packet
+- [x] Atomic `.xlsx` saves (`.partial` + rename) — no half-written logs
+- [x] Benchmark harness `tools/bench_capture.py` (TCP loopback, no hardware);
+      vs 11b7527 at 6000 fps: all frames shown instead of 72–77 %, 110–145 MB
+      less memory; median GUI stall at 1000 fps 10.5 → 0.01 ms
+- [x] Capture-in-a-separate-process implemented, tested, works in the frozen
+      build (`Bytehound.exe --selftest-capture`) — **but slower than the
+      thread at ≥3000 fps**, so it is opt-in/experimental; thread is default
+- [x] `app/main.py` imports the GUI lazily (cheap child processes, faster
+      `--validate`)
+- [x] Full `pytest` on the final state: 565 passed, 0 failed (run twice)
+
+### 0.3 Part A — Long-duration logging (highest risk for BMS labs)
+
+Today one decoded `.xlsx` per session is compiled from a temp CSV on Stop.
+Excel caps a sheet at 1,048,576 rows (~29 h at 10 Hz); a month is ~26 M rows
+and the compile at Stop would take hours. **Decided: hourly CSV segments,
+each also converted to `.xlsx` when it closes.**
+
+- [ ] Session folder `<session>/seg_NNNN.csv` (+ `seg_NNNN.bhraw`), rotated
+      every hour (configurable 15 min – 24 h) and at a size cap
+- [ ] `session.json` manifest: app version, config fingerprint + config copy,
+      start/end wall time, per-segment time range / rows / status / SHA-256;
+      rewritten atomically after every rotation
+- [ ] Each closed segment converted to `.xlsx` in the background (≤1 M rows
+      by construction); never blocks capture or the next segment
+- [ ] Absolute timestamps (UTC + local) in rows, not only elapsed ms — runs
+      span DST changes and clock syncs
+- [ ] Disk guard: warn below 10 GB free, stop logging cleanly below 2 GB
+      (both configurable); never delete data automatically; free space in the
+      status bar
+- [ ] Crash / power-loss recovery per segment on next launch; manifest fixed
+- [ ] **Behaviour change:** logging continues across auto-reconnects (new
+      segment, gap recorded) instead of stopping — a USB glitch at 3 a.m.
+      must not end a month-long log
+- [ ] Soak test: time-compressed multi-day run checks rotation, manifest,
+      disk guard, flat memory, no file-handle leaks
+
+### 0.4 Part B — Analysis Suite for months of data
+
+Today the whole log is read into pandas / float64 arrays: a month at 200
+signals is ~40 GB, so it cannot open.
+
+- [ ] Open a session folder / `session.json`, not only single files
+- [ ] Per-segment summaries at segment close (per-second and per-minute
+      min/max/mean per signal) so any session length opens in seconds
+- [ ] Multi-resolution plotting: overview from summaries, full resolution
+      loaded from segments only for the visible window when zoomed in
+- [ ] Statistics, cursors and exports always use full-resolution data for the
+      selected range (never summaries) — stated in the UI
+- [ ] Wall-clock axis across segments; disconnect gaps drawn as gaps
+- [ ] Export a time range → CSV / `.xlsx` (split at 1 M rows)
+- [ ] Legacy single `.xlsx` / `.csv` logs keep opening as before
+- [ ] Measured targets: 30-day session overview < 5 s, zoom window < 1 s,
+      bounded memory
+
+### 0.5 Part C — Canonical protocol configuration (protocol spec, phases 2–4)
+
+Design (from the audit): the in-memory model already exists (`types.py`
+dataclasses) and every format funnels into the same "tables of rows". The
+canonical JSON is the typed, structured, **pre-array-expansion** form of
+those tables, compiled to `FrameConfig` through the existing loader — so
+live decode, Protocol Studio and the test bench share one decoder and
+decoding is unchanged by construction. This JSON is also the C++ "JSON
+Configuration Contract" (Phase 1 below); the Python app is the converter that
+turns customers' Excel/CSV profiles into it.
+
+- [ ] Versioned canonical JSON + documented schema
+- [ ] Structural + semantic validation in-house (no `jsonschema` dependency):
+      overlaps, bounds, duplicates, invalid scaling, missing frames, circular
+      calc references
+- [ ] JSON load/save, migrations, deterministic fingerprint (SHA-256 of
+      canonical JSON) recorded in every log and session manifest
+- [ ] CSV / xlsx / legacy-table-JSON / YAML import → canonical; export back
+      without loss; document anything a format cannot hold
+- [ ] Import preview (errors, warnings, added / modified / removed signals),
+      explicit confirm; a failed import never replaces the active config;
+      previous config kept for rollback
+- [ ] Remove dead duplicate helpers in `config_loader.py` (lines 327–476: an
+      older copy incl. a broken `_parse_protocol`; Python uses the later copy)
+- [ ] Move the Ather-specific branch in `frame_decoder.py` (frame `0x101`,
+      `Drive_Mode`, `Key_Switch`) out of the generic decoder into
+      configuration — decode output must stay identical (regression test)
+- [ ] Document or configure the silent clamp of small negatives to 0 when
+      `min_value >= 0` (`frame_decoder.py`)
+- [ ] CRC stays limited to `crc16_modbus`, `crc16_ccitt`, `crc32`, `none` —
+      no invented parameters; schema covers exactly what is implemented
+
+### 0.6 Part D — Protocol Studio (protocol spec, phase 5)
+
+Builds on the existing Config Editor / Wizard (`config_editor.py`,
+`config_wizard.py`, today `QTableWidget` over raw rows).
+
+- [ ] Configuration management: open, import, save, save as, export,
+      validate, revert, name/version, dirty state
+- [ ] Model/view signal editor (`QAbstractTableModel` + delegates) with
+      validation feedback
+- [ ] Frame layout view: byte/bit map, overlaps, out-of-bounds, CRC config
+- [ ] Decoder test bench: hex frames, `.bhraw` replay, raw / engineering
+      values, CRC status, expected-value comparison — same decoder as live
+
+### 0.7 Part E — Hardening and release
+
+- [ ] Spec regression tests: CRC vectors, partial / concatenated / noisy
+      frames, byte order, signed ints, bitfields, scaling, round-trips,
+      failed-import rollback, migrations, decoder equivalence
+- [ ] Full pytest, smoke tests, frozen-build check including templates and
+      schemas in the package
+- [ ] Docs: JSON format, import workflow, session/segment format, long-run
+      operating guide for labs (disk sizing, rotation, recovery)
+- [ ] Known limitations and required hardware validation listed
+
+### 0.8 Part F — Zero frame loss on the serial path (BMS-critical)
+
+Goal: **every byte the PC receives is either decoded into a frame or
+accounted for**, every gap is recorded with a reason, and frames lost
+*before* reaching the PC are detected where the protocol allows it. Nothing
+is ever discarded silently. Audit of the current code (2026-10-16) found
+these loss points:
+
+| # | Where | What happens today | Fix |
+|---|---|---|---|
+| F1 | `serial_worker.py` `_reset_rx_state_for_polling_start` | Starting Auto-Fetch calls `reset_input_buffer()` and resets the parser — frames already in the OS buffer are **thrown away** | Drain and decode them (`_drain_pending_rx` already does this) instead of discarding; count them as "pre-poll frames" |
+| F2 | `_run_loop` polling gate `not backpressured` | When the GUI falls behind, **polling stops** → the device is not asked → gaps in the log | Never pause polling for UI load; the UI decimates/coalesces instead. Logging and raw capture never depend on GUI speed |
+| F3 | Parser resync / `_trim_if_overflow` | Noise bytes skipped while hunting for a header, and >1 MB unmatched buffers, are dropped **without being counted** (only a log line) | Per-parser `discarded_bytes` counter + reason; byte accounting `rx_bytes = framed_bytes + discarded_bytes + buffered_bytes` checked in tests and shown in the UI |
+| F4 | `UdpSocketWrapper` `recv(4096)` | Datagrams > 4096 B error out (WSAEMSGSIZE) / truncate | Receive up to 64 KiB per datagram |
+| F5 | TCP/UDP sockets | OS default receive buffer → **UDP drops under bursts** | Set `SO_RCVBUF` large (e.g. 4 MiB), verify the granted size, warn if smaller |
+| F6 | `open()` purge | `reset_input_buffer()` on connect drops pre-connect bytes | Keep (no session yet), but log the byte count purged |
+| F7 | Serial driver / USB-UART FIFO overrun | Invisible today | Windows: poll `ClearCommError` (`CE_OVERRUN`, `CE_RXOVER`, `CE_FRAME`, `CE_RXPARITY`) via ctypes and count/log each; elsewhere use what pyserial exposes |
+| F8 | Worker thread scheduling | Normal priority — CPU load elsewhere can starve reads | Raise the capture thread priority (`QThread.TimeCriticalPriority` / highest), keep `timeBeginPeriod(1)`, recommend power plan + USB selective-suspend off in the lab guide |
+| F9 | Bad-CRC / malformed frames | Counted, but not in the decoded log (bytes only in `.bhraw`) | Write rejected frames with reason to a per-segment `rejected.csv`; counts in the manifest |
+| F10 | Decoded-log queue full (100k) | Drops rows (raw capture keeps bytes, rebuild recovers) | Raw capture on for every logging session (already); decoded drops counted in the manifest and the UI badge; rebuild offered automatically on Stop if any were dropped |
+| F11 | Reconnect | Logging stops on unplug (Part A fixes) | Continue the session; record the gap (start/end, reason) in the manifest |
+| F12 | Frames lost on the wire / in the device | Undetectable without protocol help | Optional per-frame **alive / sequence counter** signal in the config (E2E-style): gaps, repeats and resets counted per frame ID and logged |
+
+Done when:
+
+- [ ] F1–F12 implemented, each with a regression test that would have failed
+      before the fix
+- [ ] Integrity counters per session and per segment in `session.json`:
+      bytes received, frames OK per ID, CRC errors, discarded bytes + reason,
+      driver overruns, poll timeouts, decoded-log drops, sequence gaps,
+      disconnect gaps
+- [ ] Live integrity panel / status-bar indicator; turns amber on any loss or
+      gap, with the reason
+- [ ] Stress test: TCP/UDP loopback at the maximum supported rate with
+      injected noise, split and concatenated frames — every byte accounted
+      for, every valid frame decoded and logged exactly once
+- [ ] Hardware test plan: real USB-UART at 115200 / 921600 / 2 Mbaud for
+      ≥24 h with a counter-stamped simulator; zero unexplained gaps
+- [ ] Lab guide: power plan, USB selective suspend, antivirus exclusions for
+      the log folder, disk sizing
+
+### 0.9 Part G — UI/UX to industry standard (no glitches, no lag)
+
+BMS manufacturers judge the tool by its polish. Target: behaves like
+established measurement software (Vector CANalyzer/CANape, NI, PCAN-View) —
+predictable menus, instant response, no visual glitches, readable at any DPI.
+
+**Menus and commands** (today: File / Edit / View / Device / Tools / Help
+exist; gaps below)
+
+- [ ] File: New / Open / Open Recent ▸ / Save / Save As / Import ▸ /
+      Export ▸ / Close Session / Exit — recent configs and sessions (the
+      handler `_on_load_recent_config` exists but is not in the menu)
+- [ ] Edit: Copy / Copy Table / Select All / Find (Ctrl+F) / Clear; Undo/Redo
+      in editors
+- [ ] View: every dock toggle, Full Screen (F11), Zoom In/Out/Reset, Theme ▸,
+      Reset Layout
+- [ ] Device: Connect / Disconnect, Start/Stop Polling, Start/Stop Logging,
+      Logging Mode ▸ (event / fixed-step, Part H), Send Command…
+- [ ] Tools: Protocol Studio, Analysis Suite, Rebuild Decoded Log, Decoder
+      Test Bench, **Preferences** (one dialog with pages, replacing scattered
+      Logging / Plot / Connect settings)
+- [ ] Help: User Guide (F1), Keyboard Shortcuts, Check for Updates, Report
+      Issue, Diagnostics, About
+- [ ] Standard shortcuts everywhere (Ctrl+O/S/Shift+S/Q, F5 connect, Ctrl+L
+      logging, Space pause) listed in Help → Keyboard Shortcuts; mnemonics
+      on every menu; no non-standard separators in the menu bar itself
+- [ ] Analysis Suite uses the same menu conventions as the main window
+
+**Responsiveness (measured, not assumed)**
+
+- [ ] Nothing slow on the GUI thread: config load, import, validation,
+      exports, log conversion, session open — all background with progress +
+      cancel
+- [ ] Budgets enforced by the benchmark harness and a GUI-stall probe in CI:
+      input-to-response < 100 ms, live update ≤ 100 ms behind data, no GUI
+      stall > 50 ms at the rated frame rate during logging
+- [ ] Zero flicker: no widget rebuilds on value updates, no style re-polish
+      per update (the profile showed 6.4k polish/unpolish calls), no layout
+      jumps when values change width (fixed-width numeric fonts/columns)
+
+**Visual quality**
+
+- [ ] One typography scale (font family, sizes, weights) and one spacing
+      scale used by every window; tabular (monospace-digit) numbers in tables,
+      cards, cursors
+- [ ] Consistent icon set and colour semantics: OK / warning / fault /
+      stale / disconnected the same everywhere (table, cards, plots, status)
+- [ ] Light and dark themes both complete; high-DPI 100–200 %, 4K and
+      multi-monitor (moving windows between DPIs) without blur or clipping
+- [ ] Startup: exactly one window, no tiny floating window, no focus
+      stealing; layout state versioned, corrupt layouts reset safely
+- [ ] Number display: configured precision and units consistently in
+      table, cards, plots, cursors, exports
+
+**Interaction quality**
+
+- [ ] Recoverable problems shown as toasts / status messages / the warning
+      badge — modal dialogs only for decisions; audit the ~88 popup sites
+- [ ] Every error message says what happened and what to do next
+- [ ] Destructive actions confirm (clear data, overwrite file, stop a
+      long log); long operations are cancellable
+- [ ] Empty states with guidance (no config, not connected, no data yet)
+- [ ] Keyboard-only operation and accessible names on all controls;
+      sensible tab order in every dialog
+- [ ] State remembered: window layouts, last config, column widths, plot
+      selections, Analysis Suite session
+
+**Verification**
+
+- [ ] Screenshot review set (light/dark × 100/150/200 % DPI) for main window,
+      every dialog, Analysis Suite, Protocol Studio
+- [ ] UI walkthrough checklist run before each release
+
+### 0.10 Part H — Fixed-step logging (sample on an exact time grid)
+
+Labs often need one row every 0.1 s / 1 s exactly, regardless of when or how
+often the BMS sends each frame (e.g. to align with a cycler or climate
+chamber log). Today the decoded log is event-driven (one row per poll cycle).
+
+- [ ] Logging mode: **Event** (current) or **Fixed step**; both can run
+      together into separate files of the same session
+- [ ] Step options 10 ms – 60 s (presets 0.1 s, 0.5 s, 1 s, 10 s) in Preferences
+      and in the Start Logging dialog
+- [ ] Driftless timing: row *n* is stamped at `t0 + n × step` on the
+      monotonic clock, generated in the capture worker — never by a GUI
+      timer, never accumulated sleeps; late ticks are emitted on catch-up with
+      their exact grid time, never skipped
+- [ ] Value policy per row: latest value of every signal (sample-and-hold),
+      plus per-signal **age** (ms since the value arrived) and a **stale**
+      flag when older than N steps (configurable, default 3); option to leave
+      stale cells blank instead of holding
+- [ ] Rows written even when nothing arrived (all stale) so the grid is
+      complete; disconnects shown as stale rows + gap in the manifest
+- [ ] Same session folder, segments, rotation, `.xlsx` per segment, disk
+      guard and crash recovery as Part A; Analysis Suite opens it natively
+- [ ] Metrics: tick jitter p50/p99/max and late ticks recorded per segment
+- [ ] Tests: grid exactness over a simulated week (no drift), hold/age/stale
+      behaviour, catch-up after a stall, equivalence of values with the event
+      log at the same instants
+
+### 0.11 Known gaps and follow-ups (don't lose these)
+
+- **Hardware validation still required:** `smoke_headless.py` phases 2–10
+  (live serial, polling, TX on the wire) need the Arduino BMS simulator on
+  COM7 — not run in this cycle. Also a real multi-day soak on a lab PC.
+- **Capture process follow-up:** to beat the thread it must send compact
+  numpy batches (columnar) instead of pickled `DecodedFrame` objects.
+- **Test suite touches real user settings:** GUI tests construct
+  `MainWindow` with the real `QSettings("Bytehound", "Bytehound")`; isolate
+  them in `conftest.py`.
+- **Test suite takes ~31–37 min**, mostly GUI/theme tests — worth profiling.
+- **Test process crashes on exit (code 139)** after all tests pass: access
+  violation in the final garbage collection (PySide/Qt teardown order, no
+  Python frame). Pre-existing on 11b7527. CI would read it as a failure —
+  fix by deleting Qt objects before interpreter shutdown in `conftest.py`
+  (e.g. `deleteLater` + process events in a session-scoped fixture), and
+  check the app's own exit path for the same pattern.
+- **Running two test suites at once is not safe** while tests use the real
+  registry settings — `test_window_state_schema_version_discards_stale_blobs`
+  failed from exactly that race. Same fix as the settings-isolation item.
+- **Smoke tooling:** the offscreen launch smoke used this cycle lives in a
+  scratch script; add it to the repo (`tools/`) next to `bench_capture.py`.
+- `RawLogger` (CSV/xlsx raw log) is no longer used by the app; keep or remove
+  deliberately once segments land.
+- Dropped on purpose (see fix.md): float32 plot storage (uint32 counters
+  lose precision), blocking serial reads (USB-CDC tuning, needs hardware),
+  QThread pool consolidation, shared time column, numpy columnar decode.
+
+### 0.12 Order of work
+
+1. Commit the fix.md work; new branch for the rest.
+2. **Part F (zero frame loss)** — smallest changes with the biggest risk
+   reduction; must land before long runs are trusted.
+3. **Part A (long-duration logging)** together with **Part H (fixed-step
+   logging)** — they share the session/segment writer.
+4. **Part B (Analysis Suite)**.
+5. **Part G (UI/UX)** — responsiveness items alongside each part; the menu /
+   Preferences / visual pass once A, B and H have added their commands.
+6. Parts C → D (protocol configuration, Protocol Studio), then E.
+7. Release: 0.1 blockers, frozen build, hardware validation, UI walkthrough.
+
+### 0.13 How this feeds the C++ migration
+
+| Python work | C++ plan section it defines |
+|---|---|
+| Canonical JSON + validator + fingerprint | Phase 1 *JSON Configuration Contract* — the Python app converts Excel/CSV profiles to it, so the C++ app stays JSON-only as planned |
+| Session folder + CSV segments + `.bhraw` | Phase 3 *Logging* — same on-disk format, so both apps write and read the same sessions; `.xlsx` per segment is Python-only |
+| Multi-resolution Analysis Suite | Phase 6 *Analysis Suite Rewrite* |
+| `tools/bench_capture.py` numbers | Phase 0 baseline and the performance gates |
+| `.bhraw` captures + rebuild | Golden fixtures for byte-for-byte parity tests |
+| Part F byte/frame accounting + integrity counters | Phase 2 *Transport* completion criteria and the reliability gates — the C++ worker must report the same counters |
+| Part H fixed-step logger in the capture worker | Phase 3 *Logging* — driftless grid logging is a C++ requirement too |
+| Part G UI/UX standards and budgets | Phases 4–5 and the performance gates |
+| Process-mode result | Evidence for the Phase 2 design: worker thread + batched immutable snapshots; avoid per-object serialisation across boundaries |
+
 ## Objective
 
 Migrate Bytehound from Python/PySide6 to a native C++20 and Qt 6 desktop application with **performance, deterministic timing, and UI responsiveness as the primary goals**. Preserve configurable protocol decoding, serial/TCP/UDP I/O, CAN support, command transmission, polling, logging, live plotting, Analysis Suite, configuration tooling, and Windows packaging.

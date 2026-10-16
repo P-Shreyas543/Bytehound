@@ -105,7 +105,7 @@ Recently used configs are stored and accessible via the dropdown in the Decoder 
 
 Data flows into the raw console and live table.
 
-By default the serial port is read in a separate background process so heavy traffic can't make the window stutter. If you need to troubleshoot, untick **Capture in a separate process** in the Connect dialog.
+**Capture in a separate process** in the Connect dialog is an experimental option that reads the serial port in a background process. It is off by default; leave it off unless asked to try it.
 
 ---
 
