@@ -92,21 +92,59 @@ each also converted to `.xlsx` when it closes.**
 
 ### 0.4 Part B — Analysis Suite for months of data
 
-Today the whole log is read into pandas / float64 arrays: a month at 200
-signals is ~40 GB, so it cannot open.
+Was: the whole log read into pandas / float64 arrays (a month at 200 signals
+≈ 40 GB in memory, ≈ 31 GB of CSV) — it could not open. Session CSVs did not
+open at all (no `elapsed_ms` column). Now `app/serial_logging/session_analysis.py`
++ `SessionEntry` in `app/ui/log_io.py`.
 
-- [ ] Open a session folder / `session.json`, not only single files
-- [ ] Per-segment summaries at segment close (per-second and per-minute
-      min/max/mean per signal) so any session length opens in seconds
-- [ ] Multi-resolution plotting: overview from summaries, full resolution
-      loaded from segments only for the visible window when zoomed in
-- [ ] Statistics, cursors and exports always use full-resolution data for the
-      selected range (never summaries) — stated in the UI
-- [ ] Wall-clock axis across segments; disconnect gaps drawn as gaps
-- [ ] Export a time range → CSV / `.xlsx` (split at 1 M rows)
-- [ ] Legacy single `.xlsx` / `.csv` logs keep opening as before
-- [ ] Measured targets: 30-day session overview < 5 s, zoom window < 1 s,
-      bounded memory
+- [x] **File → Open Logging Session…** (Ctrl+Shift+O), or pick a
+      `session.json` in Load Logs: event log, fixed-step log, or both; works
+      on a session that is still recording (closed segments). Sessions are
+      restored from saved workspaces and the Recent menu
+- [x] Per-segment **analysis cache** at segment close (`seg_NNNN_*_analysis.npz`,
+      lossless, compressed): row times, every signal at full resolution, and
+      10 s / 60 s / 600 s bucket aggregates (n, mean, M2, min, max) + quantile
+      sketch. Plus a **session summary** (`<kind>_summary.npz`: 600 s level
+      merged across segments + all sketches), extended as each segment closes.
+      Missing caches/summary (older or recovered sessions) are built on
+      first open, with progress. *(Was planned as per-second / per-minute;
+      1 s would cost ~18 GB per month at 200 signals.)*
+- [x] Multi-resolution plotting: full resolution when the view holds
+      ≤ 400k rows, otherwise a min/max envelope at the finest level that fits
+      the plot width (spikes stay visible); reloads in the background after a
+      pan/zoom without changing the user's zoom
+- [x] Statistics: **min / max / mean / std / n exact for any range**
+      (hierarchical: whole 600 s → 60 s → 10 s buckets, full-resolution rows
+      for the edges; Chan merge for std). Median / P5 / P95 exact up to 400k
+      rows; beyond that **estimated** from per-segment quantile sketches and
+      shown as `≈` with a note in the panel. Cursors and hover read
+      full-resolution values, never envelope points
+- [x] Wall-clock axis (session start time feeds the existing Wall-clock
+      toggle); disconnect gaps and empty buckets drawn as gaps
+- [x] Export of session curves = **full resolution** for the visible range
+      (never the envelope), streamed per segment, CSV or CSV + `.xlsx` split
+      into ≤ 1 M-row sheets
+- [x] Legacy single `.xlsx` / `.csv` logs open as before; single session
+      segment CSVs (event / fixed) now open too
+- [x] Measured (`tools/bench_session_analysis.py`, 30 days × 10 Hz × 10
+      signals = 25.9 M rows, 720 segments): reopen 67 ms, overview **16 ms**,
+      zoom 1 day 106 ms / 1 h 11 ms / 2 min 0.3 ms, exact whole-session stats
+      39 ms, cursor read 2.3 ms (cold). Targets: overview < 5 s ✅, zoom < 1 s ✅.
+      One-time summary build for a 30-day session without one: 7.5 s
+      (normally avoided — the logger extends it per segment)
+- [x] Tests: `tests/test_session_analysis.py` (windows, envelopes, gaps, stats
+      on both paths, values, export, fixed-step, incremental summary — all
+      against brute force on the CSVs), `tests/test_analysis_session.py`
+      (end to end through the Analysis Suite window)
+- [ ] Math channels for sessions (they evaluate whole arrays; disabled with a
+      status message for sessions for now)
+- [ ] Smoothing / normalising a session curve applies to the drawn view
+      (envelope when zoomed out) — make it full-resolution or label it
+- [ ] Exact long-range percentiles (background full scan with progress) if
+      labs need them beyond the ≈ estimate
+- [ ] Disk: analysis caches add ~7 % of the CSV size on smooth BMS-like data
+      (0.32 GB for 25.9 M rows × 10 signals); noisy data compresses less —
+      measure on real lab logs and document disk sizing
 
 ### 0.5 Part C — Canonical protocol configuration (protocol spec, phases 2–4)
 

@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
 )
 
 from .analysis_theme import _parse_unit
+from .log_io import entry_value_at
 
 if TYPE_CHECKING:
     from .log_io import LogEntry
@@ -217,7 +218,7 @@ class CursorReadoutPanel(QGroupBox):
                 for param in params_for_cursor(cursor):
                     if param not in log.columns:
                         continue
-                    v = float(np.interp(t, x, log.columns[param]))
+                    v = entry_value_at(log, param, t, x)
                     if np.isfinite(v):
                         vals[(log.id, param)] = v
             return vals
@@ -242,7 +243,7 @@ class CursorReadoutPanel(QGroupBox):
                 for param in params_for_cursor(cursor):
                     if param not in log.columns:
                         continue
-                    v = float(np.interp(t, x, log.columns[param]))
+                    v = entry_value_at(log, param, t, x)
                     value_text = self._fmt_val(v)
                     unit = _parse_unit(param) or ""
                     short = self._strip_param_label(param)
@@ -313,6 +314,11 @@ class CursorReadoutPanel(QGroupBox):
 # ═══════════════════════════════════════════════════════════════════════
 # Stats calculation background thread
 # ═══════════════════════════════════════════════════════════════════════
+def _log_stats_error(curve, exc) -> None:
+    import logging
+    logging.getLogger("bytehound.analysis").warning("Statistics failed for %s: %s", curve, exc)
+
+
 class StatsWorker(QThread):
     sigFinished = Signal(list)
 
@@ -329,7 +335,17 @@ class StatsWorker(QThread):
         for info in self.rows:
             if self._is_cancelled:
                 return
-            stats = self._compute_stats_internal(info["x"], info["y"], info.get("x_range"))
+            fn = info.get("stats_fn")
+            if fn is not None and info.get("x_range") is not None:
+                # Logging session: exact full-resolution statistics from the
+                # session itself, never from the drawn envelope.
+                try:
+                    stats = fn(*info["x_range"])
+                except Exception as exc:
+                    stats = None
+                    _log_stats_error(info.get("curve"), exc)
+            else:
+                stats = self._compute_stats_internal(info["x"], info["y"], info.get("x_range"))
             results.append({
                 "curve": info["curve"],
                 "color": info.get("color"),
@@ -437,7 +453,9 @@ class StatisticsPanel(QWidget):
     def _on_stats_calculated(self, results: list[dict]):
         self._worker = None
         self._table.setRowCount(0)
-        self._info.setText(f"Stats over visible x-range  ·  {len(results)} curve(s)")
+        approx = any((r.get("stats") or {}).get("approx") for r in results)
+        note = "  ·  ≈ = estimated from per-segment summaries (range too long for exact percentiles)" if approx else ""
+        self._info.setText(f"Stats over visible x-range  ·  {len(results)} curve(s){note}")
         self._table.setRowCount(len(results))
         for r, info in enumerate(results):
             stats = info["stats"]
@@ -462,6 +480,8 @@ class StatisticsPanel(QWidget):
                     txt = str(stats[key])
                 else:
                     txt = self._fmt(stats[key])
+                    if stats.get("approx") and key in ("p5", "median", "p95"):
+                        txt = "≈" + txt
                 cell = QTableWidgetItem(txt)
                 cell.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
                 self._table.setItem(r, c, cell)

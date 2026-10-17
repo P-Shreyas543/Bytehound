@@ -702,6 +702,17 @@ The app always logs into a session folder ([session.py](app/serial_logging/sessi
 - **Recovery:** `find_unfinished_sessions` / `recover_session` at startup
   (default folder + `logging/recent_sessions`).
 - **Disk guard:** `logging/disk_warn_gb` (10) / `logging/disk_stop_gb` (2).
+- **Analysis data** ([session_analysis.py](app/serial_logging/session_analysis.py)):
+  each closed segment also gets `seg_NNNN_<kind>_analysis.npz` (compressed,
+  lossless: `t`, `c/<signal>`, `L{10,60,600}/b` + `L…/<signal>/{n,mean,m2,min,max}`,
+  `q/<signal>` 101-quantile sketch), and the session keeps `<kind>_summary.npz`
+  (the 600 s level merged across segments as `S/<signal>/…`, sketches as
+  `Q/<signal>`), extended after every segment. `SessionSource` serves draw
+  windows (full resolution ≤ `FULL_RES_LIMIT` = 400k rows, else min/max
+  envelope), `value_at`, `stats` (exact n/min/max/mean/std via hierarchical
+  bucket merge; percentiles exact ≤ 400k rows, else estimated and flagged)
+  and full-resolution `export_range`. The Analysis Suite wraps it in
+  `SessionEntry` (`log_io.py`).
 
 ### `*.bhraw` — `RawCapture` (lossless wire capture)
 

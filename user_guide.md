@@ -161,7 +161,16 @@ To re-decode a recording (for example with a corrected configuration), load the 
 
 The 📂 button next to the logging status opens the log folder.
 
-To inspect a recorded run, open the segment files in the **Analysis Suite** (*Tools → Analysis Suite*). It supports time cursors, statistics over an X-range, smoothing, and overlaying multiple runs.
+### Analysing long sessions
+Open the whole session in the **Analysis Suite** (*Tools → Analysis Suite → File → Open Logging Session…*, or pick the folder's `session.json`). Any length opens in seconds:
+
+- **Zoomed out**, each curve shows the minimum and maximum of every time bucket, so spikes are never hidden. **Zoom in** and full-resolution data is loaded automatically for the visible range.
+- **Statistics** for the visible range use all recorded samples: min, max, mean, standard deviation and sample count are exact for any range. For very long ranges the median and percentiles are estimated and marked **≈**.
+- **Cursors** always read the recorded value at that instant.
+- **Export** writes every recorded row of the visible range (CSV, optionally also Excel, split into sheets of 1,000,000 rows).
+- Disconnects appear as gaps in the curves.
+
+Single segment files (`seg_0001_event.csv`, `.xlsx`) can also be opened on their own with *File → Load Logs*. The Analysis Suite also supports overlaying multiple runs and smoothing; math channels are not yet available for whole sessions.
 
 ---
 

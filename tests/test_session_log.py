@@ -431,3 +431,31 @@ def test_finished_segment_threads_are_released(tmp_path, config):
     assert len(s._finishers) <= 5
     s.stop()
     assert s.await_finished(60)
+
+
+def test_closed_session_has_complete_analysis_data(tmp_path, config):
+    """Every closed segment gets an analysis cache, and the session summary
+    already covers all segments when logging stops — so the Analysis Suite
+    opens it without any preparation (Part B)."""
+    import numpy as np
+
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock, segment_seconds=20, fixed_step_s=1.0)
+    s.start()
+    frames = _frames(config)
+    for _ in range(70):
+        for f in frames:
+            s.log_frame(f, clock.perf)
+        clock.advance(1.0)
+        s.tick()
+        time.sleep(0.002)
+    s.stop()
+    assert s.await_finished(60)
+    folder = tmp_path / "sess"
+    m = read_manifest(folder)
+    indices = [x["index"] for x in m["segments"]]
+    assert len(indices) >= 3
+    for kind in ("event", "fixed"):
+        assert all((folder / x["files"][f"{kind}_analysis"]).exists() for x in m["segments"])
+        with np.load(folder / f"{kind}_summary.npz", allow_pickle=True) as z:
+            assert [int(i) for i in z["segments"]] == indices

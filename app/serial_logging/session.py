@@ -411,6 +411,7 @@ class SessionLog:
         self._disk_free = disk_free or (lambda p: shutil.disk_usage(p).free)
 
         self._lock = threading.Lock()          # guards the manifest
+        self._summary_lock = threading.Lock()  # serialises summary updates
         self._manifest: Dict[str, Any] = {}
         self._segment: Optional[_Segment] = None
         self._finishers: List[threading.Thread] = []
@@ -431,6 +432,7 @@ class SessionLog:
             raise FileExistsError(f"{self.folder} already contains a session")
         self.folder.mkdir(parents=True, exist_ok=True)
         wall0, self.session_perf0 = self._clock(), self._perf()
+        self.session_wall0 = wall0
         config_info = _copy_config(self._config_source, self.folder / "config")
         self._manifest = {
             "format": SESSION_FORMAT,
@@ -709,13 +711,28 @@ class SessionLog:
                 errors.append(w.error)
             if w.dropped:
                 errors.append(f"{name}: {w.dropped} row(s) dropped (writer queue full)")
+        # Analysis caches (Part B) so the Analysis Suite opens any session
+        # length instantly. Derived data: a failure is a warning, not an
+        # error, and the Analysis Suite rebuilds a missing cache on open.
+        notes: List[str] = []
+        from .session_analysis import build_segment_cache
+        for kind in ("event", "fixed"):
+            name = entry["files"].get(f"{kind}_csv")
+            if not name or not (self.folder / name).exists():
+                continue
+            try:
+                cache = build_segment_cache(self.folder / name, self.session_wall0)
+                entry["files"][f"{kind}_analysis"] = cache.name
+            except Exception as exc:
+                notes.append(f"analysis cache for {name} not built: {exc}")
+                _LOG.warning("Analysis cache for %s failed", name, exc_info=True)
         sizes: Dict[str, int] = {}
         hashes: Dict[str, str] = {}
         for name in entry["files"].values():
             path = self.folder / name
             if path.exists():
                 sizes[name] = path.stat().st_size
-                if not name.endswith(".xlsx"):
+                if not name.endswith((".xlsx", "_analysis.npz")):
                     hashes[name] = _sha256(path)
             else:
                 errors.append(f"{name} missing after close")
@@ -734,9 +751,28 @@ class SessionLog:
             })
             if errors:
                 entry["errors"] = errors
+            if notes:
+                entry["warnings"] = notes
             self._save_locked()
+        self._extend_summaries(entry)
         for e in errors:
             self._warn(f"Segment {seg.index}: {e}")
+
+    def _extend_summaries(self, entry: Dict[str, Any]) -> None:
+        """Add the closed segment to the session summaries so the Analysis
+        Suite opens a session of any length instantly (Part B). Only the new
+        segment is read; finishers are serialised so the summary grows in
+        segment order."""
+        from .session_analysis import SessionSource
+
+        with self._summary_lock:
+            for kind in ("event", "fixed"):
+                if f"{kind}_analysis" not in entry.get("files", {}):
+                    continue
+                try:
+                    SessionSource(self.folder, kind=kind).ensure_summary()
+                except Exception:
+                    _LOG.warning("Session summary (%s) not updated", kind, exc_info=True)
 
     # -- disk guard ---------------------------------------------------------
 

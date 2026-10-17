@@ -133,6 +133,39 @@ class LogLoaderThread(QThread):
                 elapsed_scale = scale_mapping.get(col, 1.0)
                 break
 
+        session_layout = "time_utc" in df.columns or "elapsed_s" in df.columns
+        if session_layout:
+            # A session segment (event or fixed-step CSV): absolute time per
+            # row, frame-block bookkeeping columns that are not signals.
+            from ..serial_logging.session_analysis import _is_signal_column
+            if "time_utc" in df.columns:
+                ts = pd.to_datetime(df["time_utc"], utc=True, errors="coerce", format="ISO8601")
+                valid = ts.dropna()
+                if valid.empty:
+                    self.error.emit(self._path, "No valid time_utc values found.")
+                    return
+                first_ts_posix = valid.iloc[0].timestamp()
+                elapsed_arr = (ts - valid.iloc[0]).dt.total_seconds().to_numpy(dtype=np.float64)
+            else:
+                elapsed_arr = pd.to_numeric(df["elapsed_s"], errors='coerce').to_numpy(dtype=np.float64)
+            data_columns = [c for c in df.columns if _is_signal_column(str(c))]
+            columns: dict[str, np.ndarray] = {}
+            for col in data_columns:
+                arr = pd.to_numeric(df[col], errors='coerce').to_numpy(dtype=np.float64)
+                if not np.all(np.isnan(arr)):
+                    columns[col] = arr
+            if not columns:
+                self.error.emit(self._path, "No numeric columns found in CSV.")
+                return
+            entry = LogEntry(
+                id=self._log_id, path=self._path, name=_test_name_from_path(self._path),
+                color=self._color, start_timestamp=first_ts_posix, elapsed=elapsed_arr, columns=columns,
+            )
+            _CSV_CACHE[self._path] = entry
+            self.sigProgress.emit(100)
+            self.sigFinished.emit(self._log_id, self._path, entry)
+            return
+
         if elapsed_col:
             elapsed_arr = (pd.to_numeric(df[elapsed_col], errors='coerce').fillna(0) * elapsed_scale).to_numpy(dtype=np.float64)
         elif "elapsed_ms" in df.columns:
@@ -272,3 +305,179 @@ class LogLoaderThread(QThread):
         _CSV_CACHE[self._path] = entry
         self.sigProgress.emit(100)
         self.sigFinished.emit(self._log_id, self._path, entry)
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# Logging sessions (folders of rotated segments) — Plane.md Part B
+# ═══════════════════════════════════════════════════════════════════════
+def entry_value_at(entry, param: str, t: float, x: Optional[np.ndarray] = None) -> float:
+    """Value of ``param`` at plot time ``t`` for any loaded log.
+
+    Session entries answer from full-resolution data even when the plot shows
+    a min/max envelope; ordinary logs interpolate their arrays.
+    """
+    if getattr(entry, "is_session", False):
+        return entry.value_at(param, t)
+    if x is None:
+        x = entry.elapsed + entry.time_offset
+    if len(x) == 0 or param not in entry.columns:
+        return float("nan")
+    return float(np.interp(t, x, entry.columns[param]))
+
+
+class _SessionColumns:
+    """``entry.columns``-compatible view: keys are every signal of the
+    session, values are arrays for the entry's current view."""
+
+    def __init__(self, entry: "SessionEntry") -> None:
+        self._entry = entry
+
+    def __contains__(self, key) -> bool:
+        return key in self._entry.signal_set
+
+    def __iter__(self):
+        return iter(self._entry.signals)
+
+    def __len__(self) -> int:
+        return len(self._entry.signals)
+
+    def keys(self):
+        return list(self._entry.signals)
+
+    def __getitem__(self, key: str) -> np.ndarray:
+        if key not in self._entry.signal_set:
+            raise KeyError(key)
+        self._entry.ensure([key])
+        return self._entry.view.y.get(key, np.zeros(0))
+
+    def get(self, key: str, default=None):
+        return self[key] if key in self else default
+
+
+class SessionEntry:
+    """A logging session presented like a :class:`LogEntry`.
+
+    ``elapsed`` / ``columns`` hold the data of the current view only: full
+    resolution when zoomed in, a min/max envelope when zoomed out. Gaps are
+    NaN (draw with ``connect='finite'``). Values, statistics and exports go
+    to full resolution through :attr:`source`.
+    """
+
+    is_session = True
+    keeps_gaps = True
+
+    def __init__(self, source, *, id: str, path: str, name: str, color: str) -> None:
+        from ..serial_logging.session_analysis import Window
+
+        self.source = source
+        self.id = id
+        self.path = path
+        self.name = name
+        self.color = color
+        self.visible = True
+        self.time_offset = 0.0
+        self.start_timestamp: Optional[float] = source.start_epoch
+        self.signals = [s for s in source.signals() if not _is_time_like_param(s)]
+        self.signal_set = set(self.signals)
+        self.columns = _SessionColumns(self)
+        self.view = Window(np.zeros(0), {}, 0, 0.0, source.duration)
+        self.loading = False
+
+    @property
+    def elapsed(self) -> np.ndarray:
+        return self.view.x
+
+    def available_params(self) -> list[str]:
+        return list(self.signals)
+
+    def plan(self, t0: float, t1: float, px: int) -> tuple[float, float, int]:
+        """Range to load (with margin for smooth panning) and its level."""
+        span = max(t1 - t0, 1e-3)
+        lo = max(0.0, t0 - span * 0.5)
+        hi = min(self.source.duration, t1 + span * 0.5)
+        return lo, hi, self.source.choose_level(lo, hi, max_points=max(1000, px * 2))
+
+    def covers(self, t0: float, t1: float, level: int) -> bool:
+        v = self.view
+        return v.x.size > 0 and v.t0 <= max(0.0, t0) and v.t1 >= min(self.source.duration, t1) and v.level == level
+
+    def load(self, params, t0: float, t1: float, level: int):
+        return self.source.window(list(params), t0, t1, level=level)
+
+    def apply(self, window) -> None:
+        self.view = window
+
+    def ensure(self, params) -> None:
+        """Make sure ``params`` are in the current view (same range/level)."""
+        missing = [p for p in params if p not in self.view.y]
+        if not missing:
+            return
+        v = self.view
+        if v.x.size == 0 and not v.y:
+            lo, hi = 0.0, self.source.duration
+            level = self.source.choose_level(lo, hi)
+        else:
+            lo, hi, level = v.t0, v.t1, v.level
+        w = self.source.window(sorted(set(v.y) | set(missing)), lo, hi, level=level)
+        self.view = w
+
+    def value_at(self, param: str, t: float) -> float:
+        return self.source.value_at(param, t - self.time_offset)
+
+    def range_stats(self, param: str, x0: float, x1: float) -> Optional[dict]:
+        st = self.source.stats(param, x0 - self.time_offset, x1 - self.time_offset)
+        if st is None:
+            return None
+        return {"min": st.min, "p5": st.p5, "max": st.max, "mean": st.mean, "median": st.median,
+                "p95": st.p95, "std": st.std, "n": st.n, "approx": st.approx_percentiles}
+
+
+class SessionLoaderThread(QThread):
+    """Opens a logging session folder (building missing analysis caches)."""
+    sigFinished = Signal(str, str, object)
+    sigProgress = Signal(int)
+    error = Signal(str, str)
+
+    def __init__(self, folder: str, log_id: str, color: str, kind: str = "event", parent=None):
+        super().__init__(parent)
+        self._folder = folder
+        self._log_id = log_id
+        self._color = color
+        self._kind = kind
+
+    def run(self):
+        from ..serial_logging.session_analysis import SessionSource
+        try:
+            src = SessionSource(self._folder, kind=self._kind)
+            if not src.segments:
+                self.error.emit(self._folder, f"This session has no {self._kind} log segments.")
+                return
+            missing = len(src.missing_caches())
+            src.ensure_caches(lambda done, total: self.sigProgress.emit(int(100 * done / max(total, 1))))
+            name = os.path.basename(os.path.normpath(self._folder))
+            if self._kind != "event":
+                name += f" ({self._kind}-step)" if self._kind == "fixed" else f" ({self._kind})"
+            entry = SessionEntry(src, id=self._log_id, path=self._folder + f"#{self._kind}",
+                                 name=name, color=self._color)
+            entry.ensure([])
+            entry.cache_built = missing
+            self.sigProgress.emit(100)
+            self.sigFinished.emit(self._log_id, entry.path, entry)
+        except Exception as exc:
+            self.error.emit(self._folder, str(exc))
+
+
+class SessionWindowThread(QThread):
+    """Loads a new view window for one session entry off the GUI thread."""
+    sigDone = Signal(str, object)
+
+    def __init__(self, entry: SessionEntry, params, t0: float, t1: float, level: int, parent=None):
+        super().__init__(parent)
+        self._entry, self._params, self._t0, self._t1, self._level = entry, list(params), t0, t1, level
+
+    def run(self):
+        try:
+            w = self._entry.load(self._params, self._t0, self._t1, self._level)
+        except Exception as exc:
+            w = exc
+        self.sigDone.emit(self._entry.id, w)
