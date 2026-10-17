@@ -130,6 +130,7 @@ class TcpSocketWrapper:
         self._is_open = False
         self._buffer = bytearray()
         self.rcvbuf_bytes = 0  # receive buffer granted by the OS, set on open()
+        self._peer_closed = False  # remote end closed; buffered bytes still delivered
 
     def open(self):
         try:
@@ -140,6 +141,7 @@ class TcpSocketWrapper:
             self._socket.setblocking(False)
             self._is_open = True
             self._buffer = bytearray()
+            self._peer_closed = False
         except Exception as e:
             self._is_open = False
             if self._socket:
@@ -169,6 +171,7 @@ class TcpSocketWrapper:
             raise
         except Exception as e:
             raise serial.SerialException(str(e)) from e
+        self._raise_if_drained_and_closed()
         res = bytes(self._buffer[:size])
         del self._buffer[:size]
         return res
@@ -183,7 +186,14 @@ class TcpSocketWrapper:
             raise
         except Exception as e:
             raise serial.SerialException(str(e)) from e
+        self._raise_if_drained_and_closed()
         return len(self._buffer)
+
+    def _raise_if_drained_and_closed(self) -> None:
+        """Report the peer's close only once every byte received before it
+        has been handed over (Plane.md F15)."""
+        if self._peer_closed and not self._buffer:
+            raise serial.SerialException("TCP connection closed by remote peer")
 
     def reset_input_buffer(self):
         self._buffer.clear()
@@ -207,6 +217,8 @@ class TcpSocketWrapper:
             self._socket = None
 
     def _fill_buffer(self):
+        if self._peer_closed:
+            return
         while True:
             try:
                 r, _, _ = select.select([self._socket], [], [], 0)
@@ -214,7 +226,11 @@ class TcpSocketWrapper:
                     break
                 data = self._socket.recv(_TCP_RECV_CHUNK)
                 if not data:
-                    raise serial.SerialException("TCP connection closed by remote peer")
+                    # Peer closed. Keep what is buffered: it is delivered
+                    # first, then the close is reported (used to raise here
+                    # and lose the device's last bytes).
+                    self._peer_closed = True
+                    break
                 self._buffer.extend(data)
             except BlockingIOError:
                 break

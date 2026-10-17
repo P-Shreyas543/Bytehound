@@ -226,10 +226,11 @@ these loss points:
 | F12 | Frames lost on the wire / in the device | Undetectable without protocol help | Optional per-frame **alive / sequence counter** signal in the config (E2E-style): gaps, repeats and resets counted per frame ID and logged |
 | F13 | `TcpSocketWrapper.write` / UDP write | `socket.send()` may write only part of a buffer — **the rest of a TX command was lost** without an error | Send until every byte is out (with timeout), else raise |
 | F14 | UDP on Windows | An ICMP "port unreachable" (device rebooting) arrives as `WSAECONNRESET` on the next read → treated as an unplug → **session ended** | Ignore the notice for UDP and keep reading |
+| F15 | `TcpSocketWrapper` on peer close | Raised "closed by remote peer" while bytes already received sat in its buffer → **the device's last frames were lost**, more the busier the PC (found by the stress test under load) | Deliver every buffered byte first, then report the close |
 
 Progress (each with a test that fails on the old code):
 F1 ✅ F2 ✅ F3 ✅ F4 ✅ F5 ✅ F6 ✅ F7 ✅ F8 ✅ F9 ✅ F10 ✅ F11 ✅
-F12 ☐ F13 ✅ F14 ✅ — tests in `tests/test_polling_worker.py`
+F12 ☐ F13 ✅ F14 ✅ F15 ✅ — tests in `tests/test_polling_worker.py`
 (`test_polling_start_delivers_waiting_frames_instead_of_discarding`,
 `test_polling_continues_while_gui_is_backpressured`) and
 `tests/test_frame_loss.py`. The UDP burst test shows the old code really
@@ -245,9 +246,13 @@ Done when:
       disconnect gaps
 - [ ] Live integrity panel / status-bar indicator; turns amber on any loss or
       gap, with the reason
-- [ ] Stress test: TCP/UDP loopback at the maximum supported rate with
-      injected noise, split and concatenated frames — every byte accounted
-      for, every valid frame decoded and logged exactly once
+- [x] Stress test (`test_stress_every_byte_and_frame_accounted`, TCP + UDP):
+      30,000 frames as fast as possible with noise, random splits and
+      corrupted CRCs through a real worker into a session — raw capture
+      byte-identical, every byte accounted, every valid frame in the decoded
+      log exactly once, every corrupted one in the rejected file, rebuild
+      finds the same frames. Passes repeatedly under heavy CPU load (after
+      the F15 fix it found)
 - [ ] Hardware test plan: real USB-UART at 115200 / 921600 / 2 Mbaud for
       ≥24 h with a counter-stamped simulator; zero unexplained gaps
 - [ ] Lab guide: power plan, USB selective suspend, antivirus exclusions for

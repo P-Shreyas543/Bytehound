@@ -7,6 +7,7 @@ received data or transmitted commands used to be lost silently.
 from __future__ import annotations
 
 import socket
+from pathlib import Path
 import sys
 import threading
 import time
@@ -396,3 +397,180 @@ def test_open_records_purge_and_raises_thread_priority(monkeypatch):
     worker.start.assert_called_once_with(QThread.Priority.HighestPriority)
     assert worker.integrity_snapshot()["purged_at_connect"] == 5
     worker._serial = None
+
+
+# ---------------------------------------------------------------------------
+# Stress: maximum rate, noise, split / concatenated / corrupted frames
+# ---------------------------------------------------------------------------
+
+def _stress_stream(config, n_frames: int, seed: int = 11):
+    """(blob, valid frames by id, corrupted count) for a hostile stream."""
+    from collections import Counter
+
+    rng = random.Random(seed)
+    pc = config.protocol
+    ids = list(config.frames)
+    parts, valid, corrupt = [], Counter(), 0
+    for i in range(n_frames):
+        fid = ids[i % len(ids)]
+        length = config.frames[fid].payload_length
+        pkt = bytearray(build_packet(pc, fid, bytes(rng.randrange(256) for _ in range(length))))
+        if i % 97 == 13:                      # corrupt the CRC
+            pkt[-2] ^= 0x5A
+            corrupt += 1
+        else:
+            valid[fid] += 1
+        parts.append(bytes(pkt))
+        if i % 41 == 7:                       # line noise, incl. a false header byte
+            parts.append(bytes([0x00, 0xAA, 0x13, 0x77]))
+    return b"".join(parts), valid, corrupt
+
+
+@pytest.mark.parametrize("transport", ["tcp", "udp"])
+def test_stress_every_byte_and_frame_accounted(tmp_path, transport):
+    """30,000 frames sent as fast as possible with noise, random splits and
+    corrupted CRCs, through a real worker into a logging session: every byte
+    in the raw capture and accounted for, every valid frame in the decoded
+    log exactly once, every corrupted one in the rejected file, and a
+    rebuild from the raw capture finds the same frames (Plane.md Part F)."""
+    from collections import Counter
+
+    import pandas as pd
+    from PySide6.QtCore import Qt
+
+    from app.decoder.config_loader import load_config
+    from app.serial_io.serial_worker import PollingWorker, SerialSettings
+    from app.serial_logging.raw_capture import RX, iter_raw_capture, rebuild_decoded_log
+    from app.serial_logging.session import SessionLog, SessionSettings, read_manifest
+
+    config = load_config(Path(__file__).resolve().parents[1] / "app" / "resources" / "config_template")
+    blob, valid, corrupt = _stress_stream(config, 30_000)
+
+    if transport == "tcp":
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("127.0.0.1", 0))
+        srv.listen(1)
+        endpoint = srv
+        settings = SerialSettings(port="x", connection_type="tcp", host="127.0.0.1",
+                                  port_num=srv.getsockname()[1])
+    else:
+        dev = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        dev.bind(("127.0.0.1", 0))
+        endpoint = dev
+        settings = SerialSettings(port="x", connection_type="udp", host="127.0.0.1",
+                                  port_num=dev.getsockname()[1])
+
+    worker = PollingWorker(settings, config.protocol, [], decode_config=config)
+
+    class Hooks:
+        def start(self, path, meta):
+            worker.start_raw_capture(path, meta)
+
+        def stop(self):
+            return worker.stop_raw_capture()
+
+    session = SessionLog(tmp_path / "s", config, SessionSettings(), raw_capture=Hooks(),
+                         disk_free=lambda p: 1 << 40)
+    counted = {"n": 0}
+
+    def on_batch(batch):
+        for packet, decoded, rx_perf in batch:
+            if packet.ok and decoded is not None:
+                session.log_frame(decoded, rx_perf)
+            elif not packet.ok:
+                session.log_rejected(packet.raw, packet.frame_id, packet.error or "", rx_perf)
+        counted["n"] += len(batch)            # only after the batch is logged
+
+    worker.packets_received.connect(on_batch, Qt.ConnectionType.DirectConnection)
+    session.start()
+
+    def device():
+        rng = random.Random(5)
+        if transport == "tcp":
+            conn, _ = srv.accept()
+            i = 0
+            while i < len(blob):              # random split points, as fast as possible
+                n = rng.randint(1, 900)
+                conn.sendall(blob[i:i + n])
+                i += n
+            time.sleep(1.5)
+            conn.close()
+        else:
+            time.sleep(0.3)                   # let the worker bind
+            target = ("127.0.0.1", worker._serial._socket.getsockname()[1])
+            i = 0
+            while i < len(blob):
+                n = rng.randint(200, 1400)
+                dev.sendto(blob[i:i + n], target)
+                i += n
+
+    threading.Thread(target=device, daemon=True).start()
+    worker.open()
+    # SessionLog is single-threaded (the GUI thread in the app): wait until
+    # the worker has delivered every frame, stop the worker thread, and only
+    # then touch the session or read counters from this thread.
+    want = sum(valid.values()) + corrupt
+    deadline = time.monotonic() + 30
+    while counted["n"] < want and time.monotonic() < deadline:
+        time.sleep(0.05)
+    worker.close()
+    snap = worker.integrity_snapshot()
+    session.stop()
+    assert session.await_finished(120)
+    endpoint.close()
+
+    # 1. Every byte arrived, is in the raw capture, and is accounted for.
+    raw_path = tmp_path / "s" / "seg_0001.bhraw"
+    captured = b"".join(d for k, _, d in iter_raw_capture(raw_path) if k == RX)
+    assert captured == blob
+    assert snap["parser_bytes_in"] == len(blob)
+    assert snap["parser_bytes_in"] == (snap["frame_bytes_ok"] + snap["frame_bytes_rejected"]
+                                       + snap["discarded_bytes"] + snap["overflow_bytes"]
+                                       + snap["buffered_bytes"])
+    # 2. Every valid frame decoded, every corrupted one rejected.
+    assert snap["frames_ok"] == sum(valid.values())
+    assert snap["frames_rejected"] == corrupt
+    # 3. Every valid frame logged exactly once (frame_id cells per block).
+    df = pd.read_csv(tmp_path / "s" / "seg_0001_event.csv", low_memory=False)
+    logged = Counter()
+    for col in [c for c in df.columns if c.endswith(".frame_id")]:
+        for v in df[col].dropna():
+            logged[int(str(v), 16)] += 1
+    assert logged == valid
+    m = read_manifest(tmp_path / "s")
+    assert m["segments"][0]["rejected_frames"] == corrupt
+    assert m["segments"][0]["decoded_dropped"] == 0
+    # 4. A rebuild from the raw capture finds exactly the same frames.
+    assert rebuild_decoded_log(raw_path, config, tmp_path / "rebuilt.xlsx") == sum(valid.values())
+
+
+def test_tcp_data_received_before_peer_close_is_delivered():
+    """F15: when the device sends its last bytes and closes, those bytes must
+    still be delivered. The wrapper used to raise "closed by remote peer"
+    while already-received bytes sat in its buffer — losing the last frames
+    whenever the worker lagged (e.g. a busy PC)."""
+    srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    payload = bytes(range(256)) * 200
+    w = TcpSocketWrapper(host="127.0.0.1", port=srv.getsockname()[1])
+    w.open()
+    conn, _ = srv.accept()
+    conn.sendall(payload)
+    conn.close()                      # data and FIN both in flight
+    time.sleep(0.3)                   # worker lagging: both have arrived
+    got = bytearray()
+    try:
+        while True:
+            n = w.in_waiting
+            if n == 0:
+                break
+            got += w.read(n)
+    except Exception:
+        pass                          # the close may be reported once drained
+    assert bytes(got) == payload
+    import serial as _serial
+    with pytest.raises(_serial.SerialException):   # ...and then the close is reported
+        _ = w.in_waiting
+    w.close()
+    srv.close()
