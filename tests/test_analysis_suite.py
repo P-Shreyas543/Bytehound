@@ -500,13 +500,17 @@ def test_rebuild_param_list_saves_scroll():
     mock_scrollbar.setValue.assert_called_with(42)
 
 
-def test_rebuild_plots_saves_x_range():
-    """Verify that _do_rebuild_plots saves and restores visible X range."""
+@pytest.mark.parametrize("user_zoomed", [True, False])
+def test_rebuild_plots_saves_x_range(user_zoomed):
+    """_do_rebuild_plots carries over a zoom the user chose, and nothing
+    while X is still auto-ranging (pyqtgraph's not-yet-fitted default range
+    used to pin every rebuilt plot to 0-1 s)."""
     from unittest.mock import MagicMock
     win = AnalysisSuiteWindow.__new__(AnalysisSuiteWindow)
 
     mock_pw = MagicMock()
     mock_view_box = MagicMock()
+    mock_view_box.state = {"autoRange": [not user_zoomed, True]}
     mock_view_box.viewRange.return_value = ((10.0, 20.0), (0.0, 100.0))
     mock_plot_item = MagicMock()
     mock_plot_item.vb = mock_view_box
@@ -531,7 +535,7 @@ def test_rebuild_plots_saves_x_range():
 
     win._do_rebuild_plots()
 
-    mock_view_box.viewRange.assert_called_once()
+    assert mock_view_box.viewRange.call_count == (1 if user_zoomed else 0)
 
 
 @pytest.mark.parametrize(

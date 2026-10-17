@@ -3606,4 +3606,14 @@ class AnalysisSuiteWindow(QMainWindow):
             t.quit()
             t.wait(500)
         self._loader_threads.clear()
+        # Background session work must finish before its QThread objects are
+        # destroyed (a running QThread being destroyed aborts the process).
+        self._session_view_timer.stop()
+        for t in list(self._session_view_threads.values()):
+            t.wait(10_000)
+        self._stats_panel.shutdown(15_000)
+        export = getattr(self, "_session_export_thread", None)
+        if export is not None:
+            export.requestInterruption()
+            export.wait(15_000)
         super().closeEvent(event)

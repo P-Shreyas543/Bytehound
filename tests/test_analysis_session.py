@@ -123,7 +123,8 @@ def test_session_in_analysis_suite(qapp, session_folder, tmp_path, monkeypatch):
         monkeypatch.setattr(sa, "FULL_RES_LIMIT", 1000)
         full = entry.range_stats(param, 0.0, src.duration)
         ok = ~np.isnan(v)
-        assert full["n"] == int(ok.sum()) and full["approx"]
+        assert full["n"] == int(ok.sum()) and not full["approx"]
+        assert full["median"] == pytest.approx(np.median(v[ok]))
         assert full["min"] == pytest.approx(v[ok].min()) and full["max"] == pytest.approx(v[ok].max())
         assert full["mean"] == pytest.approx(v[ok].mean(), rel=1e-12)
 

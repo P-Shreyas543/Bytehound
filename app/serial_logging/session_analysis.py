@@ -516,8 +516,87 @@ class SessionSource:
         if agg is None or agg[0] == 0:
             return None
         n, mean, m2, mn, mx = agg
-        p5, med, p95 = self._approx_percentiles(param, t0, t1, (5, 50, 95))
+        guesses = self._approx_percentiles(param, t0, t1, (5, 50, 95))
+        exact = self._exact_percentiles(param, t0, t1, int(n), (5, 50, 95), guesses, mn, mx)
+        if exact is not None:
+            p5, med, p95 = exact
+            return RangeStats(int(n), mn, mx, mean, math.sqrt(m2 / n), med, p5, p95, False)
+        p5, med, p95 = guesses
         return RangeStats(int(n), mn, mx, mean, math.sqrt(m2 / n), med, p5, p95, True)
+
+    def _exact_percentiles(self, param: str, t0: float, t1: float, n: int, qs: Sequence[float],
+                           guesses: Sequence[float], vmin: float, vmax: float,
+                           max_passes: int = 6) -> Optional[Tuple[float, ...]]:
+        """Exact percentiles (numpy's linear definition) of a range too large
+        to hold in memory.
+
+        Each needed rank gets a value bracket around its sketch estimate; one
+        streaming pass over the segments counts values below each bracket and
+        keeps only the distinct values (with counts) inside it, from which the
+        rank is selected exactly. A bracket that misses is widened and the
+        pass repeated. Memory stays bounded by the distinct values inside the
+        brackets. Returns None if a bracket still misses after ``max_passes``.
+        """
+        if n <= 0:
+            return None
+        spread = max(vmax - vmin, 1e-12)
+        targets = []
+        for q, g in zip(qs, guesses, strict=True):
+            h = (n - 1) * q / 100.0
+            k = int(math.floor(h))
+            guess = g if math.isfinite(g) else (vmin + vmax) / 2
+            targets.append({"k": k, "k1": min(k + 1, n - 1), "frac": h - k,
+                            "lo": guess - spread * 0.002, "hi": guess + spread * 0.002})
+        segs = self._overlapping(t0, t1)
+        for _ in range(max_passes):
+            below = [0] * len(targets)
+            uniq: List[List[np.ndarray]] = [[] for _ in targets]
+            cnts: List[List[np.ndarray]] = [[] for _ in targets]
+            for s in segs:
+                a = self._arrays(s, ["t", f"c/{param}"])
+                t, y = a["t"], a[f"c/{param}"]
+                if y.size == 0:
+                    continue
+                v = y[(t >= t0) & (t <= t1)]
+                v = v[~np.isnan(v)]
+                for i, tg in enumerate(targets):
+                    below[i] += int((v < tg["lo"]).sum())
+                    inside = v[(v >= tg["lo"]) & (v <= tg["hi"])]
+                    if inside.size:
+                        u, c = np.unique(inside, return_counts=True)
+                        uniq[i].append(u)
+                        cnts[i].append(c)
+            results: List[Optional[float]] = []
+            retry = False
+            for i, tg in enumerate(targets):
+                if uniq[i]:
+                    u_all, inv = np.unique(np.concatenate(uniq[i]), return_inverse=True)
+                    c_all = np.zeros(u_all.size, np.int64)
+                    np.add.at(c_all, inv, np.concatenate(cnts[i]))
+                    cum = np.cumsum(c_all)
+                else:
+                    u_all, cum = np.zeros(0), np.zeros(0, np.int64)
+                total_inside = int(cum[-1]) if cum.size else 0
+                vals = []
+                for r in (tg["k"], tg["k1"]):
+                    rel = r - below[i]
+                    if 0 <= rel < total_inside:
+                        vals.append(float(u_all[int(np.searchsorted(cum, rel, "right"))]))
+                    else:
+                        vals.append(None)
+                if None in vals:
+                    retry = True
+                    width = (tg["hi"] - tg["lo"]) * 8
+                    if below[i] > tg["k"]:
+                        tg["lo"] -= width
+                    if below[i] + total_inside <= tg["k1"]:
+                        tg["hi"] += width
+                    results.append(None)
+                else:
+                    results.append(vals[0] + tg["frac"] * (vals[1] - vals[0]))
+            if not retry:
+                return tuple(results)  # type: ignore[arg-type]
+        return None
 
     def _exact_aggregate(self, param: str, t0: float, t1: float, *, right_open: bool,
                          levels: Tuple[int, ...]) -> Optional[Tuple[float, float, float, float, float]]:

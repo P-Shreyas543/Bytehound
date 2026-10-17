@@ -156,13 +156,12 @@ def test_stats_match_brute_force(session, monkeypatch, force_aggregates):
         assert st.min == pytest.approx(v.min()) and st.max == pytest.approx(v.max())
         assert st.mean == pytest.approx(v.mean(), rel=1e-12)
         assert st.std == pytest.approx(v.std(), rel=1e-9)
-        if st.approx_percentiles:
-            spread = v.max() - v.min()
-            assert abs(st.median - np.median(v)) <= 0.05 * spread
-        else:
-            assert st.median == pytest.approx(np.median(v))
-            assert st.p5 == pytest.approx(np.percentile(v, 5))
-        assert st.approx_percentiles == (force_aggregates and v.size > 10 and t1 - t0 > 20)
+        # Percentiles are exact on both paths: directly on small ranges, by
+        # bracketed streaming selection on long ones.
+        assert not st.approx_percentiles
+        assert st.median == pytest.approx(np.median(v))
+        assert st.p5 == pytest.approx(np.percentile(v, 5))
+        assert st.p95 == pytest.approx(np.percentile(v, 95))
 
 
 def test_value_at_is_full_resolution(session):

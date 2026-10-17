@@ -416,6 +416,7 @@ class StatisticsPanel(QWidget):
             hh.setSectionResizeMode(col, QHeaderView.ResizeToContents)
         layout.addWidget(self._table, 1)
         self._worker = None
+        self._retired_workers: list = []   # stale workers left to finish on their own
 
     @staticmethod
     def compute_stats(x: np.ndarray, y: np.ndarray, x_range: tuple[float, float] | None) -> dict[str, float] | None:
@@ -435,9 +436,16 @@ class StatisticsPanel(QWidget):
         """``rows`` is a list of {curve, log_id, param, color, x, y, x_range}.
         Starts a background worker to calculate statistics."""
         if self._worker is not None:
-            self._worker.cancel()
-            self._worker.sigFinished.disconnect()
-            self._worker.wait()
+            # Never block the GUI waiting for stale statistics: a long session
+            # range can take seconds. Disconnect it, keep it alive until it
+            # ends on its own (destroying a running QThread crashes), and
+            # ignore its result.
+            old = self._worker
+            old.cancel()
+            old.sigFinished.disconnect()
+            self._retired_workers.append(old)
+            old.finished.connect(lambda w=old: self._retired_workers.remove(w)
+                                 if w in self._retired_workers else None)
             self._worker = None
 
         if not rows:
@@ -449,6 +457,13 @@ class StatisticsPanel(QWidget):
         self._worker = StatsWorker(rows, self)
         self._worker.sigFinished.connect(self._on_stats_calculated)
         self._worker.start()
+
+    def shutdown(self, timeout_ms: int = 10_000) -> None:
+        """Wait for running statistics workers (call before closing)."""
+        workers = list(self._retired_workers) + ([self._worker] if self._worker else [])
+        for w in workers:
+            w.cancel()
+            w.wait(timeout_ms)
 
     def _on_stats_calculated(self, results: list[dict]):
         self._worker = None
