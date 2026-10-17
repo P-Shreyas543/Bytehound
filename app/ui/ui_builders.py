@@ -105,6 +105,8 @@ class UIBuildersMixin:
         bar.addWidget(self._led_label)
         bar.addWidget(self._status_label, 1)
         bar.addPermanentWidget(self._warning_badge)
+        bar.addPermanentWidget(self._logging_label)
+        bar.addPermanentWidget(self._open_log_btn)
         bar.addPermanentWidget(self._counts_label)
         self.setStatusBar(bar)
 
@@ -381,15 +383,23 @@ class UIBuildersMixin:
         top_row.addWidget(self._group_combo)
         top_row.addWidget(self._show_calcs_check)
 
-        # Config/logging status labels — kept as hidden attributes so
-        # _refresh_config_status / logging helpers can still update their text.
-        # Visible via View → Config Info...
+        # Config status labels — hidden state holders so _refresh_config_status
+        # can still update their text (shown via View → Config Info...).
+        # They must be hidden explicitly: a child of a shown window is shown,
+        # and with no layout they were drawn on top of the menu bar.
         self._config_label = QLabel("No config loaded", self)
         self._protocol_label = QLabel("-", self)
         self._frames_label = QLabel("-", self)
+        for _holder in (self._config_label, self._protocol_label, self._frames_label):
+            _holder.hide()
+        # Logging status + log-folder button live in the status bar (added in
+        # _build_ui once the bar exists) so session state is actually visible.
         self._logging_label = QLabel("Logging: stopped", self)
+        self._logging_label.setToolTip("Logging session status")
         self._open_log_btn = QPushButton("\U0001f4c2", self)
         self._open_log_btn.setToolTip("Open Log Folder")
+        self._open_log_btn.setFlat(True)
+        self._open_log_btn.setFixedWidth(28)
         self._open_log_btn.clicked.connect(self._on_open_log_folder)
 
         self._cards_view = TelemetryCardsView(center_widget)
@@ -645,6 +655,10 @@ class UIBuildersMixin:
         self._polling_list = QListWidget(self)
         self._polling_list.setMaximumHeight(130)
         self._polling_list.setEnabled(False)
+        # Hidden explicitly: unhidden, these were drawn at the window's
+        # top-left corner over the menu bar (no layout holds them).
+        for _holder in (self._recent_config_combo, self._poll_status_label, self._polling_list):
+            _holder.hide()
 
     def _build_plot_tab(self) -> QWidget:
         outer = QWidget(self)
