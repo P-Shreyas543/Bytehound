@@ -113,12 +113,14 @@ open at all (no `elapsed_ms` column). Now `app/serial_logging/session_analysis.p
       ≤ 400k rows, otherwise a min/max envelope at the finest level that fits
       the plot width (spikes stay visible); reloads in the background after a
       pan/zoom without changing the user's zoom
-- [x] Statistics: **min / max / mean / std / n exact for any range**
-      (hierarchical: whole 600 s → 60 s → 10 s buckets, full-resolution rows
-      for the edges; Chan merge for std). Median / P5 / P95 exact up to 400k
-      rows; beyond that **estimated** from per-segment quantile sketches and
-      shown as `≈` with a note in the panel. Cursors and hover read
-      full-resolution values, never envelope points
+- [x] Statistics: **all exact for any range** — min / max / mean / std / n
+      by a hierarchical bucket merge (600 s → 60 s → 10 s buckets, full
+      resolution for the edges; Chan merge for std); median / P5 / P95 by
+      bracketed streaming selection over full-resolution data (memory
+      bounded). 30 days × 10 Hz: 3.8 s on the statistics thread, and the
+      panel never blocks the GUI while it computes. (`≈` estimate only as a
+      fallback if bracketing fails.) Cursors and hover read full-resolution
+      values, never envelope points
 - [x] Wall-clock axis (session start time feeds the existing Wall-clock
       toggle); disconnect gaps and empty buckets drawn as gaps
 - [x] Export of session curves = **full resolution** for the visible range
@@ -136,15 +138,18 @@ open at all (no `elapsed_ms` column). Now `app/serial_logging/session_analysis.p
       on both paths, values, export, fixed-step, incremental summary — all
       against brute force on the CSVs), `tests/test_analysis_session.py`
       (end to end through the Analysis Suite window)
-- [ ] Math channels for sessions (they evaluate whole arrays; disabled with a
-      status message for sessions for now)
-- [ ] Smoothing / normalising a session curve applies to the drawn view
-      (envelope when zoomed out) — make it full-resolution or label it
-- [ ] Exact long-range percentiles (background full scan with progress) if
-      labs need them beyond the ≈ estimate
-- [ ] Disk: analysis caches add ~7 % of the CSV size on smooth BMS-like data
-      (0.32 GB for 25.9 M rows × 10 signals); noisy data compresses less —
-      measure on real lab logs and document disk sizing
+- [x] Math channels on sessions: computed from full-resolution data of the
+      visible range (gaps when zoomed out — never maths on an envelope);
+      `integral()` on a session starts at the view's left edge (status bar
+      says so). Shared evaluator; `integral()` is now gap-safe
+- [x] Smoothing / normalising: one helper for build and updates (fixes an
+      existing bug where an offset change or zoom dropped the smoothing);
+      smoothing is not applied to a zoomed-out envelope
+- [x] Exact long-range percentiles (see Statistics above)
+- [ ] **Needs real lab logs:** measure analysis-cache disk use (~7 % of the
+      CSV on smooth synthetic data, 0.32 GB for 25.9 M rows × 10 signals;
+      noisy data compresses less). Sizing method documented in
+      `Documentation/long_run_lab_guide.md` §2
 
 ### 0.5 Part C — Canonical protocol configuration (protocol spec, phases 2–4)
 
@@ -238,14 +243,19 @@ lost datagrams to the OS.
 
 Done when:
 
-- [ ] F1–F14 implemented, each with a regression test that would have failed
-      before the fix
-- [ ] Integrity counters per session and per segment in `session.json`:
-      bytes received, frames OK per ID, CRC errors, discarded bytes + reason,
-      driver overruns, poll timeouts, decoded-log drops, sequence gaps,
-      disconnect gaps
-- [ ] Live integrity panel / status-bar indicator; turns amber on any loss or
-      gap, with the reason
+- [x] F1–F11 and F13–F15 implemented, each with a regression test that
+      fails on the old code
+- [ ] F12 (sequence-counter gap detection) — needs a way to mark a signal as
+      the frame's counter: lands with the canonical config schema (Part C)
+- [x] Integrity counters per segment in `session.json`: bytes, frames OK,
+      rejected, discarded + overflow + escape-layer bytes, driver error flags
+      (`driver_*`), poll timeouts, bytes purged at connect, decoded-log drops,
+      rejected frames; disconnect gaps listed per session. (Sequence gaps
+      with F12)
+- [x] Status-bar integrity indicators: `Discarded: N B`, `Driver errors: N`,
+      amber warning badge with the reason, logging status with free disk
+      space (now actually visible — it was hidden). A dedicated live
+      integrity panel (all counters, per segment) moves to Part G
 - [x] Stress test (`test_stress_every_byte_and_frame_accounted`, TCP + UDP):
       30,000 frames as fast as possible with noise, random splits and
       corrupted CRCs through a real worker into a session — raw capture
@@ -253,10 +263,16 @@ Done when:
       log exactly once, every corrupted one in the rejected file, rebuild
       finds the same frames. Passes repeatedly under heavy CPU load (after
       the F15 fix it found)
-- [ ] Hardware test plan: real USB-UART at 115200 / 921600 / 2 Mbaud for
-      ≥24 h with a counter-stamped simulator; zero unexplained gaps
-- [ ] Lab guide: power plan, USB selective suspend, antivirus exclusions for
-      the log folder, disk sizing
+- [x] Hardware validation plan written:
+      `Documentation/hardware_validation_plan.md` (H1–H11: baud sweep on FTDI /
+      CH340 / CP2102, 24 h endurance, unplug, power cycle, PC load, disk full,
+      crash, ≥ 14-day soak, live serial smoke; pass criteria). Requires a
+      configurable baud rate and a rolling counter in the simulator sketch
+- [ ] **Needs lab hardware:** run H1–H11 and record results
+- [x] Lab guide: `Documentation/long_run_lab_guide.md` (PC preparation —
+      power plan, sleep, USB selective suspend, adapter power saving,
+      updates, antivirus exclusions; disk sizing; settings; status-bar
+      indicators; after the test; crash recovery; troubleshooting)
 
 ### 0.9 Part G — UI/UX to industry standard (no glitches, no lag)
 
@@ -356,7 +372,8 @@ chamber log). Today the decoded log is event-driven (one row per poll cycle).
       complete; disconnects shown as stale rows + gap in the manifest
 - [x] Same session folder, segments, rotation, `.xlsx` per segment, disk
       guard and crash recovery as Part A
-- [ ] Analysis Suite opens fixed-step logs natively (Part B)
+- [x] Analysis Suite opens fixed-step logs natively (File → Open Logging
+      Session → Fixed-step log / Both)
 - ~~Metrics: tick jitter p50/p99/max~~ — row times are exact by
   construction, so there is no tick jitter to measure. (What can lag is
   *writing*: bounded by the 1 s quiet margin, plus any GUI stall.)
@@ -367,28 +384,28 @@ chamber log). Today the decoded log is event-driven (one row per poll cycle).
 
 ### 0.11 Known gaps and follow-ups (don't lose these)
 
-- **Hardware validation still required:** `smoke_headless.py` phases 2–10
-  (live serial, polling, TX on the wire) need the Arduino BMS simulator on
-  COM7 — not run in this cycle. Also a real multi-day soak on a lab PC.
+- **Needs lab hardware / real data (cannot be done in software):**
+  `Documentation/hardware_validation_plan.md` H1–H11 (incl.
+  `smoke_headless.py` phases 2–10 on the simulator, 24 h per baud rate,
+  ≥ 14-day soak); analysis-cache disk use on real logs.
 - **Capture process follow-up:** to beat the thread it must send compact
   numpy batches (columnar) instead of pickled `DecodedFrame` objects.
-- **Test suite touches real user settings:** GUI tests construct
-  `MainWindow` with the real `QSettings("Bytehound", "Bytehound")`; isolate
-  them in `conftest.py`.
-- **Test suite takes ~31–37 min**, mostly GUI/theme tests — worth profiling.
-- **Test process crashes on exit (code 139)** after all tests pass: access
-  violation in the final garbage collection (PySide/Qt teardown order, no
-  Python frame). Pre-existing on 11b7527. CI would read it as a failure —
-  fix by deleting Qt objects before interpreter shutdown in `conftest.py`
-  (e.g. `deleteLater` + process events in a session-scoped fixture), and
-  check the app's own exit path for the same pattern.
-- **Running two test suites at once is not safe** while tests use the real
-  registry settings — `test_window_state_schema_version_discards_stale_blobs`
-  failed from exactly that race. Same fix as the settings-isolation item.
-- **Smoke tooling:** the offscreen launch smoke used this cycle lives in a
-  scratch script; add it to the repo (`tools/`) next to `bench_capture.py`.
-- `RawLogger` (CSV/xlsx raw log) is no longer used by the app; keep or remove
-  deliberately once segments land.
+- [x] **Tests no longer touch real user settings:** `conftest.py` redirects
+  every `QSettings(org, app)` (module-level and function-local imports) to a
+  per-run temp `.ini`; `tests/test_settings_isolation.py`. Two suites can
+  run at once.
+- [ ] **Test process exit crash (code 139)**, intermittent, pre-existing:
+  access violation in the final GC after all tests pass. Mitigation added —
+  `pytest_sessionfinish` destroys top-level widgets and flushes deferred
+  deletions while `QApplication` is alive. Verify over the next full runs;
+  then check the app's own exit path for the same pattern.
+- [ ] **Test suite takes ~31–37 min**, mostly GUI/theme tests — profile with
+  `pytest --durations=30` and speed up the slowest.
+- [x] **Smoke tooling in the repo:** `tools/smoke_launch.py` (offscreen
+  launch smoke, isolated settings) next to `tools/bench_capture.py`,
+  `tools/soak_session.py`, `tools/bench_session_analysis.py`.
+- [x] `RawLogger`: **kept** as a library API (covered by tests, used by
+  `smoke_headless.py`); the app itself logs through sessions + `.bhraw`.
 - Dropped on purpose (see fix.md): float32 plot storage (uint32 counters
   lose precision), blocking serial reads (USB-CDC tuning, needs hardware),
   QThread pool consolidation, shared time column, numpy columnar decode.

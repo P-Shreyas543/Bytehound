@@ -537,9 +537,14 @@ class SessionLog:
         seg.rejected_count += 1
 
     def set_integrity(self, snapshot: Dict[str, Any]) -> None:
-        self._integrity = dict(snapshot)
+        flat = dict(snapshot)
+        # Driver error flags arrive as a nested dict; flatten them so the
+        # per-segment counters in session.json include them.
+        for name, count in (flat.pop("driver_errors", None) or {}).items():
+            flat[f"driver_{name}"] = count
+        self._integrity = flat
         if self._segment is not None and not self._segment.integrity_start:
-            self._segment.integrity_start = dict(snapshot)
+            self._segment.integrity_start = dict(flat)
 
     def set_polling_mode(self, enabled: bool) -> None:
         self.polling_mode = enabled

@@ -459,3 +459,21 @@ def test_closed_session_has_complete_analysis_data(tmp_path, config):
         assert all((folder / x["files"][f"{kind}_analysis"]).exists() for x in m["segments"])
         with np.load(folder / f"{kind}_summary.npz", allow_pickle=True) as z:
             assert [int(i) for i in z["segments"]] == indices
+
+
+def test_segment_integrity_includes_driver_errors(tmp_path, config):
+    """Per-segment integrity counters in session.json include the serial
+    driver's error flags (they arrive as a nested dict)."""
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock)
+    s.start()
+    s.set_integrity({"frames_ok": 10, "discarded_bytes": 0,
+                     "driver_errors": {"hardware_overrun": 1, "framing_error": 0}})
+    clock.advance(5)
+    s.set_integrity({"frames_ok": 50, "discarded_bytes": 3,
+                     "driver_errors": {"hardware_overrun": 4, "framing_error": 2}})
+    s.stop()
+    assert s.await_finished(30)
+    integ = read_manifest(tmp_path / "sess")["segments"][0]["integrity"]
+    assert integ["frames_ok"] == 40 and integ["discarded_bytes"] == 3
+    assert integ["driver_hardware_overrun"] == 3 and integ["driver_framing_error"] == 2
