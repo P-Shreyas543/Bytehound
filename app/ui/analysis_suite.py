@@ -1973,6 +1973,11 @@ class AnalysisSuiteWindow(QMainWindow):
             return
         try:
             vb = self._plot_widgets[0].getPlotItem().vb
+            if vb.state.get("autoRange", [False])[0]:
+                # Not zoomed or panned yet: the whole-session overview is what
+                # is shown, and the range may not even be fitted yet (reading
+                # it now would load a tiny window and replace the overview).
+                return
             x0, x1 = vb.viewRange()[0]
             px = max(200, int(vb.width()))
         except Exception:
@@ -2043,7 +2048,14 @@ class AnalysisSuiteWindow(QMainWindow):
         prev_x_range = None
         if self._plot_widgets:
             try:
-                prev_x_range = self._plot_widgets[0].getPlotItem().vb.viewRange()[0]
+                vb = self._plot_widgets[0].getPlotItem().vb
+                # Only carry over a zoom the user chose. While X is still
+                # auto-ranging the range may not be fitted yet (pyqtgraph's
+                # default is 0–1), and restoring it would pin every new plot
+                # to that tiny range — e.g. when several parameters are
+                # checked in quick succession.
+                if not vb.state.get("autoRange", [True])[0]:
+                    prev_x_range = vb.viewRange()[0]
             except Exception:
                 pass
 

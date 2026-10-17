@@ -139,3 +139,28 @@ def test_session_in_analysis_suite(qapp, session_folder, tmp_path, monkeypatch):
     finally:
         win.close()
         _pump(qapp, 0.2)
+
+
+def test_checking_parameters_quickly_keeps_the_full_range(qapp):
+    """Checking several parameters before the first plot was fitted used to
+    "restore" pyqtgraph's default 0–1 range and pin every plot to it."""
+    from app.ui import analysis_suite as asu
+    from app.ui.log_io import LogEntry
+
+    win = asu.AnalysisSuiteWindow()
+    win.resize(1200, 800)
+    win.show()
+    try:
+        x = np.linspace(0.0, 1000.0, 5001)
+        entry = LogEntry(id="L1", path="mem.csv", name="mem", elapsed=x,
+                         columns={"A (V)": np.sin(x), "B (V)": np.cos(x), "C (A)": x * 0.01})
+        win._on_log_loaded("L1", "mem.csv", entry)
+        tree = win._param_tree
+        for i in range(tree.topLevelItemCount()):
+            tree.topLevelItem(i).setCheckState(0, Qt.Checked)   # no event processing in between
+        _pump(qapp, 1.0)
+        lo, hi = win._plot_widgets[0].getPlotItem().vb.viewRange()[0]
+        assert lo <= 1.0 and hi >= 999.0
+    finally:
+        win.close()
+        _pump(qapp, 0.2)
