@@ -4,7 +4,7 @@
 > progress, blocked or deliberately dropped, so nothing gets lost. The C++
 > plan proper starts at *Objective* below.
 
-## 0. Master status and roadmap (updated 2026-10-16)
+## 0. Master status and roadmap (updated 2026-10-17)
 
 Bytehound is used by BMS manufacturers and test labs that log continuously
 for **days, months or years** at high frame rates. Every item is ticked only
@@ -232,10 +232,15 @@ these loss points:
 | F13 | `TcpSocketWrapper.write` / UDP write | `socket.send()` may write only part of a buffer — **the rest of a TX command was lost** without an error | Send until every byte is out (with timeout), else raise |
 | F14 | UDP on Windows | An ICMP "port unreachable" (device rebooting) arrives as `WSAECONNRESET` on the next read → treated as an unplug → **session ended** | Ignore the notice for UDP and keep reading |
 | F15 | `TcpSocketWrapper` on peer close | Raised "closed by remote peer" while bytes already received sat in its buffer → **the device's last frames were lost**, more the busier the PC (found by the stress test under load) | Deliver every buffered byte first, then report the close |
+| F16 | Serial driver receive buffer (found on the NUCLEO rig) | Only 64 KiB requested. When reads stalled ~200 ms at 2 Mbaud the buffer filled and the USB bridge **dropped the excess upstream with no driver error flag** (50 cycles lost in one 10 s run under CPU load; reproduced deterministically with forced stalls) | Request 4 MiB (a request the driver may cap; pyserial does not report the granted size). Measured on the ST-LINK VCP: 64 KiB lost data on a 0.2 s stall, 4 MiB lost nothing over three 1.5 s stalls at 2 Mbaud. `rx_service_gap_max_ms` in the integrity snapshot shows how long data waited unread. **Unverified on FTDI / CH340 / CP2102 drivers** |
+| F17 | TX gap wait (found on the NUCLEO rig) | Every command / poll **slept up to 110 ms with reads blocked** to honour the TX gap — 20 kB unread at 2 Mbaud per command | The gap wait keeps draining RX; poll responses read during the wait still end it; pipelined drains match in-flight polls |
+| F18 | Raw capture at segment rotation (found on the NUCLEO rig) | Rotation stopped the capture, then started the next one: **~70 ms of received bytes missing from the `.bhraw` files at every rotation** (1,971 frames over 3 rotations). Also a race: a record being written while the file closed was dropped | `rotate()` swaps to the next file before the segment closes, under a lock shared with every record; per-segment gauges (`buffered_bytes`, `rx_service_gap_max_ms`) recorded as values, not deltas |
+| F19 | Poll schedule vs TX gap (found on the NUCLEO rig) | The template schedule (100/200/500 ms) needs 17 polls/s, the default 100 ms gap allows 10 → **every interval silently ran ~1.7× long** (0x1000 at 268 ms) | Warning when polling starts, with the fix (lower the TX gap or lengthen intervals) |
+| F20 | Poll scheduling (found on the NUCLEO rig) | The next poll was due one interval after the previous one *finished*, so every period was stretched by the wait for its turn, the TX gap and the round trip: **0x1000 at 100 ms ran 10–25 % slow** even when the link had capacity (45–54 polls in 6 s instead of 60) | Fixed-rate: next = previous due time + interval; a schedule already late is realigned to now (no catch-up burst). Both modes now 61–62 in 6 s |
 
 Progress (each with a test that fails on the old code):
 F1 ✅ F2 ✅ F3 ✅ F4 ✅ F5 ✅ F6 ✅ F7 ✅ F8 ✅ F9 ✅ F10 ✅ F11 ✅
-F12 ☐ F13 ✅ F14 ✅ F15 ✅ — tests in `tests/test_polling_worker.py`
+F12 ☐ F13 ✅ F14 ✅ F15 ✅ F16 ✅ F17 ✅ F18 ✅ F19 ✅ F20 ✅ — tests in `tests/test_polling_worker.py`
 (`test_polling_start_delivers_waiting_frames_instead_of_discarding`,
 `test_polling_continues_while_gui_is_backpressured`) and
 `tests/test_frame_loss.py`. The UDP burst test shows the old code really
@@ -243,8 +248,27 @@ lost datagrams to the OS.
 
 Done when:
 
-- [x] F1–F11 and F13–F15 implemented, each with a regression test that
-      fails on the old code
+- [x] F1–F11 and F13–F20 implemented, each with a regression test that
+      fails on the old code (F16–F20: verified by running the new tests
+      against the previous `app/` code — all fail there)
+- [x] **Hardware-in-the-loop rig: NUCLEO-G474RE** —
+      `firmware/nucleo_g474_bms_sim` (bare-metal, VS Code build / flash /
+      debug with the CubeIDE toolchain) and `tools/hil/run_hil.py`. The
+      board counts every frame and byte it sends (sequence counter, noise
+      and CRC-error injection, any baud); the test compares with what the
+      app saw. 13 tests, all passing on 2026-10-17, also with the full unit
+      suite loading the CPU at the same time:
+      streaming at 115,200 / 921,600 / 2,000,000 baud (2,354 cycles/s =
+      9,400 frames/s at 2 Mbaud: every byte accounted, sequence contiguous,
+      raw capture = parser input), noise + corruption (17,488 noise bytes
+      and 2,354 corrupted frames counted exactly), burst at 100 % line
+      rate, sequential and pipelined polling, watchdog, target reset
+      mid-stream, session logging + fixed-step + rotation + Analysis
+      Suite stats against the board, the real MainWindow end to end at
+      3,250 frames/s (GUI event loop worst 43–152 ms late over 7 runs,
+      one 4.5 s stall — see 0.11; Part G's 50 ms budget not yet met),
+      `smoke_headless.py`.
+      Found F16–F20 and the Part G items below
 - [ ] F12 (sequence-counter gap detection) — needs a way to mark a signal as
       the frame's counter: lands with the canonical config schema (Part C)
 - [x] Integrity counters per segment in `session.json`: bytes, frames OK,
@@ -268,7 +292,11 @@ Done when:
       CH340 / CP2102, 24 h endurance, unplug, power cycle, PC load, disk full,
       crash, ≥ 14-day soak, live serial smoke; pass criteria). Requires a
       configurable baud rate and a rolling counter in the simulator sketch
-- [ ] **Needs lab hardware:** run H1–H11 and record results
+- [ ] **Needs lab hardware:** run H1–H11 and record results. The NUCLEO
+      rig covers the simulator side on the ST-LINK VCP (H1/H2 at all three
+      bauds for minutes, H5 reset, H11); still needed: FTDI / CH340 / CP2102
+      adapters, 24 h and multi-week runs (`run_hil.py --soak-minutes`),
+      unplug, disk full, crash, a real BMS
 - [x] Lab guide: `Documentation/long_run_lab_guide.md` (PC preparation —
       power plan, sleep, USB selective suspend, adapter power saving,
       updates, antivirus exclusions; disk sizing; settings; status-bar
@@ -313,6 +341,16 @@ exist; gaps below)
 - [ ] Zero flicker: no widget rebuilds on value updates, no style re-polish
       per update (the profile showed 6.4k polish/unpolish calls), no layout
       jumps when values change width (fixed-width numeric fonts/columns)
+  - [x] Telemetry cards re-polish only when their state changes (was
+        ~1,000 polish passes/s at 3,250 frames/s on the HIL rig)
+- [x] Segment finishing (xlsx compile, analysis cache) runs in a helper
+      process (`app/serial_logging/_isolated.py`): on a thread it held the
+      GIL and the GUI lagged 150–800 ms for ~3 s after every rotation
+- [x] RX console limited to 400 lines/s with a "N frames not shown" line
+      (formatting and laying out every frame was most of the GUI thread's
+      time at high rates); logs and raw capture keep every frame
+- [x] GUI-stall probe with stack sampling in `run_hil.py gui_end_to_end`
+      (records what the GUI thread was doing whenever it is > 300 ms late)
 
 **Visual quality**
 
@@ -394,11 +432,32 @@ chamber log). Today the decoded log is event-driven (one row per poll cycle).
   every `QSettings(org, app)` (module-level and function-local imports) to a
   per-run temp `.ini`; `tests/test_settings_isolation.py`. Two suites can
   run at once.
-- [ ] **Test process exit crash (code 139)**, intermittent, pre-existing:
-  access violation in the final GC after all tests pass. Mitigation added —
-  `pytest_sessionfinish` destroys top-level widgets and flushes deferred
-  deletions while `QApplication` is alive. Verify over the next full runs;
-  then check the app's own exit path for the same pattern.
+- [x] **Test process exit crash (code 139)**, intermittent, pre-existing:
+  access violation in the interpreter's final teardown after all tests
+  pass. Destroying leftover widgets first made it *abort* instead (seen
+  2026-10-17), and so did `os._exit` (its DLL-detach step). Now
+  `pytest_unconfigure` ends the process with `TerminateProcess` and pytest's
+  own status once every report is written (verified: full suite 637 passed
+  → exit 0; pass → 0, failure → 1, nothing collected → 5; JUnit XML still
+  written). Still to check: the app's own exit path for the same pattern.
+- [ ] **8 PytestUnraisableExceptionWarnings** in a full run, reported under
+  `test_main.py` but allocated by
+  `test_logging.py::test_recover_temp_files_never_deletes_on_catastrophic_failure`
+  (it makes `Workbook.save` raise, leaving openpyxl's write-only generator
+  open). Test-induced, pre-existing; close the workbook in that error path
+  or in the test.
+- [ ] **One unexplained 4.5 s GUI stall** in one of eight `gui_end_to_end`
+  runs after the lag fixes (the first run after segment finishing moved to
+  the helper process; first spawn?). Not reproduced since; the stall sampler will name the
+  code if it recurs.
+- [x] **Polling below the configured rate** (10–25 %): completion-relative
+  scheduling, fixed as F20.
+- [x] **Stale scripts:** `smoke_headless.py` and the other device scripts
+  (`smoke_*.py`, `test_com10_full.py`, `s32k144_validator.py`) unpacked
+  worker batches as 2-tuples (they are 3-tuples since rx timestamps) and
+  saw no frames at all; `smoke_headless.py` also expected `Cell Voltage 1`
+  instead of the loader's `Cell Voltage_1`. Fixed; only `smoke_headless.py`
+  was re-run (on the NUCLEO), the others need their own devices.
 - [ ] **Test suite takes ~31–37 min**, mostly GUI/theme tests — profile with
   `pytest --durations=30` and speed up the slowest.
 - [x] **Smoke tooling in the repo:** `tools/smoke_launch.py` (offscreen

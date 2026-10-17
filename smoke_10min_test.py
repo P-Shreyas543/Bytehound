@@ -219,7 +219,7 @@ def main() -> int:
     def on_packets(batch):
         nonlocal rx_packet_count, crc_errors
         for item in batch:
-            pkt, pre_decoded = item if isinstance(item, tuple) else (item, None)
+            pkt, pre_decoded = (item[0], item[1]) if isinstance(item, tuple) else (item, None)
             rx_packet_count += 1
             raw_logger.log("RX", pkt.raw)
             if not pkt.ok:

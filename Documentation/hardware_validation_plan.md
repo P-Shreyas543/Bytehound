@@ -20,18 +20,17 @@ time-compressed soak (`tools/soak_session.py`), and the Analysis Suite on a
 |---|---|
 | Lab PC | Prepared per *long_run_lab_guide.md* section 1 |
 | USB-serial adapters | At least one each: **FTDI** (FT232R), **CH340**, **CP2102** |
-| BMS simulator | `MCU_BMS_Simulator/MCU_BMS_Simulator.ino` on an Arduino-class board |
+| BMS simulator | **NUCLEO-G474RE** with `firmware/nucleo_g474_bms_sim` (recommended: any baud, sequence counter, injection, counters), or `MCU_BMS_Simulator/MCU_BMS_Simulator.ino` on an Arduino-class board (115,200 baud only, no counter) |
 | Real BMS | At least one production unit |
 | Small log drive | USB stick or partition of ~5 GB (disk-full test) |
 
-**Simulator changes needed before these tests** (the sketch currently runs
-at a fixed 115,200 baud and has no frame counter):
-
-1. Make the baud rate configurable (115,200 / 921,600 / 2,000,000).
-2. Add a **rolling 8- or 16-bit counter** to one frame, incremented every
-   frame sent. This lets the test prove no frame was lost on the way to the
-   PC — compare the counter sequence in the log (any jump = a lost frame).
-   It also enables Plane.md F12 (sequence-counter gap detection).
+The NUCLEO firmware provides what the Arduino sketch lacks: the baud rate
+is set by command (115,200 / 921,600 / 2,000,000), frame 0x4000 carries a
+32-bit sequence number (any jump in the log = a lost frame), and the board
+reports how many frames and bytes it sent. See its README and section 6.
+The firmware drives the on-board ST-LINK virtual COM port only; testing
+FTDI / CH340 / CP2102 adapters needs them wired to a second UART (not yet
+in the firmware) or the Arduino sketch.
 
 ## 2. Pass criteria (all tests)
 
@@ -104,3 +103,38 @@ the status bar at the end, and for failures the Activity Log and
 `logs/bytehound.log`. A release is ready for long-duration lab use when
 H1–H8 and H11 pass on all three adapters and H9 passes on at least one
 production BMS.
+
+## 6. Automated HIL rig (NUCLEO-G474RE)
+
+`python tools/hil/run_hil.py` (about 5 minutes; `--soak-minutes N` adds a
+long session run). Every test compares the board's own counters with what
+the application saw; any difference is a lost, duplicated or misclassified
+byte. A JSON report is written to `artifacts/hil/`.
+
+| Test | What it proves |
+|---|---|
+| `stream_115200`, `stream_921600`, `stream_2000000` | 80–90 % line load for 10 s through `PollingWorker`: frames per ID = board, bytes accounted = board bytes sent, 0x4000 sequence contiguous, raw capture RX bytes = parser input, no driver errors |
+| `inject_noise_corrupt` | Noise after every 7th frame, bad CRC on every 13th: discarded bytes = noise injected, rejected frames = corrupted frames, good frames = board |
+| `burst` | 20,000 cycles back to back at 2 Mbaud (100 % line rate) |
+| `polling_sequential`, `polling_pipelined` | Template poll schedule: the stretch warning at the default TX gap; at 20 ms every interval honoured, responses = board replies, no timeouts |
+| `watchdog` | `device_timeout` after 3 s of silence, data resumes, no false disconnect |
+| `device_reset` | Target reset over SWD mid-stream: the app keeps running, the sequence restarts, at most one torn frame |
+| `session_analysis` | Session logging at 921,600 baud with rotation every 7.5 s and fixed-step 0.1 s: every sequence number in the event log once, fixed-step rows on the grid, raw capture gapless across rotations, Analysis Suite statistics (n, min, max) = board |
+| `gui_end_to_end` | The real MainWindow at 3,250 frames/s: logging session, every frame logged once, GUI event-loop lag (fails above 250 ms, records the GUI thread's stack while stalled), the Analysis Suite opens the result |
+| `smoke_headless` | `smoke_headless.py` phases 0–19 against the board (decoding, bitfields, enums, TX commands, voltage-limit round trip, polling cadence) |
+
+**Results 2026-10-17** (ByteHound branch `production-hardening`, firmware
+1.0.0): 13 / 13 pass, also while the full unit suite ran on the same PC.
+Longest wait before data was read: 32 ms (47 ms during session logging).
+GUI event loop at 3,250 frames/s, eight runs after the fixes: worst
+lateness 43, 59, 74, 90, 105, 105 and 152 ms, and one run with a single
+4.5 s stall (not reproduced; see Plane.md 0.11). The Part G budget is
+50 ms, so this is **not yet met**; the test's own limit is 250 ms.
+
+Found and fixed by the rig (Plane.md F16–F20): the 64 KiB driver buffer
+lost data silently during read stalls at 2 Mbaud; commands blocked reads
+for up to 110 ms; the raw capture missed ~70 ms at every segment rotation;
+the default TX gap silently stretched the template poll schedule; polls were
+scheduled from completion instead of at a fixed rate (10–25 % slow). Also GUI
+lag from segment finishing, per-update style re-polish and the RX console.
+

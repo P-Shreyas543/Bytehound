@@ -46,6 +46,12 @@ class _WorkerRawCapture:
         worker = getattr(self._window, "_serial", None)
         return worker.stop_raw_capture() if worker is not None else None
 
+    def rotate(self, path, metadata):
+        worker = getattr(self._window, "_serial", None)
+        if worker is None:
+            raise OSError("not connected")
+        return worker.rotate_raw_capture(path, metadata)
+
 
 class LoggingSessionMixin:
     """MainWindow mixin holding logging start/stop/error methods."""

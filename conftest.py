@@ -75,29 +75,44 @@ def _isolated_qsettings(tmp_path_factory):
         mod.QSettings = _RealQSettings
 
 
-def pytest_sessionfinish(session, exitstatus):
-    """Tear Qt down while QApplication is still alive.
+_FINAL_EXIT_STATUS = None
 
-    The suite intermittently exited with code 139 after every test passed:
-    an access violation in the interpreter's final garbage collection (Python
-    wrappers of Qt objects freed after Qt was gone). Destroy every top-level
-    widget and run the deferred deletions now, then collect.
+
+def pytest_sessionfinish(session, exitstatus):
+    """Remember pytest's verdict for :func:`pytest_unconfigure`."""
+    global _FINAL_EXIT_STATUS
+    _FINAL_EXIT_STATUS = int(exitstatus)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    """Exit with pytest's own status once every report has been written.
+
+    With a QApplication alive the interpreter's final teardown frees Python
+    wrappers of Qt objects after Qt is gone and intermittently dies with an
+    access violation (exit 139) after every test passed. Destroying the
+    leftover widgets first does not help: flushing their deferred deletes
+    aborts too, and so did ``os._exit`` on Windows (DLL detach). Nothing
+    useful happens after this hook, so end the process without teardown.
     """
+    if _FINAL_EXIT_STATUS is None:
+        return
     try:
-        from PySide6.QtCore import QCoreApplication, QEvent
-        from PySide6.QtWidgets import QApplication
+        from PySide6.QtCore import QCoreApplication
     except Exception:
         return
-    app = QApplication.instance()
-    if app is None:
+    if QCoreApplication.instance() is None:
         return
-    for w in list(app.topLevelWidgets()):
-        try:
-            w.close()
-            w.deleteLater()
-        except RuntimeError:
-            pass
-    QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
-    app.processEvents()
-    import gc
-    gc.collect()
+    import os
+    sys.stdout.flush()
+    sys.stderr.flush()
+    if sys.platform == "win32":
+        # os._exit() calls ExitProcess, which still runs every DLL's detach
+        # routine, and Qt's crashed there (access violation inside os._exit,
+        # seen 2026-10-17). TerminateProcess does not notify DLLs.
+        import ctypes
+        kernel32 = ctypes.windll.kernel32
+        kernel32.GetCurrentProcess.restype = ctypes.c_void_p
+        kernel32.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+        kernel32.TerminateProcess(kernel32.GetCurrentProcess(), _FINAL_EXIT_STATUS)
+    os._exit(_FINAL_EXIT_STATUS)

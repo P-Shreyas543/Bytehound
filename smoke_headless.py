@@ -96,6 +96,8 @@ def main() -> int:
                         help="pipeline depth for pipelined polling (number of concurrent requests)")
     parser.add_argument("--pipeline-gap", type=int, default=30,
                         help="inter-frame delay (ms) for pipelined polling")
+    parser.add_argument("--tx-gap", type=int, default=None,
+                        help="minimum ms between poll TXs in sequential mode (default: worker floor)")
     args = parser.parse_args()
 
     from PySide6.QtWidgets import QApplication
@@ -244,6 +246,8 @@ def main() -> int:
     worker = PollingWorker(settings, config.protocol, config.polling_schedules)
     if args.pipelining:
         worker.set_pipelining(True, depth=args.pipeline_depth, gap_ms=args.pipeline_gap)
+    elif args.tx_gap is not None:
+        worker.set_pipelining(False, gap_ms=args.tx_gap)
 
     Path("scratch").mkdir(exist_ok=True)
     raw_path = Path("scratch/test_raw.xlsx")
@@ -270,7 +274,7 @@ def main() -> int:
         nonlocal pkt_total, crc_errors
         for item in packets:
             # PollingWorker emits (ParsedPacket, decoded-or-None) tuples.
-            pkt, pre_decoded = item if isinstance(item, tuple) else (item, None)
+            pkt, pre_decoded = (item[0], item[1]) if isinstance(item, tuple) else (item, None)
             pkt_total += 1
             raw_logger.log("RX", pkt.raw)
             if not pkt.ok:
@@ -448,7 +452,7 @@ def main() -> int:
     print("\n=== Phase 8  Cell Voltage decoding (count=8 expansion) ===")
     if cell_voltage_obs:
         latest = cell_voltage_obs[-1]
-        expected_names = {f"Cell Voltage {i}" for i in range(1, 9)}
+        expected_names = {f"Cell Voltage_{i}" for i in range(1, 9)}
         if expected_names.issubset(latest.keys()):
             rep.ok(f"All 8 Cell Voltage signals decoded, latest = "
                    + ", ".join(f"{k}={v:.3f}V" for k, v in sorted(latest.items())))

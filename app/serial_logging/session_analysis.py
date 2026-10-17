@@ -40,6 +40,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ._isolated import run_isolated
 from .session import read_manifest
 
 _LOG = logging.getLogger("bytehound.serial_logging.session_analysis")
@@ -241,7 +242,7 @@ class SessionSource:
         CSVs; ``progress(done, total)`` covers both steps."""
         todo = self.missing_caches()
         for i, seg in enumerate(todo):
-            build_segment_cache(seg.csv, self.start_epoch, seg.cache)
+            run_isolated(build_segment_cache, seg.csv, self.start_epoch, seg.cache)
             if progress:
                 progress(i + 1, len(todo) + 1)
         self._fix_segment_bounds()

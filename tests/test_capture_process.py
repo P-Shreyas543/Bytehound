@@ -211,3 +211,30 @@ def test_device_disconnect_is_forwarded(qapp, config):
         assert _pump_until(qapp, lambda: bool(lost), timeout=15)
     finally:
         client.close()
+
+
+def test_raw_capture_rotates_in_child_without_a_gap(qapp, config, tmp_path):
+    """Process mode: segment rotation swaps the child's capture file; the
+    two files together hold every byte (Plane.md F18)."""
+    dev = Device()
+    client = CaptureClient(_settings(dev.port), config.protocol, [], decode_config=config)
+    got = []
+    client.packets_received.connect(lambda batch: got.extend(batch))
+    first, second = tmp_path / "a.bhraw", tmp_path / "b.bhraw"
+    client.open()
+    try:
+        client.start_raw_capture(first, {})
+        frames = _frames(config)
+        blob1 = b"".join(frames[i % 3] for i in range(60))
+        dev.send(blob1)
+        assert _pump_until(qapp, lambda: len(got) >= 60)
+        assert client.rotate_raw_capture(second, {}) is None
+        blob2 = b"".join(frames[i % 3] for i in range(30))
+        dev.send(blob2)
+        assert _pump_until(qapp, lambda: len(got) >= 90)
+        assert client.stop_raw_capture() is None
+    finally:
+        client.close()
+        dev.close()
+    rx = [b"".join(d for k, _, d in iter_raw_capture(p) if k == RX) for p in (first, second)]
+    assert rx == [blob1, blob2]

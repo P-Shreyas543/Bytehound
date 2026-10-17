@@ -574,3 +574,124 @@ def test_tcp_data_received_before_peer_close_is_delivered():
         _ = w.in_waiting
     w.close()
     srv.close()
+
+
+# ---------------------------------------------------------------------------
+# Found on the NUCLEO-G474RE HIL rig (tools/hil/run_hil.py)
+# ---------------------------------------------------------------------------
+
+class _BufferedPort:
+    """Port whose driver buffer holds ``data``; reads drain it."""
+
+    def __init__(self, data: bytes = b"") -> None:
+        self.buf = bytearray(data)
+        self.is_open = True
+        self.buffer_requests: list = []
+        self.written = bytearray()
+
+    @property
+    def in_waiting(self) -> int:
+        return len(self.buf)
+
+    def read(self, n: int = 1) -> bytes:
+        out = bytes(self.buf[:n])
+        del self.buf[:n]
+        return out
+
+    def write(self, data: bytes) -> int:
+        self.written += data
+        return len(data)
+
+    def set_buffer_size(self, rx_size: int, tx_size: int) -> None:
+        self.buffer_requests.append(rx_size)
+
+    def reset_input_buffer(self) -> None:
+        self.buf.clear()
+
+    def close(self) -> None:
+        self.is_open = False
+
+
+def test_open_requests_a_large_driver_buffer(monkeypatch):
+    """F16: at 2 Mbaud a 64 KiB driver buffer overflowed during a 200 ms read
+    stall and the ST-LINK bridge dropped the excess with no error flag."""
+    from unittest.mock import MagicMock
+
+    import app.serial_io.serial_worker as sw
+
+    port = _BufferedPort()
+    monkeypatch.setattr(sw, "ErrorTrackingSerial", lambda **kw: port)
+    worker = sw.PollingWorker(sw.SerialSettings(port="COM_TEST"), dummy_protocol_config(), [])
+    worker.start = MagicMock()
+    worker.open()
+    assert port.buffer_requests[0] == sw.RX_DRIVER_BUFFER >= 4 * 1024 * 1024
+    worker._serial = None
+
+
+def test_tx_gap_wait_keeps_reading():
+    """F17: waiting out the TX gap used to sleep with reads blocked (100 ms
+    per command, 20 kB at 2 Mbaud)."""
+    from app.serial_io.serial_worker import PollingWorker, SerialSettings
+
+    pc = dummy_protocol_config(header=b"\xAA\x55")
+    data = b"".join(build_packet(pc, 0x200, bytes([i]) * 4) for i in range(20))
+    worker = PollingWorker(SerialSettings(port="x"), pc, [])
+    worker._serial = _BufferedPort(data)
+    worker._last_tx_time = time.monotonic()
+    worker._write_serial(b"\x01", min_gap_ms=100)
+    snap = worker.integrity_snapshot()
+    assert snap["parser_bytes_in"] == len(data)
+    assert snap["frames_ok"] == 20
+    assert "rx_service_gap_max_ms" in snap
+    worker._serial = None
+
+
+def test_poll_response_read_during_gap_wait_ends_the_wait():
+    from app.serial_io.serial_worker import PollingWorker, SerialSettings
+
+    pc = dummy_protocol_config(header=b"\xAA\x55")
+    worker = PollingWorker(SerialSettings(port="x"), pc, [])
+    worker._serial = _BufferedPort(build_packet(pc, 0x300, b"\x01\x02"))
+    worker._await_target, worker._await_hit = 0x300, False
+    worker._drain_pending_rx()
+    assert worker._await_hit
+    worker._serial = None
+
+
+def test_schedule_faster_than_tx_gap_warns():
+    """The template schedule (100/200/500 ms) needs 17 polls/s; the default
+    100 ms gap allows 10, so every interval silently ran ~1.7x long."""
+    from PySide6.QtCore import Qt
+
+    from app.decoder.types import PollingScheduleSpec
+    from app.serial_io.serial_worker import PollingWorker, SerialSettings
+
+    specs = [PollingScheduleSpec(0x100, 100, 50), PollingScheduleSpec(0x200, 200, 50),
+             PollingScheduleSpec(0x300, 500, 50)]
+    worker = PollingWorker(SerialSettings(port="x"), dummy_protocol_config(), specs)
+    warnings: list = []
+    worker.warning_occurred.connect(warnings.append, Qt.ConnectionType.DirectConnection)
+    worker.set_polling_global(True)
+    assert len(warnings) == 1 and "17.0 polls/s" in warnings[0]
+
+    worker.set_polling_global(False)
+    worker.set_pipelining(False, gap_ms=20)
+    worker.set_polling_global(True)
+    assert len(warnings) == 1
+
+
+def test_poll_schedule_is_fixed_rate_not_completion_relative():
+    """F20: next poll = previous due time + interval. Measuring from the end
+    of the poll made a 100 ms schedule run 10-25 % slow on the HIL rig."""
+    from app.decoder.types import PollingScheduleSpec
+    from app.serial_io.serial_worker import PollingWorker
+
+    sched = {"spec": PollingScheduleSpec(0x100, 100, 50), "next_run": 10.0}
+    PollingWorker._advance_next_run(sched, now=10.045)    # poll took 45 ms
+    assert sched["next_run"] == pytest.approx(10.1)       # not 10.145
+    PollingWorker._advance_next_run(sched, now=10.13)
+    assert sched["next_run"] == pytest.approx(10.2)
+    PollingWorker._advance_next_run(sched, now=10.75)     # stalled 550 ms
+    assert sched["next_run"] == pytest.approx(10.75)      # realign, no catch-up burst
+    PollingWorker._advance_next_run(sched, now=10.76)
+    assert sched["next_run"] == pytest.approx(10.85)

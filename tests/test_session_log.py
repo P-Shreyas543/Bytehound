@@ -477,3 +477,56 @@ def test_segment_integrity_includes_driver_errors(tmp_path, config):
     integ = read_manifest(tmp_path / "sess")["segments"][0]["integrity"]
     assert integ["frames_ok"] == 40 and integ["discarded_bytes"] == 3
     assert integ["driver_hardware_overrun"] == 3 and integ["driver_framing_error"] == 2
+
+
+class RotatingRawHooks(RawHooks):
+    def __init__(self) -> None:
+        super().__init__()
+        self.rotated: List[Path] = []
+
+    def rotate(self, path: Path, metadata: Dict[str, Any]) -> Optional[str]:
+        self.rotated.append(path)
+        path.write_bytes(b"")
+        return "old writer error" if len(self.rotated) == 1 else None
+
+
+def test_rotation_switches_raw_capture_without_a_gap(tmp_path, config):
+    """Found on the NUCLEO HIL rig: stop() then start() at every rotation
+    left ~70 ms of received bytes out of every .bhraw file. With rotate()
+    the next file starts before the current segment closes."""
+    clock = Clock()
+    hooks = RotatingRawHooks()
+    s = SessionLog(tmp_path / "sess", config, SessionSettings(segment_seconds=10), raw_capture=hooks,
+                   clock=lambda: clock.wall, perf=lambda: clock.perf, disk_free=lambda p: 1 << 40)
+    s.start()
+    frames = _frames(config)
+    for _ in range(25):
+        for f in frames:
+            s.log_frame(f, clock.perf)
+        clock.advance(1.0)
+        s.tick()
+    s.stop()
+    assert s.await_finished(30)
+    segs = read_manifest(tmp_path / "sess")["segments"]
+    assert len(segs) == 3
+    assert [p.name for p in hooks.started] == ["seg_0001.bhraw"]
+    assert [p.name for p in hooks.rotated] == ["seg_0002.bhraw", "seg_0003.bhraw"]
+    assert hooks.stopped == 1                         # only at the end of the session
+    assert [x["files"]["raw"] for x in segs] == [f"seg_{i:04d}.bhraw" for i in (1, 2, 3)]
+    assert segs[0]["raw_capture_error"] == "old writer error"
+    assert "raw_capture_error" not in segs[1]
+
+
+def test_segment_integrity_records_gauges_as_values(tmp_path, config):
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock, segment_seconds=10)
+    s.start()
+    s.set_integrity({"parser_bytes_in": 100, "buffered_bytes": 7, "rx_service_gap_max_ms": 12.5})
+    clock.advance(11.0)
+    s.set_integrity({"parser_bytes_in": 250, "buffered_bytes": 3, "rx_service_gap_max_ms": 40.0})
+    s.tick()
+    s.stop()
+    assert s.await_finished(30)
+    first = read_manifest(tmp_path / "sess")["segments"][0]["integrity"]
+    assert first["parser_bytes_in"] == 150
+    assert first["buffered_bytes"] == 3 and first["rx_service_gap_max_ms"] == 40.0

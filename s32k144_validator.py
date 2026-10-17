@@ -276,7 +276,7 @@ def test_stage_5_commands_and_polling_pipeline(
 
     def on_packets(batch: list) -> None:
         for item in batch:
-            pkt, pre_dec = item if isinstance(item, tuple) else (item, None)
+            pkt, pre_dec = (item[0], item[1]) if isinstance(item, tuple) else (item, None)
             rx_packets.append((pkt, pre_dec))
             raw_logger.log("RX", pkt.raw)
             if pkt.ok:

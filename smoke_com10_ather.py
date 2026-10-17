@@ -167,7 +167,7 @@ def run_smoke_test(port: str = "COM10", baud: int = 2000000, duration_sec: float
     def on_packets(packets: list) -> None:
         nonlocal rx_packet_count
         for item in packets:
-            pkt, pre_decoded = item if isinstance(item, tuple) else (item, None)
+            pkt, pre_decoded = (item[0], item[1]) if isinstance(item, tuple) else (item, None)
             if not pkt.ok:
                 continue
             rx_packet_count += 1

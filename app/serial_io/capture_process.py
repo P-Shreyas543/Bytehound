@@ -440,6 +440,12 @@ class CaptureClient(QObject):
         except CaptureProcessError as exc:
             return str(exc)
 
+    def rotate_raw_capture(self, path, metadata: Optional[dict] = None) -> Optional[str]:
+        try:
+            return self._call("rotate_raw_capture", str(path), metadata, wait=True)
+        except CaptureProcessError as exc:
+            raise OSError(str(exc)) from exc
+
 
 # ---------------------------------------------------------------------------
 # Self-test (bytehound --selftest-capture)

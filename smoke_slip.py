@@ -130,7 +130,7 @@ def main() -> int:
         nonlocal pkt_total, crc_errors
         for item in packets:
             # PollingWorker emits (ParsedPacket, decoded-or-None) tuples.
-            pkt, pre_decoded = item if isinstance(item, tuple) else (item, None)
+            pkt, pre_decoded = (item[0], item[1]) if isinstance(item, tuple) else (item, None)
             pkt_total += 1
             if not pkt.ok:
                 crc_errors += 1

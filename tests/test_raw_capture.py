@@ -140,3 +140,41 @@ def test_rebuild_matches_live_decoded_log(tmp_path):
     live_rows = _data_rows(live_path)
     assert len(live_rows) > 100
     assert _data_rows(rebuilt_path) == live_rows
+
+
+def test_worker_rotation_keeps_every_byte_in_exactly_one_file(tmp_path):
+    """Rotating while the worker thread records must not drop or duplicate
+    a chunk (the swap and each record are serialised)."""
+    import threading
+
+    from app.serial_io.serial_worker import PollingWorker, SerialSettings
+    from app.serial_logging.raw_capture import iter_raw_capture
+    from tests.conftest import dummy_protocol_config
+
+    class Port:
+        is_open = True
+
+        def read(self, n):
+            return b"\x5A" * n
+
+    worker = PollingWorker(SerialSettings(port="x"), dummy_protocol_config(), [])
+    worker._serial = Port()
+    worker.start_raw_capture(tmp_path / "r0.bhraw")
+    stop = threading.Event()
+    reads = [0]
+
+    def reader():
+        while not stop.is_set():
+            worker._read_rx(7)
+            reads[0] += 1
+
+    t = threading.Thread(target=reader)
+    t.start()
+    for i in range(1, 30):
+        assert worker.rotate_raw_capture(tmp_path / f"r{i}.bhraw") is None
+    stop.set()
+    t.join()
+    worker.stop_raw_capture()
+    worker._serial = None
+    total = sum(len(d) for i in range(30) for _dir, _t, d in iter_raw_capture(tmp_path / f"r{i}.bhraw"))
+    assert total == 7 * reads[0]

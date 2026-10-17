@@ -575,8 +575,11 @@ class DecodedLogger:
         if not hasattr(self, "_tmp_data_path") or not self._tmp_data_path.exists():
             return
         metadata = _read_metadata(self._tmp_meta_path, fallback=self._metadata)
+        # Session segments (keep_csv) are compiled while recording goes on,
+        # so they compile in the helper process to keep the GUI responsive.
         exc = finalize_temp_log(
-            self._tmp_data_path, self._tmp_meta_path, self.path, metadata, keep_csv=self._keep_csv
+            self._tmp_data_path, self._tmp_meta_path, self.path, metadata, keep_csv=self._keep_csv,
+            isolate=self._keep_csv,
         )
         if exc is not None:
             self._record_error("compile", exc)
@@ -818,6 +821,7 @@ def finalize_temp_log(
     metadata: Mapping[str, Any],
     *,
     keep_csv: bool = False,
+    isolate: bool = False,
 ) -> Optional[Exception]:
     """Compile a streamed temp CSV into its final ``.xlsx``.
 
@@ -826,7 +830,15 @@ def finalize_temp_log(
     ``<target>.csv`` instead; the temp files are only removed once the data
     is safely in place. Returns the compile error, if any.
     """
-    exc = compile_csv_to_xlsx(data_path, metadata, target_path)
+    if isolate:
+        from ._isolated import run_isolated
+        try:
+            exc = run_isolated(compile_csv_to_xlsx, data_path,
+                               {k: str(v) for k, v in metadata.items()}, target_path)
+        except Exception as run_exc:  # e.g. an unpicklable result: keep the CSV fallback below
+            exc = run_exc
+    else:
+        exc = compile_csv_to_xlsx(data_path, metadata, target_path)
     csv_target = target_path.with_suffix(".csv")
     ok = exc is None and target_path.exists() and target_path.stat().st_size > 0
     try:

@@ -41,7 +41,7 @@ def main():
     def on_packets(packets):
         nonlocal rx_count, known_count
         for item in packets:
-            pkt, pre_decoded = item if isinstance(item, tuple) else (item, None)
+            pkt, pre_decoded = (item[0], item[1]) if isinstance(item, tuple) else (item, None)
             if not pkt.ok:
                 continue
             rx_count += 1

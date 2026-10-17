@@ -27,6 +27,8 @@ pip-selfcheck.json
 # ------------------------------------------------------------------------------
 # VS Code (except settings/launch configurations if team-shared; normally ignored)
 .vscode/
+# ...except the NUCLEO firmware project's build/flash/debug setup
+!firmware/nucleo_g474_bms_sim/.vscode/
 # PyCharm / IntelliJ
 .idea/
 # Vim swap files

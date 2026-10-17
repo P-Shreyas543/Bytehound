@@ -11,6 +11,9 @@ from ..protocol.packet_parser import ParsedPacket
 from .config_loader import format_display_data_type
 from .logging_session import _format_number
 
+# Most RX lines the console shows per second; the rest are counted, not drawn.
+CONSOLE_LINES_PER_SECOND = 400
+
 
 class TelemetryPipelineMixin:
     """Mixin for MainWindow."""
@@ -156,14 +159,29 @@ class TelemetryPipelineMixin:
         self._console_buffer: List[str] = []
         console_dock = getattr(self, "_console_dock", None)
         console_visible = console_dock is not None and console_dock.isVisible()
+        show_from = len(packets)
         if console_visible:
             # perf_counter → wall clock, once per flush
             wall_offset = time.time() - time.perf_counter()
+            # Nobody reads thousands of lines a second, and formatting and
+            # laying them out was most of the GUI thread's time at high
+            # rates. Show the newest lines within budget and say how many
+            # were skipped; logs and the raw capture keep every frame.
+            now = time.monotonic()
+            dt = now - getattr(self, "_console_last_flush", now - 1.0)
+            self._console_last_flush = now
+            budget = max(1, min(CONSOLE_LINES_PER_SECOND, int(CONSOLE_LINES_PER_SECOND * dt)))
+            show_from = max(0, len(packets) - budget)
+            if show_from:
+                self._console_buffer.append(
+                    f"… {show_from} frames not shown (console limited to {CONSOLE_LINES_PER_SECOND}/s; "
+                    "logs and raw capture keep every frame)"
+                )
         # Worker pushes (ParsedPacket, DecodedFrame|None, rx_perf) tuples;
         # shorter legacy items are normalised so _handle_packet doesn't branch.
-        for item in packets:
+        for index, item in enumerate(packets):
             packet, pre_decoded, rx_perf = self._unpack_item(item)
-            if console_visible and hasattr(packet, "raw"):
+            if console_visible and index >= show_from and hasattr(packet, "raw"):
                 ts = datetime.fromtimestamp(
                     (rx_perf if rx_perf is not None else time.perf_counter()) + wall_offset
                 )

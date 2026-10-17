@@ -84,6 +84,10 @@ class SessionSettings:
 class RawCaptureHooks(Protocol):
     def start(self, path: Path, metadata: Dict[str, Any]) -> None: ...
     def stop(self) -> Optional[str]: ...
+    # Optional: switch to a new file with no gap and return the old
+    # file's error. Without it rotation falls back to stop() + start(),
+    # which loses whatever arrives in between.
+    # def rotate(self, path: Path, metadata: Dict[str, Any]) -> Optional[str]: ...
 
 
 def iso_utc(wall: float) -> str:
@@ -235,7 +239,8 @@ class CsvSegmentWriter:
                 pass
             if self._compile_to is not None and self.error is None:
                 exc = finalize_temp_log(
-                    self.data_path, self.meta_path, self._compile_to, self._metadata, keep_csv=True
+                    self.data_path, self.meta_path, self._compile_to, self._metadata, keep_csv=True,
+                    isolate=True,
                 )
                 if exc is not None:
                     self.error = f"{self._compile_to.name}: {exc}"
@@ -351,6 +356,10 @@ class FixedStepSampler:
 # ---------------------------------------------------------------------------
 # Session orchestration
 # ---------------------------------------------------------------------------
+
+_STOP_RAW = object()
+_INTEGRITY_GAUGES = frozenset({"buffered_bytes", "rx_service_gap_max_ms"})
+
 
 class _RawHooksNone:
     def start(self, path: Path, metadata: Dict[str, Any]) -> None:
@@ -559,8 +568,9 @@ class SessionLog:
         if seg is not None and self._sampler is not None and seg.fixed is not None:
             seg.fixed.write_many(self._sampler.advance(now_perf - QUIET_MARGIN_S))
         if seg is not None and self._rotation_due(seg):
-            self._close_segment("rotation")
-            self._open_segment(seg.index + 1)
+            raw_error, raw_started = self._rotate_raw(seg.index + 1)
+            self._close_segment("rotation", raw_error=raw_error)
+            self._open_segment(seg.index + 1, raw_started=raw_started)
         self._check_disk()
         wall = self._clock()
         if wall - self._last_heartbeat >= _HEARTBEAT_INTERVAL_S:
@@ -598,15 +608,40 @@ class SessionLog:
     def _seg_path(self, index: int, kind: str, ext: str) -> Path:
         return self.folder / f"seg_{index:04d}_{kind}{ext}"
 
-    def _open_segment(self, index: int) -> None:
-        seg = _Segment(index, self._clock(), self._perf())
-        meta = {
+    def _segment_meta(self, index: int, wall0: float) -> Dict[str, Any]:
+        return {
             **self._metadata,
             "session": self.folder.name,
             "segment": str(index),
-            "segment_started_utc": iso_utc(seg.wall0),
+            "segment_started_utc": iso_utc(wall0),
             "config_files_sha256": self._manifest.get("config", {}).get("files_sha256", ""),
         }
+
+    def _raw_meta(self, index: int, wall0: float) -> Dict[str, Any]:
+        return {
+            "log_started_perf": self.session_perf0,
+            "polling_mode": self.polling_mode,
+            "config_source": str(self._config_source or ""),
+            "log_metadata": self._segment_meta(index, wall0),
+        }
+
+    def _rotate_raw(self, next_index: int) -> tuple:
+        """Move the raw capture to the next segment's file before the
+        current segment closes, so no received byte falls between the two
+        files. Returns (old file's error, whether the new file started)."""
+        rotate = getattr(self._raw, "rotate", None)
+        if rotate is None:
+            return self._raw.stop(), False
+        path = self.folder / f"seg_{next_index:04d}.bhraw"
+        try:
+            return rotate(path, self._raw_meta(next_index, self._clock())), True
+        except Exception as exc:
+            self._warn(f"Raw capture not rotated to segment {next_index}: {exc}")
+            return self._raw.stop(), False
+
+    def _open_segment(self, index: int, *, raw_started: bool = False) -> None:
+        seg = _Segment(index, self._clock(), self._perf())
+        meta = self._segment_meta(index, seg.wall0)
         files: Dict[str, str] = {}
         if self.settings.event_log:
             target = self._seg_path(index, "event", ".xlsx")
@@ -626,16 +661,14 @@ class SessionLog:
             files["fixed_csv"] = target.with_suffix(".csv").name
             files["fixed_xlsx"] = target.name
         raw_path = self.folder / f"seg_{index:04d}.bhraw"
-        try:
-            self._raw.start(raw_path, {
-                "log_started_perf": self.session_perf0,
-                "polling_mode": self.polling_mode,
-                "config_source": str(self._config_source or ""),
-                "log_metadata": meta,
-            })
+        if raw_started:
             files["raw"] = raw_path.name
-        except Exception as exc:
-            self._warn(f"Raw capture not started for segment {index}: {exc}")
+        else:
+            try:
+                self._raw.start(raw_path, self._raw_meta(index, seg.wall0))
+                files["raw"] = raw_path.name
+            except Exception as exc:
+                self._warn(f"Raw capture not started for segment {index}: {exc}")
         seg.integrity_start = dict(self._integrity)
         self._segment = seg
         with self._lock:
@@ -656,19 +689,22 @@ class SessionLog:
             return True
         return seg.fixed is not None and seg.fixed.rows_written + seg.fixed._queue.qsize() >= limit
 
-    def _close_segment(self, reason: str) -> None:
+    def _close_segment(self, reason: str, *, raw_error: Any = _STOP_RAW) -> None:
         seg, self._segment = self._segment, None
         if seg is None:
             return
-        raw_error = self._raw.stop()
+        if raw_error is _STOP_RAW:
+            raw_error = self._raw.stop()
         if seg.event is not None:
             seg.event.close(timeout=0.0)
         if seg.fixed is not None:
             seg.fixed.close()
         if seg.rejected is not None:
             seg.rejected.close()
+        # Counters become per-segment deltas; gauges (a level or a running
+        # maximum, not a count) are recorded as their value at close.
         integrity = {
-            k: v - seg.integrity_start.get(k, 0)
+            k: v if k in _INTEGRITY_GAUGES else v - seg.integrity_start.get(k, 0)
             for k, v in self._integrity.items()
             if isinstance(v, (int, float)) and not isinstance(v, bool)
         }
@@ -720,13 +756,14 @@ class SessionLog:
         # length instantly. Derived data: a failure is a warning, not an
         # error, and the Analysis Suite rebuilds a missing cache on open.
         notes: List[str] = []
+        from ._isolated import run_isolated
         from .session_analysis import build_segment_cache
         for kind in ("event", "fixed"):
             name = entry["files"].get(f"{kind}_csv")
             if not name or not (self.folder / name).exists():
                 continue
             try:
-                cache = build_segment_cache(self.folder / name, self.session_wall0)
+                cache = run_isolated(build_segment_cache, self.folder / name, self.session_wall0)
                 entry["files"][f"{kind}_analysis"] = cache.name
             except Exception as exc:
                 notes.append(f"analysis cache for {name} not built: {exc}")

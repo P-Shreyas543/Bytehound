@@ -159,7 +159,7 @@ def main() -> int:
     def on_packets(batch: List[Any]) -> None:
         nonlocal pkt_total, crc_errors_observed
         for item in batch:
-            p, pre_decoded = item if isinstance(item, tuple) else (item, None)
+            p, pre_decoded = (item[0], item[1]) if isinstance(item, tuple) else (item, None)
             pkt_total += 1
             raw_logger.log("RX", p.raw)
             if not p.ok:
