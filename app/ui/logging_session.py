@@ -14,7 +14,7 @@ import time
 from datetime import datetime
 from pathlib import Path
 
-from PySide6.QtCore import QObject, Qt, Signal
+from PySide6.QtCore import QObject, Qt, Signal, Slot
 from PySide6.QtWidgets import (
     QApplication, QDialog, QFileDialog, QMessageBox, QProgressDialog,
 )
@@ -23,6 +23,39 @@ from ..serial_logging.decoded_logger import DecodedLogger
 from ..serial_logging.session import SessionLog, SessionSettings, find_unfinished_sessions, recover_session
 from .dialogs import LoggingSettingsDialog
 from .widgets import _BTN_PINK, _BTN_YELLOW
+
+
+class _GuiCallbackRelay(QObject):
+    """Runs session callbacks on the GUI thread.
+
+    The capture worker writes frames to the session on its own thread, and
+    the session's warning / error callbacks touch widgets. Emitting from the
+    worker queues the call to this object's (GUI) thread; emitting from the
+    GUI thread calls it directly.
+    """
+
+    _call = Signal(object, str)
+
+    def __init__(self, parent=None) -> None:
+        super().__init__(parent)
+        self._call.connect(self._deliver)
+
+    @Slot(object, str)
+    def _deliver(self, callback, message: str) -> None:
+        callback(message)
+
+    def wrap(self, callback):
+        return lambda message: self._call.emit(callback, message)
+
+
+def _attach_session_sink(worker, session) -> bool:
+    """Hand the session to a worker that logs on its own thread. False when
+    the worker cannot (capture-process mode): the GUI then logs as before."""
+    setter = getattr(worker, "set_session_sink", None)
+    if worker is None or setter is None or not getattr(worker, "logs_sessions", False):
+        return False
+    setter(session)
+    return True
 
 
 class _RecoveryNotifier(QObject):
@@ -57,7 +90,10 @@ class LoggingSessionMixin:
     """MainWindow mixin holding logging start/stop/error methods."""
 
     _DRAIN_CAP_SECONDS = 60.0
-    _DRAIN_POLL_MS = 200
+    # Longest the GUI thread blocks per wait while a stopped log finishes.
+    # 200 ms made the window respond five times a second for the whole
+    # finishing time (seconds, measured with tools/gui_latency_probe.py).
+    _DRAIN_POLL_MS = 40
 
     def _on_logging_settings(self) -> None:
         self._log_activity("[ACTION] Open Logging Settings dialog")
@@ -166,8 +202,8 @@ class LoggingSessionMixin:
             app_version=self._version_info.get("version", "") if hasattr(self, "_version_info") else "",
             polling_mode=polling_active,
             raw_capture=_WorkerRawCapture(self),
-            on_warning=lambda msg: self._log_activity(f"[WARN] {msg}"),
-            on_error=self._on_logger_error,
+            on_warning=self._session_relay().wrap(lambda msg: self._log_activity(f"[WARN] {msg}")),
+            on_error=self._session_relay().wrap(self._on_logger_error),
         )
         try:
             session.start()
@@ -175,6 +211,9 @@ class LoggingSessionMixin:
             self._popup_critical("Start Logging", f"Could not start the logging session:\n\n{exc}")
             return False
         self._session_log = session
+        # From here on the capture worker writes frames to the session on its
+        # thread (the GUI thread only does housekeeping).
+        _attach_session_sink(self._serial, session)
         self._remember_session_folder(folder)
         if getattr(self, "_integrity", None):
             session.set_integrity(self._integrity)
@@ -245,6 +284,12 @@ class LoggingSessionMixin:
         for handler in root.handlers:
             handler.setLevel(level)
 
+    def _session_relay(self) -> _GuiCallbackRelay:
+        relay = getattr(self, "_session_callback_relay", None)
+        if relay is None:
+            relay = self._session_callback_relay = _GuiCallbackRelay(self)
+        return relay
+
     def _on_logger_error(self, message: str) -> None:
         logging.getLogger("bytehound.logging").error("Logging error: %s", message)
         if self._logging:
@@ -257,6 +302,10 @@ class LoggingSessionMixin:
         was_logging = self._logging
         session = getattr(self, "_session_log", None)
         self._session_log = None
+        # Detach before stopping: a frame the worker is logging right now is
+        # serialised with stop() by the session's lock; later ones are not
+        # written (the session has ended).
+        _attach_session_sink(getattr(self, "_serial", None), None)
         if hasattr(self, "_session_timer"):
             self._session_timer.stop()
         if session is not None:

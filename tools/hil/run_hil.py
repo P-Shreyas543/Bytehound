@@ -407,19 +407,9 @@ def _session(name: str, args, config, cfg_dir: Path, baud: int, seconds: float, 
     r = Result(name)
     prepare_board(args.port, baud)
     out = Path(tempfile.mkdtemp(prefix="bh_hil_session_")) / "session"
-    holder: Dict[str, object] = {}
-
-    def log_items(items) -> None:
-        s = holder.get("session")
-        if s is None:
-            return
-        for p, decoded, rx_perf in items:
-            if p.ok and p.frame_id in config.frames and decoded is not None:
-                s.log_frame(decoded, rx_perf)
-            elif not p.ok:
-                s.log_rejected(p.raw, p.frame_id, p.error or "", rx_perf)
-
-    link = AppLink(args.port, baud, config, on_items=log_items).open()
+    # The production path: the worker writes frames to the session on its
+    # own thread (PollingWorker.set_session_sink).
+    link = AppLink(args.port, baud, config).open()
 
     class Hooks:
         def start(self, path, metadata):
@@ -439,7 +429,7 @@ def _session(name: str, args, config, cfg_dir: Path, baud: int, seconds: float, 
     cps = max(1, int(load * baud / 10 / hw.CYCLE_BYTES[True]))
     try:
         session.start()
-        holder["session"] = session
+        link.worker.set_session_sink(session)
         link.send(hw.stream_cmd(cps, True))
         t_end = time.monotonic() + seconds
         while time.monotonic() < t_end:
@@ -450,7 +440,7 @@ def _session(name: str, args, config, cfg_dir: Path, baud: int, seconds: float, 
         pump(0.5)
         st = link.board_stats()
         session.set_integrity(link.worker.integrity_snapshot())
-        holder.pop("session")
+        link.worker.set_session_sink(None)
         session.stop()
         r.check(session.await_finished(300), "segment finishers done")
     finally:
@@ -459,6 +449,8 @@ def _session(name: str, args, config, cfg_dir: Path, baud: int, seconds: float, 
 
     check_accounting(r, link, snap, st, injected=False)
     check_seq(r, link.seq, st["frames_4000"])
+    r.check(snap.get("session_log_errors") == 0 and snap.get("parse_errors") == 0,
+            f"no session-log or parser errors ({snap.get('session_log_errors')}, {snap.get('parse_errors')})")
     m = read_manifest(out)
     segs = m["segments"]
     r.check(len(segs) >= int(seconds // seg_s), f"{len(segs)} segments (rotation every {seg_s:.0f}s)")
@@ -555,7 +547,7 @@ def t_gui(args, config, cfg_dir: Path) -> Result:
     win.show()
     replies: Dict[int, bytes] = {}
     seq: List[int] = []
-    lag = {"max": 0.0, "n": 0, "over_100": 0, "spikes": []}
+    lag = {"max": 0.0, "n": 0, "over_100": 0, "spikes": [], "all": []}
     last = [time.monotonic()]
 
     def tick() -> None:
@@ -563,6 +555,7 @@ def t_gui(args, config, cfg_dir: Path) -> Result:
         late = now - last[0] - 0.02
         last[0] = now
         lag["n"] += 1
+        lag["all"].append(max(0.0, late))
         lag["max"] = max(lag["max"], late)
         lag["over_100"] += late > 0.1
         if late > 0.1:
@@ -639,8 +632,14 @@ def t_gui(args, config, cfg_dir: Path) -> Result:
                   gui_stall_stacks=stall_stacks.most_common(8), board=st)
     r.check(seq == list(range(st["frames_4000"])),
             f"GUI worker delivered seq 0..{st['frames_4000'] - 1} exactly once ({len(seq)})")
-    r.check(lag["max"] < 0.25, f"GUI event loop max lag {lag['max'] * 1000:.0f} ms < 250 ms "
-                               f"({lag['over_100']} of {lag['n']} ticks > 100 ms)")
+    # Release gate (agreed 2026-10-17): p99 <= 50 ms and max <= 250 ms at the
+    # rated 3,000 frames/s; this test runs 3,250.
+    ordered = sorted(lag["all"])
+    p99 = ordered[min(len(ordered) - 1, int(0.99 * len(ordered)))] if ordered else 0.0
+    r.data["gui_p99_lag_ms"] = round(p99 * 1000, 1)
+    r.check(p99 <= 0.05, f"GUI event loop p99 lag {p99 * 1000:.0f} ms <= 50 ms ({lag['n']} ticks of 20 ms)")
+    r.check(lag["max"] <= 0.25, f"GUI event loop max lag {lag['max'] * 1000:.0f} ms <= 250 ms "
+                                f"({lag['over_100']} of {lag['n']} ticks > 100 ms)")
     m = read_manifest(folder)
     segs = m["segments"]
     r.check(m["status"] == "closed" and all(x["status"] == "closed" for x in segs),

@@ -1228,6 +1228,10 @@ class MainWindow(
                 self._session_log.connection_restored()
                 self._update_logging_label()
                 self._log_activity("[INFO] Logging resumed in a new segment")
+            if self._logging and self._session_log is not None:
+                # A reconnect creates a new worker: hand it the session.
+                from .logging_session import _attach_session_sink
+                _attach_session_sink(self._serial, self._session_log)
             if is_retry:
                 self._restore_polling_after_reconnect()
             else:

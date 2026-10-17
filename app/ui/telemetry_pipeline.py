@@ -13,6 +13,11 @@ from .logging_session import _format_number
 
 # Most RX lines the console shows per second; the rest are counted, not drawn.
 CONSOLE_LINES_PER_SECOND = 400
+# Most GUI-thread time one UI flush spends on queued packets. The rest stay
+# queued for the next tick: draining a large backlog in one call stalled
+# the event loop for 0.1-1.5 s at 5,000 frames/s (tools/gui_latency_probe.py).
+# Display only: the session log is written on arrival, before this queue.
+FLUSH_BUDGET_S = 0.025
 
 
 class TelemetryPipelineMixin:
@@ -66,6 +71,9 @@ class TelemetryPipelineMixin:
         config = getattr(self, "_config", None)
         if session is None or config is None:
             return batch
+        if getattr(getattr(self, "_serial", None), "logs_sessions", False):
+            # The capture worker already wrote these frames on its thread.
+            return batch
         out = []
         for item in batch:
             packet, decoded, rx_perf = self._unpack_item(item)
@@ -96,11 +104,16 @@ class TelemetryPipelineMixin:
         if len(batch) > space_left:
             dropped = len(batch) - space_left
             self._backpressure_dropped_count = getattr(self, "_backpressure_dropped_count", 0) + dropped
-            import logging
-            logging.getLogger("bytehound.ui").warning(
-                "UI event queue saturated: dropped %d packets (total dropped: %d)",
-                dropped, self._backpressure_dropped_count
-            )
+            # Once saturated this fired for every batch, and each log line was
+            # a file write + flush on the GUI thread (seen in stall stacks).
+            now = time.monotonic()
+            if now - getattr(self, "_last_saturation_log", 0.0) >= 5.0:
+                self._last_saturation_log = now
+                import logging
+                logging.getLogger("bytehound.ui").warning(
+                    "UI event queue saturated: display skipped %d packets so far "
+                    "(the session log is unaffected)", self._backpressure_dropped_count
+                )
 
         self._pending_packets.extend(batch)
 
@@ -172,14 +185,14 @@ class TelemetryPipelineMixin:
             self._console_last_flush = now
             budget = max(1, min(CONSOLE_LINES_PER_SECOND, int(CONSOLE_LINES_PER_SECOND * dt)))
             show_from = max(0, len(packets) - budget)
-            if show_from:
-                self._console_buffer.append(
-                    f"… {show_from} frames not shown (console limited to {CONSOLE_LINES_PER_SECOND}/s; "
-                    "logs and raw capture keep every frame)"
-                )
         # Worker pushes (ParsedPacket, DecodedFrame|None, rx_perf) tuples;
         # shorter legacy items are normalised so _handle_packet doesn't branch.
+        deadline = time.perf_counter() + FLUSH_BUDGET_S
+        processed = len(packets)
         for index, item in enumerate(packets):
+            if index & 31 == 0 and index and time.perf_counter() > deadline:
+                processed = index
+                break
             packet, pre_decoded, rx_perf = self._unpack_item(item)
             if console_visible and index >= show_from and hasattr(packet, "raw"):
                 ts = datetime.fromtimestamp(
@@ -196,6 +209,17 @@ class TelemetryPipelineMixin:
                     "_handle_packet raised on frame_id=0x%04X",
                     getattr(packet, 'frame_id', 0),
                 )
+        if processed < len(packets):
+            # Out of budget: keep the rest, in order, ahead of anything newer.
+            rest = deque(packets[processed:], maxlen=10_000)
+            rest.extend(self._pending_packets)
+            self._pending_packets = rest
+        hidden = min(show_from, processed) if console_visible else 0
+        if hidden:
+            self._console_buffer.insert(0, (
+                f"… {hidden} frames not shown (console limited to {CONSOLE_LINES_PER_SECOND}/s; "
+                "logs and raw capture keep every frame)"
+            ))
         if self._console_buffer:
             sb = self._console.verticalScrollBar()
             at_bottom = sb.value() >= sb.maximum() - 4

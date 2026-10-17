@@ -384,8 +384,12 @@ class _Segment:
 class SessionLog:
     """Writes one logging session as rotated segments with a manifest.
 
-    Not thread-safe: call from one thread (the GUI thread). Writers, segment
-    finishing and xlsx compilation run on their own threads.
+    ``log_frame`` / ``log_rejected`` may be called from the capture worker's
+    thread while the GUI thread calls ``tick`` / ``stop`` / the connection
+    methods: everything that touches the open segment or the fixed-step
+    sampler is serialised by ``_seg_lock`` (task.md Phase 1: logging moved
+    off the GUI thread). Lock order is ``_seg_lock`` then ``_lock``. Writers,
+    segment finishing and xlsx compilation run on their own threads.
     """
 
     def __init__(
@@ -420,6 +424,7 @@ class SessionLog:
         self._disk_free = disk_free or (lambda p: shutil.disk_usage(p).free)
 
         self._lock = threading.Lock()          # guards the manifest
+        self._seg_lock = threading.RLock()     # guards the open segment + sampler
         self._summary_lock = threading.Lock()  # serialises summary updates
         self._manifest: Dict[str, Any] = {}
         self._segment: Optional[_Segment] = None
@@ -437,6 +442,10 @@ class SessionLog:
     # -- lifecycle --------------------------------------------------------
 
     def start(self) -> None:
+        with self._seg_lock:
+            self._start()
+
+    def _start(self) -> None:
         if (self.folder / MANIFEST_NAME).exists():
             raise FileExistsError(f"{self.folder} already contains a session")
         self.folder.mkdir(parents=True, exist_ok=True)
@@ -472,6 +481,10 @@ class SessionLog:
     def stop(self, reason: str = "stopped") -> None:
         """Close the open segment and finish the session (non-blocking;
         use :meth:`await_finished` to wait for the last xlsx/hash)."""
+        with self._seg_lock:
+            self._stop(reason)
+
+    def _stop(self, reason: str) -> None:
         if self._segment is not None:
             self._close_segment(reason)
         with self._lock:
@@ -519,17 +532,22 @@ class SessionLog:
         return seg.wall0 + (perf_t - seg.perf0)
 
     def log_frame(self, decoded: DecodedFrame, rx_perf: float) -> None:
-        seg = self._segment
-        if seg is None:
-            return
-        if seg.event is not None:
-            elapsed_ms = int((rx_perf - self.session_perf0) * 1000)
-            seg.event.log_frame(decoded, elapsed_ms, wall=self._wall_of(rx_perf))
-        if self._sampler is not None and seg.fixed is not None:
-            seg.fixed.write_many(self._sampler.feed(decoded, rx_perf))
+        with self._seg_lock:
+            seg = self._segment
+            if seg is None:
+                return
+            if seg.event is not None:
+                elapsed_ms = int((rx_perf - self.session_perf0) * 1000)
+                seg.event.log_frame(decoded, elapsed_ms, wall=self._wall_of(rx_perf))
+            if self._sampler is not None and seg.fixed is not None:
+                seg.fixed.write_many(self._sampler.feed(decoded, rx_perf))
 
     def log_rejected(self, raw: bytes, frame_id: Optional[int], error: str, rx_perf: float) -> None:
         """Record a frame that failed CRC / framing checks (F9)."""
+        with self._seg_lock:
+            self._log_rejected(raw, frame_id, error, rx_perf)
+
+    def _log_rejected(self, raw: bytes, frame_id: Optional[int], error: str, rx_perf: float) -> None:
         seg = self._segment
         if seg is None:
             return
@@ -551,18 +569,24 @@ class SessionLog:
         # per-segment counters in session.json include them.
         for name, count in (flat.pop("driver_errors", None) or {}).items():
             flat[f"driver_{name}"] = count
-        self._integrity = flat
-        if self._segment is not None and not self._segment.integrity_start:
-            self._segment.integrity_start = dict(flat)
+        with self._seg_lock:
+            self._integrity = flat
+            if self._segment is not None and not self._segment.integrity_start:
+                self._segment.integrity_start = dict(flat)
 
     def set_polling_mode(self, enabled: bool) -> None:
-        self.polling_mode = enabled
-        if self._segment and self._segment.event is not None:
-            self._segment.event.polling_mode = enabled
+        with self._seg_lock:
+            self.polling_mode = enabled
+            if self._segment and self._segment.event is not None:
+                self._segment.event.polling_mode = enabled
 
     def tick(self) -> None:
         """Housekeeping, ~1 Hz: quiet-period fixed-step rows, rotation, disk
         guard, heartbeat."""
+        with self._seg_lock:
+            self._tick()
+
+    def _tick(self) -> None:
         seg = self._segment
         now_perf = self._perf()
         if seg is not None and self._sampler is not None and seg.fixed is not None:
@@ -583,6 +607,10 @@ class SessionLog:
 
     def connection_lost(self, reason: str) -> None:
         """Close the current segment and start a gap; the session continues."""
+        with self._seg_lock:
+            self._connection_lost(reason)
+
+    def _connection_lost(self, reason: str) -> None:
         if self._segment is not None:
             self._close_segment(f"connection lost: {reason}")
         with self._lock:
@@ -591,6 +619,10 @@ class SessionLog:
             self._save_locked()
 
     def connection_restored(self) -> None:
+        with self._seg_lock:
+            self._connection_restored()
+
+    def _connection_restored(self) -> None:
         with self._lock:
             self._end_gap_locked(self._clock())
             self._save_locked()

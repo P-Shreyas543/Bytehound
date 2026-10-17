@@ -449,6 +449,10 @@ class SerialSettings:
 
 
 class PollingWorker(QThread):
+    # This worker writes decoded frames to the attached logging session on
+    # its own thread (set_session_sink); the GUI must not log them again.
+    logs_sessions = True
+
     # Batch of parsed packets (may include bad CRC frames)
     packets_received = Signal(list)
     metrics_updated = Signal(int, int, int)   # timeouts, crc_errors, rx_bytes
@@ -591,6 +595,14 @@ class PollingWorker(QThread):
         # gap wait still ends that wait.
         self._await_target: Optional[int] = None
         self._await_hit: bool = False
+        # Exceptions raised by the parser while feeding received bytes.
+        self._parse_errors: int = 0
+        # Logging session written from this thread (task.md Phase 1: per-
+        # frame logging cost the GUI thread most of its time at high rates).
+        # Read once per _accumulate call; assignment is atomic.
+        self._session_sink = None
+        self._session_log_errors: int = 0
+        self._last_sink_warning: float = 0.0
 
         # Lossless wire capture while logging is on. Written from this thread
         # right after each read/write; the GUI only starts and stops it.
@@ -728,6 +740,11 @@ class PollingWorker(QThread):
                 ctypes.windll.winmm.timeEndPeriod(1)
             except Exception:
                 pass
+
+    def set_session_sink(self, session) -> None:
+        """Log every frame decoded from now on to ``session`` (a SessionLog),
+        or stop logging with ``None``. Thread-safe."""
+        self._session_sink = session
 
     def start_raw_capture(self, path, metadata: Optional[dict] = None) -> None:
         """Start recording every RX/TX byte to a ``.bhraw`` file."""
@@ -976,6 +993,7 @@ class PollingWorker(QThread):
         cfg = self._decode_config
         if rx_perf is None:
             rx_perf = time.perf_counter()
+        first = len(self._batch)
         for p in packets:
             if not p.ok:
                 self._crc_errors += 1
@@ -1000,8 +1018,31 @@ class PollingWorker(QThread):
                     _LOG.exception("decode_frame raised on frame_id=0x%04X", p.frame_id)
                     decoded = None
             self._batch.append((p, decoded, rx_perf))
+        sink = self._session_sink
+        if sink is not None:
+            self._log_to_session(sink, self._batch[first:])
         if self._should_flush():
             self._flush_batch()
+
+    def _log_to_session(self, sink, items: List[tuple]) -> None:
+        """Write this read's frames to the session, in arrival order. A
+        failure is counted (integrity) and reported, never fatal to capture."""
+        for p, decoded, t in items:
+            try:
+                if p.ok:
+                    if p.frame_id is not None and decoded is not None:
+                        sink.log_frame(decoded, t)
+                    elif p.frame_id is not None:
+                        self._session_log_errors += 1
+                else:
+                    sink.log_rejected(p.raw, p.frame_id, p.error or "", t)
+            except Exception as exc:
+                self._session_log_errors += 1
+                now = time.monotonic()
+                if now - self._last_sink_warning >= 5.0:
+                    self._last_sink_warning = now
+                    _LOG.exception("Logging a frame to the session failed")
+                    self.warning_occurred.emit(f"Session logging error ({self._session_log_errors} so far): {exc!r}")
 
     def _check_watchdog(self) -> None:
         """Emit device_timeout if no data received within WATCHDOG_TIMEOUT."""
@@ -1035,6 +1076,8 @@ class PollingWorker(QThread):
             "poll_timeouts": self._timeouts,
             "purged_at_connect": self._open_purged_bytes,
             "rx_service_gap_max_ms": round(self._rx_service_gap_max * 1000.0, 1),
+            "parse_errors": self._parse_errors,
+            "session_log_errors": self._session_log_errors,
             # None = this transport cannot report driver errors (TCP/UDP, POSIX).
             "driver_errors": dict(errs) if (errs := getattr(self._serial, "comm_errors", None)) else None,
         }
@@ -1140,8 +1183,14 @@ class PollingWorker(QThread):
         self._rx_bytes += len(data)
         self._last_rx_time = now
         self._watchdog_fired = False
-        self._parser.feed(data)
-        extracted = self._parser.extract_all()
+        try:
+            self._parser.feed(data)
+            extracted = self._parser.extract_all()
+        except Exception:
+            # The run loop recovers, but bytes in flight may be lost: count
+            # it so the session's integrity record shows it (it was silent).
+            self._parse_errors += 1
+            raise
         if extracted:
             if self._pipelining_enabled and self._in_flight:
                 self._match_in_flight_responses(extracted)
