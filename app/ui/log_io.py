@@ -308,6 +308,50 @@ class LogLoaderThread(QThread):
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Math channels
+# ═══════════════════════════════════════════════════════════════════════
+def math_components(expr: str) -> list[str]:
+    """Signal names referenced as ``[name]`` in a math-channel expression."""
+    return re.findall(r'\[(.*?)\]', expr)
+
+
+def eval_math_expression(expr: str, data, x: np.ndarray) -> np.ndarray:
+    """Evaluate a math-channel expression over arrays sharing the time axis
+    ``x``. ``diff``/``deriv`` = d/dt; ``integral``/``cumsum`` = trapezoidal
+    running integral. NaN samples (gaps) are skipped: an interval with a
+    NaN end contributes nothing instead of turning everything after it NaN.
+    """
+    def diff_func(y):
+        if len(x) <= 1:
+            return np.zeros_like(y)
+        return np.gradient(y, x)
+
+    def integral_func(y):
+        if len(x) <= 1:
+            return np.zeros_like(y)
+        dt = np.diff(x)
+        y_avg = 0.5 * (y[:-1] + y[1:])
+        integrand = np.where(np.isfinite(y_avg) & np.isfinite(dt), y_avg * dt, 0.0)
+        return np.insert(np.cumsum(integrand), 0, 0.0)
+
+    py_expr = re.sub(r'\[(.*?)\]', r'data["\1"]', expr)
+    return eval(  # noqa: S307 - restricted namespace, user's own expressions
+        py_expr,
+        {
+            "__builtins__": None,
+            "np": np,
+            "diff": diff_func,
+            "deriv": diff_func,
+            "derivative": diff_func,
+            "integral": integral_func,
+            "int": integral_func,
+            "cumsum": integral_func,
+        },
+        {"data": data},
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Logging sessions (folders of rotated segments) — Plane.md Part B
 # ═══════════════════════════════════════════════════════════════════════
 def entry_value_at(entry, param: str, t: float, x: Optional[np.ndarray] = None) -> float:
@@ -382,6 +426,39 @@ class SessionEntry:
         self.columns = _SessionColumns(self)
         self.view = Window(np.zeros(0), {}, 0, 0.0, source.duration)
         self.loading = False
+        self.math: dict[str, str] = {}
+
+    def set_math_channels(self, defs: dict[str, str]) -> None:
+        """Math channels for a session are evaluated on full-resolution data
+        of the current view; when zoomed out (envelope) they are NaN.
+        ``integral`` therefore integrates from the left edge of the view."""
+        self.math = {k: v for k, v in defs.items() if k not in self.source.signals()}
+        base = [s for s in self.source.signals() if not _is_time_like_param(s)]
+        self.signals = base + [m for m in self.math if m not in base]
+        self.signal_set = set(self.signals)
+        for name in self.math:
+            self.view.y.pop(name, None)
+
+    def _real_params(self, params) -> list[str]:
+        out: list[str] = []
+        for p in params:
+            for q in (math_components(self.math[p]) if p in self.math else [p]):
+                if q in self.source.signals() and q not in out:
+                    out.append(q)
+        return out
+
+    def _with_math(self, window, params):
+        for p in params:
+            if p not in self.math:
+                continue
+            if window.level == 0 and window.x.size:
+                try:
+                    window.y[p] = np.asarray(eval_math_expression(self.math[p], window.y, window.x), dtype=float)
+                    continue
+                except Exception:
+                    pass
+            window.y[p] = np.full(window.x.size, np.nan)
+        return window
 
     @property
     def elapsed(self) -> np.ndarray:
@@ -402,7 +479,9 @@ class SessionEntry:
         return v.x.size > 0 and v.t0 <= max(0.0, t0) and v.t1 >= min(self.source.duration, t1) and v.level == level
 
     def load(self, params, t0: float, t1: float, level: int):
-        return self.source.window(list(params), t0, t1, level=level)
+        params = list(params)
+        w = self.source.window(self._real_params(params), t0, t1, level=level)
+        return self._with_math(w, params)
 
     def apply(self, window) -> None:
         self.view = window
@@ -418,13 +497,23 @@ class SessionEntry:
             level = self.source.choose_level(lo, hi)
         else:
             lo, hi, level = v.t0, v.t1, v.level
-        w = self.source.window(sorted(set(v.y) | set(missing)), lo, hi, level=level)
-        self.view = w
+        wanted = sorted(set(v.y) | set(missing))
+        w = self.source.window(self._real_params(wanted), lo, hi, level=level)
+        self.view = self._with_math(w, wanted)
 
     def value_at(self, param: str, t: float) -> float:
+        if param in self.math:
+            v = self.view
+            if v.level == 0 and param in v.y and v.x.size:
+                ok = np.isfinite(v.x) & np.isfinite(v.y[param])
+                if ok.any():
+                    return float(np.interp(t - self.time_offset, v.x[ok], v.y[param][ok]))
+            return float("nan")
         return self.source.value_at(param, t - self.time_offset)
 
     def range_stats(self, param: str, x0: float, x1: float) -> Optional[dict]:
+        if param in self.math:
+            return None   # math channels: no full-session statistics (view-only)
         st = self.source.stats(param, x0 - self.time_offset, x1 - self.time_offset)
         if st is None:
             return None

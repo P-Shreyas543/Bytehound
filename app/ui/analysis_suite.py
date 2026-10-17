@@ -51,7 +51,7 @@ from .analysis_theme import (
 from .analysis_widgets import CursorReadoutPanel, StatisticsPanel, TimeAxisItem, OverlayViewBox
 from .log_io import (
     LogEntry, LogLoaderThread, _CSV_CACHE,
-    SessionLoaderThread, SessionWindowThread, entry_value_at,
+    SessionLoaderThread, SessionWindowThread, entry_value_at, eval_math_expression,
 )
 from .xy_plot import XYPlotWindow
 
@@ -1020,45 +1020,21 @@ class AnalysisSuiteWindow(QMainWindow):
 
     def _compute_math_channels(self, log: LogEntry):
         if getattr(log, "is_session", False):
-            # Math channels evaluate whole arrays; a session is loaded one
-            # view at a time, so they are not available for sessions yet.
+            # Sessions load one view at a time: math channels are evaluated
+            # on the full-resolution data of the current view (NaN when
+            # zoomed out; integral() starts at the view's left edge).
+            log.set_math_channels(dict(self._math_channels))
             if self._math_channels:
                 self._status.showMessage(
-                    "Math channels are not available for logging sessions.", 6000)
+                    "Math channels on a logging session are computed for the visible range "
+                    "at full resolution — zoom in to see them.", 8000)
             return
 
-        def diff_func(y):
-            if len(log.elapsed) <= 1:
-                return np.zeros_like(y)
-            return np.gradient(y, log.elapsed)
-
-        def integral_func(y):
-            if len(log.elapsed) <= 1:
-                return np.zeros_like(y)
-            dt = np.diff(log.elapsed)
-            y_avg = 0.5 * (y[:-1] + y[1:])
-            integrand = y_avg * dt
-            return np.insert(np.cumsum(integrand), 0, 0.0)
-
         for name, expr in self._math_channels.items():
-            py_expr = re.sub(r'\[(.*?)\]', r'data["\1"]', expr)
             try:
                 # Evaluate expression vectorised over numpy arrays.
                 # All signals for a log are already uniform length from log_io!
-                res = eval(
-                    py_expr,
-                    {
-                        "__builtins__": None,
-                        "np": np,
-                        "diff": diff_func,
-                        "deriv": diff_func,
-                        "derivative": diff_func,
-                        "integral": integral_func,
-                        "int": integral_func,
-                        "cumsum": integral_func,
-                    },
-                    {"data": log.columns}
-                )
+                res = eval_math_expression(expr, log.columns, log.elapsed)
                 log.columns[name] = res
             except Exception as e:
                 _log.warning(f"Math channel '{name}' failed to compute for log {log.name}: {e}")
@@ -1168,6 +1144,28 @@ class AnalysisSuiteWindow(QMainWindow):
         self._update_cursor_dots()
         self._update_cursor_readout()
 
+    def _curve_y(self, entry, param: str, group: list[str] | None) -> np.ndarray:
+        """Values a curve displays: the log's data with the subplot's
+        smoothing / normalising applied. Used for the initial build and for
+        every update, so a zoom or offset change never drops a transform.
+        On a zoomed-out session (min/max envelope) smoothing is not applied:
+        averaging an envelope means nothing."""
+        y = entry.columns[param]
+        if group is None:
+            return y
+        envelope = getattr(entry, "is_session", False) and entry.view.level != 0
+        if self._is_subplot_smoothed(group) and not envelope:
+            y = self._moving_average(y, self._smoothing_window)
+        if self._is_subplot_normalized(group):
+            y = self._normalize_series(y)
+        return y
+
+    def _group_of(self, param: str) -> list[str] | None:
+        for group in self._plot_groups:
+            if param in group:
+                return group
+        return None
+
     def _update_curves_for_log(self, log_id: str):
         entry = self._logs.get(log_id)
         if not entry:
@@ -1178,7 +1176,7 @@ class AnalysisSuiteWindow(QMainWindow):
         if log_id in self._curves:
             for param, curve in self._curves[log_id].items():
                 if param in entry.columns:
-                    y = entry.columns[param]
+                    y = self._curve_y(entry, param, self._group_of(param))
                     if getattr(entry, "keeps_gaps", False):
                         curve.setData(x, y, connect="finite")
                     else:
@@ -1314,24 +1312,6 @@ class AnalysisSuiteWindow(QMainWindow):
     def _extract_unit(name: str) -> str:
         match = re.search(r'\(([^()]*)\)\s*$', name)
         return match.group(1).strip() if match else ""
-
-    @staticmethod
-    def _moving_average(arr: np.ndarray, window: int) -> np.ndarray:
-        """Compute rolling average over arr with window size `window`, NaN-safe."""
-        if len(arr) == 0 or window <= 1:
-            return arr
-        w = min(window, len(arr))
-        kernel = np.ones(w) / float(w)
-        valid_mask = ~np.isnan(arr)
-        if not np.any(valid_mask):
-            return arr
-        clean_arr = np.where(valid_mask, arr, 0.0)
-        sum_conv = np.convolve(clean_arr, kernel, mode='same')
-        count_conv = np.convolve(valid_mask.astype(float), kernel, mode='same')
-        with np.errstate(divide='ignore', invalid='ignore'):
-            out = np.where(count_conv > 0, sum_conv / count_conv, np.nan)
-        return out
-
 
     def _axis_title_for_group(self, group: list[str]) -> str:
         """Compact label suitable for a rotated Y-axis title — strips units
@@ -2219,11 +2199,7 @@ class AnalysisSuiteWindow(QMainWindow):
                     if param not in entry.columns:
                         continue
                     x = entry.elapsed + entry.time_offset
-                    y = entry.columns[param]
-                    if smoothed:
-                        y = self._moving_average(y, self._smoothing_window)
-                    if normalized:
-                        y = self._normalize_series(y)
+                    y = self._curve_y(entry, param, group)
                     mask = ~np.isnan(y)
                     # Multi-param: color = parameter, style = log.
                     # Single-param: color = log, style = solid.

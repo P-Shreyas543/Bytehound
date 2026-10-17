@@ -165,3 +165,61 @@ def test_checking_parameters_quickly_keeps_the_full_range(qapp):
     finally:
         win.close()
         _pump(qapp, 0.2)
+
+
+def test_session_math_channels_use_full_resolution(qapp, session_folder, monkeypatch):
+    """Math channels on a session are computed from the full-resolution data
+    of the view; zoomed out (envelope) they are gaps, never envelope math."""
+    from app.serial_logging import session_analysis as sa
+    from app.serial_logging.session_analysis import SessionSource
+    from app.ui.log_io import SessionEntry
+
+    monkeypatch.setattr(sa, "FULL_RES_LIMIT", 20_000)
+    src = SessionSource(session_folder)
+    src.ensure_summary()
+    entry = SessionEntry(src, id="S", path="p", name="s", color="#fff")
+    a, b = [p for p in entry.available_params() if p.startswith("0x1000.")][:2]
+    entry.set_math_channels({"Sum": f"[{a}] + [{b}]"})
+    assert "Sum" in entry.columns
+
+    entry.apply(entry.load(["Sum"], 3600.0, 3720.0, 0))
+    np.testing.assert_allclose(entry.columns["Sum"], entry.view.y[a] + entry.view.y[b], equal_nan=True)
+    q = 3650.0
+    assert entry.value_at("Sum", q) == pytest.approx(src.value_at(a, q) + src.value_at(b, q), rel=1e-9)
+
+    entry.apply(entry.load(["Sum"], 0.0, src.duration, 600))
+    assert np.all(np.isnan(entry.columns["Sum"]))      # no maths on an envelope
+
+
+def test_offset_change_keeps_smoothing(qapp):
+    """Updating curves (offset change, session zoom) used to set raw data and
+    silently drop the subplot's smoothing / normalising."""
+    from app.ui import analysis_suite as asu
+    from app.ui.log_io import LogEntry
+
+    win = asu.AnalysisSuiteWindow()
+    win.resize(1200, 800)
+    win.show()
+    try:
+        x = np.linspace(0.0, 100.0, 2001)
+        rng = np.random.default_rng(0)
+        y = np.sin(x) + rng.normal(0, 0.5, x.size)
+        entry = LogEntry(id="L1", path="mem.csv", name="mem", elapsed=x, columns={"A (V)": y})
+        win._on_log_loaded("L1", "mem.csv", entry)
+        tree = win._param_tree
+        tree.topLevelItem(0).setCheckState(0, Qt.Checked)
+        _pump(qapp, 0.5)
+        group = win._plot_groups[0]
+        win._smoothed_subplots.add(frozenset(group))
+        win._smoothing_window = 25
+        win._rebuild_plots()
+        _pump(qapp, 0.3)
+        smoothed = win._curves["L1"]["A (V)"].getData()[1].copy()
+        entry.time_offset = 5.0
+        win._update_curves_for_log("L1")
+        after = win._curves["L1"]["A (V)"].getData()[1]
+        np.testing.assert_allclose(after, smoothed)          # still smoothed
+        assert np.std(np.diff(after)) < np.std(np.diff(y))   # i.e. not the raw noisy data
+    finally:
+        win.close()
+        _pump(qapp, 0.2)
