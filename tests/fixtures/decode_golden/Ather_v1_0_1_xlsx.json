@@ -1,0 +1,1718 @@
+{
+ "config": "Ather_v1_0_1.xlsx",
+ "frames": {
+  "0x101": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Drive_Mode",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Drive Mode Active",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "Key_Switch",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Key Switch ON",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Drive_Mode",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Drive Mode Active",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "Key_Switch",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Key Switch ON",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Drive_Mode",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Drive Mode Active",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "Key_Switch",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Key Switch ON",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Drive_Mode",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Drive Mode Active",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "Key_Switch",
+      1,
+      1.0,
+      "None",
+      null,
+      [
+       [
+        "Key Switch ON",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Drive_Mode",
+      1,
+      1.0,
+      "Drive Mode Active",
+      null,
+      [
+       [
+        "Drive Mode Active",
+        true
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "Key_Switch",
+      1,
+      1.0,
+      "None",
+      null,
+      [
+       [
+        "Key Switch ON",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x102": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Charger_Status",
+      0,
+      0.0,
+      "Disconnected",
+      "Disconnected",
+      [],
+      "ok"
+     ],
+     [
+      "Side_Stand",
+      0,
+      0.0,
+      "UP (Retracted)",
+      "UP (Retracted)",
+      [
+       [
+        "Side Stand Down",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Charger_Status",
+      48,
+      48.0,
+      "48",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Side_Stand",
+      1,
+      1.0,
+      "DOWN (Deployed)",
+      "DOWN (Deployed)",
+      [
+       [
+        "Side Stand Down",
+        true
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Charger_Status",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Side_Stand",
+      1,
+      1.0,
+      "DOWN (Deployed)",
+      "DOWN (Deployed)",
+      [
+       [
+        "Side Stand Down",
+        true
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Charger_Status",
+      0,
+      0.0,
+      "Disconnected",
+      "Disconnected",
+      [],
+      "ok"
+     ],
+     [
+      "Side_Stand",
+      0,
+      0.0,
+      "UP (Retracted)",
+      "UP (Retracted)",
+      [
+       [
+        "Side Stand Down",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Charger_Status",
+      0,
+      0.0,
+      "Disconnected",
+      "Disconnected",
+      [],
+      "ok"
+     ],
+     [
+      "Side_Stand",
+      0,
+      0.0,
+      "UP (Retracted)",
+      "UP (Retracted)",
+      [
+       [
+        "Side Stand Down",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x132": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Vol1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Vol1",
+      12299,
+      1.2299,
+      "1.2299",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol2",
+      31317,
+      3.1317,
+      "3.1317",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol3",
+      50335,
+      5.0335,
+      "5.0335",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol4",
+      3817,
+      0.38170000000000004,
+      "0.3817",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Vol1",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol2",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol3",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol4",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Vol1",
+      6,
+      0.0006000000000000001,
+      "0.0006",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Vol1",
+      7,
+      0.0007,
+      "0.0007",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x133": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Vol5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Vol5",
+      12299,
+      1.2299,
+      "1.2299",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol6",
+      31317,
+      3.1317,
+      "3.1317",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol7",
+      50335,
+      5.0335,
+      "5.0335",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol8",
+      3817,
+      0.38170000000000004,
+      "0.3817",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Vol5",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol6",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol7",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol8",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Vol5",
+      6,
+      0.0006000000000000001,
+      "0.0006",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Vol5",
+      7,
+      0.0007,
+      "0.0007",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x134": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Vol9",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol10",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol11",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol12",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Vol9",
+      12299,
+      1.2299,
+      "1.2299",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol10",
+      31317,
+      3.1317,
+      "3.1317",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol11",
+      50335,
+      5.0335,
+      "5.0335",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol12",
+      3817,
+      0.38170000000000004,
+      "0.3817",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Vol9",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol10",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol11",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol12",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Vol9",
+      6,
+      0.0006000000000000001,
+      "0.0006",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol10",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol11",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol12",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Vol9",
+      7,
+      0.0007,
+      "0.0007",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol10",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol11",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol12",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x135": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Vol13",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol14",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Vol13",
+      12299,
+      1.2299,
+      "1.2299",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol14",
+      31317,
+      3.1317,
+      "3.1317",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Vol13",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol14",
+      65535,
+      6.5535000000000005,
+      "6.5535",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Vol13",
+      6,
+      0.0006000000000000001,
+      "0.0006",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol14",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Vol13",
+      7,
+      0.0007,
+      "0.0007",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Vol14",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x136": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Battery_Temp_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Battery_Temp_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Battery_Temp_1",
+      31317,
+      313.17,
+      "313.17",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Battery_Temp_2",
+      3817,
+      38.17,
+      "38.17",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Battery_Temp_1",
+      65535,
+      655.35,
+      "655.35",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Battery_Temp_2",
+      65535,
+      655.35,
+      "655.35",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Battery_Temp_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Battery_Temp_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Battery_Temp_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Battery_Temp_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x137": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Battery_Temp_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Battery_Temp_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Battery_Temp_3",
+      31317,
+      313.17,
+      "313.17",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Battery_Temp_4",
+      3817,
+      38.17,
+      "38.17",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Battery_Temp_3",
+      65535,
+      655.35,
+      "655.35",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Battery_Temp_4",
+      65535,
+      655.35,
+      "655.35",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Battery_Temp_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Battery_Temp_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Battery_Temp_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Battery_Temp_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x148": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Charge_Power_Limit",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Charge_Power_Limit",
+      3817,
+      3817.0,
+      "3817",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Charge_Power_Limit",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Charge_Power_Limit",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Charge_Power_Limit",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x18C": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Vehicle_Speed",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Vehicle_Speed",
+      1328,
+      132.8,
+      "132.8",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Vehicle_Speed",
+      -1,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Vehicle_Speed",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Vehicle_Speed",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x18D": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Motor_RPM",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Motor_RPM",
+      21882,
+      21882.0,
+      "21882",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Motor_RPM",
+      -1,
+      -1.0,
+      "-1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Motor_RPM",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Motor_RPM",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x209": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Battery_SOC",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Battery_SOC",
+      159,
+      159.0,
+      "159",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Battery_SOC",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Battery_SOC",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Battery_SOC",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x28C": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Throttle_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Throttle_2",
+      40826,
+      244.95600000000002,
+      "244.956",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Throttle_2",
+      65535,
+      393.21000000000004,
+      "393.21",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Throttle_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Throttle_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x601": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Battery_Current",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Battery_Current",
+      2052403211,
+      -2052403.2110000001,
+      "-2.0524e+06",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Battery_Current",
+      -1,
+      0.001,
+      "0.001",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Battery_Current",
+      6,
+      -0.006,
+      "-0.006",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Battery_Current",
+      7,
+      -0.007,
+      "-0.007",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ]
+ }
+}

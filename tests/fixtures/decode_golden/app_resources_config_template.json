@@ -1,0 +1,926 @@
+{
+ "config": "app/resources/config_template",
+ "frames": {
+  "0x1000": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "Pack Voltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Current",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack SOC",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature",
+      0,
+      -40.0,
+      "-40",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "Pack Voltage",
+      12299,
+      122.99000000000001,
+      "122.99",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Current",
+      31317,
+      3131.7000000000003,
+      "3131.7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack SOC",
+      159,
+      159.0,
+      "159",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature",
+      -5692,
+      -609.2,
+      "-609.2",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "Pack Voltage",
+      65535,
+      655.35,
+      "655.35",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Current",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack SOC",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature",
+      -1,
+      -40.1,
+      "-40.1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "Pack Voltage",
+      6,
+      0.06,
+      "0.06",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Current",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack SOC",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature",
+      0,
+      -40.0,
+      "-40",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "Pack Voltage",
+      7,
+      0.07,
+      "0.07",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Current",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack SOC",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature",
+      0,
+      -40.0,
+      "-40",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x2000": [
+   {
+    "payload": "000000000000000000000000000000000000",
+    "signals": [
+     [
+      "Cell Voltage_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Voltage Limit",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e33587da2c7ec11365b80",
+    "signals": [
+     [
+      "Cell Voltage_1",
+      12299,
+      12.299,
+      "12.299",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_2",
+      31317,
+      31.317,
+      "31.317",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_3",
+      50335,
+      50.335,
+      "50.335",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_4",
+      3817,
+      3.817,
+      "3.817",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_5",
+      22579,
+      22.579,
+      "22.579",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_6",
+      41597,
+      41.597,
+      "41.597",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_7",
+      60615,
+      60.615,
+      "60.615",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_8",
+      13841,
+      13.841000000000001,
+      "13.841",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Voltage Limit",
+      32859,
+      328.59000000000003,
+      "328.59",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffffffffffffffffffffffff",
+    "signals": [
+     [
+      "Cell Voltage_1",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_2",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_3",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_4",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_5",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_6",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_7",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_8",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Voltage Limit",
+      65535,
+      655.35,
+      "655.35",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "060000000000000000000000000000000000",
+    "signals": [
+     [
+      "Cell Voltage_1",
+      6,
+      0.006,
+      "0.006",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Voltage Limit",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "070000000000000000000000000000000000",
+    "signals": [
+     [
+      "Cell Voltage_1",
+      7,
+      0.007,
+      "0.007",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Voltage Limit",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x3000": [
+   {
+    "payload": "0000",
+    "signals": [
+     [
+      "Fault Flags",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Balancing",
+        false
+       ],
+       [
+        "Charging",
+        false
+       ],
+       [
+        "Discharging",
+        false
+       ],
+       [
+        "Fault",
+        false
+       ],
+       [
+        "Overtemp",
+        false
+       ],
+       [
+        "Overvoltage",
+        false
+       ],
+       [
+        "Ready",
+        false
+       ],
+       [
+        "Undervoltage",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "BMS State",
+      0,
+      0.0,
+      "Idle",
+      "Idle",
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30",
+    "signals": [
+     [
+      "Fault Flags",
+      11,
+      11.0,
+      "Charging, Discharging, Fault",
+      null,
+      [
+       [
+        "Balancing",
+        false
+       ],
+       [
+        "Charging",
+        true
+       ],
+       [
+        "Discharging",
+        true
+       ],
+       [
+        "Fault",
+        true
+       ],
+       [
+        "Overtemp",
+        false
+       ],
+       [
+        "Overvoltage",
+        false
+       ],
+       [
+        "Ready",
+        false
+       ],
+       [
+        "Undervoltage",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "BMS State",
+      48,
+      48.0,
+      "48",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffff",
+    "signals": [
+     [
+      "Fault Flags",
+      255,
+      255.0,
+      "Charging, Discharging, Balancing, Fault, Overvoltage, Undervoltage, Overtemp, Ready",
+      null,
+      [
+       [
+        "Balancing",
+        true
+       ],
+       [
+        "Charging",
+        true
+       ],
+       [
+        "Discharging",
+        true
+       ],
+       [
+        "Fault",
+        true
+       ],
+       [
+        "Overtemp",
+        true
+       ],
+       [
+        "Overvoltage",
+        true
+       ],
+       [
+        "Ready",
+        true
+       ],
+       [
+        "Undervoltage",
+        true
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "BMS State",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600",
+    "signals": [
+     [
+      "Fault Flags",
+      6,
+      6.0,
+      "Discharging, Balancing",
+      null,
+      [
+       [
+        "Balancing",
+        true
+       ],
+       [
+        "Charging",
+        false
+       ],
+       [
+        "Discharging",
+        true
+       ],
+       [
+        "Fault",
+        false
+       ],
+       [
+        "Overtemp",
+        false
+       ],
+       [
+        "Overvoltage",
+        false
+       ],
+       [
+        "Ready",
+        false
+       ],
+       [
+        "Undervoltage",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "BMS State",
+      0,
+      0.0,
+      "Idle",
+      "Idle",
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700",
+    "signals": [
+     [
+      "Fault Flags",
+      7,
+      7.0,
+      "Charging, Discharging, Balancing",
+      null,
+      [
+       [
+        "Balancing",
+        true
+       ],
+       [
+        "Charging",
+        true
+       ],
+       [
+        "Discharging",
+        true
+       ],
+       [
+        "Fault",
+        false
+       ],
+       [
+        "Overtemp",
+        false
+       ],
+       [
+        "Overvoltage",
+        false
+       ],
+       [
+        "Ready",
+        false
+       ],
+       [
+        "Undervoltage",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "BMS State",
+      0,
+      0.0,
+      "Idle",
+      "Idle",
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ]
+ }
+}

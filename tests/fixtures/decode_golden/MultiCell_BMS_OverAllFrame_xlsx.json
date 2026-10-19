@@ -1,0 +1,4342 @@
+{
+ "config": "MultiCell-BMS-OverAllFrame.xlsx",
+ "frames": {
+  "0x1000": [
+   {
+    "payload": "000000000000",
+    "signals": [
+     [
+      "Pack Voltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Current",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4",
+    "signals": [
+     [
+      "Pack Voltage",
+      12299,
+      12.299,
+      "12.299",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Current",
+      -996181419,
+      -996181.419,
+      "-996181",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffff",
+    "signals": [
+     [
+      "Pack Voltage",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Current",
+      -1,
+      -0.001,
+      "-0.001",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "060000000000",
+    "signals": [
+     [
+      "Pack Voltage",
+      6,
+      0.006,
+      "0.006",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Current",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "070000000000",
+    "signals": [
+     [
+      "Pack Voltage",
+      7,
+      0.007,
+      "0.007",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Current",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x2000": [
+   {
+    "payload": "00000000000000000000000000000000000000000000000000000000",
+    "signals": [
+     [
+      "Cell Voltage_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_9",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_10",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_11",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_12",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_13",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_14",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83a8cdf2",
+    "signals": [
+     [
+      "Cell Voltage_1",
+      12299,
+      12.299,
+      "12.299",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_2",
+      31317,
+      31.317,
+      "31.317",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_3",
+      50335,
+      50.335,
+      "50.335",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_4",
+      3817,
+      3.817,
+      "3.817",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_5",
+      22579,
+      22.579,
+      "22.579",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_6",
+      41597,
+      41.597,
+      "41.597",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_7",
+      60615,
+      60.615,
+      "60.615",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_8",
+      13841,
+      13.841000000000001,
+      "13.841",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_9",
+      32859,
+      32.859,
+      "32.859",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_10",
+      51877,
+      51.877,
+      "51.877",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_11",
+      5359,
+      5.359,
+      "5.359",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_12",
+      24121,
+      24.121000000000002,
+      "24.121",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_13",
+      43139,
+      43.139,
+      "43.139",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_14",
+      62157,
+      62.157000000000004,
+      "62.157",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "signals": [
+     [
+      "Cell Voltage_1",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_2",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_3",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_4",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_5",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_6",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_7",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_8",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_9",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_10",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_11",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_12",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_13",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_14",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06000000000000000000000000000000000000000000000000000000",
+    "signals": [
+     [
+      "Cell Voltage_1",
+      6,
+      0.006,
+      "0.006",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_9",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_10",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_11",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_12",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_13",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_14",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07000000000000000000000000000000000000000000000000000000",
+    "signals": [
+     [
+      "Cell Voltage_1",
+      7,
+      0.007,
+      "0.007",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_9",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_10",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_11",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_12",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_13",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage_14",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x3000": [
+   {
+    "payload": "0000000000000000000000000000",
+    "signals": [
+     [
+      "Pack Temperature_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e33587da2c7ec",
+    "signals": [
+     [
+      "Pack Temperature_1",
+      12299,
+      1229.9,
+      "1229.9",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_2",
+      31317,
+      3131.7000000000003,
+      "3131.7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_3",
+      -15201,
+      -1520.1000000000001,
+      "-1520.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_4",
+      3817,
+      381.70000000000005,
+      "381.7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_5",
+      22579,
+      2257.9,
+      "2257.9",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_6",
+      -23939,
+      -2393.9,
+      "-2393.9",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_7",
+      -4921,
+      -492.1,
+      "-492.1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffffffffffffffff",
+    "signals": [
+     [
+      "Pack Temperature_1",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_2",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_3",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_4",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_5",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_6",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_7",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000000000000000",
+    "signals": [
+     [
+      "Pack Temperature_1",
+      6,
+      0.6000000000000001,
+      "0.6",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000000000000000",
+    "signals": [
+     [
+      "Pack Temperature_1",
+      7,
+      0.7000000000000001,
+      "0.7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pack Temperature_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x4000": [
+   {
+    "payload": "00000000000000000000000000000000",
+    "signals": [
+     [
+      "Balancing Resistor Temperature_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Balancing Resistor Temperature_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Balancing Resistor Temperature_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BDPS MOSFET Temperature_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BDPS MOSFET Temperature_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pre-Charge Resistors Temperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Ambient Temperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC IC Temperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e33587da2c7ec1136",
+    "signals": [
+     [
+      "Balancing Resistor Temperature_1",
+      12299,
+      1229.9,
+      "1229.9",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Balancing Resistor Temperature_2",
+      31317,
+      3131.7000000000003,
+      "3131.7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Balancing Resistor Temperature_3",
+      -15201,
+      -1520.1000000000001,
+      "-1520.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BDPS MOSFET Temperature_1",
+      3817,
+      381.70000000000005,
+      "381.7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BDPS MOSFET Temperature_2",
+      22579,
+      2257.9,
+      "2257.9",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pre-Charge Resistors Temperature",
+      -23939,
+      -2393.9,
+      "-2393.9",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Ambient Temperature",
+      -4921,
+      -492.1,
+      "-492.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC IC Temperature",
+      13841,
+      1384.1000000000001,
+      "1384.1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffffffffffffffffffff",
+    "signals": [
+     [
+      "Balancing Resistor Temperature_1",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Balancing Resistor Temperature_2",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Balancing Resistor Temperature_3",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BDPS MOSFET Temperature_1",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BDPS MOSFET Temperature_2",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pre-Charge Resistors Temperature",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Ambient Temperature",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC IC Temperature",
+      -1,
+      -0.1,
+      "-0.1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06000000000000000000000000000000",
+    "signals": [
+     [
+      "Balancing Resistor Temperature_1",
+      6,
+      0.6000000000000001,
+      "0.6",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Balancing Resistor Temperature_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Balancing Resistor Temperature_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BDPS MOSFET Temperature_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BDPS MOSFET Temperature_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pre-Charge Resistors Temperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Ambient Temperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC IC Temperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07000000000000000000000000000000",
+    "signals": [
+     [
+      "Balancing Resistor Temperature_1",
+      7,
+      0.7000000000000001,
+      "0.7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Balancing Resistor Temperature_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Balancing Resistor Temperature_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BDPS MOSFET Temperature_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BDPS MOSFET Temperature_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Pre-Charge Resistors Temperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Ambient Temperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC IC Temperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x5000": [
+   {
+    "payload": "00000000000000000000000000000000000000000000",
+    "signals": [
+     [
+      "CELL_OV_FLT (CT overvoltage fault)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CELL_UV_FLT (CT undervoltage fault)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CB_OPEN_FLT (Open CB fault)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CB_SHORT_FLT (Short CB fault)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "GPIO_STS (GPIO status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "AN_OT_UT_FLT (AN over and undertemperature)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "GPIO_SHORT_ANx_OPEN_STS (Short GPIO/open AN diagnostic)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "COM_STATUS (Number of communication errors detected)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT1_STATUS (Fault status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT2_STATUS (Fault status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT3_STATUS (Fault status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e33587da2c7ec11365b80a5caef14",
+    "signals": [
+     [
+      "CELL_OV_FLT (CT overvoltage fault)",
+      12299,
+      12299.0,
+      "12299",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CELL_UV_FLT (CT undervoltage fault)",
+      31317,
+      31317.0,
+      "31317",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CB_OPEN_FLT (Open CB fault)",
+      50335,
+      50335.0,
+      "50335",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CB_SHORT_FLT (Short CB fault)",
+      3817,
+      3817.0,
+      "3817",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "GPIO_STS (GPIO status)",
+      22579,
+      22579.0,
+      "22579",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "AN_OT_UT_FLT (AN over and undertemperature)",
+      41597,
+      41597.0,
+      "41597",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "GPIO_SHORT_ANx_OPEN_STS (Short GPIO/open AN diagnostic)",
+      60615,
+      60615.0,
+      "60615",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "COM_STATUS (Number of communication errors detected)",
+      13841,
+      13841.0,
+      "13841",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT1_STATUS (Fault status)",
+      32859,
+      32859.0,
+      "32859",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT2_STATUS (Fault status)",
+      51877,
+      51877.0,
+      "51877",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT3_STATUS (Fault status)",
+      5359,
+      5359.0,
+      "5359",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffffffffffffffffffffffffffffffff",
+    "signals": [
+     [
+      "CELL_OV_FLT (CT overvoltage fault)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CELL_UV_FLT (CT undervoltage fault)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CB_OPEN_FLT (Open CB fault)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CB_SHORT_FLT (Short CB fault)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "GPIO_STS (GPIO status)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "AN_OT_UT_FLT (AN over and undertemperature)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "GPIO_SHORT_ANx_OPEN_STS (Short GPIO/open AN diagnostic)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "COM_STATUS (Number of communication errors detected)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT1_STATUS (Fault status)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT2_STATUS (Fault status)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT3_STATUS (Fault status)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06000000000000000000000000000000000000000000",
+    "signals": [
+     [
+      "CELL_OV_FLT (CT overvoltage fault)",
+      6,
+      6.0,
+      "6",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CELL_UV_FLT (CT undervoltage fault)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CB_OPEN_FLT (Open CB fault)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CB_SHORT_FLT (Short CB fault)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "GPIO_STS (GPIO status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "AN_OT_UT_FLT (AN over and undertemperature)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "GPIO_SHORT_ANx_OPEN_STS (Short GPIO/open AN diagnostic)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "COM_STATUS (Number of communication errors detected)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT1_STATUS (Fault status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT2_STATUS (Fault status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT3_STATUS (Fault status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07000000000000000000000000000000000000000000",
+    "signals": [
+     [
+      "CELL_OV_FLT (CT overvoltage fault)",
+      7,
+      7.0,
+      "7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CELL_UV_FLT (CT undervoltage fault)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CB_OPEN_FLT (Open CB fault)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CB_SHORT_FLT (Short CB fault)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "GPIO_STS (GPIO status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "AN_OT_UT_FLT (AN over and undertemperature)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "GPIO_SHORT_ANx_OPEN_STS (Short GPIO/open AN diagnostic)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "COM_STATUS (Number of communication errors detected)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT1_STATUS (Fault status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT2_STATUS (Fault status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FAULT3_STATUS (Fault status)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x6000": [
+   {
+    "payload": "00000000",
+    "signals": [
+     [
+      "Load Voltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a",
+    "signals": [
+     [
+      "Load Voltage",
+      2052403211,
+      2052403.2110000001,
+      "2.0524e+06",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffff",
+    "signals": [
+     [
+      "Load Voltage",
+      -1,
+      -0.001,
+      "-0.001",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06000000",
+    "signals": [
+     [
+      "Load Voltage",
+      6,
+      0.006,
+      "0.006",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07000000",
+    "signals": [
+     [
+      "Load Voltage",
+      7,
+      0.007,
+      "0.007",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x7000": [
+   {
+    "payload": "0000",
+    "signals": [
+     [
+      "Cell Balancing Status",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Cell 1",
+        false
+       ],
+       [
+        "Cell 10",
+        false
+       ],
+       [
+        "Cell 11",
+        false
+       ],
+       [
+        "Cell 12",
+        false
+       ],
+       [
+        "Cell 13",
+        false
+       ],
+       [
+        "Cell 14",
+        false
+       ],
+       [
+        "Cell 2",
+        false
+       ],
+       [
+        "Cell 3",
+        false
+       ],
+       [
+        "Cell 4",
+        false
+       ],
+       [
+        "Cell 5",
+        false
+       ],
+       [
+        "Cell 6",
+        false
+       ],
+       [
+        "Cell 7",
+        false
+       ],
+       [
+        "Cell 8",
+        false
+       ],
+       [
+        "Cell 9",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30",
+    "signals": [
+     [
+      "Cell Balancing Status",
+      12299,
+      12299.0,
+      "Cell 1, Cell 2, Cell 4, Cell 13, Cell 14",
+      null,
+      [
+       [
+        "Cell 1",
+        true
+       ],
+       [
+        "Cell 10",
+        false
+       ],
+       [
+        "Cell 11",
+        false
+       ],
+       [
+        "Cell 12",
+        false
+       ],
+       [
+        "Cell 13",
+        true
+       ],
+       [
+        "Cell 14",
+        true
+       ],
+       [
+        "Cell 2",
+        true
+       ],
+       [
+        "Cell 3",
+        false
+       ],
+       [
+        "Cell 4",
+        true
+       ],
+       [
+        "Cell 5",
+        false
+       ],
+       [
+        "Cell 6",
+        false
+       ],
+       [
+        "Cell 7",
+        false
+       ],
+       [
+        "Cell 8",
+        false
+       ],
+       [
+        "Cell 9",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffff",
+    "signals": [
+     [
+      "Cell Balancing Status",
+      65535,
+      65535.0,
+      "Cell 1, Cell 2, Cell 3, Cell 4, Cell 5, Cell 6, Cell 7, Cell 8, Cell 9, Cell 10, Cell 11, Cell 12, Cell 13, Cell 14",
+      null,
+      [
+       [
+        "Cell 1",
+        true
+       ],
+       [
+        "Cell 10",
+        true
+       ],
+       [
+        "Cell 11",
+        true
+       ],
+       [
+        "Cell 12",
+        true
+       ],
+       [
+        "Cell 13",
+        true
+       ],
+       [
+        "Cell 14",
+        true
+       ],
+       [
+        "Cell 2",
+        true
+       ],
+       [
+        "Cell 3",
+        true
+       ],
+       [
+        "Cell 4",
+        true
+       ],
+       [
+        "Cell 5",
+        true
+       ],
+       [
+        "Cell 6",
+        true
+       ],
+       [
+        "Cell 7",
+        true
+       ],
+       [
+        "Cell 8",
+        true
+       ],
+       [
+        "Cell 9",
+        true
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600",
+    "signals": [
+     [
+      "Cell Balancing Status",
+      6,
+      6.0,
+      "Cell 2, Cell 3",
+      null,
+      [
+       [
+        "Cell 1",
+        false
+       ],
+       [
+        "Cell 10",
+        false
+       ],
+       [
+        "Cell 11",
+        false
+       ],
+       [
+        "Cell 12",
+        false
+       ],
+       [
+        "Cell 13",
+        false
+       ],
+       [
+        "Cell 14",
+        false
+       ],
+       [
+        "Cell 2",
+        true
+       ],
+       [
+        "Cell 3",
+        true
+       ],
+       [
+        "Cell 4",
+        false
+       ],
+       [
+        "Cell 5",
+        false
+       ],
+       [
+        "Cell 6",
+        false
+       ],
+       [
+        "Cell 7",
+        false
+       ],
+       [
+        "Cell 8",
+        false
+       ],
+       [
+        "Cell 9",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700",
+    "signals": [
+     [
+      "Cell Balancing Status",
+      7,
+      7.0,
+      "Cell 1, Cell 2, Cell 3",
+      null,
+      [
+       [
+        "Cell 1",
+        true
+       ],
+       [
+        "Cell 10",
+        false
+       ],
+       [
+        "Cell 11",
+        false
+       ],
+       [
+        "Cell 12",
+        false
+       ],
+       [
+        "Cell 13",
+        false
+       ],
+       [
+        "Cell 14",
+        false
+       ],
+       [
+        "Cell 2",
+        true
+       ],
+       [
+        "Cell 3",
+        true
+       ],
+       [
+        "Cell 4",
+        false
+       ],
+       [
+        "Cell 5",
+        false
+       ],
+       [
+        "Cell 6",
+        false
+       ],
+       [
+        "Cell 7",
+        false
+       ],
+       [
+        "Cell 8",
+        false
+       ],
+       [
+        "Cell 9",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x8000": [
+   {
+    "payload": "0000",
+    "signals": [
+     [
+      "Fault Status",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Cell Over Voltage (COV)",
+        false
+       ],
+       [
+        "Cell Under Voltage (CUV)",
+        false
+       ],
+       [
+        "Cell Voltage Imbalance",
+        false
+       ],
+       [
+        "Over Charge Protection (OCP)",
+        false
+       ],
+       [
+        "Over Current (OC)",
+        false
+       ],
+       [
+        "Over Temperature (OT)",
+        false
+       ],
+       [
+        "Over-Discharge Protection (ODP)",
+        false
+       ],
+       [
+        "Pack Over Voltage (POV)",
+        false
+       ],
+       [
+        "Pack Under Voltage (PUV)",
+        false
+       ],
+       [
+        "Thermal Imbalance",
+        false
+       ],
+       [
+        "Under Temperature (UT)",
+        false
+       ],
+       [
+        "Voltage Sensing Mismatch",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30",
+    "signals": [
+     [
+      "Fault Status",
+      12299,
+      12299.0,
+      "Cell Over Voltage (COV), Cell Under Voltage (CUV), Pack Under Voltage (PUV)",
+      null,
+      [
+       [
+        "Cell Over Voltage (COV)",
+        true
+       ],
+       [
+        "Cell Under Voltage (CUV)",
+        true
+       ],
+       [
+        "Cell Voltage Imbalance",
+        false
+       ],
+       [
+        "Over Charge Protection (OCP)",
+        false
+       ],
+       [
+        "Over Current (OC)",
+        false
+       ],
+       [
+        "Over Temperature (OT)",
+        false
+       ],
+       [
+        "Over-Discharge Protection (ODP)",
+        false
+       ],
+       [
+        "Pack Over Voltage (POV)",
+        false
+       ],
+       [
+        "Pack Under Voltage (PUV)",
+        true
+       ],
+       [
+        "Thermal Imbalance",
+        false
+       ],
+       [
+        "Under Temperature (UT)",
+        false
+       ],
+       [
+        "Voltage Sensing Mismatch",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffff",
+    "signals": [
+     [
+      "Fault Status",
+      65535,
+      65535.0,
+      "Cell Over Voltage (COV), Cell Under Voltage (CUV), Pack Over Voltage (POV), Pack Under Voltage (PUV), Voltage Sensing Mismatch, Over Current (OC), Over Temperature (OT), Under Temperature (UT), Over-Discharge Protection (ODP), Over Charge Protection (OCP), Cell Voltage Imbalance, Thermal Imbalance",
+      null,
+      [
+       [
+        "Cell Over Voltage (COV)",
+        true
+       ],
+       [
+        "Cell Under Voltage (CUV)",
+        true
+       ],
+       [
+        "Cell Voltage Imbalance",
+        true
+       ],
+       [
+        "Over Charge Protection (OCP)",
+        true
+       ],
+       [
+        "Over Current (OC)",
+        true
+       ],
+       [
+        "Over Temperature (OT)",
+        true
+       ],
+       [
+        "Over-Discharge Protection (ODP)",
+        true
+       ],
+       [
+        "Pack Over Voltage (POV)",
+        true
+       ],
+       [
+        "Pack Under Voltage (PUV)",
+        true
+       ],
+       [
+        "Thermal Imbalance",
+        true
+       ],
+       [
+        "Under Temperature (UT)",
+        true
+       ],
+       [
+        "Voltage Sensing Mismatch",
+        true
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600",
+    "signals": [
+     [
+      "Fault Status",
+      6,
+      6.0,
+      "Cell Under Voltage (CUV), Pack Over Voltage (POV)",
+      null,
+      [
+       [
+        "Cell Over Voltage (COV)",
+        false
+       ],
+       [
+        "Cell Under Voltage (CUV)",
+        true
+       ],
+       [
+        "Cell Voltage Imbalance",
+        false
+       ],
+       [
+        "Over Charge Protection (OCP)",
+        false
+       ],
+       [
+        "Over Current (OC)",
+        false
+       ],
+       [
+        "Over Temperature (OT)",
+        false
+       ],
+       [
+        "Over-Discharge Protection (ODP)",
+        false
+       ],
+       [
+        "Pack Over Voltage (POV)",
+        true
+       ],
+       [
+        "Pack Under Voltage (PUV)",
+        false
+       ],
+       [
+        "Thermal Imbalance",
+        false
+       ],
+       [
+        "Under Temperature (UT)",
+        false
+       ],
+       [
+        "Voltage Sensing Mismatch",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700",
+    "signals": [
+     [
+      "Fault Status",
+      7,
+      7.0,
+      "Cell Over Voltage (COV), Cell Under Voltage (CUV), Pack Over Voltage (POV)",
+      null,
+      [
+       [
+        "Cell Over Voltage (COV)",
+        true
+       ],
+       [
+        "Cell Under Voltage (CUV)",
+        true
+       ],
+       [
+        "Cell Voltage Imbalance",
+        false
+       ],
+       [
+        "Over Charge Protection (OCP)",
+        false
+       ],
+       [
+        "Over Current (OC)",
+        false
+       ],
+       [
+        "Over Temperature (OT)",
+        false
+       ],
+       [
+        "Over-Discharge Protection (ODP)",
+        false
+       ],
+       [
+        "Pack Over Voltage (POV)",
+        true
+       ],
+       [
+        "Pack Under Voltage (PUV)",
+        false
+       ],
+       [
+        "Thermal Imbalance",
+        false
+       ],
+       [
+        "Under Temperature (UT)",
+        false
+       ],
+       [
+        "Voltage Sensing Mismatch",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x9000": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "FET Status",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Main FET",
+        false
+       ],
+       [
+        "Pre-Charge FET",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "FET Status",
+      11,
+      11.0,
+      "Main FET, Pre-Charge FET",
+      null,
+      [
+       [
+        "Main FET",
+        true
+       ],
+       [
+        "Pre-Charge FET",
+        true
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "FET Status",
+      255,
+      255.0,
+      "Main FET, Pre-Charge FET",
+      null,
+      [
+       [
+        "Main FET",
+        true
+       ],
+       [
+        "Pre-Charge FET",
+        true
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "FET Status",
+      6,
+      6.0,
+      "Pre-Charge FET",
+      null,
+      [
+       [
+        "Main FET",
+        false
+       ],
+       [
+        "Pre-Charge FET",
+        true
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "FET Status",
+      7,
+      7.0,
+      "Main FET, Pre-Charge FET",
+      null,
+      [
+       [
+        "Main FET",
+        true
+       ],
+       [
+        "Pre-Charge FET",
+        true
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x9001": [
+   {
+    "payload": "00000000000000000000000000",
+    "signals": [
+     [
+      "BMS Status",
+      0,
+      0.0,
+      "Rest",
+      "Rest",
+      [],
+      "ok"
+     ],
+     [
+      "Cumulative Capacity",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cycle Count",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOC (OCV)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOC (CC)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOH",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e33587da2c7",
+    "signals": [
+     [
+      "BMS Status",
+      11,
+      11.0,
+      "11",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cumulative Capacity",
+      2675594544,
+      2675594544.0,
+      "2.67559e+09",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cycle Count",
+      59844,
+      59844.0,
+      "59844",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOC (OCV)",
+      13070,
+      130.7,
+      "130.7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOC (CC)",
+      32088,
+      32088.0,
+      "32088",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOH",
+      51106,
+      511.06,
+      "511.06",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffffffffffffff",
+    "signals": [
+     [
+      "BMS Status",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cumulative Capacity",
+      4294967295,
+      4294967295.0,
+      "4.29497e+09",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cycle Count",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOC (OCV)",
+      65535,
+      655.35,
+      "655.35",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOC (CC)",
+      65535,
+      65535.0,
+      "65535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOH",
+      65535,
+      655.35,
+      "655.35",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06000000000000000000000000",
+    "signals": [
+     [
+      "BMS Status",
+      6,
+      6.0,
+      "6",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cumulative Capacity",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cycle Count",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOC (OCV)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOC (CC)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOH",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07000000000000000000000000",
+    "signals": [
+     [
+      "BMS Status",
+      7,
+      7.0,
+      "7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cumulative Capacity",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cycle Count",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOC (OCV)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOC (CC)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SOH",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x9002": [
+   {
+    "payload": "00000000000000000000000000000000000000000000000000",
+    "signals": [
+     [
+      "BCC Status_1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_9",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_10",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_11",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_12",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_13",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_14",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_15",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_16",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_17",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_18",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_19",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_20",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_21",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_22",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_23",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_24",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_25",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e33587da2c7ec11365b80a5caef14395e83",
+    "signals": [
+     [
+      "BCC Status_1",
+      11,
+      11.0,
+      "11",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_2",
+      48,
+      48.0,
+      "48",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_3",
+      85,
+      85.0,
+      "85",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_4",
+      122,
+      122.0,
+      "122",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_5",
+      159,
+      159.0,
+      "159",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_6",
+      196,
+      196.0,
+      "196",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_7",
+      233,
+      233.0,
+      "233",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_8",
+      14,
+      14.0,
+      "14",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_9",
+      51,
+      51.0,
+      "51",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_10",
+      88,
+      88.0,
+      "88",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_11",
+      125,
+      125.0,
+      "125",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_12",
+      162,
+      162.0,
+      "162",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_13",
+      199,
+      199.0,
+      "199",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_14",
+      236,
+      236.0,
+      "236",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_15",
+      17,
+      17.0,
+      "17",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_16",
+      54,
+      54.0,
+      "54",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_17",
+      91,
+      91.0,
+      "91",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_18",
+      128,
+      128.0,
+      "128",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_19",
+      165,
+      165.0,
+      "165",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_20",
+      202,
+      202.0,
+      "202",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_21",
+      239,
+      239.0,
+      "239",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_22",
+      20,
+      20.0,
+      "20",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_23",
+      57,
+      57.0,
+      "57",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_24",
+      94,
+      94.0,
+      "94",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_25",
+      131,
+      131.0,
+      "131",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffffffffffffffffffffffffffffffffffffff",
+    "signals": [
+     [
+      "BCC Status_1",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_2",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_3",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_4",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_5",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_6",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_7",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_8",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_9",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_10",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_11",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_12",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_13",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_14",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_15",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_16",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_17",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_18",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_19",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_20",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_21",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_22",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_23",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_24",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_25",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06000000000000000000000000000000000000000000000000",
+    "signals": [
+     [
+      "BCC Status_1",
+      6,
+      6.0,
+      "6",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_9",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_10",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_11",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_12",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_13",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_14",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_15",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_16",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_17",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_18",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_19",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_20",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_21",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_22",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_23",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_24",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_25",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07000000000000000000000000000000000000000000000000",
+    "signals": [
+     [
+      "BCC Status_1",
+      7,
+      7.0,
+      "7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_5",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_6",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_7",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_8",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_9",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_10",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_11",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_12",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_13",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_14",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_15",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_16",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_17",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_18",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_19",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_20",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_21",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_22",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_23",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_24",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "BCC Status_25",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ]
+ }
+}

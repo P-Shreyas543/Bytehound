@@ -1,6 +1,6 @@
 # Canonical protocol configuration — design for review (Part C)
 
-Status: **DRAFT for owner review — no loader code changed yet.**
+Status: **Approved 2026-10-19** (decisions in §9). Implementation tracked in `Plane.md` §0.0 Part C.
 Source of requirements: the "ByteHound — Production Refactoring and Protocol
 Configuration" specification (§2–§5, §9–§12) and `Plane.md` §0.5. Facts below
 were taken from the repository on 2026-10-19 (commit `44f5f9e`).
@@ -272,7 +272,17 @@ protocol from CSV or xlsx gives the same fingerprint). Recorded in
 
 ---
 
-## 9. Decisions requested
+## 9. Decisions (answered by the owner on 2026-10-19: all as proposed)
+
+| # | Decision |
+|---|---|
+| 1 | Frame IDs are hex strings (`"0x1000"`) |
+| 2 | Structural validation in-house; JSON Schema document shipped for tools |
+| 3 | Activating a configuration while connected reconnects automatically with it (a logging session records a gap and continues in a new segment) |
+| 4 | Ather `0x101` branch → generic config-driven value rules + automatic migration on import (decoded values unchanged) |
+| 5 | Negative clamp → explicit per-signal setting, default on (decoded values unchanged) |
+
+The original options:
 
 1. Frame IDs in JSON: hex strings (proposed) or integers.
 2. Structural validation: in-house (proposed) or add `jsonschema`.

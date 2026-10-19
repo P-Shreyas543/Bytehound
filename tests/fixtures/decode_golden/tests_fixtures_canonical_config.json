@@ -1,0 +1,354 @@
+{
+ "config": "tests/fixtures/canonical_config",
+ "frames": {
+  "0x10": [
+   {
+    "payload": "00000000",
+    "signals": [
+     [
+      "Cell Voltage 1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage 2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a",
+    "signals": [
+     [
+      "Cell Voltage 1",
+      2864,
+      2.864,
+      "2.864",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage 2",
+      21882,
+      21.882,
+      "21.882",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffff",
+    "signals": [
+     [
+      "Cell Voltage 1",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage 2",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06000000",
+    "signals": [
+     [
+      "Cell Voltage 1",
+      1536,
+      1.536,
+      "1.536",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage 2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07000000",
+    "signals": [
+     [
+      "Cell Voltage 1",
+      1792,
+      1.792,
+      "1.792",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Voltage 2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x30": [
+   {
+    "payload": "00000000",
+    "signals": [
+     [
+      "BMS State",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FET Status",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Main FET Status",
+        false
+       ],
+       [
+        "Pre Charge FET Status",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "Fault Status",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Cell UV",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a",
+    "signals": [
+     [
+      "BMS State",
+      11,
+      11.0,
+      "11",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FET Status",
+      48,
+      48.0,
+      "None",
+      null,
+      [
+       [
+        "Main FET Status",
+        false
+       ],
+       [
+        "Pre Charge FET Status",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "Fault Status",
+      21882,
+      21882.0,
+      "None",
+      null,
+      [
+       [
+        "Cell UV",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffff",
+    "signals": [
+     [
+      "BMS State",
+      255,
+      255.0,
+      "255",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FET Status",
+      255,
+      255.0,
+      "Main FET Status, Pre Charge FET Status",
+      null,
+      [
+       [
+        "Main FET Status",
+        true
+       ],
+       [
+        "Pre Charge FET Status",
+        true
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "Fault Status",
+      65535,
+      65535.0,
+      "Cell UV",
+      null,
+      [
+       [
+        "Cell UV",
+        true
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06000000",
+    "signals": [
+     [
+      "BMS State",
+      6,
+      6.0,
+      "6",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FET Status",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Main FET Status",
+        false
+       ],
+       [
+        "Pre Charge FET Status",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "Fault Status",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Cell UV",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07000000",
+    "signals": [
+     [
+      "BMS State",
+      7,
+      7.0,
+      "7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "FET Status",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Main FET Status",
+        false
+       ],
+       [
+        "Pre Charge FET Status",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "Fault Status",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Cell UV",
+        false
+       ]
+      ],
+      "ok"
+     ]
+    ]
+   }
+  ]
+ }
+}

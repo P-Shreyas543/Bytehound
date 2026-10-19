@@ -270,8 +270,20 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
       — canonical JSON v1 (pre-expansion, typed, stable ids, extensions
       preserved), validation, fingerprint, import/export/migration,
       lifecycle, clean-ups, tests, steps C0–C6
-- [ ] **Owner decisions 1–5** (design §9) — pending
-- [ ] C0 … C6 — not started (waiting for the decisions)
+- [x] **Owner decisions 1–5 (2026-10-19): all as proposed** — hex frame
+      IDs; in-house validation + shipped schema; auto-reconnect on
+      activation while connected; generic value rules replace the Ather
+      branch (with migration); clamp becomes a per-signal setting, default on
+- [x] **C0 baseline:** `tests/test_config_corpus.py` + fixtures from
+      `tools/make_decode_golden.py` — all 23 configurations, 5 deterministic
+      payloads per frame (incl. the Ather 0x101 trigger bytes 6 / 7 and 8
+      values at the negative clamp), **1,150 frame decodes pinned**; any
+      later change to a decoded value fails the suite. Config swap while
+      connected **verified**: the worker keeps decoding with the old
+      configuration (old frames 0x1000… vs the window's 0x6000…); the
+      interactive path shows a "Reconnect required" toast, the programmatic
+      path nothing. Fixed by decision 3 in C4
+- [ ] C1 … C6
 
 **Closure — scope traceability (Parts C, D, E, G, F12)**
 
