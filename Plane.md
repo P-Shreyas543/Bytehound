@@ -121,7 +121,7 @@ Updated after every phase. Release recommendation so far: **NOT READY**.
       counter signal. Scope decision needed (closure table)
 - [ ] FTDI / CH340 / CP2102 — **BLOCKED** (no adapters)
 
-**Phase 4 — rotation, polling, shutdown**
+**Phase 4 — rotation, polling, shutdown** — commit `75286bb`
 
 - [x] **Two silent-loss defects found and fixed:**
       - the segment's event logger had no `on_error`: a write error (disk
@@ -158,12 +158,60 @@ Updated after every phase. Release recommendation so far: **NOT READY**.
       workaround stays until several clean normal-exit runs are recorded
 - [ ] Frozen exe closed normally / killed — NOT RUN (Phase 5)
 
-**Phase 5 — packaging** — [x] frozen build builds (into scratch, `dist/`
-untouched); [ ] packaged workflow checks; clean Windows machine **BLOCKED**
+**Phase 5 — packaging**
 
-**Phase 6 — soak and security** — [ ] 24 h soak **BLOCKED** (needs the
-bench for a day); [ ] pip-audit / Bandit (not installed — ask before
-adding); [ ] scoped mypy
+- [x] Frozen build from `75286bb`: `python -m PyInstaller --noconfirm
+      --distpath <scratch> --workpath <scratch> Bytehound.spec` (the
+      documented step; `build.py` not used because it rewrites
+      version.json and may auto-commit). Python 3.10.11, PyInstaller
+      6.20.0, `Bytehound.exe` sha256 `9a368cde…bcd653`, 278 MB; `dist/`
+      untouched
+- [x] Frozen CLI: `--selftest-finish` PASS, `--selftest-capture` PASS,
+      `--validate` template → 0, broken config → 1, missing path → 1
+- [x] Frozen windowed GUI launch + normal close 3/3: window in 3.1–3.6 s,
+      exit 0, no process left (user settings backed up and restored)
+- [ ] Connect / log / rotate inside the frozen GUI — **NOT RUN** (needs UI
+      automation; the helper and capture paths are covered by the
+      self-tests)
+- [ ] Clean Windows machine — **BLOCKED**
+
+**TCP / UDP on a real network** (Raspberry Pi 4-class, Debian 13, as the
+device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
+
+- [x] **10/10 over the direct Ethernet cable and 10/10 over Wi-Fi**: TCP
+      at 1,000 and 5,000 cycles/s (20,000 frames/s) byte-exact with raw
+      capture; peer close delivers every frame first (F15); drop +
+      reconnect keeps the sequence complete; 300 TX commands intact
+      (F13); UDP at 1,000 / 5,000 cycles/s and 60 KB datagrams (F4) with
+      0 cycles lost; ICMP port unreachable does not end the session (F14)
+- [ ] **Limitation found:** the TCP and UDP transports are IPv4-only
+      (`AF_INET`); a device reachable only over IPv6 (e.g. a link-local
+      Ethernet port) cannot be used. Not fixed — scope decision
+- [ ] **Behaviour to document:** manual TX commands are spaced by the
+      poll TX-gap floor (100 ms → at most 10 commands/s); the TX queue
+      holds 256 and drops the excess with a warning. Correct, but a
+      script sending many writes will lose commands unless the gap is
+      lowered
+- Lab note: the Pi's `netplan-eth0` profile is DHCP; on a direct cable it
+  fails every ~45 s and NetworkManager wipes eth0's addresses. Tests used
+  a temporary static profile (removed afterwards)
+
+**Phase 6 — soak and security**
+
+- [x] Manual review: no `shell=True`, no `pickle`/`yaml` load of untrusted
+      data; updates over HTTPS with sha256 (missing hash refused)
+- [x] **Fixed (`07b2d6b`):** update installer downloaded to a fixed name
+      in %TEMP% and launched later without re-checking (CWE-377/367) →
+      private random directory + re-hash right before launch
+- [ ] **Open (Low):** math-channel `eval` with `__builtins__=None` and
+      `np` in scope is not a sandbox. Input is only the user's own
+      expressions from their own registry settings, so exploiting it
+      needs code execution as that user already. Recommended: AST
+      allow-list before eval (needs a compatibility review of existing
+      expressions)
+- [ ] pip-audit / Bandit — approved 2026-10-19, results below
+- [ ] Scoped mypy — NOT RUN (no project configuration)
+- [ ] 24 h soak — **BLOCKED** (bench needed for a day)
 
 **Closure** — [ ] traceability table for Parts C, D, E, G and F12;
 [ ] final report (task.md §10)
