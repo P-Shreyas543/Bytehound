@@ -101,3 +101,12 @@ def test_shipped_schema_matches_the_checker():
     assert schema["properties"]["format"]["const"] == canonical.FORMAT
     assert schema["properties"]["schema_version"]["const"] == canonical.SCHEMA_VERSION
     assert set(schema["required"]) == {"format", "schema_version", "tables"}
+
+
+def test_value_rule_beyond_the_payload_is_a_warning():
+    doc = _doc()
+    row = doc["tables"]["variables"][0]
+    doc["tables"]["value_rules"] = [{"id_or_address": row["id_or_address"], "signal_name": row["signal_name"],
+                                     "source_byte": 40, "match_values": "1"}]
+    report = validate(doc)
+    assert report.ok and any("value rule reads byte 40" in w.message for w in report.warnings)

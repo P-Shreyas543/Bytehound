@@ -314,6 +314,9 @@ class SignalSpec:
     max_value: Optional[float] = None
     bit_offset: Optional[int] = None
     bit_length: Optional[int] = None
+    # Decision 5 (Part C): a value in -0.5..0 shows as 0 when min_value >= 0
+    # (noise around zero). Per signal; on by default as before.
+    clamp_negative: bool = True
 
     @property
     def is_boolean(self) -> bool:
@@ -408,6 +411,22 @@ class PollingScheduleSpec:
 
 
 @dataclass(frozen=True)
+class ValueRuleSpec:
+    """Replace a signal's value by one of two constants depending on a raw
+    payload byte (Part C decision 4): ``value_if_match`` when
+    ``payload[source_byte]`` is one of ``match_values``, else
+    ``value_otherwise``. Replaces a decoder branch that was hard-coded for
+    one customer's frame 0x101."""
+
+    frame_id: int
+    signal_name: str
+    source_byte: int
+    match_values: frozenset
+    value_if_match: float = 1.0
+    value_otherwise: float = 0.0
+
+
+@dataclass(frozen=True)
 class SequenceCounterSpec:
     """A signal that counts up by ``step`` per frame and wraps at
     ``2**bits`` (an alive / rolling counter). Lets the application detect
@@ -454,6 +473,8 @@ class FrameConfig:
     polling_schedules: List[PollingScheduleSpec] = field(default_factory=list)
     # Optional ``sequence_counters`` table: frame_id -> counter (F12).
     sequence_counters: Dict[int, SequenceCounterSpec] = field(default_factory=dict)
+    # Optional ``value_rules`` table: (frame_id, signal_name) -> rule.
+    value_rules: Dict[tuple[int, str], ValueRuleSpec] = field(default_factory=dict)
 
     @property
     def all_signals(self) -> List[SignalSpec]:

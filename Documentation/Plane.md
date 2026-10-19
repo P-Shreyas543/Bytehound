@@ -353,13 +353,25 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
       decoding with the new config, 2 segments `config` / `config_2`, gap,
       history entry; cancel / invalid leave everything unchanged). Tests use
       a temp history folder (conftest), never the user's app data
-- [ ] C5 clean-ups: dead code, Ather value rules (decision 4), clamp setting
-      (decision 5) — **NOT DONE: implementation discarded at the owner's
-      request (2026-10-19)**, never committed. Still true in the code: 151
-      lines of dead duplicate helpers in `config_loader.py` (shadowed, no
-      effect), the hard-coded frame 0x101 `Drive_Mode` / `Key_Switch` branch
-      in `frame_decoder.py`, the always-on negative clamp. Decisions 4 and 5
-      stay recorded but unimplemented
+- [x] **C5 clean-ups** (first implementation discarded at the owner's
+      request, then re-implemented on the owner's go-ahead the same day):
+      (1) **dead code** — 151 lines / 12 shadowed duplicate loader helpers
+      (incl. a half-written `_parse_protocol`) removed; the 12 live
+      functions are bytecode-identical before/after. (2) **Decision 4** —
+      the decoder's hard-coded frame `0x101` branch is replaced by an
+      optional **`value_rules`** table. **Bug demonstrated on the old code:**
+      a voltage-like signal named `Drive_Mode` in frame 0x101 of *any*
+      configuration decoded as 1.0 / 0.0 instead of 0.07 / 46.6 V (same
+      signal in 0x102). Migration: a config with no rules whose 0x101 has
+      those names gets the equivalent rows (loader, every path; shown
+      explicitly in the canonical document on import); Ather decodes
+      identically (corpus baseline passes and **fails with the migration
+      disabled**). (3) **Decision 5** — `clamp_negative` per-signal column
+      in `variables`, default TRUE (values unchanged). Validation warns on a
+      rule past `payload_length`; preview diff covers `value_rules`; schema,
+      `instruction.md` §5.13, manual (Sheet 12, Variables column), JSON doc
+      updated. 16 new tests (13 failed on the old code); Ather-specific
+      tests skip without `configs/`
 - [x] **C6 fingerprint / docs / packaging:** the canonical content
       fingerprint is recorded in `session.json → config.fingerprint`, in
       each `config_changes[]` entry and as `config_fingerprint` in every
@@ -423,7 +435,7 @@ not-done item needs an owner scope decision before release.**
 
 | ID | Expected (summary of the checklist) | Status | Evidence / where | Depends on | Critical? |
 |---|---|---|---|---|---|
-| C | Versioned canonical JSON config + schema; in-house validation (overlaps, bounds, duplicates, circular calcs); fingerprint in every log; CSV/xlsx/JSON/YAML import → canonical, lossless export; import preview + rollback; remove dead `config_loader.py` copy; move Ather branch out of the decoder; document negative clamp; CRC set limited to what exists | **Partial — 6 of 9 PASS** (canonical JSON + schema, validation, fingerprint in every log, lossless import/export, preview + rollback, CRC unchanged; C1–C4, C6). **Open (3):** dead loader code, Ather 0x101 branch, negative clamp — C5 discarded at owner request | §0.5, §0.0 C-steps | — | No for the current formats (existing loaders work and are tested); **yes** for the protocol spec's acceptance |
+| C | Versioned canonical JSON config + schema; in-house validation (overlaps, bounds, duplicates, circular calcs); fingerprint in every log; CSV/xlsx/JSON/YAML import → canonical, lossless export; import preview + rollback; remove dead `config_loader.py` copy; move Ather branch out of the decoder; document negative clamp; CRC set limited to what exists | **PASS — 9 of 9** (C1–C6: canonical JSON + schema, validation, fingerprint in every log, lossless import/export, preview + rollback, dead code removed, Ather branch → value rules, clamp setting, CRC unchanged) | §0.5, §0.0 C-steps | — | No for the current formats (existing loaders work and are tested); **yes** for the protocol spec's acceptance |
 | D | Protocol Studio: config management, model/view signal editor, frame layout view, decoder test bench (`.bhraw` replay) | **NOT RUN** (0 of 4) | §0.6 | C | No |
 | E | Spec regression tests (CRC vectors, framing, byte order, bitfields, round-trips, migrations); full pytest + smoke + frozen check; docs (JSON format, import, session format, long-run guide); known limitations | **Partial**: full pytest (671 passed), frozen self-tests, long-run lab guide, hardware plan, limitations list (§0.11 + this section) **PASS**; spec regression tests / JSON docs **NOT RUN** (need C) | §0.7, this section | C | Partial: the done half is; the C half follows C |
 | G | Menus/shortcuts (8), responsiveness (3), visual quality (5), interaction (6), verification (2) | **Partial**: responsiveness — segment finishing off the GUI, logging on the worker, bounded flush, card re-polish, console limit, stop-wait, latency gate **PASS** at 3,000 fps (9/9, caveat in Phase 1); "nothing slow on the GUI thread" for config load / import / export **NOT RUN**; budgets in CI **NOT RUN** (probe exists, not wired to CI); menus, visual, interaction, screenshot review **NOT RUN** (0 of 21) | §0.9, Phase 1 | — | Responsiveness: **yes** (done for logging); the rest: No |
@@ -604,16 +616,15 @@ Status per item (2026-10-19; steps C0–C6 in §0.0 have the evidence):
 - [x] Import preview (errors, warnings, added / modified / removed signals),
       explicit confirm; a failed import never replaces the active config;
       previous config kept for rollback — C4 (4a92459)
-- [ ] Remove dead duplicate helpers in `config_loader.py` (lines 327–476: an
+- [x] Remove dead duplicate helpers in `config_loader.py` (lines 327–476: an
       older copy incl. a broken `_parse_protocol`; Python uses the later copy)
-      — C5, implemented then **discarded at the owner's request**; still open
-- [ ] Move the Ather-specific branch in `frame_decoder.py` (frame `0x101`,
+      — C5 (re-implemented): done
+- [x] Move the Ather-specific branch in `frame_decoder.py` (frame `0x101`,
       `Drive_Mode`, `Key_Switch`) out of the generic decoder into
       configuration — decode output must stay identical (regression test)
-      — C5, discarded; still open (decision 4 recorded)
-- [ ] Document or configure the silent clamp of small negatives to 0 when
-      `min_value >= 0` (`frame_decoder.py`) — C5, discarded; still open
-      (decision 5 recorded)
+      — C5: `value_rules` + migration, decode unchanged
+- [x] Document or configure the silent clamp of small negatives to 0 when
+      `min_value >= 0` (`frame_decoder.py`) — C5: `clamp_negative` column
 - [x] CRC stays limited to `crc16_modbus`, `crc16_ccitt`, `crc32`, `none` —
       no invented parameters; schema covers exactly what is implemented
       (unchanged by C1–C6; the schema does not enumerate CRC types beyond

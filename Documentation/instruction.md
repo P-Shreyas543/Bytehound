@@ -276,6 +276,7 @@ aliases:
 | `SerialDefaults`    | `serial_defaults`    |
 | `PollingSchedule`   | `polling_schedule`   |
 | `SequenceCounters`  | `sequence_counters`  |
+| `ValueRules`        | `value_rules`        |
 
 ### 5.1 `protocol` (required, exactly one enabled row)
 
@@ -329,6 +330,7 @@ If `frames` is omitted, frame definitions are auto-derived from `variables`.
 | `read_write`    | str   | `R` (default) \| `W` \| `RW`                                                           |
 | `min_value`     | float?| For UI clamping                                                                        |
 | `max_value`     | float?| For UI clamping                                                                        |
+| `clamp_negative`| bool  | Default true: a value in −0.5…0 shows as 0 when `min_value` ≥ 0 (noise around zero). FALSE keeps it negative |
 | `description`   | str   | Optional                                                                               |
 | `enabled`       | bool  | Default true                                                                           |
 
@@ -443,6 +445,34 @@ disconnect, leave no later counter value to compare with (a disconnect is
 recorded as a session gap instead). In capture-process mode the counters
 are in the integrity record but individual events are not written to
 `seg_NNNN_sequence.csv`.
+
+### 5.13 `value_rules` (optional)
+
+Sets a signal to one of two constants from a raw payload byte, instead of
+its decoded value (Part C decision 4 — replaces a decoder branch that was
+hard-coded for frame `0x101`).
+
+| Column            | Type  | Notes                                                        |
+|-------------------|-------|--------------------------------------------------------------|
+| `id_or_address`   | hex   | Frame of the signal                                          |
+| `signal_name`     | str   | The signal (exact, expanded name)                            |
+| `source_byte`     | int   | Payload byte to test, 0-based                                |
+| `match_values`    | str   | Byte values that match, e.g. `6,7` or `0x06 0x07`            |
+| `value_if_match`  | float | Default 1                                                    |
+| `value_otherwise` | float | Default 0                                                    |
+| `enabled`         | bool  | Default true                                                 |
+
+The rule is applied after scaling; the raw value becomes `int(value)`. If
+the payload has no `source_byte`, the decoded value is kept. One rule per
+signal; a rule for an unknown signal is an error, one reading past
+`payload_length` a warning.
+
+**Migration:** a configuration with no `value_rules` rows whose frame
+`0x101` has signals named `Drive_Mode` / `Key_Switch` gets the old built-in
+rule as rows (`Drive_Mode`: byte 0 in `7`; `Key_Switch`: byte 0 in `6,7`),
+so it decodes exactly as before; importing it shows the rows explicitly. A
+`value_rules` table that is present (even with every row disabled) replaces
+the migration.
 
 ### Validation rules (loader must enforce)
 

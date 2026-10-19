@@ -111,6 +111,12 @@ def semantic_warnings(config: FrameConfig) -> List[Issue]:
                 out.append(Issue("warning", where, f"scale {s.scale} makes every value the offset"))
             if s.min_value is not None and s.max_value is not None and s.min_value > s.max_value:
                 out.append(Issue("warning", where, f"min_value {s.min_value} > max_value {s.max_value}"))
+    for (fid, name), rule in sorted(config.value_rules.items()):
+        plen = getattr(config.frames.get(fid), "payload_length", None)
+        if plen and rule.source_byte >= plen:
+            out.append(Issue("warning", f"frame 0x{fid:X} / {name}",
+                             f"value rule reads byte {rule.source_byte}, beyond the frame's payload_length "
+                             f"{plen}: it only applies if the device sends a longer payload"))
     for (fid, name), bits in sorted(config.bitfields.items()):
         sig = next((s for s in config.signals_by_frame.get(fid, [])
                     if s.signal_name == name or s.source_name == name), None)

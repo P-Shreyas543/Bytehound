@@ -30,7 +30,7 @@ Key = Tuple[int, str]
 
 # Sections compared as a whole (any difference is reported by name).
 _SECTIONS = ("bitfields", "enums", "calc_groups", "tx_commands", "serial_defaults",
-             "polling_schedules", "sequence_counters")
+             "polling_schedules", "sequence_counters", "value_rules")
 
 
 @dataclass

@@ -691,6 +691,7 @@
                             <li><a href="#config-polling">Sheet 9 — PollingSchedule</a></li>
                             <li><a href="#sheet-serialdefaults">Sheet 10 — SerialDefaults</a></li>
                             <li><a href="#sheet-sequencecounters">Sheet 11 — SequenceCounters</a></li>
+                            <li><a href="#sheet-valuerules">Sheet 12 — ValueRules</a></li>
                             <li><a href="#config-import">Importing, Previewing &amp; Restoring a Config</a></li>
                             <li><a href="#validator-cli">Config Validator CLI</a></li>
                         </ul>
@@ -2825,6 +2826,13 @@ enabled                = TRUE</pre>
                 <td>Maximum valid write value. Leave blank for no limit.</td>
             </tr>
             <tr>
+                <td><code>clamp_negative</code></td>
+                <td>bool</td>
+                <td><code>TRUE</code> <em>(blank = TRUE)</em></td>
+                <td>When <code>min_value</code> is 0 or more, a decoded value between −0.5 and 0 (noise around zero) is
+                    shown and logged as 0. Set <code>FALSE</code> to keep the real negative value.</td>
+            </tr>
+            <tr>
                 <td><code>description</code></td>
                 <td>text</td>
                 <td><code>Total pack voltage</code> <em>(blank ok)</em></td>
@@ -3507,6 +3515,68 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
             a <strong>gap</strong> (that many frames missing); the same value again is a <strong>repeat</strong>; a
             backward jump is a <strong>reset</strong> (the device restarted — not counted as loss). Example: an 8-bit
             counter going <code>41 → 45</code> means 3 frames were lost; <code>255 → 0</code> is a normal wrap.</p>
+
+        <h3 id="sheet-valuerules">Sheet 12 — ValueRules (optional)</h3>
+        <p>Sets a signal to one of two fixed values depending on one raw byte of the payload — for state flags that
+            a device encodes as a code rather than as bits. Example: <em>Drive mode is ON when byte 0 is 7</em>.</p>
+        <table>
+            <tr>
+                <th>Column</th>
+                <th>Type</th>
+                <th>Example</th>
+                <th>What it does</th>
+            </tr>
+            <tr>
+                <td><code>id_or_address</code></td>
+                <td>hex</td>
+                <td><code>0x101</code></td>
+                <td>Frame of the signal.</td>
+            </tr>
+            <tr>
+                <td><code>signal_name</code></td>
+                <td>text</td>
+                <td><code>Key_Switch</code></td>
+                <td>The signal whose value is set (a Variables row of that frame).</td>
+            </tr>
+            <tr>
+                <td><code>source_byte</code></td>
+                <td>int</td>
+                <td><code>0</code></td>
+                <td>Payload byte to test, counted from 0.</td>
+            </tr>
+            <tr>
+                <td><code>match_values</code></td>
+                <td>text</td>
+                <td><code>6,7</code></td>
+                <td>Byte values that count as a match (decimal or <code>0x</code> hex, separated by commas or
+                    spaces).</td>
+            </tr>
+            <tr>
+                <td><code>value_if_match</code></td>
+                <td>number</td>
+                <td><code>1</code></td>
+                <td>Value when the byte matches. Default 1.</td>
+            </tr>
+            <tr>
+                <td><code>value_otherwise</code></td>
+                <td>number</td>
+                <td><code>0</code></td>
+                <td>Value when it does not. Default 0.</td>
+            </tr>
+            <tr>
+                <td><code>enabled</code></td>
+                <td>bool</td>
+                <td><code>TRUE</code></td>
+                <td>Default TRUE.</td>
+            </tr>
+        </table>
+        <div class="note">
+            <strong>Older Ather workbooks.</strong> Earlier versions applied this rule automatically to the
+            <code>Drive_Mode</code> and <code>Key_Switch</code> signals of frame <code>0x101</code> in every
+            configuration. A workbook without a ValueRules sheet still decodes exactly the same: Bytehound adds the
+            equivalent rules (<code>Drive_Mode</code>: byte 0 = 7; <code>Key_Switch</code>: byte 0 = 6 or 7), and the
+            import preview and saved JSON show them. Add a ValueRules sheet to change or disable them.
+        </div>
 
         <h3 id="config-import">Importing, Previewing &amp; Restoring a Configuration</h3>
         <p>Loading a configuration never changes anything until you confirm it:</p>

@@ -70,7 +70,7 @@ KNOWN_COLUMNS: Dict[str, Dict[str, str]] = {
         "byte_order": _T, "scale": "float", "offset": "float", "unit": _T, "group": _T, "read_write": _T,
         "min_value": "float", "max_value": "float", "description": _T, "enabled": "bool",
         "start_byte": "int", "bit_offset": "int", "bit_index": "int", "bit_pos": "int", "bit_length": "int",
-        "bit_count": "int", "bits": "int", "bit_order": _T,
+        "bit_count": "int", "bits": "int", "bit_order": _T, "clamp_negative": "bool",
     },
     "frame_config": {
         "frame_id_hex": _T, "frame_name": _T, "signal_name": _T, "start_byte": "int", "byte_length": "int",
@@ -95,6 +95,8 @@ KNOWN_COLUMNS: Dict[str, Dict[str, str]] = {
     "polling_schedule": {"id_or_address": _T, "interval_ms": "int", "timeout_ms": "int", "enabled": "bool"},
     "sequence_counters": {"id_or_address": _T, "signal_name": _T, "bits": "int", "step": "int",
                           "enabled": "bool"},
+    "value_rules": {"id_or_address": _T, "signal_name": _T, "source_byte": "int", "match_values": _T,
+                    "value_if_match": "float", "value_otherwise": "float", "enabled": "bool"},
 }
 
 def _typed(text: str, kind: str) -> Any:
@@ -238,7 +240,23 @@ def import_config(path: str | Path, *, app_version: str = "") -> Dict[str, Any]:
         "imported_utc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "app_version": app_version,
     }
-    return tables_to_canonical(tables, source)
+    return tables_to_canonical(_with_migrated_value_rules(tables), source)
+
+
+def _with_migrated_value_rules(tables: Dict[str, List[Dict[str, str]]]) -> Dict[str, List[Dict[str, str]]]:
+    """Import migration (decision 4): a source written for the old built-in
+    frame 0x101 rule gets the equivalent explicit ``value_rules`` rows, so
+    the canonical document says what the decoder does. A source that does
+    not load is left as it is (the validation report explains why)."""
+    from .config_loader import config_from_tables, legacy_value_rule_rows
+
+    if any(any(str(v).strip() for v in r.values()) for r in tables.get("value_rules", [])):
+        return tables
+    try:
+        rows = legacy_value_rule_rows(config_from_tables(tables))
+    except Exception:
+        return tables
+    return {**tables, "value_rules": rows} if rows else tables
 
 
 def dumps(doc: Dict[str, Any]) -> str:

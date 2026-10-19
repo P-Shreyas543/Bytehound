@@ -103,16 +103,14 @@ def _decode_signal(config: FrameConfig, spec: SignalSpec, payload: bytes) -> Dec
         )
 
     scaled = raw * spec.scale + spec.offset
-    if spec.min_value is not None and spec.min_value >= 0 and -0.5 <= scaled < 0:
+    if spec.clamp_negative and spec.min_value is not None and spec.min_value >= 0 and -0.5 <= scaled < 0:
         scaled = 0.0
 
-    # Ather vehicle operating state handling
-    if spec.frame_id == 0x101 and len(payload) > 0:
-        if spec.signal_name == "Drive_Mode":
-            scaled = 1.0 if payload[0] == 7 else 0.0
-            raw = int(scaled)
-        elif spec.signal_name == "Key_Switch":
-            scaled = 1.0 if payload[0] in (6, 7) else 0.0
+    rules = config.value_rules
+    if rules:
+        rule = rules.get((spec.frame_id, spec.signal_name))
+        if rule is not None and rule.source_byte < len(payload):
+            scaled = rule.value_if_match if payload[rule.source_byte] in rule.match_values else rule.value_otherwise
             raw = int(scaled)
 
     enum_label = _lookup_enum(config, spec, raw)

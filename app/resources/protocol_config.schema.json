@@ -10,7 +10,7 @@
     "schema_version": {"const": 1},
     "tables": {
       "type": "object",
-      "description": "One entry per configuration table (protocol, frames, variables, frame_config, bitfields, enums, calc_groups, tx_commands, tx_command_fields, serial_defaults, polling_schedule, sequence_counters). Column names are kept as written in the source.",
+      "description": "One entry per configuration table (protocol, frames, variables, frame_config, bitfields, enums, calc_groups, tx_commands, tx_command_fields, serial_defaults, polling_schedule, sequence_counters, value_rules). Column names are kept as written in the source.",
       "required": ["protocol"],
       "anyOf": [{"required": ["variables"]}, {"required": ["frame_config"]}],
       "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/row"}}

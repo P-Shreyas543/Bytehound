@@ -52,7 +52,7 @@ names as written:
 `protocol` (required) · `frames` · `variables` (or legacy `frame_config`;
 one of them required) · `bitfields` · `enums` · `calc_groups` ·
 `tx_commands` · `tx_command_fields` · `serial_defaults` ·
-`polling_schedule` · `sequence_counters`
+`polling_schedule` · `sequence_counters` · `value_rules`
 
 - **One entry per sheet row, before expansion.** A `variables` row with
   `count: 8` stays one row; the loader expands it to 8 signals exactly as it
@@ -61,6 +61,11 @@ one of them required) · `bitfields` · `enums` · `calc_groups` ·
   holds no configuration); an empty `variables` table is kept because its
   presence changes how the loader reads `frame_config`.
 - **Unknown columns** are kept per row under `"extensions": {"column": "text"}`.
+
+A workbook written for the old built-in frame `0x101` rule (signals
+`Drive_Mode` / `Key_Switch`) gets the equivalent explicit `value_rules`
+rows when it is imported (Part C decision 4), so the document states what
+the decoder does; decoded values are unchanged.
 
 ## 3. Values
 
