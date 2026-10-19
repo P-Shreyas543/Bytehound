@@ -367,7 +367,7 @@ def t_smoke(args, config) -> Result:
     r = Result("smoke_headless")
     restore_board(args.port)
     env = dict(os.environ, QT_QPA_PLATFORM="offscreen")
-    p = subprocess.run([sys.executable, str(ROOT / "smoke_headless.py"), "--port", args.port,
+    p = subprocess.run([sys.executable, str(ROOT / "tools" / "smoke" / "smoke_headless.py"), "--port", args.port,
                         "--boot-delay", "0.5", "--seconds", "12", "--tx-gap", "20"],
                        cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8",
                        errors="replace", timeout=180)

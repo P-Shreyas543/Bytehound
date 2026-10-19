@@ -1,7 +1,7 @@
 """Probe Bytehound poll latency on a real serial port.
 
 Example:
-    python tools/polling_latency_probe.py --port COM13 --config MultiCell-BMS-OverAllFrame.xlsx
+    python tools/polling_latency_probe.py --port COM13 --config configs/MultiCell-BMS-OverAllFrame.xlsx
 
 The probe uses the same config loader, packet builder, and parser as the app,
 then sends one poll at a time. That makes it useful for checking whether the
@@ -187,7 +187,7 @@ def _summary(results: list[ProbeResult]) -> str:
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Measure Bytehound polling latency on real hardware.")
     ap.add_argument("--port", default="COM13")
-    ap.add_argument("--config", default="MultiCell-BMS-OverAllFrame.xlsx")
+    ap.add_argument("--config", default="configs/MultiCell-BMS-OverAllFrame.xlsx")
     ap.add_argument("--timeouts", default="250,500,750,1000")
     ap.add_argument("--cycles", type=int, default=1)
     ap.add_argument("--gap-ms", type=int, default=25, help="Delay before each TX in sequential probing.")

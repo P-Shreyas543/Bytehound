@@ -1,3 +1,5 @@
+import pytest
+
 from tests.conftest import dummy_protocol_config
 from app.protocol.packet_builder import build_packet
 
@@ -25,8 +27,13 @@ def test_tx_pad_length_zero_normalized():
 
 
 def test_experiment1_excel_loading():
+    from pathlib import Path
+
     from app.decoder.config_loader import load_config
-    cfg = load_config("Experiment1_frame_config.xlsx")
+    path = Path(__file__).resolve().parents[1] / "configs" / "Experiment1_frame_config.xlsx"
+    if not path.exists():
+        pytest.skip("configs/Experiment1_frame_config.xlsx not present (local device configuration)")
+    cfg = load_config(path)
     assert cfg.protocol.tx_pad_length is None
     pkt = build_packet(cfg.protocol, 0x6000, b"\x01")
     assert isinstance(pkt, bytes)

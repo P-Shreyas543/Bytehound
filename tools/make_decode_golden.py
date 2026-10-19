@@ -1,6 +1,7 @@
 """Regression corpus for the protocol configuration work (Plane.md Part C).
 
-Every configuration in the repository is decoded with deterministic payloads
+Every configuration in the repository (and the local, git-ignored
+``configs/`` folder when present) is decoded with deterministic payloads
 and the results are written to ``tests/fixtures/decode_golden/``.
 ``tests/test_config_corpus.py`` decodes the same payloads with the current
 code and requires identical results, so a change to the configuration
@@ -23,17 +24,28 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 GOLDEN = ROOT / "tests" / "fixtures" / "decode_golden"
+# Device / customer configurations: local only (git-ignored), may be absent.
+CONFIGS = ROOT / "configs"
+TRACKED = [ROOT / "app" / "resources" / "config_template", ROOT / "tests" / "fixtures" / "canonical_config"]
+
+
+def _cid(path: Path, base: Path) -> str:
+    return re.sub(r"[^A-Za-z0-9]+", "_", path.relative_to(base).as_posix()).strip("_")
+
+
+def tracked_ids() -> set:
+    """Ids of the configurations that are in git (always present)."""
+    return {_cid(p, ROOT) for p in TRACKED}
 
 
 def corpus() -> list:
-    """(id, path) of every configuration in the repository, sorted."""
-    items = [ROOT / "app" / "resources" / "config_template", ROOT / "tests" / "fixtures" / "canonical_config"]
-    items += sorted(p for p in ROOT.glob("*.xlsx"))
-    items += sorted(ROOT.glob("MultiCellBMSConfig/*/*.xlsx"))
-    out = []
-    for p in items:
-        rel = p.relative_to(ROOT).as_posix()
-        out.append((re.sub(r"[^A-Za-z0-9]+", "_", rel).strip("_"), p))
+    """(id, path) of every configuration present, sorted: the tracked ones
+    plus those in ``configs/``. Ids of ``configs/`` files are relative to
+    that folder (they were at the repository root before 2026-10-19), so
+    the recorded fixtures keep their names."""
+    out = [(_cid(p, ROOT), p) for p in TRACKED]
+    local = sorted(CONFIGS.glob("*.xlsx")) + sorted(CONFIGS.glob("MultiCellBMSConfig/*/*.xlsx"))
+    out += [(_cid(p, CONFIGS), p) for p in local]
     return out
 
 

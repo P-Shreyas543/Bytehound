@@ -9,7 +9,7 @@ ISS = (Path(__file__).resolve().parents[1] / "installer.iss").read_text(encoding
 
 def test_installer_packages_bytehound():
     assert '#define MyAppExe       "Bytehound.exe"' in ISS
-    assert '#define MyDistDir      "dist\Bytehound"' in ISS
+    assert r'#define MyDistDir      "dist\Bytehound"' in ISS
     assert "OutputDir                 = installer_output" in ISS
     assert "OutputBaseFilename        = Bytehound_Setup_{#MyAppVersion}" in ISS
 

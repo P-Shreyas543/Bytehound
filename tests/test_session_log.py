@@ -62,7 +62,9 @@ class RawHooks:
 def _frames(config) -> List[DecodedFrame]:
     out = []
     for fid, f in config.frames.items():
-        payload = bytes((i * 7 + fid) & 0xFF for i in range(f.payload_length))
+        # payload_length is optional: fall back to the last byte any signal uses.
+        n = f.payload_length or max((s.end_byte for s in config.signals_by_frame.get(fid, [])), default=0)
+        payload = bytes((i * 7 + fid) & 0xFF for i in range(n))
         out.append(decode_frame(config, fid, payload, {}))
     return out
 
@@ -782,7 +784,9 @@ def test_config_change_during_a_gap_continues_in_a_new_segment(tmp_path, config)
     fixed-step grid continues."""
     from app.serial_logging.session import _segment_configs
 
-    other_path = Path(__file__).resolve().parents[1] / "Blue01_M_CAN_4836.xlsx"
+    # A tracked fixture with its own protocol and signal names (no device
+    # configuration needed, so this always runs).
+    other_path = Path(__file__).resolve().parent / "fixtures" / "canonical_config"
     other = load_config(other_path)
     clock = Clock()
     s, _ = _session(tmp_path, config, clock, segment_seconds=3600, fixed_step_s=1.0)
@@ -807,12 +811,12 @@ def test_config_change_during_a_gap_continues_in_a_new_segment(tmp_path, config)
     assert all(seg["status"] == "closed" for seg in m["segments"]), m["segments"]
     change = m["config_changes"][0]
     assert change["id"] == "config_2" and change["first_segment"] == 2 and len(change["files_sha256"]) == 64
-    assert (folder / change["load"]).is_file()
+    assert (folder / change["load"]).exists()
     from app.decoder import canonical
     assert change["fingerprint"] == canonical.fingerprint(canonical.import_config(other_path))
     assert change["fingerprint"] != m["config"]["fingerprint"]
     assert len(m["gaps"]) == 1 and m["gaps"][0]["end_utc"]
-    assert any("Configuration changed to Blue01_M_CAN_4836.xlsx" in e["text"] for e in m["events"])
+    assert any("Configuration changed to canonical_config" in e["text"] for e in m["events"])
 
     seg1, seg2 = m["segments"]
     head1 = _csv_rows(folder / seg1["files"]["event_csv"])

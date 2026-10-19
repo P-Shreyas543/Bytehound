@@ -13,17 +13,22 @@ import json
 
 import pytest
 
-from tools.make_decode_golden import GOLDEN, corpus, decode_snapshot
+from tools.make_decode_golden import CONFIGS, GOLDEN, corpus, decode_snapshot, tracked_ids
 
 CORPUS = corpus()
 
 
 def test_corpus_is_complete():
-    """Every golden fixture belongs to a configuration that still exists, and
-    every configuration has a fixture (a new file must be added on purpose)."""
+    """Every configuration present has a fixture (a new file must be added on
+    purpose). The tracked configurations are always present; with the local
+    ``configs/`` folder every fixture must have its configuration."""
     ids = {cid for cid, _ in CORPUS}
     fixtures = {p.stem for p in GOLDEN.glob("*.json")}
-    assert ids == fixtures, f"missing fixtures: {sorted(ids - fixtures)}; orphaned: {sorted(fixtures - ids)}"
+    assert ids <= fixtures, f"missing fixtures: {sorted(ids - fixtures)}"
+    assert tracked_ids() <= ids
+    if not CONFIGS.is_dir():
+        pytest.skip("configs/ (local device configurations) not present: only the tracked ones were checked")
+    assert ids == fixtures, f"orphaned fixtures: {sorted(fixtures - ids)}"
     assert len(CORPUS) >= 23
 
 

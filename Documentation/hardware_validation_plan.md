@@ -66,7 +66,7 @@ Record the version, adapter, baud rate, start/end time, and the final
 | H8 | Crash recovery | 3 runs | Kill `Bytehound.exe` in Task Manager mid-run; once with a power cut (UPS off) |
 | H9 | Multi-week soak | ≥ 14 days | Real BMS, production config, 1 h segments, fixed-step 1 s |
 | H10 | Live analysis | during H9 | Open the session in the Analysis Suite daily while it records |
-| H11 | Live serial smoke | 15 min | `python smoke_headless.py --port COMx` (phases 2–10) against the simulator |
+| H11 | Live serial smoke | 15 min | `python tools/smoke/smoke_headless.py --port COMx` (phases 2–10) against the simulator |
 
 ## 4. Procedures and expected results
 

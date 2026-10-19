@@ -1,0 +1,10 @@
+.settings/*
+!.settings/com.nxp.s32ds.cle.runtime.component.prefs
+Debug_FLASH/
+Debug_RAM/
+Release_FLASH/
+Release_RAM/
+
+# Eclipse / S32DS workspace state (per machine, not source)
+.workspace/
+.metadata/

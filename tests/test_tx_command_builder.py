@@ -150,9 +150,9 @@ def test_experiment1_config_boolean_tx_commands():
     from app.commands.tx_command_builder import build_payload
     from pathlib import Path
 
-    exp1_file = Path("Experiment1_frame_config.xlsx")
+    exp1_file = Path(__file__).resolve().parents[1] / "configs" / "Experiment1_frame_config.xlsx"
     if not exp1_file.exists():
-        pytest.skip("Experiment1_frame_config.xlsx not found in working directory")
+        pytest.skip("configs/Experiment1_frame_config.xlsx not present (local device configuration)")
 
     cfg = load_config(exp1_file)
     assert "Cell Discharge Select" in cfg.tx_commands

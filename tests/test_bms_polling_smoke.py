@@ -19,7 +19,9 @@ from app.decoder.config_loader import load_config
 from app.serial_io.serial_worker import POLLING_BOOT_GRACE, PollingWorker, SerialSettings
 
 
-USER_CONFIG = Path(__file__).resolve().parent.parent / "MultiCell-BMS-OverAllFrame.xlsx"
+USER_CONFIG = Path(__file__).resolve().parent.parent / "configs" / "MultiCell-BMS-OverAllFrame.xlsx"
+# A real device configuration: local only (configs/ is git-ignored).
+pytestmark = pytest.mark.skipif(not USER_CONFIG.exists(), reason=f"device config not present: {USER_CONFIG}")
 RESPONDING_TARGETS = {0x9000}  # The user's device only answers to 0x9000.
 
 
