@@ -26,6 +26,7 @@
  *      0x7F05 GET_STATS    -> 0x7F85: 15 x u32 (see send_stats())
  *      0x7F06 BURST        u32 cycles: send that many cycles (with 0x4000) back to back
  *      0x7F07 PING         -> 0x7F87: firmware version text
+ *      0x7F08 SET_SEQ      u32 next 0x4000 sequence number (wraparound tests)
  *    Replies (0x7F8x) are not counted in the telemetry statistics.
  *
  * Frame format (as the app config): AA 55 | id LE16 | len u8 | payload |
@@ -35,7 +36,7 @@
 #include <string.h>
 #include "regs.h"
 
-#define FW_VERSION  "bh-sim-g474 1.0.0"
+#define FW_VERSION  "bh-sim-g474 1.1.0"
 #define HSI_HZ      16000000UL
 #define SYSCLK_HZ   150000000UL
 
@@ -459,6 +460,7 @@ static void on_command(uint16_t id, const uint8_t *p, uint8_t len)
         send_control(0x7F87, (const uint8_t *)FW_VERSION, (uint8_t)strlen(FW_VERSION));
         return;
     }
+    if (id == 0x7F08 && len == 4) { hil_seq = get_u32(p); return; }
 }
 
 /* AA 55 | id LE | len | payload | crc LE | EE  (validated, then dispatched) */

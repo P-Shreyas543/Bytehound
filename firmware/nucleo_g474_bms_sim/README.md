@@ -77,6 +77,7 @@ line). Send `0x1005 [00]` or Reset Faults to turn it on.
 | 0x7F05 GET_STATS | — | reply 0x7F85: 15 × `u32` (below) |
 | 0x7F06 BURST | `u32 cycles` | that many cycles (with 0x4000) back to back at full line rate |
 | 0x7F07 PING | — | reply 0x7F87: firmware version string |
+| 0x7F08 SET_SEQ | `u32 seq` | next 0x4000 sequence number (wraparound tests) |
 
 GET_STATS fields, in order: frames sent for 0x1000, 0x2000, 0x3000 and 0x4000
 (good CRC only), frames sent corrupted, noise bytes injected, total bytes sent;

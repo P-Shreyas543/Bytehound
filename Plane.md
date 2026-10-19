@@ -45,18 +45,26 @@ Updated after every phase. Release recommendation so far: **NOT READY**.
 - [x] Stop Logging blocks the GUI ≤ 40 ms per wait (was 200 ms, for seconds)
 - [x] Queue-saturation warning rate-limited (was a file write per batch)
 - [x] Order-dependent test pollution from `56b99d8` fixed
-- [ ] **Gate run** — repeated runs at 3,000 fps with p50/p95/p99/max.
-      Latest: NUCLEO p99 12 ms / max 43 ms; 3 interleaved loopback runs
-      max 46–93 ms; but an earlier batch on the same build had max
-      284–632 ms. Machine-state variance is larger than the effects
-      measured. **OPEN** until a repeated gate batch passes
+- [x] **Gate run 2026-10-19 — PASS, 9 of 9 runs**, with a caveat.
+      Loopback probe, 3,000 fps, logging + 10 s rotation, 60 s each, 6
+      runs: p50 0.0–0.03 ms, p95 3.6–5.0 ms, **p99 5.9–14.1 ms, max
+      37–158 ms**, 0 ticks > 250 ms (~5,900 samples of 10 ms per run).
+      NUCLEO `gui_end_to_end`, 3,252 fps, 3 runs: **p99 10–11 ms, max
+      39–49 ms**. Caveat: a batch of 5 on 2026-10-17 with the same logging
+      architecture failed the max (284–632 ms); results depend on machine
+      state, so this is evidence for the tested conditions, not a bound.
+      (One HIL run on 2026-10-19 reported p99 58 ms, but its tick clock
+      was `time.monotonic` — 15.6 ms steps — so the value is not usable;
+      the HIL probe now uses `perf_counter`, as do the figures above.
+      Earlier HIL figures, e.g. "p99 12 ms / max 43 ms", had the same
+      flaw.)
 - [ ] **4.5 s stall** (one HIL run, 2026-10-17): mechanism identified at
       5,000 fps (GIL saturation + gen-2 GC 41→420 ms + backlog) but not
       reproduced at the rated rate; **OPEN**
 - Tested and rejected: Qt posted-event backlog as the cause; `gc.freeze()`
   (cuts GC pauses, not the stalls)
 
-**Phase 2 — helper process** (`app/serial_logging/_isolated.py`)
+**Phase 2 — helper process** (`app/serial_logging/_isolated.py`) — commit `19174e1`
 
 - [x] Timeout per job (10 min + 10 s/MB); hung helper terminated; next job
       gets a fresh helper
@@ -74,19 +82,43 @@ Updated after every phase. Release recommendation so far: **NOT READY**.
 - [x] `Bytehound.exe --selftest-finish` — **PASS in the frozen build**
       (PyInstaller 6.20.0, Python 3.10.11): separate helper pid, readable
       xlsx, analysis cache, no leftovers; `--selftest-capture` PASS
+- [x] **Orphan helpers (found in Phase 3, fixed):** an *idle* helper
+      outlived a crashed / killed application forever — 22 had piled up
+      from test runs (pytest ends with `TerminateProcess`). The earlier
+      orphan test was invalid (its script lacked the `__main__` guard, so
+      it never had a real helper) and its "no watchdog needed" conclusion
+      was wrong. Helpers now exit when the parent process ends; both the
+      busy and idle tests fail without the watcher and pass with it
 - [ ] GUI responsiveness *while* finishing fails — NOT RUN
 - [ ] Application closed during finishing (non-daemon finishers keep the
       process alive until done) — NOT RUN
 
-**Phase 3 — serial and end-to-end integrity** — next
+**Phase 3 — serial and end-to-end integrity** — firmware 1.1.0 (`SET_SEQ`)
 
-- [ ] Transport test 115,200 / 921,600 / 2,000,000 with reader pauses, CPU
-      load, removal/reconnect, shutdown under traffic (NUCLEO)
-- [ ] Requested vs effective driver buffer (record; do not infer)
-- [ ] Deterministic frames: sent = received = decoded = logged = exported;
-      partial frames, corruption, noise, wraparound of the 32-bit counter,
-      missing-frame detection, rotation boundaries
-- [ ] F12 disposition (sequence-gap detection; depends on Part C schema)
+- [x] Transport at 115,200 / 921,600 / 2,000,000 (existing `stream_*`),
+      CPU load on every core (`cpu_load`), shutdown while streaming
+      (`shutdown_under_traffic`): **PASS** — every byte accounted, raw
+      capture complete, close < 3 s
+- [ ] Device removal / USB reconnect — **NOT RUN** (needs a physical
+      unplug; target reset is covered by `device_reset`)
+- [x] Reader pauses at 2 Mbaud (`reader_pause`, 7 runs): pauses ≤ 2 s
+      lossless in 6 of 7 runs, ≤ 4 s in 4 of 5; 8 s loses 0.5–1.3 MB,
+      16 s loses everything; one run lost data at 1 s (unexplained, not
+      reproduced in 6 attempts). Every loss showed as a sequence gap.
+      **FAIL** for "no unexplained loss" until the 1-run case is explained
+- [x] **Requested vs effective buffer:** pyserial does not report the
+      granted size. Measured: request 4 KB, 64 KB, 4 MiB or 64 MiB makes
+      no difference at 0.25 s / 1 s pauses → buffering is upstream of the
+      requested driver buffer on the ST-LINK VCP. F16's earlier claim was
+      based on a flawed experiment and is corrected
+- [x] Deterministic frames, all stages: board sent = worker received =
+      decoded = event log (once, in order) = Analysis Suite stats and
+      export = per-segment .xlsx rows; timestamps never backwards across
+      rotations; noise and corruption counted exactly; 32-bit wraparound
+      0xFFFFFFFF → 0 logged once, unsigned (`seq_wraparound`) — **PASS**
+- [ ] F12 (the *application* detecting missing frames from a counter) —
+      **not implemented**; depends on the Part C config schema to mark a
+      counter signal. Scope decision needed (closure table)
 - [ ] FTDI / CH340 / CP2102 — **BLOCKED** (no adapters)
 
 **Phase 4 — rotation, polling, shutdown**
@@ -329,7 +361,7 @@ these loss points:
 | F13 | `TcpSocketWrapper.write` / UDP write | `socket.send()` may write only part of a buffer — **the rest of a TX command was lost** without an error | Send until every byte is out (with timeout), else raise |
 | F14 | UDP on Windows | An ICMP "port unreachable" (device rebooting) arrives as `WSAECONNRESET` on the next read → treated as an unplug → **session ended** | Ignore the notice for UDP and keep reading |
 | F15 | `TcpSocketWrapper` on peer close | Raised "closed by remote peer" while bytes already received sat in its buffer → **the device's last frames were lost**, more the busier the PC (found by the stress test under load) | Deliver every buffered byte first, then report the close |
-| F16 | Serial driver receive buffer (found on the NUCLEO rig) | Only 64 KiB requested. When reads stalled ~200 ms at 2 Mbaud the buffer filled and the USB bridge **dropped the excess upstream with no driver error flag** (50 cycles lost in one 10 s run under CPU load; reproduced deterministically with forced stalls) | Request 4 MiB (a request the driver may cap; pyserial does not report the granted size). Measured on the ST-LINK VCP: 64 KiB lost data on a 0.2 s stall, 4 MiB lost nothing over three 1.5 s stalls at 2 Mbaud. `rx_service_gap_max_ms` in the integrity snapshot shows how long data waited unread. **Unverified on FTDI / CH340 / CP2102 drivers** |
+| F16 | Serial driver receive buffer / reader stalls (NUCLEO rig) | A reader stall at 2 Mbaud loses data upstream (USB bridge / driver) with **no driver error flag** | Request 4 MiB (kept: harmless, may help other drivers — unverified). **Correction 2026-10-19:** the earlier evidence that the request fixes it was a flawed experiment. Rigorous `run_hil.py reader_pause` (single pause, full accounting): on the ST-LINK VCP the request size makes no measurable difference (4 KB…64 MB all lossless at 1 s); pauses ≤ 4 s lossless in 4 of 5 runs, 8 s loses 0.5–1.3 MB, 16 s loses everything; one run of 7 lost data at 1 s (unexplained). The app cannot prevent upstream loss: keep the reader from stalling (F17, Part G) and detect loss (F12). `rx_service_gap_max_ms` shows how long data waited unread |
 | F17 | TX gap wait (found on the NUCLEO rig) | Every command / poll **slept up to 110 ms with reads blocked** to honour the TX gap — 20 kB unread at 2 Mbaud per command | The gap wait keeps draining RX; poll responses read during the wait still end it; pipelined drains match in-flight polls |
 | F18 | Raw capture at segment rotation (found on the NUCLEO rig) | Rotation stopped the capture, then started the next one: **~70 ms of received bytes missing from the `.bhraw` files at every rotation** (1,971 frames over 3 rotations). Also a race: a record being written while the file closed was dropped | `rotate()` swaps to the next file before the segment closes, under a lock shared with every record; per-segment gauges (`buffered_bytes`, `rx_service_gap_max_ms`) recorded as values, not deltas |
 | F19 | Poll schedule vs TX gap (found on the NUCLEO rig) | The template schedule (100/200/500 ms) needs 17 polls/s, the default 100 ms gap allows 10 → **every interval silently ran ~1.7× long** (0x1000 at 268 ms) | Warning when polling starts, with the fix (lower the TX gap or lengthen intervals) |

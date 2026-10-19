@@ -356,6 +356,163 @@ def t_watchdog(args, config) -> Result:
     return r
 
 
+def _lost_bytes(link: "AppLink", snap: dict, st: Dict[str, int]) -> int:
+    return st["tx_bytes"] - (link.good_bytes + link.rejected_bytes + snap["discarded_bytes"])
+
+
+def t_reader_pause(args, config) -> Result:
+    """task.md Phase 3: the worker stops reading for P seconds while the
+    board streams at 2 Mbaud. The driver buffer the OS actually granted is
+    not reported by pyserial, so it is measured: the longest pause with no
+    loss bounds it from below, the first lossy pause from above."""
+    r = Result("reader_pause_2000000")
+    baud, load = 2_000_000, 0.8
+    cps = int(load * baud / 10 / hw.CYCLE_BYTES[True])
+    rate = cps * hw.CYCLE_BYTES[True]
+    results = []
+    for pause_s in args.pauses:
+        prepare_board(args.port, baud)
+        link = AppLink(args.port, baud, config).open()
+        orig = link.worker._service_rx
+        pending = {"s": 0.0}
+
+        def paused(_orig=orig, _pending=pending):
+            if _pending["s"]:
+                d, _pending["s"] = _pending["s"], 0.0
+                time.sleep(d)
+            return _orig()
+
+        link.worker._service_rx = paused
+        try:
+            link.send(hw.stream_cmd(cps, True))
+            pump(2.0)
+            pending["s"] = pause_s
+            pump(pause_s + 3.0)
+            link.send(hw.stream_cmd(0, False))
+            pump(1.0)
+            st = link.board_stats(timeout=10.0)
+        finally:
+            snap = link.close()
+            restore_board(args.port)
+        lost = _lost_bytes(link, snap, st)
+        results.append({"pause_s": pause_s, "bytes_during_pause": int(rate * pause_s), "lost_bytes": lost,
+                        "seq_missing": st["frames_4000"] - len(link.seq),
+                        "driver_errors": snap.get("driver_errors")})
+    import app.serial_io.serial_worker as sw
+    r.data.update(baud=baud, bytes_per_s=rate, requested_rx_buffer=sw.RX_DRIVER_BUFFER, pauses=results)
+    lossless = [x["pause_s"] for x in results if x["lost_bytes"] == 0]
+    lossy = [x for x in results if x["lost_bytes"] > 0]
+    r.data["effective_buffer_bytes_at_least"] = int(rate * max(lossless)) if lossless else 0
+    r.data["effective_buffer_bytes_below"] = int(rate * lossy[0]["pause_s"]) if lossy else None
+    for x in results:
+        r.checks.append(f"info pause {x['pause_s']:>4.1f}s ({x['bytes_during_pause']:,} B unread): "
+                        f"lost {x['lost_bytes']:,} B, seq missing {x['seq_missing']}")
+    # Acceptance: a 2 s reader stall (GC, CPU load, AV scan) at the rated
+    # 2 Mbaud must cost nothing. Longer pauses are measured, not assumed.
+    for x in results:
+        if x["pause_s"] <= 2.0:
+            r.check(x["lost_bytes"] == 0, f"no loss across a {x['pause_s']} s reader pause")
+    for x in lossy:
+        r.check(x["seq_missing"] > 0, f"loss after a {x['pause_s']} s pause is visible as a sequence gap")
+    return r
+
+
+def _burn(stop) -> None:
+    while not stop.is_set():
+        pass
+
+
+def t_cpu_load(args, config) -> Result:
+    """Every core busy in other processes while streaming at 2 Mbaud."""
+    import multiprocessing as mp
+    n = os.cpu_count() or 4
+    stop = mp.get_context("spawn").Event()
+    burners = [mp.get_context("spawn").Process(target=_burn, args=(stop,), daemon=True) for _ in range(n)]
+    for b in burners:
+        b.start()
+    try:
+        time.sleep(1.0)
+        res = _stream("cpu_load_2000000", args, config, 2_000_000, args.stream_seconds, 0.8)
+    finally:
+        stop.set()
+        for b in burners:
+            b.join(5)
+            if b.is_alive():
+                b.terminate()
+    res.data["busy_processes"] = n
+    return res
+
+
+def t_shutdown_under_traffic(args, config) -> Result:
+    """Close the connection while the board streams at 2 Mbaud with raw
+    capture on: no error, the capture file is complete and parseable."""
+    from app.serial_logging.raw_capture import iter_raw_capture
+    r = Result("shutdown_under_traffic")
+    baud = 2_000_000
+    prepare_board(args.port, baud)
+    link = AppLink(args.port, baud, config).open()
+    raw = Path(tempfile.mkdtemp(prefix="bh_hil_")) / "wire.bhraw"
+    link.worker.start_raw_capture(raw, {"test": "shutdown"})
+    link.send(hw.stream_cmd(int(0.8 * baud / 10 / hw.CYCLE_BYTES[True]), True))
+    pump(3.0)
+    t0 = time.monotonic()
+    snap = link.close()                       # board still streaming
+    close_s = time.monotonic() - t0
+    r.check(close_s < 3.0, f"close returned in {close_s:.2f} s")
+    r.check(not link.worker.isRunning(), "worker thread stopped")
+    r.check(not link.errors, f"no worker errors {link.errors[:2]}")
+    try:
+        rx = sum(len(d) for direction, _t, d in iter_raw_capture(raw) if direction == 0)
+        r.check(rx == snap["parser_bytes_in"],
+                f"raw capture complete: {rx} RX bytes == parser bytes in {snap['parser_bytes_in']}")
+    except Exception as exc:
+        r.check(False, f"raw capture unreadable after close: {exc}")
+    restore_board(args.port)                   # finds the board at 2 Mbaud, stops it
+    r.check(True, "board recovered and back at 115200")
+    return r
+
+
+def t_seq_wraparound(args, config, cfg_dir: Path) -> Result:
+    """The 32-bit sequence counter wraps 0xFFFFFFFF -> 0 inside a logged
+    session: every value is decoded unsigned, logged once, in order."""
+    import pandas as pd
+    from app.serial_logging.session import SessionLog, SessionSettings, read_manifest
+    r = Result("seq_wraparound")
+    baud, cycles = 921600, 4000
+    start = 0xFFFFFFFF - 1999
+    prepare_board(args.port, baud)
+    out = Path(tempfile.mkdtemp(prefix="bh_hil_wrap_")) / "session"
+    link = AppLink(args.port, baud, config).open()
+    session = SessionLog(out, config, SessionSettings(segment_seconds=1.5, fixed_step_s=0.1), config_source=cfg_dir)
+    try:
+        session.start()
+        link.worker.set_session_sink(session)
+        link.send(hw.command(hw.ID_SET_SEQ, struct.pack("<I", start)))
+        pump(0.2)
+        link.send(hw.burst_cmd(cycles))
+        pump(10.0, lambda: link.good.get(0x4000, 0) >= cycles)
+        pump(0.5)
+        for _ in range(3):
+            session.tick()
+            pump(0.6)
+        link.worker.set_session_sink(None)
+        session.stop()
+        r.check(session.await_finished(120), "session finished")
+    finally:
+        link.close()
+        restore_board(args.port)
+    expect = [(start + i) & 0xFFFFFFFF for i in range(cycles)]
+    r.check(link.seq == expect, f"worker saw {len(link.seq)} counters, wrapping at 0xFFFFFFFF -> 0")
+    logged = []
+    for seg in read_manifest(out)["segments"]:
+        ev = pd.read_csv(out / seg["files"]["event_csv"])
+        col = next(c for c in ev.columns if c.endswith("HIL Seq"))
+        logged += ev[col].dropna().astype("int64").tolist()
+    r.check(logged == expect, f"event log holds the {cycles} values exactly once, in order, unsigned")
+    r.check(min(logged) == 0 and max(logged) == 0xFFFFFFFF, "both ends of the 32-bit range present")
+    return r
+
+
 def t_device_reset(args, config) -> Result:
     """Hardware reset of the target mid-stream (the ST-LINK VCP stays up,
     as a BMS rebooting behind a USB-UART adapter would)."""
@@ -515,6 +672,29 @@ def _session(name: str, args, config, cfg_dir: Path, baud: int, seconds: float, 
     r.check(logged - rebuilt <= len(raws) - 1,
             f"per-segment rebuild {rebuilt} frames, short by {logged - rebuilt} <= {len(raws) - 1} boundaries")
 
+    # Order and timestamps across rotation boundaries; xlsx = CSV; export.
+    from openpyxl import load_workbook
+    times = []
+    xlsx_ok = True
+    for s in segs:
+        ev = pd.read_csv(out / s["files"]["event_csv"], usecols=["time_utc"])
+        times += pd.to_datetime(ev["time_utc"], utc=True, format="ISO8601").astype("int64").tolist()
+        wb = load_workbook(out / s["files"]["event_xlsx"], read_only=True)
+        xlsx_rows = sum(1 for _ in wb["Data"].iter_rows()) - 1
+        wb.close()
+        xlsx_ok &= xlsx_rows == s["rows"]["event"] == len(ev)
+    r.check(all(b >= a for a, b in zip(times, times[1:], strict=False)),
+            "event timestamps never go backwards, across every rotation")
+    r.check(xlsx_ok, "each segment's .xlsx has exactly the rows of its CSV and the manifest")
+    export = out.parent / "export.csv"
+    n_export = src.export_range([seq_sig], 0.0, src.duration + 1.0, export)
+    exported = pd.read_csv(export)
+    ecol = next(c for c in exported.columns if c.endswith("HIL Seq"))
+    ex = exported[ecol].dropna().astype("int64")
+    ex = ex[ex.diff().fillna(1) != 0].tolist()
+    r.check(ex == list(range(st["frames_4000"])),
+            f"Analysis Suite export: {n_export} rows, every seq once ({len(ex)} distinct)")
+
     r.data.update(folder=str(out), segments=len(segs), fixed_rows=fixed_rows, baud=baud,
                   cycles_per_s=cps, seconds=seconds)
     return r
@@ -547,11 +727,13 @@ def t_gui(args, config, cfg_dir: Path) -> Result:
     win.show()
     replies: Dict[int, bytes] = {}
     seq: List[int] = []
+    # perf_counter: time.monotonic() moves in ~15.6 ms steps on Windows,
+    # which quantised every lateness value by up to that much.
     lag = {"max": 0.0, "n": 0, "over_100": 0, "spikes": [], "all": []}
-    last = [time.monotonic()]
+    last = [time.perf_counter()]
 
     def tick() -> None:
-        now = time.monotonic()
+        now = time.perf_counter()
         late = now - last[0] - 0.02
         last[0] = now
         lag["n"] += 1
@@ -575,7 +757,7 @@ def t_gui(args, config, cfg_dir: Path) -> Result:
 
     def sampler() -> None:
         while not sampling.wait(0.05):
-            if probe.isActive() and time.monotonic() - last[0] > 0.3:
+            if probe.isActive() and time.perf_counter() - last[0] > 0.3:
                 frame = sys._current_frames().get(gui_ident)
                 if frame is not None:
                     stack = traceback.extract_stack(frame)[-6:]
@@ -604,7 +786,7 @@ def t_gui(args, config, cfg_dir: Path) -> Result:
         r.check(win._start_logging_file(folder), "logging session starts")
         pump(0.3)
         probe.start()
-        last[0] = lag["t0"] = time.monotonic()
+        last[0] = lag["t0"] = time.perf_counter()
         win._serial.enqueue_priority_tx(hw.stream_cmd(cps, True))
         pump(seconds)
         win._serial.enqueue_priority_tx(hw.stream_cmd(0, False))
@@ -684,11 +866,18 @@ def main() -> int:
     ap.add_argument("--burst-cycles", type=int, default=20000)
     ap.add_argument("--session-seconds", type=float, default=30.0)
     ap.add_argument("--gui-seconds", type=float, default=30.0)
+    ap.add_argument("--rx-buffer", type=int, default=None,
+                    help="override the driver receive-buffer request (bytes) for experiments")
+    ap.add_argument("--pauses", type=float, nargs="*", default=[1.0, 2.0, 4.0, 8.0, 16.0],
+                    help="reader pauses (s) for the reader_pause test")
     ap.add_argument("--soak-minutes", type=float, default=0.0, help="extra session soak at 921600 baud")
     ap.add_argument("--report", type=Path, default=ROOT / "artifacts" / "hil")
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):
         stream.reconfigure(encoding="utf-8", errors="replace")
+    if args.rx_buffer:
+        import app.serial_io.serial_worker as sw
+        sw.RX_DRIVER_BUFFER = args.rx_buffer
     args.port = args.port or hw.find_port()
     if not args.port:
         print("No ST-LINK virtual COM port found. Is the NUCLEO plugged in?")
@@ -714,6 +903,10 @@ def main() -> int:
         "session_analysis": lambda: _session("session_analysis", args, config, cfg_dir, 921600,
                                              args.session_seconds, 0.6),
         "gui_end_to_end": lambda: t_gui(args, config, cfg_dir),
+        "reader_pause": lambda: t_reader_pause(args, config),
+        "cpu_load": lambda: t_cpu_load(args, config),
+        "shutdown_under_traffic": lambda: t_shutdown_under_traffic(args, config),
+        "seq_wraparound": lambda: t_seq_wraparound(args, config, cfg_dir),
         "smoke_headless": lambda: t_smoke(args, config),
     }
     if args.soak_minutes:

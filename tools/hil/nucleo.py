@@ -30,6 +30,7 @@ TEMPLATE = ROOT / "app" / "resources" / "config_template"
 ID_COUNTER = 0x4000
 ID_STREAM, ID_BAUD, ID_INJECT, ID_RESET_STATS = 0x7F01, 0x7F02, 0x7F03, 0x7F04
 ID_STATS, ID_BURST, ID_PING = 0x7F05, 0x7F06, 0x7F07
+ID_SET_SEQ = 0x7F08
 ID_BAUD_ACK, ID_STATS_REPLY, ID_PING_REPLY = 0x7F82, 0x7F85, 0x7F87
 LEGACY_STREAMING = 0x1005     # [0] = on, [1] = off
 CYCLE_BYTES = {True: 68, False: 52}   # bytes per cycle with / without the 0x4000 frame

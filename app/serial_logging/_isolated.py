@@ -23,9 +23,8 @@ Failure handling (task.md Phase 2):
 * no helper can be started at all (spawn not possible here) - the job runs
   in-process, slower to the GUI but not lost.
 
-A helper does not outlive the application, even when the application is
-killed in the middle of a job (tests/test_isolated.py checks this on
-Windows; no extra watchdog was needed).
+A helper exits on its own when the application process ends (killed or
+crashed included), idle or in the middle of a job.
 
 On any failure the caller's ``leftovers`` (temp files the job may have half
 written) are deleted, so an incomplete output never looks finished.
@@ -78,11 +77,29 @@ def timeout_for(*paths: Path) -> float:
     return BASE_TIMEOUT_S + TIMEOUT_S_PER_MB * size / 1e6
 
 
+def _exit_with_parent() -> None:
+    """Helper-process initializer: exit as soon as the application is gone.
+
+    Without it a helper outlives a crashed or killed application for good
+    when idle (it waits for its next job forever) and until its job ends
+    when busy (tests/test_isolated.py, both cases)."""
+    parent = multiprocessing.parent_process()
+    if parent is None:
+        return
+
+    def watch() -> None:
+        parent.join()
+        os._exit(3)
+
+    threading.Thread(target=watch, name="ParentWatch", daemon=True).start()
+
+
 def _get_pool() -> ProcessPoolExecutor:
     global _pool
     with _lock:
         if _pool is None:
-            _pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+            _pool = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"),
+                                        initializer=_exit_with_parent)
         return _pool
 
 

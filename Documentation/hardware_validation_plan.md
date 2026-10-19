@@ -119,8 +119,12 @@ byte. A JSON report is written to `artifacts/hil/`.
 | `polling_sequential`, `polling_pipelined` | Template poll schedule: the stretch warning at the default TX gap; at 20 ms every interval honoured, responses = board replies, no timeouts |
 | `watchdog` | `device_timeout` after 3 s of silence, data resumes, no false disconnect |
 | `device_reset` | Target reset over SWD mid-stream: the app keeps running, the sequence restarts, at most one torn frame |
-| `session_analysis` | Session logging at 921,600 baud with rotation every 7.5 s and fixed-step 0.1 s: every sequence number in the event log once, fixed-step rows on the grid, raw capture gapless across rotations, Analysis Suite statistics (n, min, max) = board |
+| `session_analysis` | Session logging (on the worker thread) at 921,600 baud with rotation every 7.5 s and fixed-step 0.1 s: every sequence number in the event log once, timestamps never backwards across rotations, each .xlsx = its CSV, fixed-step rows on the grid, raw capture gapless across rotations, Analysis Suite statistics and export = board |
 | `gui_end_to_end` | The real MainWindow at 3,250 frames/s: logging session, every frame logged once, GUI event-loop lag (fails above 250 ms, records the GUI thread's stack while stalled), the Analysis Suite opens the result |
+| `reader_pause` | The worker stops reading for 1/2/4/8/16 s at 2 Mbaud: measures how much the link buffers upstream (the driver does not report its granted size); pauses ≤ 2 s must be lossless; any loss must show as a sequence gap |
+| `cpu_load` | Streaming at 2 Mbaud while every core runs a busy loop in another process |
+| `shutdown_under_traffic` | Closing the connection while the board streams at 2 Mbaud with raw capture on: no error, raw capture complete |
+| `seq_wraparound` | The 32-bit counter wraps 0xFFFFFFFF → 0 inside a rotating session: every value logged once, in order, unsigned (firmware 1.1.0 `SET_SEQ`) |
 | `smoke_headless` | `smoke_headless.py` phases 0–19 against the board (decoding, bitfields, enums, TX commands, voltage-limit round trip, polling cadence) |
 
 **Results 2026-10-17** (ByteHound branch `production-hardening`, firmware
@@ -131,8 +135,9 @@ lateness 43, 59, 74, 90, 105, 105 and 152 ms, and one run with a single
 4.5 s stall (not reproduced; see Plane.md 0.11). The Part G budget is
 50 ms, so this is **not yet met**; the test's own limit is 250 ms.
 
-Found and fixed by the rig (Plane.md F16–F20): the 64 KiB driver buffer
-lost data silently during read stalls at 2 Mbaud; commands blocked reads
+Found by the rig (Plane.md F16–F20): read stalls at 2 Mbaud lose data
+upstream with no driver error (not fixed by the larger buffer request —
+see F16 correction and the reader_pause results below); commands blocked reads
 for up to 110 ms; the raw capture missed ~70 ms at every segment rotation;
 the default TX gap silently stretched the template poll schedule; polls were
 scheduled from completion instead of at a fixed rate (10–25 % slow). Also GUI

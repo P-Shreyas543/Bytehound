@@ -154,24 +154,30 @@ def test_timeout_scales_with_input_size(tmp_path):
 def test_helper_exits_when_the_application_is_killed_mid_job(tmp_path):
     """No orphan: the helper is busy with a 120 s job when its parent dies."""
     script = tmp_path / "parent.py"
+    pidfile = tmp_path / "helper.pid"
     script.write_text(textwrap.dedent(f"""
         import os, sys, threading, time
         sys.path.insert(0, {str(ROOT)!r})
         from app.serial_logging import _isolated
         from tests import isolated_jobs
-        threading.Thread(target=_isolated.run_isolated,
-                         args=(isolated_jobs.sleep_then_write, 120, {str(tmp_path / 'p')!r}),
-                         daemon=True).start()
-        for _ in range(300):
-            pids = _isolated.helper_pids()
-            if pids and os.path.exists({str(tmp_path / 'p')!r}):
-                break
-            time.sleep(0.1)
-        print(pids[0], flush=True)
-        os._exit(9)          # abrupt: no atexit, no shutdown
+
+        if __name__ == "__main__":   # spawn re-imports this script in the helper
+            threading.Thread(target=_isolated.run_isolated,
+                             args=(isolated_jobs.sleep_then_write, 120, {str(tmp_path / 'p')!r}),
+                             daemon=True).start()
+            for _ in range(300):
+                pids = _isolated.helper_pids()
+                if pids and os.path.exists({str(tmp_path / 'p')!r}):
+                    break
+                time.sleep(0.1)
+            assert pids[0] != os.getpid()
+            open({str(pidfile)!r}, "w").write(str(pids[0]))
+            os._exit(9)          # abrupt: no atexit, no shutdown
     """), encoding="utf-8")
-    out = subprocess.run([sys.executable, str(script)], capture_output=True, text=True, timeout=120)
-    helper = int(out.stdout.strip().splitlines()[-1])
+    # Output discarded: a surviving helper would hold a captured pipe open.
+    subprocess.run([sys.executable, str(script)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=120)
+    helper = int(pidfile.read_text())
     deadline = time.monotonic() + 15
     while _alive(helper) and time.monotonic() < deadline:
         time.sleep(0.2)
@@ -200,3 +206,37 @@ def test_write_failure_in_the_helper_keeps_the_csv(tmp_path):
     assert exc is not None and not isinstance(exc, TimeoutError)
     assert (tmp_path / "seg.csv").read_text(encoding="utf-8") == "a,b\n1,2\n"
     assert not list(tmp_path.glob("*.partial"))
+
+
+def test_idle_helper_exits_when_the_application_is_killed(tmp_path):
+    """No orphan when the application dies after finishing work: an idle
+    helper used to wait for its next job forever (found: one leftover
+    helper per pytest run, which ends with TerminateProcess)."""
+    script = tmp_path / "parent_idle.py"
+    pidfile = tmp_path / "helper.pid"
+    script.write_text(textwrap.dedent(f"""
+        import os, sys
+        sys.path.insert(0, {str(ROOT)!r})
+        from app.serial_logging import _isolated
+        from tests import isolated_jobs
+
+        if __name__ == "__main__":   # spawn re-imports this script in the helper
+            helper = _isolated.run_isolated(isolated_jobs.pid)    # helper started, now idle
+            assert helper != os.getpid() and _isolated.helper_pids() == [helper]
+            open({str(pidfile)!r}, "w").write(str(helper))
+            if sys.platform == "win32":
+                import ctypes
+                k = ctypes.windll.kernel32
+                k.GetCurrentProcess.restype = ctypes.c_void_p
+                k.TerminateProcess.argtypes = [ctypes.c_void_p, ctypes.c_uint]
+                k.TerminateProcess(k.GetCurrentProcess(), 9)
+            os._exit(9)
+    """), encoding="utf-8")
+    # Output discarded: a surviving helper would hold a captured pipe open.
+    subprocess.run([sys.executable, str(script)], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                   timeout=120)
+    helper = int(pidfile.read_text())
+    deadline = time.monotonic() + 15
+    while _alive(helper) and time.monotonic() < deadline:
+        time.sleep(0.2)
+    assert not _alive(helper), "idle helper outlived its killed parent"
