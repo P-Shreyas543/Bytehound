@@ -10,7 +10,7 @@ mixed into ``MainWindow`` — relies on host helpers ``self._log_activity``,
 
 from __future__ import annotations
 
-import os
+import tempfile
 from pathlib import Path
 
 from PySide6.QtCore import Qt
@@ -69,7 +69,11 @@ class UpdaterWiringMixin:
         self._progress.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
         self._progress.show()
 
-        dest_path = str(Path(os.environ.get("TEMP", ".")) / f"{APP_NAME}_Update.exe")
+        # A fresh private directory per download, not a fixed name in %TEMP%
+        # that another process could prepare or swap (CWE-377).
+        dest_dir = tempfile.mkdtemp(prefix=f"{APP_NAME}_Update_")
+        dest_path = str(Path(dest_dir) / f"{APP_NAME}_Setup.exe")
+        self._update_sha256 = sha256
         self._downloader = UpdateDownloader(url, dest_path, expected_sha256=sha256)
         self._downloader.progress.connect(self._on_download_progress)
         self._downloader.finished.connect(self._on_download_finished)
@@ -96,4 +100,9 @@ class UpdaterWiringMixin:
             buttons=QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
         )
         if reply == QMessageBox.StandardButton.Yes:
-            launch_installer(dest_path)
+            if not launch_installer(dest_path, getattr(self, "_update_sha256", "")):
+                self._popup_critical(
+                    "Updater Error",
+                    "The downloaded installer changed after it was verified and was not started. "
+                    "Download the update again.",
+                )

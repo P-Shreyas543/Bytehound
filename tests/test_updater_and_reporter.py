@@ -230,3 +230,58 @@ def test_report_issue_dialog_data(qapp, tmp_path):
     assert len(attachments) == 1
     assert attachments[0]["name"] == "test_attachment.txt"
     assert attachments[0]["data"] == b"Hello World"
+
+
+def test_installer_is_rehashed_and_not_launched_if_it_changed(tmp_path, monkeypatch):
+    """Check-then-use (CWE-367): the installer verified at download time
+    must still match when the user clicks Install."""
+    import hashlib
+
+    import app.ui.updater as up
+
+    launched = []
+    monkeypatch.setattr(up.subprocess, "Popen", lambda args, *a, **k: launched.append(args))
+    monkeypatch.setattr(up.sys, "exit", lambda code=0: None)
+    exe = tmp_path / "Bytehound_Setup.exe"
+    exe.write_bytes(b"genuine installer")
+    good = hashlib.sha256(b"genuine installer").hexdigest()
+
+    exe.write_bytes(b"swapped after verification")
+    assert up.launch_installer(str(exe), good) is False
+    assert launched == [] and not exe.exists()       # not run, and removed
+
+    exe.write_bytes(b"genuine installer")
+    assert up.launch_installer(str(exe), good.upper()) is True
+    assert launched == [[str(exe), "/SILENT"]]
+
+
+def test_update_downloads_into_a_private_directory(monkeypatch, tmp_path):
+    import tempfile as _tf
+
+    import app.ui.updater_wiring as uw
+
+    made = []
+    real = _tf.mkdtemp
+    monkeypatch.setattr(uw.tempfile, "mkdtemp", lambda **k: made.append(real(dir=str(tmp_path), **k)) or made[-1])
+    started = {}
+
+    class FakeDownloader:
+        def __init__(self, url, dest, expected_sha256=""):
+            started["dest"] = dest
+            self.progress = self.finished = self.error = MagicMock()
+
+        def start(self):
+            pass
+
+        def requestInterruption(self):
+            pass
+
+    monkeypatch.setattr(uw, "UpdateDownloader", FakeDownloader)
+    monkeypatch.setattr(uw, "QProgressDialog", MagicMock())
+
+    class Host(uw.UpdaterWiringMixin):
+        pass
+
+    Host()._download_update("https://example.invalid/setup.exe", "ab" * 32)
+    assert made and started["dest"].startswith(made[0])
+    assert not started["dest"].endswith("Bytehound_Update.exe")

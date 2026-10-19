@@ -155,8 +155,32 @@ class UpdateDownloader(QThread):
             self.error.emit(str(e))
 
 
-def launch_installer(installer_path: str) -> None:
-    """Launches the downloaded installer and exits the app."""
+def file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fp:
+        for chunk in iter(lambda: fp.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def launch_installer(installer_path: str, expected_sha256: str = "") -> bool:
+    """Launch the downloaded installer and exit the app.
+
+    The file is hashed again right before it is started: it was verified
+    when the download finished, but the user may take a while to answer
+    "Install now?", and a file that changed in between must not run
+    (check-then-use). Returns False, without launching, on a mismatch.
+    """
+    if expected_sha256:
+        actual = file_sha256(installer_path)
+        if actual != expected_sha256.strip().lower():
+            _LOG.error("Installer %s changed after verification (sha256 %s); not launched",
+                       installer_path, actual)
+            try:
+                os.remove(installer_path)
+            except OSError:
+                pass
+            return False
     # /SILENT runs the Inno Setup installer without a wizard but shows progress
     # /VERYSILENT shows nothing
     subprocess.Popen([installer_path, "/SILENT"])
@@ -169,3 +193,4 @@ def launch_installer(installer_path: str) -> None:
         app.quit()
     else:
         sys.exit(0)
+    return True
