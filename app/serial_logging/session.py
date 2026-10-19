@@ -866,9 +866,10 @@ class SessionLog:
                 continue
             try:
                 csv_path = self.folder / name
-                partial = csv_path.with_name(csv_path.stem + _CACHE_SUFFIX + ".partial")
+                final = csv_path.with_name(csv_path.stem + _CACHE_SUFFIX)
+                partial = final.with_name(final.name + ".partial")
                 cache = run_isolated(build_segment_cache, csv_path, self.session_wall0,
-                                     timeout=timeout_for(csv_path), leftovers=[partial])
+                                     timeout=timeout_for(csv_path), leftovers=[partial, final])
                 entry["files"][f"{kind}_analysis"] = cache.name
             except Exception as exc:
                 notes.append(f"analysis cache for {name} not built: {exc}")

@@ -165,6 +165,11 @@ def run_isolated(fn: Callable[..., Any], *args: Any, timeout: Optional[float] = 
                 except FutureTimeout:
                     _LOG.error("Helper job %s exceeded %.0f s; terminating the helper", fn.__name__, timeout)
                     _discard_pool(pool, kill=True)
+                    # The job may have completed between the timeout and the
+                    # kill: its output is then whole and its result valid.
+                    if future.done() and not future.cancelled() and future.exception() is None:
+                        _LOG.warning("Helper job %s finished while being stopped; keeping its result", fn.__name__)
+                        return future.result()
                     raise TimeoutError(f"{fn.__name__} did not finish within {timeout:.0f} s") from None
                 except BrokenProcessPool as exc:
                     _discard_pool(pool, kill=True)

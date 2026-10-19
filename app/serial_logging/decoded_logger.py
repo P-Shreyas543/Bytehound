@@ -846,7 +846,9 @@ def finalize_temp_log(
             exc = run_isolated(compile_csv_to_xlsx, data_path,
                                {k: str(v) for k, v in metadata.items()}, target_path,
                                timeout=timeout_for(data_path),
-                               leftovers=[target_path.with_name(target_path.name + ".partial")])
+                               # On failure the target goes too: a killed helper can
+                               # have renamed it into place without reporting back.
+                               leftovers=[target_path.with_name(target_path.name + ".partial"), target_path])
         except Exception as run_exc:  # e.g. an unpicklable result: keep the CSV fallback below
             exc = run_exc
     else:

@@ -536,9 +536,14 @@ def test_helper_timeout_marks_the_segment_and_keeps_the_csv(tmp_path, config, mo
     """task.md Phase 2: a hung xlsx compile must not be presented as a
     finished segment. The CSV stays, no .xlsx or .partial is left, and the
     reason is in session.json."""
-    from app.serial_logging import _isolated
+    from app.serial_logging import _isolated, session_analysis
+    from tests import isolated_jobs as jobs
 
-    monkeypatch.setattr(_isolated, "timeout_for", lambda *p: 0.0001)
+    # Jobs that really hang: a tiny timeout on real jobs races with them
+    # finishing, and a job that wins the race is (correctly) kept.
+    monkeypatch.setattr(dl_mod, "compile_csv_to_xlsx", jobs.hang_compile)
+    monkeypatch.setattr(session_analysis, "build_segment_cache", jobs.hang)
+    monkeypatch.setattr(_isolated, "timeout_for", lambda *p: 1.0)
     clock = Clock()
     s, _ = _session(tmp_path, config, clock, segment_seconds=3600, fixed_step_s=1.0)
     s.start()

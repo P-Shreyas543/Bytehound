@@ -114,6 +114,26 @@ def test_hung_job_times_out_kills_the_helper_and_cleans_up(tmp_path):
     assert second not in (first, os.getpid())
 
 
+def test_job_that_finishes_while_being_stopped_keeps_its_result(tmp_path, monkeypatch):
+    """The timeout fires, but the job completes before the kill lands: its
+    output is whole, so it is returned rather than reported as a timeout
+    (found by the full suite: a segment marked failed beside a complete
+    .xlsx)."""
+    target = tmp_path / "out.xlsx"
+    real_discard = _isolated._discard_pool
+
+    def late_kill(pool, *, kill):
+        deadline = time.monotonic() + 30
+        while not target.exists() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        time.sleep(1.0)                               # the result reaches the parent
+        real_discard(pool, kill=kill)
+
+    monkeypatch.setattr(_isolated, "_discard_pool", late_kill)
+    assert _isolated.run_isolated(jobs.write_and_return, str(target), timeout=0.0001) == str(target)
+    assert target.read_text(encoding="utf-8") == "whole"
+
+
 def test_helper_crash_is_retried_once_in_a_fresh_helper(tmp_path):
     marker = tmp_path / "crashed"
     pid = _isolated.run_isolated(jobs.crash_once, str(marker))
