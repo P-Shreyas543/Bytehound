@@ -60,6 +60,8 @@ MANIFEST_NAME = "session.json"
 QUIET_MARGIN_S = 1.0
 _DISK_CHECK_INTERVAL_S = 30.0
 _HEARTBEAT_INTERVAL_S = 60.0
+# Warn when this many closed segments are still being finished at once.
+FINISH_BACKLOG_WARN = 3
 _WRITER_QUEUE_SIZE = 1_000_000
 
 Key = Tuple[Any, str]
@@ -362,6 +364,8 @@ _INTEGRITY_GAUGES = frozenset({"buffered_bytes", "rx_service_gap_max_ms"})
 
 
 class _RawHooksNone:
+    records = False   # writes no file: the manifest must not list one
+
     def start(self, path: Path, metadata: Dict[str, Any]) -> None:
         return None
 
@@ -698,7 +702,8 @@ class SessionLog:
         else:
             try:
                 self._raw.start(raw_path, self._raw_meta(index, seg.wall0))
-                files["raw"] = raw_path.name
+                if getattr(self._raw, "records", True):
+                    files["raw"] = raw_path.name
             except Exception as exc:
                 self._warn(f"Raw capture not started for segment {index}: {exc}")
         seg.integrity_start = dict(self._integrity)
@@ -762,6 +767,13 @@ class SessionLog:
         # over a months-long session (found by tools/soak_session.py).
         self._finishers = [f for f in self._finishers if f.is_alive()]
         self._finishers.append(t)
+        # Finishing slower than rotation piles segments up (each holds its
+        # CSV until compiled): make the backlog visible.
+        backlog = len(self._finishers)
+        if backlog >= FINISH_BACKLOG_WARN and backlog > getattr(self, "_backlog_warned", 0):
+            self._backlog_warned = backlog
+            self._warn(f"{backlog} segments are still being finished (xlsx / analysis cache); "
+                       "the PC is not keeping up with the rotation interval")
 
     def _finish_segment(self, seg: _Segment, entry: Dict[str, Any]) -> None:
         """Wait for the writers, then record row counts, sizes and hashes."""
@@ -770,6 +782,8 @@ class SessionLog:
         if seg.event is not None:
             seg.event.await_drain(None)
             rows["event"] = seg.event.rows_written
+            if seg.event.error:
+                errors.append(seg.event.error)
             entry_dropped = seg.event.total_dropped
             if entry_dropped:
                 self.decoded_dropped += entry_dropped
@@ -788,14 +802,17 @@ class SessionLog:
         # length instantly. Derived data: a failure is a warning, not an
         # error, and the Analysis Suite rebuilds a missing cache on open.
         notes: List[str] = []
-        from ._isolated import run_isolated
-        from .session_analysis import build_segment_cache
+        from ._isolated import run_isolated, timeout_for
+        from .session_analysis import _CACHE_SUFFIX, build_segment_cache
         for kind in ("event", "fixed"):
             name = entry["files"].get(f"{kind}_csv")
             if not name or not (self.folder / name).exists():
                 continue
             try:
-                cache = run_isolated(build_segment_cache, self.folder / name, self.session_wall0)
+                csv_path = self.folder / name
+                partial = csv_path.with_name(csv_path.stem + _CACHE_SUFFIX + ".partial")
+                cache = run_isolated(build_segment_cache, csv_path, self.session_wall0,
+                                     timeout=timeout_for(csv_path), leftovers=[partial])
                 entry["files"][f"{kind}_analysis"] = cache.name
             except Exception as exc:
                 notes.append(f"analysis cache for {name} not built: {exc}")

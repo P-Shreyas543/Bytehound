@@ -603,6 +603,14 @@ class DecodedLogger:
             if self._pending_error is None:
                 self._pending_error = f"Decoded log {context} error for {self.path.name}: {exc}"
 
+    @property
+    def error(self) -> Optional[str]:
+        """The writer's first error not yet delivered to ``on_error``. A
+        closed segment's logger never gets another ``log_frame`` to deliver
+        it, so the session reads it here when the segment finishes."""
+        with self._error_lock:
+            return self._pending_error
+
     def _pump_pending_error(self) -> None:
         with self._error_lock:
             err = self._pending_error
@@ -831,10 +839,12 @@ def finalize_temp_log(
     is safely in place. Returns the compile error, if any.
     """
     if isolate:
-        from ._isolated import run_isolated
+        from ._isolated import run_isolated, timeout_for
         try:
             exc = run_isolated(compile_csv_to_xlsx, data_path,
-                               {k: str(v) for k, v in metadata.items()}, target_path)
+                               {k: str(v) for k, v in metadata.items()}, target_path,
+                               timeout=timeout_for(data_path),
+                               leftovers=[target_path.with_name(target_path.name + ".partial")])
         except Exception as run_exc:  # e.g. an unpicklable result: keep the CSV fallback below
             exc = run_exc
     else:

@@ -530,3 +530,49 @@ def test_segment_integrity_records_gauges_as_values(tmp_path, config):
     first = read_manifest(tmp_path / "sess")["segments"][0]["integrity"]
     assert first["parser_bytes_in"] == 150
     assert first["buffered_bytes"] == 3 and first["rx_service_gap_max_ms"] == 40.0
+
+
+def test_helper_timeout_marks_the_segment_and_keeps_the_csv(tmp_path, config, monkeypatch):
+    """task.md Phase 2: a hung xlsx compile must not be presented as a
+    finished segment. The CSV stays, no .xlsx or .partial is left, and the
+    reason is in session.json."""
+    from app.serial_logging import _isolated
+
+    monkeypatch.setattr(_isolated, "timeout_for", lambda *p: 0.0001)
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock, segment_seconds=3600, fixed_step_s=1.0)
+    s.start()
+    for f in _frames(config) * 20:
+        s.log_frame(f, clock.perf)
+        clock.advance(0.1)
+    s.stop()
+    assert s.await_finished(120)
+    seg = read_manifest(tmp_path / "sess")["segments"][0]
+    assert seg["status"] == "closed_with_errors"
+    assert any("did not finish within" in e for e in seg["errors"]), seg["errors"]
+    folder = tmp_path / "sess"
+    assert (folder / seg["files"]["event_csv"]).stat().st_size > 0
+    assert not (folder / seg["files"]["event_xlsx"]).exists()
+    assert not list(folder.glob("*.partial"))
+
+
+def test_finishing_backlog_is_reported(tmp_path, config, monkeypatch):
+    import threading as th
+
+    release = th.Event()
+    monkeypatch.setattr(SessionLog, "_finish_segment", lambda self, seg, entry: release.wait(30))
+    warnings = []
+    clock = Clock()
+    s = SessionLog(tmp_path / "sess", config, SessionSettings(segment_seconds=10), raw_capture=RawHooks(),
+                   on_warning=warnings.append, clock=lambda: clock.wall, perf=lambda: clock.perf,
+                   disk_free=lambda p: 1 << 40)
+    s.start()
+    try:
+        for _ in range(4):
+            clock.advance(11)
+            s.tick()
+        assert any("segments are still being finished" in w for w in warnings), warnings
+    finally:
+        release.set()
+        s.stop()
+        assert s.await_finished(30)

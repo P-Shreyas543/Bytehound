@@ -200,3 +200,46 @@ def test_finishing_wait_blocks_the_gui_at_most_one_short_poll_at_a_time(qapp, mo
     monkeypatch.setattr(ls, "QProgressDialog", lambda *a, **k: MagicMock(wasCanceled=lambda: False))
     Host()._wait_for_logger_drain([("logging session", SlowDrainer())])
     assert len(waits) == 5 and max(waits) <= 0.05
+
+
+def test_stop_does_not_call_an_unfinished_session_saved(qapp, monkeypatch):
+    from app.ui import logging_session as ls
+
+    class Session:
+        folder = "C:/x/session"
+        decoded_dropped = 0
+
+        def stop(self):
+            pass
+
+        def is_finishing(self):
+            return True
+
+    class Host(ls.LoggingSessionMixin):
+        def __init__(self):
+            self._logging = True
+            self._session_log = Session()
+            self._serial = None
+            self._config = None
+            self._logging_action = MagicMock()
+            self._logging_label = MagicMock()
+            self.activity = []
+            self.skip = None
+
+        def _wait_for_logger_drain(self, drainers, title="", skip_label=""):
+            self.skip = skip_label
+
+        def _log_activity(self, msg):
+            self.activity.append(msg)
+
+        def _style_action_btn(self, *a):
+            pass
+
+        def _set_status(self, *a):
+            pass
+
+    host = Host()
+    host._stop_logging()
+    assert host.skip == "Continue in background"
+    assert not any("saved" in m for m in host.activity)
+    assert any("still being finished" in m for m in host.activity)

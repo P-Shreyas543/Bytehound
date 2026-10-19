@@ -11,6 +11,103 @@ for **days, months or years** at high frame rates. Every item is ticked only
 when implemented, tested and verified; dropped items say why. Detailed
 evidence for finished threading/memory work lives in [fix.md](fix.md).
 
+### 0.0 Production-readiness closure pass ([task.md](task.md)) — progress tracker
+
+Started 2026-10-17 from `56b99d8`. Status per task.md: **PASS** (criterion
+run and met, evidence named), **FAIL**, **OPEN**, **NOT RUN**, **BLOCKED**.
+Updated after every phase. Release recommendation so far: **NOT READY**.
+
+**Decisions taken with the project owner (2026-10-17)**
+
+- GUI latency release gate: **p99 ≤ 50 ms and max ≤ 250 ms at the rated
+  3,000 frames/s** (logging on, rotation). Above the rated rate the display
+  may degrade; logging may not. (No document defined "rated frame rate" or
+  whether 50 ms was a maximum.)
+- Session logging moves off the GUI thread into the capture worker.
+
+**Phase 1 — GUI stalls** — commit `5758cbe`
+
+- [x] Diagnostic tool `tools/gui_latency_probe.py`: real MainWindow, loopback
+      device or NUCLEO, logging + rotation; tick lateness on `perf_counter`
+      (`time.monotonic` ticks in 15.6 ms steps on Windows), GC pauses,
+      session events, UI-flush cost, queue depths, CPU, worker progress,
+      worker log; optional stack sampling, A/B and `gc.freeze` switches
+- [x] **Silent data loss found and fixed:** a retained frame kept the
+      parser's memoryview alive → `BufferError` on every `feed()` → the
+      worker dropped what it read while the session said "closed".
+      Triggered by the probe's own stack sampler (2/3 runs; 0/5 without).
+      Views now released before each parse returns; parser exceptions
+      counted (`parse_errors`). Tests fail on the old code
+- [x] UI flush bounded to 25 ms per tick (worst flush 832 → ~200 ms)
+- [x] Session logging on the worker thread (`set_session_sink`), SessionLog
+      locked, GUI callbacks via a queued relay. A/B: no change at 3,000
+      fps; lower worst case at 5,000 fps in 2 of 3 pairs (small sample)
+- [x] Stop Logging blocks the GUI ≤ 40 ms per wait (was 200 ms, for seconds)
+- [x] Queue-saturation warning rate-limited (was a file write per batch)
+- [x] Order-dependent test pollution from `56b99d8` fixed
+- [ ] **Gate run** — repeated runs at 3,000 fps with p50/p95/p99/max.
+      Latest: NUCLEO p99 12 ms / max 43 ms; 3 interleaved loopback runs
+      max 46–93 ms; but an earlier batch on the same build had max
+      284–632 ms. Machine-state variance is larger than the effects
+      measured. **OPEN** until a repeated gate batch passes
+- [ ] **4.5 s stall** (one HIL run, 2026-10-17): mechanism identified at
+      5,000 fps (GIL saturation + gen-2 GC 41→420 ms + backlog) but not
+      reproduced at the rated rate; **OPEN**
+- Tested and rejected: Qt posted-event backlog as the cause; `gc.freeze()`
+  (cuts GC pauses, not the stalls)
+
+**Phase 2 — helper process** (`app/serial_logging/_isolated.py`)
+
+- [x] Timeout per job (10 min + 10 s/MB); hung helper terminated; next job
+      gets a fresh helper
+- [x] Crash: retried once in a fresh helper, then `HelperFailed` — never
+      rerun inside the application
+- [x] Jobs serialised (timeout = the job's own run); leftover `.partial`
+      files removed on any failure
+- [x] Unpicklable result, job exception, write failure → error returned,
+      CSV kept, segment `closed_with_errors` with the reason in
+      `session.json` (event-log compile errors were not recorded before)
+- [x] No orphan helper when the application is killed mid-job (tested;
+      no watchdog was needed)
+- [x] Finishing backlog warning (≥ 3 segments waiting)
+- [x] Stop Logging no longer says "saved" while finishing continues
+- [x] `Bytehound.exe --selftest-finish` — **PASS in the frozen build**
+      (PyInstaller 6.20.0, Python 3.10.11): separate helper pid, readable
+      xlsx, analysis cache, no leftovers; `--selftest-capture` PASS
+- [ ] GUI responsiveness *while* finishing fails — NOT RUN
+- [ ] Application closed during finishing (non-daemon finishers keep the
+      process alive until done) — NOT RUN
+
+**Phase 3 — serial and end-to-end integrity** — next
+
+- [ ] Transport test 115,200 / 921,600 / 2,000,000 with reader pauses, CPU
+      load, removal/reconnect, shutdown under traffic (NUCLEO)
+- [ ] Requested vs effective driver buffer (record; do not infer)
+- [ ] Deterministic frames: sent = received = decoded = logged = exported;
+      partial frames, corruption, noise, wraparound of the 32-bit counter,
+      missing-frame detection, rotation boundaries
+- [ ] F12 disposition (sequence-gap detection; depends on Part C schema)
+- [ ] FTDI / CH340 / CP2102 — **BLOCKED** (no adapters)
+
+**Phase 4 — rotation, polling, shutdown**
+
+- [ ] Rotation failure injection (open/write/flush/close, disk exhaustion,
+      termination during rotation, recovery never overwrites a session)
+- [ ] Fixed-rate polling edge cases (below / equal / above TX gap, reset,
+      overrun, jitter, missed-poll accounting)
+- [ ] Test harness exit without the `TerminateProcess` workaround (subset);
+      the application's own normal and abnormal exit paths
+
+**Phase 5 — packaging** — [x] frozen build builds (into scratch, `dist/`
+untouched); [ ] packaged workflow checks; clean Windows machine **BLOCKED**
+
+**Phase 6 — soak and security** — [ ] 24 h soak **BLOCKED** (needs the
+bench for a day); [ ] pip-audit / Bandit (not installed — ask before
+adding); [ ] scoped mypy
+
+**Closure** — [ ] traceability table for Parts C, D, E, G and F12;
+[ ] final report (task.md §10)
+
 ### 0.1 Release blockers (current Python release, v1.2.3)
 
 From the production check — must be fixed before shipping:

@@ -311,8 +311,17 @@ class LoggingSessionMixin:
         if session is not None:
             session.stop()
             if session.is_finishing():
-                self._wait_for_logger_drain([("logging session", session)], title=title)
-            self._log_activity(f"Logging session saved: {session.folder}")
+                # Skipping only stops waiting: finishing continues in the
+                # background and loses nothing.
+                self._wait_for_logger_drain([("logging session", session)], title=title,
+                                            skip_label="Continue in background")
+            if session.is_finishing():
+                self._log_activity(
+                    f"Logging stopped: {session.folder} is still being finished in the background "
+                    "(the .xlsx files and session.json are complete when it is done)"
+                )
+            else:
+                self._log_activity(f"Logging session saved: {session.folder}")
             self._offer_rebuild_if_dropped(session)
 
         self._logging = False
@@ -369,7 +378,8 @@ class LoggingSessionMixin:
 
         threading.Thread(target=_worker, name="RebuildSession", daemon=False).start()
 
-    def _wait_for_logger_drain(self, drainers: list, title: str = "Closing") -> None:
+    def _wait_for_logger_drain(self, drainers: list, title: str = "Closing",
+                               skip_label: str = "Skip (may lose data)") -> None:
         """Show a progress dialog and poll each logger until its writer
         thread exits (data on disk), the cap elapses, or the user
         cancels. ``drainers`` is a list of (name, logger) tuples for
@@ -378,7 +388,7 @@ class LoggingSessionMixin:
         total_rows = sum(lg.pending_rows() for _, lg in drainers)
         dlg = QProgressDialog(
             f"Finishing log — {total_rows} row(s) remaining…",
-            "Skip (may lose data)",
+            skip_label,
             0,
             max(total_rows, 1),
             self,

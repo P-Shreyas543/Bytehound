@@ -248,13 +248,18 @@ def main(argv: list[str] | None = None) -> int:
         action="store_true",
         help="Stream test frames through a capture process over loopback and exit. Returns 0 on success.",
     )
+    parser.add_argument(
+        "--selftest-finish",
+        action="store_true",
+        help="Record and finish a short session through the helper process and exit. Returns 0 on success.",
+    )
     args, remaining = parser.parse_known_args(argv)
     # Strip our own flags so Qt sees a clean argv.
     sys.argv = [sys.argv[0], *remaining]
 
     configure_logging(
         level=logging.INFO,
-        console=bool(args.validate or args.profile or args.selftest_capture)
+        console=bool(args.validate or args.profile or args.selftest_capture or args.selftest_finish)
     )
 
     if args.validate:
@@ -271,6 +276,10 @@ def main(argv: list[str] | None = None) -> int:
     if args.selftest_capture:
         from app.serial_io.capture_process import selftest
         return selftest()
+
+    if args.selftest_finish:
+        from app.serial_logging.selftest import selftest_finish
+        return selftest_finish()
 
     if not args.profile:
         return _run_app()
