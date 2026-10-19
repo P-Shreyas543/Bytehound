@@ -928,6 +928,21 @@ chamber log). Today the decoded log is event-driven (one row per poll cycle).
 | Part G UI/UX standards and budgets | Phases 4–5 and the performance gates |
 | Process-mode result | Evidence for the Phase 2 design: worker thread + batched immutable snapshots; avoid per-object serialisation across boundaries |
 
+### 0.14 Part I — Live plot review ([live_plot_plan.md](live_plot_plan.md))
+
+Owner request 2026-10-19. Scope: the Live Plot dock (not the Analysis
+Suite, not the XY plot). Phases L0 baseline → L1 correctness → L2
+performance → L3 UX (owner picks).
+
+- [ ] L0 baseline: measure M1–M5 (redraw cost at 3,000 fps with 8 × 8
+      signals, budget-full trimming, "All session" after hours, hover /
+      legend, visual checks)
+- [ ] L1 correctness — P1 gaps drawn as straight lines; P2 states drawn as
+      ramps; P3 third unit drawn on the second unit's axis; P4 points
+      skipped under load joined silently; P5 manual wrong about history size
+- [ ] L2 performance (only what L0 shows over budget)
+- [ ] L3 UX (U1–U5; owner chooses)
+
 ## Objective
 
 Migrate Bytehound from Python/PySide6 to a native C++20 and Qt 6 desktop application with **performance, deterministic timing, and UI responsiveness as the primary goals**. Preserve configurable protocol decoding, serial/TCP/UDP I/O, CAN support, command transmission, polling, logging, live plotting, Analysis Suite, configuration tooling, and Windows packaging.
