@@ -14,6 +14,15 @@ from PySide6.QtCore import QThread, Signal
 _LOG = logging.getLogger("bytehound.updater")
 
 
+def require_https(url: str) -> str:
+    """Only https:// URLs are opened (Bandit B310): the installer URL comes
+    from the remote manifest, and urlopen would also accept file:// or
+    other schemes."""
+    if not str(url).lower().startswith("https://"):
+        raise ValueError(f"refusing non-HTTPS URL: {url!r}")
+    return url
+
+
 def _project_root() -> Path:
     """Repo root in dev, exe-adjacent dir in a frozen PyInstaller build.
 
@@ -59,8 +68,8 @@ class UpdateChecker(QThread):
                 self.error.emit("No manifest URL configured in version.json.")
                 return
 
-            req = urllib.request.Request(manifest_url, headers={'User-Agent': 'Bytehound-Updater'})
-            with urllib.request.urlopen(req, timeout=5) as response:
+            req = urllib.request.Request(require_https(manifest_url), headers={'User-Agent': 'Bytehound-Updater'})
+            with urllib.request.urlopen(req, timeout=5) as response:  # noqa: S310 - https enforced
                 remote_data = json.loads(response.read().decode("utf-8"))
 
             remote_version = remote_data.get("version", "0.0.0")
@@ -104,8 +113,8 @@ class UpdateDownloader(QThread):
     def run(self) -> None:
         try:
             hasher = hashlib.sha256()
-            req = urllib.request.Request(self.url, headers={'User-Agent': 'Bytehound-Updater'})
-            with urllib.request.urlopen(req, timeout=10) as response:
+            req = urllib.request.Request(require_https(self.url), headers={'User-Agent': 'Bytehound-Updater'})
+            with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310 - https enforced
                 total_size = int(response.getheader('Content-Length', 0))
                 downloaded = 0
                 with open(self.dest_path, 'wb') as f:

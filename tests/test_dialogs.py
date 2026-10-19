@@ -234,7 +234,7 @@ def test_report_issue_dialog_and_reporter(qapp, monkeypatch):
         def __exit__(self, exc_type, exc_val, exc_tb):
             pass
 
-    reporter = IssueReporter("My Title", "My Desc", "My Diag", "My Log", [], "http://dummy")
+    reporter = IssueReporter("My Title", "My Desc", "My Diag", "My Log", [], "https://dummy")
     finished_calls = []
     reporter.finished.connect(lambda s, m: finished_calls.append((s, m)))
 
@@ -320,7 +320,7 @@ def test_report_issue_body_truncation_on_overflow(qapp):
         diagnostics="System Diagnostics",
         log_content="Log Tail Content",
         attachments=attachments,
-        worker_url="http://dummy"
+        worker_url="https://dummy"
     )
 
     captured_payload = None
@@ -349,3 +349,18 @@ def test_report_issue_body_truncation_on_overflow(qapp):
 
 
 
+
+
+def test_report_issue_refuses_a_non_https_endpoint():
+    """Bandit B310 hardening: reports are only sent over HTTPS."""
+    from unittest.mock import patch as _patch
+
+    from app.ui.report_issue import IssueReporter
+
+    reporter = IssueReporter("T", "D", "diag", "log", [], "http://insecure.invalid/report")
+    finished = []
+    reporter.finished.connect(lambda ok, msg: finished.append((ok, msg)))
+    with _patch("urllib.request.urlopen") as urlopen:
+        reporter.run()
+    urlopen.assert_not_called()
+    assert finished and finished[0][0] is False and "non-HTTPS" in finished[0][1]

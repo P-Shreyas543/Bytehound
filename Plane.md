@@ -209,12 +209,50 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
       needs code execution as that user already. Recommended: AST
       allow-list before eval (needs a compatibility review of existing
       expressions)
-- [ ] pip-audit / Bandit — approved 2026-10-19, results below
+- [x] **pip-audit 2.10.1** (installed into .venv only, approved
+      2026-10-19; no existing package changed): `requirements.txt` → **no
+      known vulnerabilities**. Installed environment: pillow 12.2.0 (25),
+      setuptools 65.5.0 (8), pip 26.1.1 (4), soupsieve 2.8.4 (2). In the
+      frozen build: pillow and pip **not shipped**; setuptools' advisories
+      are in `package_index` / sdist code, which is not shipped (only
+      `pkg_resources` was); soupsieve (CSS-selector ReDoS) shipped but is
+      unreachable (the app never uses bs4 / `read_html`)
+- [x] **Found and fixed:** the release bundled **pytest, _pytest, pluggy,
+      bs4, soupsieve and pkg_resources** (pulled in by pandas' optional
+      test helpers). Excluded in `Bytehound.spec`; frozen self-tests and
+      GUI launch re-verified; bundle 278 → 277 MB, window 3.1 → 2.6 s.
+      Recommended for the build machine anyway: upgrade setuptools and
+      pip
+- [x] **Bandit 1.9.4** on `app/`: 0 High, 4 Medium, 78 Low. Medium: B307
+      (math-channel eval, above) and 3× B310 (urlopen without a scheme
+      check — the installer URL comes from the remote manifest) → **fixed:
+      HTTPS required** for manifest, installer and issue-report URLs (still
+      listed by Bandit, which does not see the check). Low: 72× try/except/
+      pass, 2× except/continue (code quality, not addressed in this pass),
+      subprocess use (reviewed: installer launch, fixed argv, no shell)
 - [ ] Scoped mypy — NOT RUN (no project configuration)
 - [ ] 24 h soak — **BLOCKED** (bench needed for a day)
 
-**Closure** — [ ] traceability table for Parts C, D, E, G and F12;
-[ ] final report (task.md §10)
+**Closure — scope traceability (Parts C, D, E, G, F12)**
+
+Scope taken from the checklists in this file (§0.5–0.9), not from the part
+names. "Critical" = needed for trustworthy long-duration logging with the
+existing configuration formats; the rest is product scope. **Every
+not-done item needs an owner scope decision before release.**
+
+| ID | Expected (summary of the checklist) | Status | Evidence / where | Depends on | Critical? |
+|---|---|---|---|---|---|
+| C | Versioned canonical JSON config + schema; in-house validation (overlaps, bounds, duplicates, circular calcs); fingerprint in every log; CSV/xlsx/JSON/YAML import → canonical, lossless export; import preview + rollback; remove dead `config_loader.py` copy; move Ather branch out of the decoder; document negative clamp; CRC set limited to what exists | **NOT RUN** (not started; 0 of 9) | §0.5 | — | No for the current formats (existing loaders work and are tested); **yes** for the protocol spec's acceptance |
+| D | Protocol Studio: config management, model/view signal editor, frame layout view, decoder test bench (`.bhraw` replay) | **NOT RUN** (0 of 4) | §0.6 | C | No |
+| E | Spec regression tests (CRC vectors, framing, byte order, bitfields, round-trips, migrations); full pytest + smoke + frozen check; docs (JSON format, import, session format, long-run guide); known limitations | **Partial**: full pytest (671 passed), frozen self-tests, long-run lab guide, hardware plan, limitations list (§0.11 + this section) **PASS**; spec regression tests / JSON docs **NOT RUN** (need C) | §0.7, this section | C | Partial: the done half is; the C half follows C |
+| G | Menus/shortcuts (8), responsiveness (3), visual quality (5), interaction (6), verification (2) | **Partial**: responsiveness — segment finishing off the GUI, logging on the worker, bounded flush, card re-polish, console limit, stop-wait, latency gate **PASS** at 3,000 fps (9/9, caveat in Phase 1); "nothing slow on the GUI thread" for config load / import / export **NOT RUN**; budgets in CI **NOT RUN** (probe exists, not wired to CI); menus, visual, interaction, screenshot review **NOT RUN** (0 of 21) | §0.9, Phase 1 | — | Responsiveness: **yes** (done for logging); the rest: No |
+| F12 | The application detects frames lost on the wire/device from a sequence counter declared in the config (gaps, repeats, resets per frame ID) | **NOT RUN** (not implemented). Loss *is* detectable today only by tooling (HIL) or by the user reading the counter column | §0.8; Phase 3 (reader_pause showed upstream loss is otherwise invisible to the app) | C (schema to mark a counter signal) | **Yes for BMS labs**: upstream USB / network loss leaves no other trace |
+
+Release recommendation from this pass: **NOT READY** — open: scope
+decision for C / D / E-spec / G / F12; 4.5 s stall OPEN; 1-of-7 unexplained
+reader-pause loss; adapter matrix (FTDI / CH340 / CP2102), clean-machine
+packaged test and 24 h soak BLOCKED on hardware/time; frozen GUI workflow
+NOT RUN.
 
 ### 0.1 Release blockers (current Python release, v1.2.3)
 

@@ -115,6 +115,9 @@ class IssueReporter(QThread):
             "labels": ["user-reported"],
         }
 
+        if not str(self.worker_url).lower().startswith("https://"):
+            self.finished.emit(False, f"Refusing to send the report to a non-HTTPS URL: {self.worker_url}")
+            return
         req = urllib.request.Request(self.worker_url, method="POST")
         req.add_header("Content-Type", "application/json")
         req.add_header("User-Agent", "BMSConfigurator-App")  # Matches proxy filter

@@ -285,3 +285,14 @@ def test_update_downloads_into_a_private_directory(monkeypatch, tmp_path):
     Host()._download_update("https://example.invalid/setup.exe", "ab" * 32)
     assert made and started["dest"].startswith(made[0])
     assert not started["dest"].endswith("Bytehound_Update.exe")
+
+
+@pytest.mark.parametrize("url", ["file:///C:/Windows/notepad.exe", "http://example.invalid/setup.exe",
+                                 "ftp://example.invalid/x"])
+def test_updater_refuses_non_https_urls(url):
+    """Bandit B310: the installer URL comes from the remote manifest."""
+    from app.ui.updater import require_https
+
+    with pytest.raises(ValueError):
+        require_https(url)
+    assert require_https("https://example.invalid/setup.exe")
