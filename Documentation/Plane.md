@@ -957,9 +957,31 @@ Owner request 2026-10-19. Scope: the Live Plot dock (not the Analysis
 Suite, not the XY plot). Phases L0 baseline → L1 correctness → L2
 performance → L3 UX (owner picks).
 
-- [ ] L0 baseline: measure M1–M5 (redraw cost at 3,000 fps with 8 × 8
-      signals, budget-full trimming, "All session" after hours, hover /
-      legend, visual checks)
+- [x] **L0 baseline (2026-10-19)** — tools: `tools/plot_bench.py` (offline,
+      synthetic history) and `tools/gui_latency_probe.py --plot-grid`.
+      **M1 FAIL — the live plot breaks the GUI latency gate at 3,000
+      frames/s:** 15 template signals on a 2×4 grid, 5-min window, 3 × 60 s:
+      p99 84.7 / 82.8 / 88.6 ms (gate ≤ 50), max 133.8 / 135.9 / 256.6 ms
+      (gate ≤ 250; one run over), 112–149 ticks > 50 ms; redraw p50 ≈ 11
+      ms, p99 ≈ 48–50 ms, max 78–112 ms. No data lost (all 180,000 frames
+      shown). Stacks: pyqtgraph `PlotDataItem._getDisplayDataset` inside
+      `setData` (finite check of x, clip, peak min/max) over every point in
+      the window on every redraw. The Phase 1 gate PASS (9/9) was measured
+      with an **empty plot**, so this load had never been measured. **A/B
+      on the code before the P1–P5 fixes (5a0d61e): same failure** (p99
+      79.6 / 107.7 ms, redraw p50 10.4 / 12.3 ms) — pre-existing, not
+      caused by P1–P5. **M3 FAIL — "All session" after hours:**
+      `plot_bench` 64 signals × 10 Hz: redraw with new data 16 / 23 / **177**
+      ms median at 0.1 / 1 / 8 h of history (whole history re-sent each
+      redraw); the 5-min window stays 15–23 ms at any history length.
+      **M2 PASS:** dropping old samples when the budget is full costs ≤ 2.4
+      ms (8 h, one signal). **M4:** hover readout cold 0.1 / 0.4 / 10.5 ms
+      (max 16 ms at 8 h) — acceptable. M5 visual: offscreen screenshots in
+      L1 only; DPI / theme review NOT RUN. **Probe defect found and fixed:**
+      the window's deferred default-config load replaced the probe's
+      configuration after setup (plot emptied; in `--port` mode the HIL
+      config was replaced by the bundled template — earlier hardware
+      latency runs decoded with the template, figures still meaningful)
 - [x] **L1 correctness (P1–P5) done:** P1 — a sample arriving more than
       5× the signal's usual interval (and ≥ 0.5 s) after the previous one
       stores a NaN break point right after the last sample; curves draw with
@@ -979,7 +1001,10 @@ performance → L3 UX (owner picks).
       now; existing plot / buffer tests unchanged and passing; offscreen
       screenshot: Pack Voltage breaks at the 8–12 s outage, BMS State drawn
       as steps ending at its last sample
-- [ ] L2 performance (only what L0 shows over budget)
+- [ ] L2 performance — required by L0 (M1, M3): send each curve at most
+      ~2 points per screen pixel column (min/max per bucket, so spikes stay
+      visible) instead of every sample, and re-decimate "All session" only
+      when its view changes; target: gate met with the plot running
 - [ ] L3 UX (U1–U5; owner chooses)
 
 ## Objective

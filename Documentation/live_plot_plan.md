@@ -1,6 +1,6 @@
 # Live Plot review plan
 
-**Status:** L1 (P1–P5) done 2026-10-19; L0, L2, L3 open (owner request, 2026-10-19). Tracked in
+**Status:** L1 (P1–P5) and L0 done 2026-10-19 — L0 found the live plot breaks the GUI latency gate at 3,000 frames/s (pre-existing; see Plane.md Part I); L2 required; L3 open. Tracked in
 [Plane.md](Plane.md) as Part I.
 
 **Scope:** the Live Plot dock — `app/ui/plot_orchestration.py` (grid,

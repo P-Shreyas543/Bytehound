@@ -121,6 +121,10 @@ def run_once(args, run_index: int) -> dict:
     from app.serial_logging.session import SessionSettings
 
     mw.MainWindow._check_and_recover_temp_logs = lambda self, *a, **k: None
+    # The window loads the default configuration on its first event-loop
+    # pass; the probe loads its own explicitly, so that deferred load must
+    # not replace it (it did before 2026-10-19: config and plot setup lost).
+    mw.MainWindow._load_default_config = lambda self, *a, **k: None
     mw.MainWindow._popup_warning = lambda self, *a, **k: None
     mw.MainWindow._popup_critical = lambda self, *a, **k: None
     app = QApplication.instance() or QApplication(sys.argv)
@@ -193,6 +197,27 @@ def run_once(args, run_index: int) -> dict:
         segment_seconds=args.segment_seconds, fixed_step_s=0.1)
     if getattr(w, "_console_dock", None) is not None:
         w._console_dock.show()
+
+    # --- live plot load (live_plot_plan.md L0 / M1) ----------------------
+    redraws: List[float] = []            # duration of every _redraw_plot, ms
+    orig_redraw = mw.MainWindow._redraw_plot
+    plot_signals = 0
+    if args.plot_grid:
+        rows, cols = (int(v) for v in args.plot_grid.lower().split("x"))
+        w._plot_dock.show()
+        w._rebuild_plot_grid(rows, cols, restore=False)
+        for i, sig in enumerate(w._config.all_signals):
+            w._add_signal_to_panel(i % len(w._plot_panels), (sig.frame_id, sig.signal_name))
+        plot_signals = sum(len(p.assigned_keys) for p in w._plot_panels)
+        w._plot_window_seconds = args.plot_window or None
+
+        def timed_redraw(self, __orig=orig_redraw):
+            t0 = time.perf_counter()
+            try:
+                return __orig(self)
+            finally:
+                redraws.append((time.perf_counter() - t0) * 1000)
+        mw.MainWindow._redraw_plot = timed_redraw
 
     def pump(sec: float) -> None:
         end = time.perf_counter() + sec
@@ -390,6 +415,18 @@ def run_once(args, run_index: int) -> dict:
     stop_watch.set()
     watch.join(1.0)
 
+    plot_state = {
+        "dock_visible": bool(w._plot_dock.isVisible()),
+        "panels": len(w._plot_panels),
+        "assigned": sum(len(p.assigned_keys) for p in w._plot_panels),
+        "items_visible": sum(bool(p.plot_item.isVisible()) for p in w._plot_panels),
+        "history_keys": [list(k) for k in list(w._plot_history)[:4]],
+        "curves": sum(len(p.curves) for p in w._plot_panels),
+        "points_in_curves": sum(len(c.getData()[0]) if c.getData()[0] is not None else 0
+                                for p in w._plot_panels for c in p.curves.values()),
+        "history_points": sum(len(w._plot_history[k]) for p in w._plot_panels for k in p.assigned_keys
+                              if k in w._plot_history),
+    } if args.plot_grid else None
     session = w._session_log
     t_stop0 = time.perf_counter()
     w._stop_logging()
@@ -412,6 +449,7 @@ def run_once(args, run_index: int) -> dict:
     logging.getLogger().removeHandler(handler)
     handler.close()
     tp.TelemetryPipelineMixin._flush_ui_inner = orig_flush
+    mw.MainWindow._redraw_plot = orig_redraw
     for name, orig in originals.items():
         setattr(session_mod.SessionLog, name, orig)
 
@@ -441,6 +479,14 @@ def run_once(args, run_index: int) -> dict:
         "flush_max_ms": max((d for _, _, d in flushes), default=0.0),
         "flush_us_per_packet_p50": round(_percentile(sorted(d * 1000 / n for _, n, d in flushes if n >= 20), 0.5), 1),
         "flushes": flushes,
+        "plot_grid": args.plot_grid,
+        "plot_window_s": args.plot_window if args.plot_grid else None,
+        "plot_signals": plot_signals,
+        "plot_state": plot_state,
+        "redraws": len(redraws),
+        "redraw_p50_ms": round(_percentile(sorted(redraws), 0.50), 2) if redraws else None,
+        "redraw_p99_ms": round(_percentile(sorted(redraws), 0.99), 2) if redraws else None,
+        "redraw_max_ms": round(max(redraws), 2) if redraws else None,
         "frames_sent": sent,
         "frames_shown": shown,
         "session_finished": finished,
@@ -482,6 +528,8 @@ def main() -> int:
                     help="A/B: write the session on the GUI thread (pre-change behaviour)")
     ap.add_argument("--gc-freeze", action="store_true", help="experiment: gc.freeze() after start-up")
     ap.add_argument("--keep-ticks", action="store_true", help="store every tick in the JSON")
+    ap.add_argument("--plot-grid", default=None, help="live plot grid, e.g. 2x4, with every config signal plotted")
+    ap.add_argument("--plot-window", type=float, default=300.0, help="plot window in s (0 = All session)")
     ap.add_argument("--out", type=Path, default=ROOT / "artifacts" / "gui_latency")
     args = ap.parse_args()
     for stream in (sys.stdout, sys.stderr):
@@ -499,6 +547,10 @@ def main() -> int:
               f"posted_backlog_max={r['max_posted_batch_backlog']} worst(lat,backlog)={r['backlog_at_worst_ticks'][:2]}  "
               f"shown={r['frames_shown']}/{r['frames_sent']}  worker_stalls={len(r['worker_stalls'])}  "
               f"buffer_errors={r['buffer_errors']} gc2_max={r['gc_gen2_max_ms']}  -> {path.name}")
+        if r["plot_grid"]:
+            print(f"   plot {r['plot_grid']} ({r['plot_signals']} signals, window "
+                  f"{r['plot_window_s'] or 'all'} s): redraws={r['redraws']} p50={r['redraw_p50_ms']} "
+                  f"p99={r['redraw_p99_ms']} max={r['redraw_max_ms']} ms")
         for ws in r["worker_stalls"]:
             print(f"   WORKER not reading {ws['start']}..{ws.get('end')} s, batch={ws['batch']}, "
                   f"socket_waiting={ws['socket_waiting']}: {ws['stacks'][:2]}")
