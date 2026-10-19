@@ -139,6 +139,12 @@ def tables_to_canonical(tables: Dict[str, List[Dict[str, str]]],
     extra: Dict[str, List[Dict[str, str]]] = {}
     for name in sorted(tables):
         rows = [r for r in tables[name] if any(str(v).strip() for v in r.values())]
+        # An empty sheet carries no configuration: the loader reads every
+        # table with .get(name, []), so absent == empty — except
+        # "variables", whose mere presence selects it over the legacy
+        # "frame_config" table. That one is kept even when empty.
+        if not rows and name != "variables":
+            continue
         spec = KNOWN_COLUMNS.get(name)
         if spec is None:
             extra[name] = [dict(r) for r in rows]
@@ -166,7 +172,10 @@ def tables_to_canonical(tables: Dict[str, List[Dict[str, str]]],
 
 
 def canonical_to_tables(doc: Dict[str, Any]) -> Dict[str, List[Dict[str, str]]]:
-    """Canonical document → the string rows the loader parses."""
+    """Canonical document → the string rows the loader parses (older
+    schema versions are migrated first)."""
+    if isinstance(doc, dict) and isinstance(doc.get("schema_version"), int)             and doc.get("schema_version") < SCHEMA_VERSION:
+        doc = migrate(doc)
     check_document(doc)
     tables: Dict[str, List[Dict[str, str]]] = {}
     for name, rows in doc.get("tables", {}).items():
@@ -247,3 +256,117 @@ def save_canonical(doc: Dict[str, Any], path: str | Path) -> None:
         fp.flush()
         os.fsync(fp.fileno())
     os.replace(tmp, path)
+
+
+# ---------------------------------------------------------------------------
+# Export (step C3). Every cell is written as text, exactly as stored, so
+# re-importing an export gives back the same document (round-trip tests).
+# Table / sheet names are the canonical ones (``variables``, ...); the
+# loader's aliases accept them. Formatting, comments and formulas of a
+# source workbook are not carried over (not part of the configuration).
+# ---------------------------------------------------------------------------
+
+# Header written for an empty "variables" table so its presence survives an
+# export (see tables_to_canonical).
+_EMPTY_TABLE_HEADER = {"variables": ["id_or_address", "signal_name", "data_type"]}
+
+
+def _all_tables(doc: Dict[str, Any]) -> Dict[str, List[Dict[str, str]]]:
+    tables = canonical_to_tables(doc)
+    for name, rows in (doc.get("extra_tables") or {}).items():
+        tables[name] = [{k: str(v) for k, v in r.items()} for r in rows]
+    return tables
+
+
+def _columns(rows: List[Dict[str, str]]) -> List[str]:
+    cols: List[str] = []
+    for r in rows:
+        for c in r:
+            if c not in cols:
+                cols.append(c)
+    return cols
+
+
+def export_csv_dir(doc: Dict[str, Any], directory: str | Path) -> List[Path]:
+    """One ``<table>.csv`` per table (unknown sheets included), each written
+    atomically. Returns the files written."""
+    import csv
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    written = []
+    for name, rows in _all_tables(doc).items():
+        if not rows and name != "variables":
+            continue
+        cols = _columns(rows) or _EMPTY_TABLE_HEADER.get(name, [])
+        target = directory / f"{name}.csv"
+        tmp = target.with_name(target.name + ".partial")
+        with tmp.open("w", encoding="utf-8", newline="") as fp:
+            w = csv.DictWriter(fp, fieldnames=cols)
+            w.writeheader()
+            for r in rows:
+                w.writerow({c: r.get(c, "") for c in cols})
+            fp.flush()
+            os.fsync(fp.fileno())
+        os.replace(tmp, target)
+        written.append(target)
+    return written
+
+
+def export_xlsx(doc: Dict[str, Any], path: str | Path) -> None:
+    """One sheet per table, cells as text, saved atomically."""
+    from openpyxl import Workbook
+
+    from ..serial_logging._atomic import save_workbook_atomic
+    wb = Workbook(write_only=True)
+    for name, rows in _all_tables(doc).items():
+        if not rows and name != "variables":
+            continue
+        ws = wb.create_sheet(title=name[:31])
+        cols = _columns(rows) or _EMPTY_TABLE_HEADER.get(name, [])
+        ws.append(cols)
+        for r in rows:
+            ws.append([r.get(c, "") for c in cols])
+    save_workbook_atomic(wb, Path(path))
+
+
+def export(doc: Dict[str, Any], path: str | Path) -> None:
+    """Save ``doc`` in the format implied by ``path``: ``.json`` (canonical),
+    ``.xlsx``, or a directory of CSV files."""
+    path = Path(path)
+    suffix = path.suffix.lower()
+    if suffix == ".json":
+        save_canonical(doc, path)
+    elif suffix in {".xlsx", ".xlsm"}:
+        export_xlsx(doc, path)
+    elif suffix == "" or path.is_dir():
+        export_csv_dir(doc, path)
+    else:
+        raise CanonicalError(f"unsupported export format: {path.name} (use .json, .xlsx or a folder)")
+
+
+# ---------------------------------------------------------------------------
+# Migration (step C3): upgrades run on load, never in place; the original
+# file is untouched until the user saves.
+# ---------------------------------------------------------------------------
+
+#: schema_version -> function(doc) -> doc for the next version.
+MIGRATIONS: Dict[int, Any] = {}
+
+
+def migrate(doc: Dict[str, Any]) -> Dict[str, Any]:
+    """Bring an older canonical document to ``SCHEMA_VERSION``."""
+    if not isinstance(doc, dict) or doc.get("format") != FORMAT:
+        raise CanonicalError(f'not a canonical configuration (missing "format": "{FORMAT}")')
+    version = doc.get("schema_version")
+    if not isinstance(version, int):
+        raise CanonicalError(f"schema_version {version!r} is not a number")
+    if version > SCHEMA_VERSION:
+        raise CanonicalError(f"schema_version {version} is newer than this version supports ({SCHEMA_VERSION}); "
+                             "update ByteHound")
+    out = json.loads(json.dumps(doc))
+    while out["schema_version"] < SCHEMA_VERSION:
+        step = MIGRATIONS.get(out["schema_version"])
+        if step is None:
+            raise CanonicalError(f"no migration from schema_version {out['schema_version']}")
+        out = step(out)
+    return out

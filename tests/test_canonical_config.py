@@ -44,6 +44,9 @@ def test_round_trip_is_lossless(cid, path):
     back = canonical.canonical_to_tables(doc)
     back.update(doc.get("extra_tables", {}))
     expect = {name: [r for r in rows if any(str(v).strip() for v in r.values())] for name, rows in tables.items()}
+    # Empty optional sheets carry no configuration and are not kept (the
+    # loader treats absent and empty alike); "variables" is always kept.
+    expect = {name: rows for name, rows in expect.items() if rows or name == "variables"}
     assert back == expect
 
 
@@ -116,3 +119,64 @@ def test_save_is_atomic(tmp_path, monkeypatch):
     with pytest.raises(OSError):
         canonical.save_canonical(doc, target)
     assert target.read_bytes() == before                   # previous file intact
+
+
+# ---------------------------------------------------------------------------
+# Step C3: export and migration
+# ---------------------------------------------------------------------------
+
+def _content(doc):
+    return {k: v for k, v in doc.items() if k != "import"}
+
+
+@pytest.mark.parametrize("fmt", ["xlsx", "csv"])
+@pytest.mark.parametrize("cid, path", CORPUS, ids=IDS)
+def test_export_and_reimport_is_identical(cid, path, fmt, tmp_path):
+    """Every configuration exported to xlsx / a CSV folder and imported again
+    gives the same canonical document and decodes exactly as recorded."""
+    doc = canonical.import_config(path)
+    target = tmp_path / ("out.xlsx" if fmt == "xlsx" else "out_csv")
+    canonical.export(doc, target)
+    again = canonical.import_config(target)
+    assert _content(again) == _content(doc)
+    assert canonical.fingerprint(again) == canonical.fingerprint(doc)
+    assert _snap(load_config(target)) == _golden(cid)
+
+
+def test_older_schema_versions_are_migrated_on_load_without_touching_the_file(tmp_path, monkeypatch):
+    doc = canonical.import_config(CORPUS[0][1])
+    old = dict(doc, schema_version=0)
+    old["tables"] = {"legacy_wrapper": True, "inner": doc["tables"]}
+    monkeypatch.setitem(canonical.MIGRATIONS, 0,
+                        lambda d: dict(d, schema_version=1, tables=d["tables"]["inner"]))
+    p = tmp_path / "v0.json"
+    p.write_text(json.dumps(old), encoding="utf-8")
+    before = p.read_bytes()
+    assert _snap(load_config(p)) == _golden(CORPUS[0][0])
+    assert p.read_bytes() == before                         # never upgraded in place
+
+
+def test_newer_or_unmigratable_versions_are_refused():
+    doc = canonical.import_config(CORPUS[0][1])
+    with pytest.raises(canonical.CanonicalError, match="newer than this version"):
+        canonical.migrate(dict(doc, schema_version=5))
+    with pytest.raises(canonical.CanonicalError, match="no migration from schema_version -1"):
+        canonical.migrate(dict(doc, schema_version=-1))
+
+
+def test_failed_export_keeps_the_previous_file(tmp_path, monkeypatch):
+    doc = canonical.import_config(CORPUS[0][1])
+    target = tmp_path / "c.xlsx"
+    canonical.export(doc, target)
+    before = target.read_bytes()
+    from app.serial_logging import _atomic
+
+    def boom(*_a, **_k):
+        raise OSError("disk full")
+
+    # Fail the final rename: the new workbook is fully written to the temp
+    # file, then cannot replace the old one.
+    monkeypatch.setattr(_atomic.os, "replace", boom)
+    with pytest.raises(OSError):
+        canonical.export(doc, target)
+    assert target.read_bytes() == before and not list(tmp_path.glob("*.partial"))

@@ -613,38 +613,24 @@ class ConfigEditorWindow(QMainWindow):
         elif reply == QMessageBox.No:
             self._save_json()
 
-    def _save_to_path(self, path: Path):
-        suffix = path.suffix.lower()
-        data = self.get_data()
+    def _canonical_doc(self) -> dict:
+        from ..decoder.canonical import tables_to_canonical
+        return tables_to_canonical(self.get_data())
 
-        if suffix == ".json":
-            with path.open("w", encoding="utf-8") as fp:
-                json.dump(data, fp, indent=2)
-        elif suffix in {".xlsx", ".xlsm"}:
-            import pandas as pd
-            with pd.ExcelWriter(path) as writer:
-                for name, rows in data.items():
-                    df = pd.DataFrame(rows)
-                    df.to_excel(writer, sheet_name=_sheet_name_from_csv(name + ".csv"), index=False)
-        elif path.is_dir() or suffix == "":
-            self._save_csv_dir(path)
-        else:
-            raise ValueError(f"Unsupported save format for path: {path}")
+    def _save_to_path(self, path: Path):
+        """Save atomically (a failure leaves the previous file intact): .json
+        as canonical JSON, .xlsx / a folder via the canonical exporters
+        (Plane.md Part C3)."""
+        from ..decoder.canonical import CanonicalError, export
+        try:
+            export(self._canonical_doc(), path)
+        except CanonicalError as exc:
+            raise ValueError(str(exc)) from exc
 
     def _save_csv_dir(self, directory: Path):
-        data = self.get_data()
+        from ..decoder.canonical import export_csv_dir
         try:
-            directory.mkdir(parents=True, exist_ok=True)
-            for name, rows in data.items():
-                if not rows:
-                    continue
-                file_path = directory / f"{name}.csv"
-                columns = list(rows[0].keys())
-                import csv
-                with file_path.open("w", encoding="utf-8", newline="") as fp:
-                    writer = csv.DictWriter(fp, fieldnames=columns)
-                    writer.writeheader()
-                    writer.writerows(rows)
+            export_csv_dir(self._canonical_doc(), directory)
         except Exception as e:
             raise RuntimeError(f"Failed to save CSV directory: {e}") from e
 
@@ -653,10 +639,9 @@ class ConfigEditorWindow(QMainWindow):
         if not path:
             return
 
-        data = self.get_data()
         try:
-            with open(path, "w", encoding="utf-8") as fp:
-                json.dump(data, fp, indent=2)
+            from ..decoder.canonical import save_canonical
+            save_canonical(self._canonical_doc(), Path(path))
             QMessageBox.information(self, "Success", f"Saved to {path}")
             self.set_active_config_path(Path(path))
             self._mark_clean()
@@ -670,13 +655,9 @@ class ConfigEditorWindow(QMainWindow):
         if not path:
             return
 
-        data = self.get_data()
         try:
-            import pandas as pd
-            with pd.ExcelWriter(path) as writer:
-                for name, rows in data.items():
-                    df = pd.DataFrame(rows)
-                    df.to_excel(writer, sheet_name=_sheet_name_from_csv(name + ".csv"), index=False)
+            from ..decoder.canonical import export_xlsx
+            export_xlsx(self._canonical_doc(), Path(path))
             QMessageBox.information(self, "Success", f"Saved to {path}")
             self.set_active_config_path(Path(path))
             self._mark_clean()

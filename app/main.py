@@ -263,15 +263,22 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     if args.validate:
-        try:
-            from app.decoder.config_loader import load_config
-            config = load_config(args.validate)
-            print(f"OK: Config {args.validate} is valid.")
-            print(f"Loaded {len(config.all_signals)} signals across {len(config.frames)} frames.")
-            return 0
-        except Exception as e:
-            print(f"ERROR: Config validation failed for {args.validate}\n{e}", file=sys.stderr)
+        # Structure, loader rules and semantic warnings (Plane.md Part C2).
+        from app.decoder.validation import validate
+        report = validate(args.validate)
+        if not report.ok:
+            details = "\n".join(str(i) for i in report.errors)
+            print(f"ERROR: Config validation failed for {args.validate}\n{details}", file=sys.stderr)
             return 1
+        config = report.config
+        assert config is not None  # a report without errors always carries the config
+        print(f"OK: Config {args.validate} is valid.")
+        print(f"Loaded {len(config.all_signals)} signals across {len(config.frames)} frames.")
+        if report.fingerprint:
+            print(f"Fingerprint (SHA-256): {report.fingerprint}")
+        for w in report.warnings:
+            print(str(w))
+        return 0
 
     if args.selftest_capture:
         from app.serial_io.capture_process import selftest

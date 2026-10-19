@@ -293,13 +293,50 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
       configurations decode identically to the C0 baseline via canonical
       JSON (in memory and saved), round trip byte-for-byte lossless incl.
       `readme` sheets; 64 tests (`tests/test_canonical_config.py`)
-- [ ] C2 validation + schema document
-- [ ] C3 import / export / migration; atomic Config Editor save
+- [x] **C2 validation** (`app/decoder/validation.py`): structure checks
+      (in-house, decision 2) + every loader rule (errors, unchanged) + new
+      semantic **warnings** that never block loading (signal beyond
+      `payload_length`, zero / non-finite scale, min > max, bitfield bit
+      beyond the signal width, frame without signals). New rules are
+      warnings because the corpus already contains one such problem: frame
+      `0x1F0` declares `payload_length 3` but defines signals up to byte 4
+      in **Blue01_M_CAN_4836, DB_48100 and the_energy_company_4850** —
+      **finding for the configuration owner** (those signals can only
+      decode if the device sends longer frames); files left unchanged.
+      JSON Schema shipped as `app/resources/protocol_config.schema.json`.
+      `Bytehound --validate` now prints the fingerprint and the warnings
+      (existing output lines kept). 40 tests; corpus pinned: 0 errors, the
+      6 known warnings and no others
+- [x] **C3 export / migration / atomic saves:** `canonical.export` → canonical
+      `.json`, `.xlsx` (one sheet per table, every cell text) or a CSV folder,
+      all atomic; migration registry (upgrades on load, never in place; newer
+      versions refused with "update ByteHound"). **Config Editor** saves (JSON,
+      xlsx, CSV) now go through these — previously plain writes that a crash
+      could truncate. **Proof:** all 23 configurations exported to xlsx and to
+      CSV and re-imported give the identical canonical document and
+      fingerprint, and decode as the baseline (46 round trips). Behaviour
+      notes: Config Editor JSON is now canonical (an *older* ByteHound cannot
+      read it; xlsx / CSV exports stay readable everywhere); empty optional
+      sheets are not carried (an empty sheet holds no configuration; an
+      empty `variables` table is kept because its presence matters to the
+      loader); xlsx cells are text (Excel may flag numbers stored as text)
 - [ ] C4 lifecycle: candidate, preview diff, confirm, rollback; auto-reconnect
       on activation (decision 3)
 - [ ] C5 clean-ups: dead code, Ather value rules (decision 4), clamp setting
       (decision 5)
 - [ ] C6 fingerprint in session.json / logs; docs; packaging
+
+**Defect found by the full suite during C3 (2026-10-19), fixed:** helper
+timeout race. When a helper job hit its timeout but finished its atomic
+rename before the kill landed, the segment was marked
+`closed_with_errors` ("did not finish") while a complete `.xlsx` sat next
+to it — manifest and disk disagreed (`test_helper_timeout_…` failed 1 of
+867). Fix: `run_isolated` keeps the result of a job that completed while
+being stopped; on a real timeout the job's final output is removed with
+its `.partial`, so a failed segment never carries a complete-looking file.
+New test `test_job_that_finishes_while_being_stopped_keeps_its_result`
+(fails without the fix, passes with it); the session timeout test now uses
+jobs that really hang instead of racing a 0.1 ms timeout against real ones.
 
 **Closure — scope traceability (Parts C, D, E, G, F12)**
 
