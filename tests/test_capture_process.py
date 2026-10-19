@@ -238,3 +238,28 @@ def test_raw_capture_rotates_in_child_without_a_gap(qapp, config, tmp_path):
         dev.close()
     rx = [b"".join(d for k, _, d in iter_raw_capture(p) if k == RX) for p in (first, second)]
     assert rx == [blob1, blob2]
+
+
+def test_sequence_gaps_are_counted_in_capture_process_mode(qapp, tmp_path):
+    """F12 in capture-process mode: the counters reach the integrity record
+    forwarded from the child (individual events are not logged there)."""
+    import struct as _struct
+
+    from tools.hil import nucleo as hw
+
+    cfg_dir = hw.hil_config_dir(tmp_path / "cfg")
+    config = load_config(cfg_dir)
+    assert config.sequence_counters
+    dev = Device()
+    client = CaptureClient(_settings(dev.port), config.protocol, [], decode_config=config)
+    snaps = []
+    client.integrity_updated.connect(snaps.append)
+    client.open()
+    try:
+        seqs = list(range(10)) + list(range(15, 20))          # 10..14 missing: 5 frames
+        dev.send(b"".join(build_packet(config.protocol, 0x4000, _struct.pack("<II", s, 0)) for s in seqs))
+        assert _pump_until(qapp, lambda: snaps and snaps[-1].get("frames_ok", 0) >= len(seqs))
+    finally:
+        client.close()
+        dev.close()
+    assert snaps[-1]["seq_missing"] == 5 and snaps[-1]["seq_gaps"] == 1

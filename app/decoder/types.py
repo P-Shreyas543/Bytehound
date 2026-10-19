@@ -407,6 +407,18 @@ class PollingScheduleSpec:
     enabled: bool = True
 
 
+@dataclass(frozen=True)
+class SequenceCounterSpec:
+    """A signal that counts up by ``step`` per frame and wraps at
+    ``2**bits`` (an alive / rolling counter). Lets the application detect
+    frames lost before they reached the PC (Plane.md F12)."""
+
+    frame_id: int
+    signal_name: str
+    bits: int
+    step: int = 1
+
+
 @dataclass
 class FrameConfig:
     """Aggregate of every parsed config sheet.
@@ -440,6 +452,8 @@ class FrameConfig:
     tx_commands: Dict[str, TxCommandSpec] = field(default_factory=dict)
     serial_defaults: SerialDefaults = field(default_factory=SerialDefaults)
     polling_schedules: List[PollingScheduleSpec] = field(default_factory=list)
+    # Optional ``sequence_counters`` table: frame_id -> counter (F12).
+    sequence_counters: Dict[int, SequenceCounterSpec] = field(default_factory=dict)
 
     @property
     def all_signals(self) -> List[SignalSpec]:

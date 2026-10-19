@@ -275,6 +275,7 @@ aliases:
 | `TxCommandFields`   | `tx_command_fields`  |
 | `SerialDefaults`    | `serial_defaults`    |
 | `PollingSchedule`   | `polling_schedule`   |
+| `SequenceCounters`  | `sequence_counters`  |
 
 ### 5.1 `protocol` (required, exactly one enabled row)
 
@@ -410,6 +411,38 @@ fields are bit-packed sequentially into byte flags (up to 8 bits per byte).
 | `interval_ms`   | int  | Polling cadence                                          |
 | `timeout_ms`    | int  | Per-request response wait                                |
 | `enabled`       | bool | Default true                                             |
+
+### 5.12 `sequence_counters` (optional)
+
+Declares a rolling (alive) counter so the application detects frames lost
+**before** they reach the PC — USB-serial bridge overflow, network loss,
+device firmware — which otherwise leave no trace (Plane.md F12).
+
+| Column          | Type | Notes                                                              |
+|-----------------|------|--------------------------------------------------------------------|
+| `id_or_address` | hex  | Frame that carries the counter                                     |
+| `signal_name`   | str  | The counter signal (a `variables` row of that frame)               |
+| `bits`          | int  | Wrap width, 1–64; default: the signal's size (`byte_length × 8`)   |
+| `step`          | int  | Increment per frame, default 1                                     |
+| `enabled`       | bool | Default true                                                       |
+
+One counter per frame. Each received value is compared with the previous
+one: the next expected value is `(previous + step) mod 2^bits`. A forward
+jump of less than half the range is a **gap** (frames missing), the same
+value is a **repeat**, a backward jump is a **reset** (device restarted —
+not counted as loss). Results:
+
+- integrity counters `seq_missing`, `seq_gaps`, `seq_repeats`,
+  `seq_resets` (and `seq_missing_0x<id>`), per segment in `session.json`;
+- every event in `seg_NNNN_sequence.csv` (time, frame, kind, expected,
+  received, missing) and its count in the segment's `sequence_events`;
+- a warning in the application on the first gap (at most every 10 s).
+
+Limits: frames lost at the very end of a recording, or across a
+disconnect, leave no later counter value to compare with (a disconnect is
+recorded as a session gap instead). In capture-process mode the counters
+are in the integrity record but individual events are not written to
+`seg_NNNN_sequence.csv`.
 
 ### Validation rules (loader must enforce)
 

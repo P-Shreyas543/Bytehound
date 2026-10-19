@@ -37,7 +37,7 @@ from app.decoder.config_loader import load_config  # noqa: E402
 from app.protocol.packet_builder import build_packet  # noqa: E402
 from app.serial_io.serial_worker import PollingWorker, SerialSettings  # noqa: E402
 from tools.hil import nucleo as hw  # noqa: E402
-from tools.hil.run_hil import TELEMETRY, Result, pump  # noqa: E402
+from tools.hil.run_hil import TELEMETRY, Result, pump, seq_gaps  # noqa: E402
 
 DEVICE = ROOT / "tools" / "hil" / "net_device.py"
 REMOTE = "/tmp/bh_net_device.py"
@@ -137,6 +137,9 @@ def _account(r: Result, link: Link, snap: dict, dev: dict, *, exact: bool = True
     if exact:
         total = link.good_bytes + link.rejected_bytes + snap["discarded_bytes"]
         r.check(total == dev["bytes_sent"], f"bytes app {total} == device {dev['bytes_sent']}")
+    expect = seq_gaps(link.seq)
+    r.check(snap.get("seq_missing") == expect,
+            f"F12: app detected {snap.get('seq_missing')} missing from the counter == {expect} in the sequence")
     r.data.update(device=dev, app_frames={f"0x{k:04X}": v for k, v in link.good.items()},
                   integrity={k: v for k, v in snap.items() if k != "driver_errors"})
 

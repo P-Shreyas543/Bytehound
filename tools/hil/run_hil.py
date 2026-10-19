@@ -179,6 +179,28 @@ def check_seq(r: Result, seq: List[int], expected: int, allow_missing: int = 0) 
         r.check(len(seq) == expected, f"0x4000 frames seen {len(seq)} == sent {expected}")
 
 
+def seq_gaps(seq: List[int]) -> int:
+    """Frames missing between consecutive received counters (32-bit wrap;
+    a backward jump is a reset, not loss) — the tests' own count."""
+    missing = 0
+    for a, b in zip(seq, seq[1:], strict=False):
+        d = (b - a) % (1 << 32)
+        if 1 < d < (1 << 31):
+            missing += d - 1
+    return missing
+
+
+def check_app_sequence(r: Result, link: "AppLink", snap: dict) -> None:
+    """F12: the application's own gap count equals what the received
+    sequence proves."""
+    if "seq_missing" not in snap:
+        r.check(False, "application did not report sequence counters (F12)")
+        return
+    expect = seq_gaps(link.seq)
+    r.check(snap["seq_missing"] == expect,
+            f"app detected {snap['seq_missing']} missing frames from the counter == {expect} in the sequence")
+
+
 def check_accounting(r: Result, link: AppLink, snap: dict, st: Dict[str, int], *, injected: bool) -> None:
     for fid in TELEMETRY:
         got, sent = link.good.get(fid, 0), st[STAT_KEY[fid]]
@@ -195,6 +217,7 @@ def check_accounting(r: Result, link: AppLink, snap: dict, st: Dict[str, int], *
         r.check(snap["frames_rejected"] == 0, "no rejected frames on a clean line")
     r.check(st["rx_crc_errors"] == 0 and st["rx_overruns"] == 0 and st["rx_line_errors"] == 0,
             f"board RX clean (crc {st['rx_crc_errors']}, overrun {st['rx_overruns']}, line {st['rx_line_errors']})")
+    check_app_sequence(r, link, snap)
     r.data.update(board=st, app_good=dict(link.good), app_rejected=link.rejected,
                   integrity={k: v for k, v in snap.items() if k != "driver_errors"})
 
@@ -418,6 +441,7 @@ def t_reader_pause(args, config) -> Result:
         lost = _lost_bytes(link, snap, st)
         results.append({"pause_s": pause_s, "bytes_during_pause": int(rate * pause_s), "lost_bytes": lost,
                         "seq_missing": st["frames_4000"] - len(link.seq),
+                        "app_seq_missing": snap.get("seq_missing"),
                         "driver_errors": snap.get("driver_errors")})
     import app.serial_io.serial_worker as sw
     r.data.update(baud=baud, bytes_per_s=rate, requested_rx_buffer=sw.RX_DRIVER_BUFFER, pauses=results)
@@ -435,6 +459,13 @@ def t_reader_pause(args, config) -> Result:
             r.check(x["lost_bytes"] == 0, f"no loss across a {x['pause_s']} s reader pause")
     for x in lossy:
         r.check(x["seq_missing"] > 0, f"loss after a {x['pause_s']} s pause is visible as a sequence gap")
+    for x in results:
+        # F12: the application itself reports what the board proves was lost
+        # (frames lost at the very end of a run leave no later counter, so
+        # the app can only be <= the board's count, never more).
+        r.check(x["app_seq_missing"] is not None and x["app_seq_missing"] <= x["seq_missing"]
+                and (x["seq_missing"] == 0) == (x["app_seq_missing"] == 0),
+                f"pause {x['pause_s']} s: app detected {x['app_seq_missing']} missing, board proves {x['seq_missing']}")
     return r
 
 
@@ -520,8 +551,10 @@ def t_seq_wraparound(args, config, cfg_dir: Path) -> Result:
         session.stop()
         r.check(session.await_finished(120), "session finished")
     finally:
-        link.close()
+        snap = link.close()
         restore_board(args.port)
+    r.check(snap.get("seq_missing") == 0 and snap.get("seq_resets") == 0,
+            f"F12: wrap is not a gap or reset (missing {snap.get('seq_missing')}, resets {snap.get('seq_resets')})")
     expect = [(start + i) & 0xFFFFFFFF for i in range(cycles)]
     r.check(link.seq == expect, f"worker saw {len(link.seq)} counters, wrapping at 0xFFFFFFFF -> 0")
     logged = []
@@ -564,6 +597,9 @@ def t_device_reset(args, config) -> Result:
         r.check(link.worker.isRunning(), "worker still running")
         r.check(link.lost == 0, "no connection_lost (port never went away)")
         snap = link.worker.integrity_snapshot()
+        r.check(snap.get("seq_resets") == 1 and snap.get("seq_missing") == 0,
+                f"F12: the reboot is a counter reset, not loss (resets {snap.get('seq_resets')}, "
+                f"missing {snap.get('seq_missing')})")
         torn = snap["frame_bytes_rejected"] + snap["discarded_bytes"]
         r.check(torn <= 2 * hw.CYCLE_BYTES[True], f"bytes lost to the torn frame at reset: {torn}")
         r.data.update(before=before, after=len(after), torn_bytes=torn)

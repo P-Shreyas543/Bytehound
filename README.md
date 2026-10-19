@@ -41,6 +41,7 @@ A config is split across several sheets / CSV files:
 | `tx_command_fields`   | One row per field in a TX command (name, type, scale, range). |
 | `serial_defaults`     | Initial baud / parity / timeout. |
 | `polling_schedule`    | Frame IDs to poll on a fixed interval (request-response devices). |
+| `sequence_counters`   | Optional. Marks a rolling counter signal so frames lost before reaching the PC are detected and logged. |
 
 Full schema reference: [instruction.md](instruction.md) (`§3 Config Schema`) or the in-app help (`Help → View Documentation`).
 

@@ -116,9 +116,28 @@ Updated after every phase. Release recommendation so far: **NOT READY**.
       export = per-segment .xlsx rows; timestamps never backwards across
       rotations; noise and corruption counted exactly; 32-bit wraparound
       0xFFFFFFFF → 0 logged once, unsigned (`seq_wraparound`) — **PASS**
-- [ ] F12 (the *application* detecting missing frames from a counter) —
-      **not implemented**; depends on the Part C config schema to mark a
-      counter signal. Scope decision needed (closure table)
+- [x] **F12 implemented (2026-10-19, owner: "go ahead as recommended")**
+      without waiting for Part C: an optional, backward-compatible
+      `sequence_counters` table (CSV or xlsx sheet; documented in
+      instruction.md §5.12) marks a counter signal (bits, step). The worker
+      tracks it after decode: gap / repeat / reset (half-range rule, as in
+      RFC 1982). Totals in integrity (`seq_missing`, `seq_gaps`,
+      `seq_repeats`, `seq_resets`, per frame) → session.json per segment;
+      every event in `seg_NNNN_sequence.csv`; a warning on the first gap
+      (≤ 1 per 10 s). **Verified on the NUCLEO:** the app's count equals the
+      board-proven loss exactly — reader pause 8 s: 18,791 = 18,791; 16 s:
+      37,631 = 37,631; noise/corruption: 588 = 588; clean streams 0; the
+      32-bit wrap is neither gap nor reset; a reboot is 1 reset, 0 missing.
+      Over TCP / UDP to the Pi: 0 = 0. Capture-process mode: counters in
+      integrity (tested), events not written to the CSV (documented)
+- [x] **Re-test 2026-10-19 (owner request):** NUCLEO clean 2 Mbaud 3/3
+      (≈1.6 MB each, byte-exact, app 0 missing). Pi over the Ethernet
+      cable **10/10**; over Wi-Fi 9/10 — `udp_stream_5000` lost 152 cycles
+      in one gap (whole datagrams: 10,336 B = 152 × 68 never reached the
+      parser), **detected by F12 exactly (152 = 152)**; repeated 3× with 0
+      loss. Wi-Fi UDP datagram loss: 1 of 5 runs; Ethernet UDP: 0 of 4.
+      UDP has no retransmission — this is the network, and the app now
+      reports it
 - [ ] FTDI / CH340 / CP2102 — **BLOCKED** (no adapters)
 
 **Phase 4 — rotation, polling, shutdown** — commit `75286bb`
@@ -246,10 +265,10 @@ not-done item needs an owner scope decision before release.**
 | D | Protocol Studio: config management, model/view signal editor, frame layout view, decoder test bench (`.bhraw` replay) | **NOT RUN** (0 of 4) | §0.6 | C | No |
 | E | Spec regression tests (CRC vectors, framing, byte order, bitfields, round-trips, migrations); full pytest + smoke + frozen check; docs (JSON format, import, session format, long-run guide); known limitations | **Partial**: full pytest (671 passed), frozen self-tests, long-run lab guide, hardware plan, limitations list (§0.11 + this section) **PASS**; spec regression tests / JSON docs **NOT RUN** (need C) | §0.7, this section | C | Partial: the done half is; the C half follows C |
 | G | Menus/shortcuts (8), responsiveness (3), visual quality (5), interaction (6), verification (2) | **Partial**: responsiveness — segment finishing off the GUI, logging on the worker, bounded flush, card re-polish, console limit, stop-wait, latency gate **PASS** at 3,000 fps (9/9, caveat in Phase 1); "nothing slow on the GUI thread" for config load / import / export **NOT RUN**; budgets in CI **NOT RUN** (probe exists, not wired to CI); menus, visual, interaction, screenshot review **NOT RUN** (0 of 21) | §0.9, Phase 1 | — | Responsiveness: **yes** (done for logging); the rest: No |
-| F12 | The application detects frames lost on the wire/device from a sequence counter declared in the config (gaps, repeats, resets per frame ID) | **NOT RUN** (not implemented). Loss *is* detectable today only by tooling (HIL) or by the user reading the counter column | §0.8; Phase 3 (reader_pause showed upstream loss is otherwise invisible to the app) | C (schema to mark a counter signal) | **Yes for BMS labs**: upstream USB / network loss leaves no other trace |
+| F12 | The application detects frames lost on the wire/device from a sequence counter declared in the config (gaps, repeats, resets per frame ID) | **PASS** — implemented with an optional `sequence_counters` table (no Part C needed); app count = board-proven loss on the NUCLEO (18,791 / 37,631 / 588 / 0) and over TCP/UDP (0 = 0) | `app/decoder/sequence.py`, worker `_check_sequence`, session `log_sequence_event`; tests/test_sequence_counters.py; run_hil / net_hil checks | — (Part C will fold the table into the canonical schema) | Yes — done |
 
 Release recommendation from this pass: **NOT READY** — open: scope
-decision for C / D / E-spec / G / F12; 4.5 s stall OPEN; 1-of-7 unexplained
+decision for C / D / E-spec / G; 4.5 s stall OPEN; 1-of-7 unexplained
 reader-pause loss; adapter matrix (FTDI / CH340 / CP2102), clean-machine
 packaged test and 24 h soak BLOCKED on hardware/time; frozen GUI workflow
 NOT RUN.
@@ -471,7 +490,7 @@ these loss points:
 | F9 | Bad-CRC / malformed frames | Counted, but not in the decoded log (bytes only in `.bhraw`) | Write rejected frames with reason to a per-segment `rejected.csv`; counts in the manifest |
 | F10 | Decoded-log queue full (100k) | Drops rows (raw capture keeps bytes, rebuild recovers) | Raw capture on for every logging session (already); decoded drops counted in the manifest and the UI badge; rebuild offered automatically on Stop if any were dropped |
 | F11 | Reconnect | Logging stops on unplug (Part A fixes) | Continue the session; record the gap (start/end, reason) in the manifest |
-| F12 | Frames lost on the wire / in the device | Undetectable without protocol help | Optional per-frame **alive / sequence counter** signal in the config (E2E-style): gaps, repeats and resets counted per frame ID and logged |
+| F12 | Frames lost on the wire / in the device | Undetectable without protocol help | **Done 2026-10-19:** optional `sequence_counters` table marks a counter (bits, step); gaps, repeats and resets counted per frame ID, in integrity / session.json and `seg_NNNN_sequence.csv` (instruction.md §5.12) |
 | F13 | `TcpSocketWrapper.write` / UDP write | `socket.send()` may write only part of a buffer — **the rest of a TX command was lost** without an error | Send until every byte is out (with timeout), else raise |
 | F14 | UDP on Windows | An ICMP "port unreachable" (device rebooting) arrives as `WSAECONNRESET` on the next read → treated as an unplug → **session ended** | Ignore the notice for UDP and keep reading |
 | F15 | `TcpSocketWrapper` on peer close | Raised "closed by remote peer" while bytes already received sat in its buffer → **the device's last frames were lost**, more the busier the PC (found by the stress test under load) | Deliver every buffered byte first, then report the close |
@@ -483,7 +502,7 @@ these loss points:
 
 Progress (each with a test that fails on the old code):
 F1 ✅ F2 ✅ F3 ✅ F4 ✅ F5 ✅ F6 ✅ F7 ✅ F8 ✅ F9 ✅ F10 ✅ F11 ✅
-F12 ☐ F13 ✅ F14 ✅ F15 ✅ F16 ✅ F17 ✅ F18 ✅ F19 ✅ F20 ✅ — tests in `tests/test_polling_worker.py`
+F12 ✅ F13 ✅ F14 ✅ F15 ✅ F16 ✅ F17 ✅ F18 ✅ F19 ✅ F20 ✅ — tests in `tests/test_polling_worker.py`
 (`test_polling_start_delivers_waiting_frames_instead_of_discarding`,
 `test_polling_continues_while_gui_is_backpressured`) and
 `tests/test_frame_loss.py`. The UDP burst test shows the old code really
@@ -512,8 +531,9 @@ Done when:
       one 4.5 s stall — see 0.11; Part G's 50 ms budget not yet met),
       `smoke_headless.py`.
       Found F16–F20 and the Part G items below
-- [ ] F12 (sequence-counter gap detection) — needs a way to mark a signal as
-      the frame's counter: lands with the canonical config schema (Part C)
+- [x] F12 (sequence-counter gap detection) — optional `sequence_counters`
+      table, verified on hardware (see §0.0 Phase 3); Part C will fold the
+      table into the canonical schema
 - [x] Integrity counters per segment in `session.json`: bytes, frames OK,
       rejected, discarded + overflow + escape-layer bytes, driver error flags
       (`driver_*`), poll timeouts, bytes purged at connect, decoded-log drops,

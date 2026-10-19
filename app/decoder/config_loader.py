@@ -28,6 +28,7 @@ from .types import (
     PollingScheduleSpec,
     ProtocolConfig,
     ReadWrite,
+    SequenceCounterSpec,
     SignalSpec,
     SerialDefaults,
     TxCommandFieldSpec,
@@ -173,6 +174,7 @@ def load_config(path: str | Path | dict) -> FrameConfig:
     )
     cfg.serial_defaults = _parse_serial_defaults(tables.get("serial_defaults", []))
     cfg.polling_schedules = _parse_polling_schedules(tables.get("polling_schedule", []))
+    cfg.sequence_counters = _parse_sequence_counters(tables.get("sequence_counters", []), cfg)
     return cfg
 
 
@@ -291,6 +293,10 @@ def _normalize_table_name(name: str) -> str:
         "pollingschedules": "polling_schedule",
         "polling_schedule": "polling_schedule",
         "polling_schedules": "polling_schedule",
+        "sequencecounter": "sequence_counters",
+        "sequencecounters": "sequence_counters",
+        "sequence_counter": "sequence_counters",
+        "sequence_counters": "sequence_counters",
     }
     return aliases.get(normalized, normalized)
 
@@ -1152,6 +1158,40 @@ def _parse_enums(
         if val in signal_enums:
             raise ConfigError(f"enums row {row_no}: duplicate enum value {val} for signal {variable_name!r}")
         signal_enums[val] = row["label"]
+    return out
+
+
+_SEQUENCE_COUNTERS_REQUIRED = {"id_or_address", "signal_name"}
+
+
+def _parse_sequence_counters(rows: List[Dict[str, str]], cfg: FrameConfig) -> Dict[int, SequenceCounterSpec]:
+    """Optional ``sequence_counters`` table (Plane.md F12): which signal of a
+    frame is a rolling counter, its width in bits (default: the signal's
+    size) and step (default 1). One counter per frame."""
+    _optional_columns_ok(rows, _SEQUENCE_COUNTERS_REQUIRED, "sequence_counters")
+    out: Dict[int, SequenceCounterSpec] = {}
+    for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row):
+            continue
+        if not _to_bool(row.get("enabled", "true"), default=True, field_name="sequence_counters.enabled"):
+            continue
+        frame_id = _parse_frame_id(row["id_or_address"], field_name="sequence_counters.id_or_address")
+        name = row["signal_name"]
+        sig = next((s for s in cfg.signals_by_frame.get(frame_id, [])
+                    if s.signal_name == name or s.source_name == name), None)
+        if sig is None:
+            raise ConfigError(f"sequence_counters row {row_no}: frame 0x{frame_id:X} has no signal {name!r}")
+        if frame_id in out:
+            raise ConfigError(f"sequence_counters row {row_no}: frame 0x{frame_id:X} already has a counter")
+        bits_text = row.get("bits", "").strip()
+        bits = _to_int(bits_text, field_name="sequence_counters.bits") if bits_text else 8 * sig.byte_length
+        if not 1 <= bits <= 64:
+            raise ConfigError(f"sequence_counters row {row_no}: bits must be 1..64, got {bits}")
+        step_text = row.get("step", "").strip()
+        step = _to_int(step_text, field_name="sequence_counters.step") if step_text else 1
+        if not 1 <= step < (1 << bits) // 2:
+            raise ConfigError(f"sequence_counters row {row_no}: step must be 1..{(1 << bits) // 2 - 1}, got {step}")
+        out[frame_id] = SequenceCounterSpec(frame_id, sig.signal_name, bits, step)
     return out
 
 

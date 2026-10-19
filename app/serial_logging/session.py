@@ -10,6 +10,7 @@ session is a folder of rotated segments plus a manifest::
       seg_0001_event.csv/.xlsx  event log: one wide row per cycle
       seg_0001_fixed.csv/.xlsx  fixed-step log: one row per grid tick
       seg_0001_rejected.csv     frames that failed CRC / framing (F9)
+      seg_0001_sequence.csv     sequence-counter gaps / repeats / resets (F12)
       seg_0001.bhraw            lossless raw capture (written by the worker)
       seg_0002_…
 
@@ -386,6 +387,8 @@ class _Segment:
         self.fixed: Optional[CsvSegmentWriter] = None
         self.rejected: Optional[CsvSegmentWriter] = None
         self.rejected_count = 0
+        self.sequence: Optional[CsvSegmentWriter] = None
+        self.sequence_events = 0
         self.integrity_start: Dict[str, Any] = {}
 
 
@@ -555,6 +558,27 @@ class SessionLog:
         with self._seg_lock:
             self._log_rejected(raw, frame_id, error, rx_perf)
 
+    def log_sequence_event(self, frame_id: int, kind: str, expected: int, received: int, missing: int,
+                           rx_perf: float) -> None:
+        """Record a sequence-counter gap / repeat / reset (F12): frames lost
+        before they reached the PC leave no other trace."""
+        with self._seg_lock:
+            seg = self._segment
+            if seg is None:
+                return
+            if seg.sequence is None:
+                seg.sequence = CsvSegmentWriter(
+                    ["time_utc", "time_local", "elapsed_ms", "frame_id", "kind", "expected", "received",
+                     "missing"],
+                    path=self.folder / f"seg_{seg.index:04d}_sequence.csv",
+                )
+            wall = self._wall_of(rx_perf)
+            seg.sequence.write([
+                iso_utc(wall), iso_local(wall), int((rx_perf - self.session_perf0) * 1000),
+                f"0x{frame_id:X}", kind, expected, received, missing,
+            ])
+            seg.sequence_events += 1
+
     def _log_rejected(self, raw: bytes, frame_id: Optional[int], error: str, rx_perf: float) -> None:
         seg = self._segment
         if seg is None:
@@ -600,7 +624,7 @@ class SessionLog:
         if seg is not None:
             # A CSV writer thread that hit a write error (disk full) has
             # stopped; report it now, not when the segment closes.
-            for w in (seg.fixed, seg.rejected):
+            for w in (seg.fixed, seg.rejected, seg.sequence):
                 if w is not None and w.error and not getattr(w, "_reported", False):
                     w._reported = True
                     self._error(w.error)
@@ -767,6 +791,8 @@ class SessionLog:
             seg.fixed.close()
         if seg.rejected is not None:
             seg.rejected.close()
+        if seg.sequence is not None:
+            seg.sequence.close()
         # Counters become per-segment deltas; gauges (a level or a running
         # maximum, not a count) are recorded as their value at close.
         integrity = {
@@ -782,6 +808,7 @@ class SessionLog:
                 "ended_utc": iso_utc(ended),
                 "close_reason": reason,
                 "rejected_frames": seg.rejected_count,
+                "sequence_events": seg.sequence_events,
                 "integrity": integrity,
             })
             if raw_error:
@@ -818,7 +845,7 @@ class SessionLog:
                 self.decoded_dropped += entry_dropped
         else:
             entry_dropped = 0
-        for name, w in (("fixed", seg.fixed), ("rejected", seg.rejected)):
+        for name, w in (("fixed", seg.fixed), ("rejected", seg.rejected), ("sequence", seg.sequence)):
             if w is None:
                 continue
             w.join()
@@ -856,11 +883,12 @@ class SessionLog:
                     hashes[name] = _sha256(path)
             else:
                 errors.append(f"{name} missing after close")
-        if seg.rejected is not None:
-            name = seg.rejected.data_path.name
-            entry["files"]["rejected_csv"] = name
-            sizes[name] = seg.rejected.data_path.stat().st_size
-            hashes[name] = _sha256(seg.rejected.data_path)
+        for key, w in (("rejected_csv", seg.rejected), ("sequence_csv", seg.sequence)):
+            if w is not None:
+                name = w.data_path.name
+                entry["files"][key] = name
+                sizes[name] = w.data_path.stat().st_size
+                hashes[name] = _sha256(w.data_path)
         with self._lock:
             entry.update({
                 "status": "closed" if not errors else "closed_with_errors",

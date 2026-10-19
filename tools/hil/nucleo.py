@@ -161,6 +161,10 @@ def hil_config_dir(dest: Path) -> Path:
     append("frames.csv", "0x4000,HIL Counter,8,rx,TRUE,Sequence counter from the HIL firmware")
     append("variables.csv", "0x4000,HIL Seq,uint32,1,1,little,1,0,,,R,0,4294967295,Frame sequence number,TRUE")
     append("variables.csv", "0x4000,HIL Uptime,uint32,1,1,little,1,0,ms,,R,0,4294967295,Board uptime,TRUE")
+    # The counter is declared so the application itself detects lost
+    # frames (Plane.md F12); the tests compare its count with the board's.
+    (dest / "sequence_counters.csv").write_text(
+        "id_or_address,signal_name,bits,step,enabled\n0x4000,HIL Seq,32,1,TRUE\n", encoding="utf-8")
     return dest
 
 
