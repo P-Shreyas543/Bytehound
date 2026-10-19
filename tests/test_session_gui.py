@@ -175,3 +175,100 @@ def test_auto_reconnect_restores_the_exact_polling_setup():
     host._polling_action.setChecked.assert_called_once_with(True)
     host._session_log.set_polling_mode.assert_called_once_with(True)
     assert host._resume_polling is False
+
+
+def _gui_window(mw, tmp_path, monkeypatch):
+    ini = str(tmp_path / "settings.ini")
+
+    class IsolatedSettings(QSettings):
+        def __init__(self, *args, **kwargs):
+            super().__init__(ini, QSettings.Format.IniFormat)
+
+    monkeypatch.setattr(mw, "QSettings", IsolatedSettings)
+    monkeypatch.setattr(mw.MainWindow, "_check_and_recover_temp_logs", lambda self: None)
+    monkeypatch.setattr(mw.MainWindow, "_popup_warning", lambda self, *a, **k: None)
+    monkeypatch.setattr(mw.MainWindow, "_popup_critical", lambda self, *a, **k: None)
+    return mw.MainWindow()
+
+
+def test_activating_a_config_while_logging_reconnects_and_continues_the_session(qapp, tmp_path, monkeypatch):
+    """Part C decision 3 end to end: the preview is confirmed, the worker is
+    restarted with the new configuration (it used to keep decoding with the
+    old one until a manual reconnect), the session records a gap and
+    continues in a new segment, and the configuration is in the rollback
+    history."""
+    import app.ui.main_window as mw
+    from app.decoder import canonical
+    from app.decoder.lifecycle import prepare_candidate
+    from app.ui.config_loader import config_history_dir
+
+    config = load_config(TEMPLATE)
+    frames = [build_packet(config.protocol, fid, bytes(f.payload_length)) for fid, f in config.frames.items()]
+    doc = canonical.import_config(TEMPLATE)
+    doc["tables"]["variables"][0]["signal_name"] = "Renamed_By_C4"
+    new_path = tmp_path / "changed.json"
+    canonical.save_canonical(doc, new_path)
+
+    dev = Device(frames)
+    win = _gui_window(mw, tmp_path, monkeypatch)
+    previews = []
+    monkeypatch.setattr(win, "_confirm_candidate", lambda cand, path: previews.append(cand) or True)
+    try:
+        win._load_config_from_path(TEMPLATE, suppress_popups=True)
+        monkeypatch.setattr(win, "_session_settings_from_qsettings",
+                            lambda: SessionSettings(segment_seconds=3600, fixed_step_s=0.5))
+        settings = SerialSettings(port="127.0.0.1", connection_type="tcp", host="127.0.0.1",
+                                  port_num=dev.port, auto_reconnect=False)
+        assert win._attempt_connect(settings)
+        folder = tmp_path / "session_c4"
+        assert win._start_logging_file(folder)
+        assert _pump(qapp, 10, until=lambda: win._packet_count > 50)
+        old_worker = win._serial
+
+        assert win._import_config_interactive(new_path)
+        cand = previews[0]
+        assert cand.can_activate and any(name == "Renamed_By_C4" for _f, name in cand.diff.added)
+        assert win._serial is not None and win._serial is not old_worker      # restarted
+        assert win._serial._decode_config is win._config                      # with the new config
+        assert any(s.signal_name == "Renamed_By_C4" for s in win._config.all_signals)
+        assert win._logging and win._session_log.segment_index == 2
+        count = win._packet_count
+        assert _pump(qapp, 10, until=lambda: win._packet_count > count + 50)  # data flows again
+        session = win._session_log
+        win._stop_logging()
+        assert session.await_finished(60)
+    finally:
+        win._disconnect(reason="test done")
+        win.close()
+        dev.close()
+        _pump(qapp, 0.3)
+
+    m = read_manifest(folder)
+    assert [s["config"] for s in m["segments"]] == ["config", "config_2"]
+    assert all(s["status"] == "closed" for s in m["segments"]), [s.get("errors") for s in m["segments"]]
+    assert len(m["gaps"]) == 1 and m["gaps"][0]["end_utc"]
+    assert m["segments"][1]["rows"]["event"] > 0
+    entries = __import__("app.decoder.lifecycle", fromlist=["ConfigHistory"]).ConfigHistory(
+        config_history_dir()).entries()
+    assert entries and entries[0].fingerprint == canonical.fingerprint(doc)
+    assert prepare_candidate(entries[0].path).fingerprint == canonical.fingerprint(doc)
+
+
+def test_cancelled_or_invalid_import_leaves_everything_as_it_was(qapp, tmp_path, monkeypatch):
+    import app.ui.main_window as mw
+
+    win = _gui_window(mw, tmp_path, monkeypatch)
+    try:
+        win._load_config_from_path(TEMPLATE, suppress_popups=True)
+        active = win._config
+        monkeypatch.setattr(win, "_confirm_candidate", lambda cand, path: False)
+        assert not win._import_config_interactive(TEMPLATE)          # user cancels
+        assert win._config is active
+        monkeypatch.setattr(win, "_confirm_candidate", type(win)._confirm_candidate.__get__(win))
+        bad = tmp_path / "broken.json"
+        bad.write_text("{ not json", encoding="utf-8")
+        assert not win._import_config_interactive(bad)               # errors: no dialog opened, not activated
+        assert win._config is active
+    finally:
+        win.close()
+        _pump(qapp, 0.3)

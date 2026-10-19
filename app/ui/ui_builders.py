@@ -153,6 +153,9 @@ class UIBuildersMixin:
         self._load_config_action.setShortcut(QKeySequence("Ctrl+O"))
         self._load_config_action.triggered.connect(self._on_load_config)
 
+        self._restore_config_action = QAction(_icon("mdi6.history", _ic), "Restore Previous Configuration…", self)
+        self._restore_config_action.triggered.connect(self._on_restore_config)
+
         self._edit_config_action = QAction(_icon("mdi6.file-document-edit-outline", _ic), "Edit Configuration", self)
         self._edit_config_action.setShortcut(QKeySequence("Ctrl+Shift+E"))
         self._edit_config_action.triggered.connect(self._on_edit_config)
@@ -232,6 +235,7 @@ class UIBuildersMixin:
         file_menu = menubar.addMenu("&File")
         file_menu.addAction(self._wizard_action)
         file_menu.addAction(self._load_config_action)
+        file_menu.addAction(self._restore_config_action)
         file_menu.addAction(self._edit_config_action)
         file_menu.addAction(self._export_template_action)
         file_menu.addSeparator()

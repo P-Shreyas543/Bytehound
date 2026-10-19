@@ -767,3 +767,56 @@ def test_fixed_step_write_failure_is_reported_at_the_next_tick(tmp_path, config)
     assert s.await_finished(60)
     seg = read_manifest(tmp_path / "sess")["segments"][0]
     assert seg["status"] == "closed_with_errors"
+
+
+def test_config_change_during_a_gap_continues_in_a_new_segment(tmp_path, config):
+    """Part C decision 3: activating a configuration while logging records a
+    gap and continues in a new segment with the new configuration. No
+    segment mixes two configurations; each records the one it used; the
+    fixed-step grid continues."""
+    from app.serial_logging.session import _segment_configs
+
+    other_path = Path(__file__).resolve().parents[1] / "Blue01_M_CAN_4836.xlsx"
+    other = load_config(other_path)
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock, segment_seconds=3600, fixed_step_s=1.0)
+    s.start()
+    for f in _frames(config) * 5:
+        s.log_frame(f, clock.perf)
+        clock.advance(0.5)
+    with pytest.raises(RuntimeError, match="between segments"):
+        s.change_config(other, other_path)                 # a segment is open
+    s.connection_lost("configuration change")
+    assert s.change_config(other, other_path) == "config_2"
+    s.connection_restored()
+    for f in _frames(other) * 5:
+        s.log_frame(f, clock.perf)
+        clock.advance(0.5)
+    s.stop()
+    assert s.await_finished(120)
+
+    folder = tmp_path / "sess"
+    m = read_manifest(folder)
+    assert [seg["config"] for seg in m["segments"]] == ["config", "config_2"]
+    assert all(seg["status"] == "closed" for seg in m["segments"]), m["segments"]
+    change = m["config_changes"][0]
+    assert change["id"] == "config_2" and change["first_segment"] == 2 and len(change["files_sha256"]) == 64
+    assert (folder / change["load"]).is_file()
+    assert len(m["gaps"]) == 1 and m["gaps"][0]["end_utc"]
+    assert any("Configuration changed to Blue01_M_CAN_4836.xlsx" in e["text"] for e in m["events"])
+
+    seg1, seg2 = m["segments"]
+    head1 = _csv_rows(folder / seg1["files"]["event_csv"])
+    head2 = _csv_rows(folder / seg2["files"]["event_csv"])
+    new_name = next(x.signal_name for x in other.all_signals
+                    if x.signal_name not in {y.signal_name for y in config.all_signals})
+    assert not any(new_name in h for h in head1[0])        # old segment: old columns only
+    assert any(new_name in h for h in head2[0])            # new segment: the new configuration
+    fixed1 = _csv_rows(folder / seg1["files"]["fixed_csv"])
+    fixed2 = _csv_rows(folder / seg2["files"]["fixed_csv"])
+    assert fixed1[0] != fixed2[0]                          # new columns
+    assert int(fixed2[1][0]) == int(fixed1[-1][0]) + 1     # same grid, no tick lost or repeated
+
+    pick = _segment_configs(folder, m, config)             # offline rebuild: each its own config
+    assert pick(seg1).protocol == config.protocol
+    assert pick(seg2).protocol == other.protocol

@@ -250,17 +250,19 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
       pass, 2× except/continue (code quality, not addressed in this pass),
       subprocess use (reviewed: installer launch, fixed argv, no shell)
 - [ ] Scoped mypy — NOT RUN (no project configuration)
-- [ ] 24 h soak — **RUNNING** (handed over 2026-10-19): test build
-      `Bytehound_soak_4fe6e7d.zip` (commit 4fe6e7d, exe SHA-256
-      e201e628…c3ec79611; suite 868 passed, frozen validate / capture /
-      finish self-tests and GUI start/close OK) on a separate lab PC with a
-      real BMS, Blue01-style config, Waveshare USB-CAN at 2 Mbaud. Kit:
-      SOAK_TEST.txt (procedure, pass criteria) + soak_monitor.ps1
-      (memory / handles / threads per minute). No sequence counters in
-      that config, so F12 is not exercised; judged on discarded bytes,
-      parse errors, gaps, segment status and resource trend. Also to
-      report: whether 0x1F0 Balancing_Status / BMS_Operation_State ever
-      decode (C2 finding). Result: pending
+- [ ] 24 h soak — **RUNNING** (started 2026-10-19 afternoon) on a separate
+      lab PC: **`Bytehound_Setup_1.2.4.exe`** (installer SHA-256
+      5787911b…fa230b60, built 15:31 by the owner with `build.py`). Its app
+      code is exactly the C4 commit (no app file changed after the build;
+      full suite on that code: 880 passed); bundled manual is the pre-update
+      text. Real BMS, Blue01-style config, Waveshare USB-CAN at 2 Mbaud.
+      Owner cannot run extra tooling: judged on session.json (segment
+      status, gaps, integrity counters), bytehound.log, end status-bar
+      screenshot and, if provided, Task Manager memory at start and end
+      (otherwise memory trend = NOT MEASURED). F12 not exercised (no
+      sequence counters in that config). Also asked: do 0x1F0
+      Balancing_Status / BMS_Operation_State ever decode (C2 finding).
+      The earlier zip (4fe6e7d) was superseded before it ran. Result: pending
 
 **Part C — canonical configuration (started 2026-10-19)**
 
@@ -330,8 +332,27 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
       sheets are not carried (an empty sheet holds no configuration; an
       empty `variables` table is kept because its presence matters to the
       loader); xlsx cells are text (Excel may flag numbers stored as text)
-- [ ] C4 lifecycle: candidate, preview diff, confirm, rollback; auto-reconnect
-      on activation (decision 3)
+- [x] **C4 lifecycle** (`app/decoder/lifecycle.py`, UI in
+      `app/ui/config_loader.py`): Import Config / recent / welcome-page loads
+      now build a **candidate** (import + validate + diff against the active
+      config by stable id `(frame, signal)`, plus protocol fields and other
+      tables) and show a **preview** — errors block activation, warnings and
+      the change list inform — and activate only on **Activate**. A failed or
+      cancelled import never changes the active config. **Rollback:** every
+      activated config is kept as canonical JSON (last 20, deduplicated,
+      atomic) in app data; File → *Restore Previous Configuration…* goes
+      through the same preview. **Decision 3:** activating while connected
+      restarts the capture worker with the new config — fixes the C0 finding
+      (the worker kept decoding with the old config; the app only showed a
+      "Reconnect required" toast). While logging, `SessionLog.change_config`
+      records a gap, copies the config as `config_N/`, tags every segment
+      with the config it used, keeps the fixed-step grid (no tick lost or
+      repeated) and the offline rebuild decodes each segment with its own
+      config. Startup/preset loads stay direct (no preview). Tests: 7
+      service, 1 session, 2 GUI end to end (TCP device: worker replaced and
+      decoding with the new config, 2 segments `config` / `config_2`, gap,
+      history entry; cancel / invalid leave everything unchanged). Tests use
+      a temp history folder (conftest), never the user's app data
 - [ ] C5 clean-ups: dead code, Ather value rules (decision 4), clamp setting
       (decision 5)
 - [ ] C6 fingerprint in session.json / logs; docs; packaging

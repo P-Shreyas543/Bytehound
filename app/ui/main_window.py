@@ -423,7 +423,7 @@ class MainWindow(
             self._welcome_dashboard.preset_selected.connect(self._on_load_preset)
             self._welcome_dashboard.open_wizard_requested.connect(self._on_open_protocol_wizard)
             self._welcome_dashboard.open_manual_requested.connect(self._on_view_docs)
-            self._welcome_dashboard.recent_config_selected.connect(lambda p: self._load_config_from_path(Path(p)))
+            self._welcome_dashboard.recent_config_selected.connect(lambda p: self._import_config_interactive(Path(p)))
             ports = list_available_ports()
             self._welcome_dashboard.update_ports(ports)
             self._welcome_dashboard.set_recent_configs(self._recent_paths())

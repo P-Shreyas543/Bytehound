@@ -7,6 +7,7 @@ of where pytest is invoked from.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 import pytest
@@ -54,6 +55,19 @@ def _make_isolated_qsettings(folder: Path):
             super().__init__(str(folder / f"{safe}.ini"), _RealQSettings.Format.IniFormat, parent)
 
     return IsolatedQSettings
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolated_config_history(tmp_path_factory):
+    """Rollback history (Part C4) goes to a temp folder, never the user's
+    app data."""
+    old = os.environ.get("BYTEHOUND_CONFIG_HISTORY_DIR")
+    os.environ["BYTEHOUND_CONFIG_HISTORY_DIR"] = str(tmp_path_factory.mktemp("config_history"))
+    yield
+    if old is None:
+        os.environ.pop("BYTEHOUND_CONFIG_HISTORY_DIR", None)
+    else:
+        os.environ["BYTEHOUND_CONFIG_HISTORY_DIR"] = old
 
 
 @pytest.fixture(autouse=True, scope="session")

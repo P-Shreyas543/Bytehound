@@ -145,6 +145,8 @@ def _copy_config(source: Optional[Path], dest: Path) -> Dict[str, Any]:
         h.update(str(rel).replace("\\", "/").encode("utf-8") + b"\0")
         h.update(f.read_bytes())
     info["copy"] = str(dest.name)
+    # What to pass to load_config to read the copy back (offline rebuild).
+    info["load"] = dest.name if source.is_dir() else f"{dest.name}/{source.name}"
     info["files_sha256"] = h.hexdigest()
     return info
 
@@ -424,6 +426,10 @@ class SessionLog:
         self.config = config
         self.settings = settings
         self._config_source = Path(config_source) if config_source else None
+        # Configuration of the segments being written: "config" (the one the
+        # session started with) or "config_N" after change_config.
+        self._config_id = "config"
+        self._config_info: Dict[str, Any] = {}
         self._metadata = dict(metadata or {})
         self._app_version = app_version
         self.polling_mode = polling_mode
@@ -463,6 +469,7 @@ class SessionLog:
         wall0, self.session_perf0 = self._clock(), self._perf()
         self.session_wall0 = wall0
         config_info = _copy_config(self._config_source, self.folder / "config")
+        self._config_info = config_info
         self._manifest = {
             "format": SESSION_FORMAT,
             "format_version": SESSION_FORMAT_VERSION,
@@ -674,6 +681,46 @@ class SessionLog:
             self._manifest["gaps"][-1]["seconds"] = round(wall - self._gap_start, 3)
         self._gap_start = None
 
+    def change_config(self, config: FrameConfig, config_source: Optional[Path] = None) -> str:
+        """Use ``config`` from the next segment on (Part C decision 3: a
+        configuration activated while connected reconnects, and the session
+        continues in a new segment). Only allowed during a gap, so no
+        segment ever mixes two configurations. The new configuration is
+        copied into the session as ``config_N/``; every segment records the
+        configuration it used. Returns the copy's id."""
+        with self._seg_lock:
+            if self._segment is not None:
+                raise RuntimeError("the configuration can only change between segments (during a gap)")
+            with self._lock:
+                changes = self._manifest.setdefault("config_changes", [])
+                copy_id = f"config_{len(changes) + 2}"
+                first_segment = len(self._manifest["segments"]) + 1
+            source = Path(config_source) if config_source else None
+            info = _copy_config(source, self.folder / copy_id)
+            self.config = config
+            self._config_source = source
+            self._config_id = copy_id
+            self._config_info = info
+            if self._sampler is not None:
+                # Same grid (t0, step) and row numbering; the new columns.
+                old = self._sampler
+                self._sampler = FixedStepSampler(
+                    fixed_step_columns(config),
+                    self.settings.fixed_step_s,
+                    old.t0,
+                    stale_steps=self.settings.stale_steps,
+                    hold_stale=self.settings.hold_stale,
+                    wall_of=self._wall_of,
+                )
+                self._sampler.next_index = old.next_index
+            with self._lock:
+                changes.append({"id": copy_id, "utc": iso_utc(self._clock()),
+                                "first_segment": first_segment, **info})
+                self._save_locked()
+            name = source.name if source else "(no file)"
+            self._event(f"Configuration changed to {name} from segment {first_segment} ({copy_id})")
+            return copy_id
+
     # -- segments -----------------------------------------------------------
 
     def _seg_path(self, index: int, kind: str, ext: str) -> Path:
@@ -685,7 +732,7 @@ class SessionLog:
             "session": self.folder.name,
             "segment": str(index),
             "segment_started_utc": iso_utc(wall0),
-            "config_files_sha256": self._manifest.get("config", {}).get("files_sha256", ""),
+            "config_files_sha256": self._config_info.get("files_sha256", ""),
         }
 
     def _raw_meta(self, index: int, wall0: float) -> Dict[str, Any]:
@@ -767,6 +814,7 @@ class SessionLog:
                 "status": "open",
                 "started_utc": iso_utc(seg.wall0),
                 "ended_utc": None,
+                "config": self._config_id,
                 "files": files,
             })
             self._save_locked()
@@ -1041,6 +1089,34 @@ def find_unfinished_sessions(root: Path, max_depth: int = 2) -> List[Path]:
     return out
 
 
+def _segment_configs(folder: Path, manifest: Dict[str, Any], config: FrameConfig):
+    """Which configuration decodes a segment. A session that never changed
+    configuration uses ``config`` (unchanged behaviour). After a change, each
+    segment uses the copy it was recorded with; a copy that cannot be read
+    falls back to ``config``."""
+    from ..decoder.config_loader import load_config
+
+    changes = manifest.get("config_changes") or []
+    if not changes:
+        return lambda seg: config
+    infos = {"config": manifest.get("config", {}), **{c["id"]: c for c in changes if c.get("id")}}
+    cache: Dict[str, FrameConfig] = {}
+
+    def pick(seg: Dict[str, Any]) -> FrameConfig:
+        cid = seg.get("config", "config")
+        if cid not in cache:
+            load = infos.get(cid, {}).get("load")
+            try:
+                cache[cid] = load_config(folder / load) if load else config
+            except Exception:
+                _LOG.warning("Session config copy %s not readable; using the active configuration", cid,
+                             exc_info=True)
+                cache[cid] = config
+        return cache[cid]
+
+    return pick
+
+
 def rebuild_session_event_logs(folder: Path, config: FrameConfig) -> int:
     """Regenerate every segment's event log from its raw capture (F10).
 
@@ -1052,13 +1128,14 @@ def rebuild_session_event_logs(folder: Path, config: FrameConfig) -> int:
 
     folder = Path(folder)
     manifest = read_manifest(folder)
+    configs = _segment_configs(folder, manifest, config)
     rebuilt = 0
     for seg in manifest.get("segments", []):
         raw_name = seg.get("files", {}).get("raw")
         if not raw_name or not (folder / raw_name).exists():
             continue
         out = folder / f"seg_{int(seg['index']):04d}_event_rebuilt.xlsx"
-        frames = rebuild_decoded_log(folder / raw_name, config, out)
+        frames = rebuild_decoded_log(folder / raw_name, configs(seg), out)
         seg.setdefault("files", {})["event_rebuilt_xlsx"] = out.name
         seg["rebuilt_frames"] = frames
         rebuilt += 1

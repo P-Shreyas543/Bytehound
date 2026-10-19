@@ -8,21 +8,39 @@ mixed into MainWindow.
 
 from __future__ import annotations
 
+import logging
+import os
 from pathlib import Path
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import QStandardPaths, Qt
 from PySide6.QtWidgets import (
     QApplication,
     QDialog,
     QDialogButtonBox,
     QFileDialog,
     QFormLayout,
+    QInputDialog,
     QLabel,
+    QPlainTextEdit,
     QProgressDialog,
+    QPushButton,
     QVBoxLayout,
 )
 
-from ..decoder.config_loader import ConfigError, load_config
+from ..decoder.config_loader import load_config
+from ..decoder.lifecycle import Candidate, ConfigHistory, prepare_candidate
+
+_LOG = logging.getLogger("bytehound.ui")
+
+
+def config_history_dir() -> Path:
+    """Where activated configurations are kept for rollback (Part C4).
+    ``BYTEHOUND_CONFIG_HISTORY_DIR`` overrides it (tests)."""
+    override = os.environ.get("BYTEHOUND_CONFIG_HISTORY_DIR")
+    if override:
+        return Path(override)
+    base = QStandardPaths.writableLocation(QStandardPaths.StandardLocation.AppDataLocation)
+    return Path(base or Path.home() / ".bytehound") / "config_history"
 from ..protocol.packet_parser import create_parser
 
 
@@ -121,14 +139,14 @@ class ConfigLoaderMixin:
             self,
             "Select Configuration",
             start_dir,
-            "Config Files (*.xlsx *.xlsm protocol.csv);;Excel Files (*.xlsx *.xlsm);;CSV Files (protocol.csv);;All Files (*.*)",
+            "Config Files (*.xlsx *.xlsm *.json protocol.csv);;Excel Files (*.xlsx *.xlsm);;JSON (*.json);;CSV Files (protocol.csv);;All Files (*.*)",
         )
         if not path_str:
             return
 
         chosen = Path(path_str)
         suffix = chosen.suffix.lower()
-        if suffix in {".xlsx", ".xlsm"}:
+        if suffix in {".xlsx", ".xlsm", ".json"}:
             path = chosen
         elif suffix == ".csv":
             path = chosen.parent
@@ -151,27 +169,146 @@ class ConfigLoaderMixin:
         QApplication.processEvents()
 
         try:
-            self._load_config_from_path(path)
-        except ConfigError:
-            return
+            candidate = prepare_candidate(path, self._config)
         finally:
             progress.close()
+        self._review_and_activate(candidate, path)
 
-        # The running PollingWorker captured its protocol/parser/schedules at
-        # construction time. Loading a new config replaces self._config and
-        # self._parser, but the worker keeps decoding live bytes with the OLD
-        # rules until it is restarted. Tell the user via status/toast.
-        if self._serial is not None and self._serial.is_open:
-            if hasattr(self, "_toast"):
-                self._toast("Reconnect required to apply new config on live serial worker.")
+    # -- lifecycle (Part C4): candidate -> preview -> confirm -> activate ----
 
-    def _load_config_from_path(self, path: Path, suppress_popups: bool = False) -> None:
+    def _import_config_interactive(self, path: Path, *, remember: bool = True) -> bool:
+        """Import ``path`` as a candidate, preview it, activate on confirm."""
+        return self._review_and_activate(prepare_candidate(path, self._config), path, remember=remember)
+
+    def _review_and_activate(self, candidate: Candidate, path: Path, *, remember: bool = True) -> bool:
+        self._log_activity(
+            f"[CONFIG] Candidate {Path(path).name}: {len(candidate.report.errors)} error(s), "
+            f"{len(candidate.report.warnings)} warning(s)"
+        )
+        if not self._confirm_candidate(candidate, path):
+            self._log_activity("[CONFIG] Import not activated; the active configuration is unchanged")
+            return False
+        self._activate_candidate(candidate, path, remember=remember)
+        return True
+
+    def _connected(self) -> bool:
+        return self._serial is not None and self._serial.is_open
+
+    @staticmethod
+    def candidate_preview_text(candidate: Candidate, has_active: bool) -> str:
+        report = candidate.report
+        lines = []
+        if report.errors:
+            lines.append(f"{len(report.errors)} error(s) - this configuration cannot be activated:")
+            lines += [f"  {i}" for i in report.errors]
+            lines.append("")
+        if report.warnings:
+            lines.append(f"{len(report.warnings)} warning(s) (it can still be activated):")
+            lines += [f"  {i}" for i in report.warnings]
+            lines.append("")
+        if candidate.diff is not None:
+            lines.append("Changes against the active configuration:" if has_active else "Contents:")
+            lines += [f"  {line}" for line in candidate.diff.summary_lines()]
+            if has_active:
+                lines += [f"    {line}" for line in candidate.diff.detail_lines()]
+        return "\n".join(lines)
+
+    def _confirm_candidate(self, candidate: Candidate, path: Path) -> bool:
+        """Preview dialog: errors block, warnings and the change list inform,
+        and nothing is applied without an explicit Activate."""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Import Configuration")
+        dlg.setMinimumSize(640, 420)
+        root = QVBoxLayout(dlg)
+        head = f"<b>{Path(path).name}</b>"
+        if candidate.fingerprint:
+            head += f"<br>Fingerprint: <code>{candidate.fingerprint[:16]}</code>"
+        root.addWidget(QLabel(head))
+        text = QPlainTextEdit(self.candidate_preview_text(candidate, self._config is not None))
+        text.setReadOnly(True)
+        text.setLineWrapMode(QPlainTextEdit.LineWrapMode.NoWrap)
+        root.addWidget(text, 1)
+        if candidate.can_activate and self._connected():
+            note = "ByteHound will reconnect with the new configuration."
+            if getattr(self, "_logging", False):
+                note += " Logging continues: a short gap is recorded and a new segment starts."
+            root.addWidget(QLabel(note))
+        buttons = QDialogButtonBox(dlg)
+        if candidate.can_activate:
+            activate = QPushButton("Activate")
+            activate.setDefault(True)
+            buttons.addButton(activate, QDialogButtonBox.ButtonRole.AcceptRole)
+            buttons.addButton(QDialogButtonBox.StandardButton.Cancel)
+        else:
+            buttons.addButton(QDialogButtonBox.StandardButton.Close)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        root.addWidget(buttons)
+        return bool(candidate.can_activate and dlg.exec() == QDialog.DialogCode.Accepted)
+
+    def _config_history(self) -> ConfigHistory:
+        return ConfigHistory(config_history_dir())
+
+    def _activate_candidate(self, candidate: Candidate, path: Path, *, remember: bool = True) -> None:
+        """Make ``candidate`` the active configuration. While connected, the
+        capture worker is restarted with it (decision 3): the worker holds
+        the configuration it was started with. While logging, the session
+        records a gap and continues in a new segment with the new
+        configuration."""
+        assert candidate.config is not None
+        settings = getattr(self, "_saved_settings", None)
+        reconnect = self._connected() and settings is not None
+        logging_on = bool(getattr(self, "_logging", False) and getattr(self, "_session_log", None) is not None)
+        if reconnect:
+            self._resume_polling = self._polling_action.isChecked()
+            self._disconnect(reason="Reconnecting with the new configuration", keep_logging=True)
+        self._load_config_from_path(path, config=candidate.config, remember=remember)
+        self._config_fingerprint = candidate.fingerprint
+        if logging_on and self._session_log is not None:
+            try:
+                cid = self._session_log.change_config(self._config, Path(path))
+                self._log_activity(f"[SESSION] Configuration changed; new segments use {cid}")
+            except Exception as exc:
+                _LOG.exception("Session configuration change failed")
+                self._log_activity(f"[ERROR] Session could not switch configuration: {exc}")
+        if candidate.doc is not None:
+            try:
+                self._config_history().record(candidate.doc)
+            except Exception as exc:
+                # The configuration is active; only the rollback copy is missing.
+                _LOG.warning("Configuration history not updated", exc_info=True)
+                self._log_activity(f"[WARN] Configuration history not updated: {exc}")
+        if reconnect:
+            if self._attempt_connect(settings, is_retry=True):
+                self._log_activity("[CONFIG] Reconnected with the new configuration")
+            else:
+                self._log_activity("[WARN] Reconnect with the new configuration failed; retrying")
+                self._reconnect_attempts = 0
+                self._reconnect_timer.start(1000)
+
+    def _on_restore_config(self) -> None:
+        """File > Restore Previous Configuration... (rollback, Part C4)."""
+        self._log_activity("[ACTION] Restore previous configuration")
+        current = getattr(self, "_config_fingerprint", None)
+        entries = [e for e in self._config_history().entries() if e.fingerprint != current]
+        if not entries:
+            self._popup_info("Restore Configuration", "No earlier configuration is stored yet.")
+            return
+        labels = [e.label for e in entries]
+        choice, ok = QInputDialog.getItem(self, "Restore Configuration",
+                                          "Configuration to restore (newest first):", labels, 0, False)
+        if not ok:
+            return
+        self._import_config_interactive(entries[labels.index(choice)].path, remember=False)
+
+    def _load_config_from_path(self, path: Path, suppress_popups: bool = False, *,
+                               config=None, remember: bool = True) -> None:
         # Keep a snapshot so we can revert on failure
         _prev_config = self._config
         _prev_config_path = self._config_path
         _prev_parser = self._parser
         try:
-            self._config = load_config(path)
+            self._config = config if config is not None else load_config(path)
         except Exception as exc:  # ConfigError or unexpected
             self._config = _prev_config
             self._config_path = _prev_config_path
@@ -240,7 +377,8 @@ class ConfigLoaderMixin:
                 self._settings.setValue("conn/baud", str(baud))
                 if hasattr(self, "_welcome_dashboard") and self._welcome_dashboard is not None:
                     self._welcome_dashboard.set_baud(baud)
-        self._remember_config(path)
+        if remember:
+            self._remember_config(path)
         self._refresh_action_state()
         self._set_status(f"Loaded config from {path}")
         self._log_activity(f"Loaded config: {path}")
@@ -250,10 +388,7 @@ class ConfigLoaderMixin:
         if not path_text:
             return
         self._log_activity(f"[ACTION] Load recent config: {path_text}")
-        try:
-            self._load_config_from_path(Path(path_text))
-        except ConfigError:
-            pass
+        self._import_config_interactive(Path(path_text))
 
     def _recent_paths(self) -> list[str]:
         value = self._settings.value("recent_configs", [])
