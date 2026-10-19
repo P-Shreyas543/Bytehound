@@ -184,6 +184,7 @@ class DecodedLogger:
         self._stop_event = threading.Event()
         self._error_lock = threading.Lock()
         self._pending_error: Optional[str] = None
+        self._first_error: Optional[str] = None
         self._dropped_count = 0  # rows dropped because the queue was full
         self.total_dropped = 0   # same, but never reset (session manifests)
         self._last_drop_warning_time = 0.0
@@ -602,14 +603,15 @@ class DecodedLogger:
         with self._error_lock:
             if self._pending_error is None:
                 self._pending_error = f"Decoded log {context} error for {self.path.name}: {exc}"
+            if self._first_error is None:
+                self._first_error = self._pending_error
 
     @property
     def error(self) -> Optional[str]:
-        """The writer's first error not yet delivered to ``on_error``. A
-        closed segment's logger never gets another ``log_frame`` to deliver
-        it, so the session reads it here when the segment finishes."""
+        """The writer's first error, delivered to ``on_error`` or not. The
+        session records it in session.json when the segment finishes."""
         with self._error_lock:
-            return self._pending_error
+            return self._first_error
 
     def _pump_pending_error(self) -> None:
         with self._error_lock:

@@ -684,14 +684,64 @@ def test_poll_schedule_is_fixed_rate_not_completion_relative():
     """F20: next poll = previous due time + interval. Measuring from the end
     of the poll made a 100 ms schedule run 10-25 % slow on the HIL rig."""
     from app.decoder.types import PollingScheduleSpec
-    from app.serial_io.serial_worker import PollingWorker
+    from app.serial_io.serial_worker import PollingWorker, SerialSettings
 
+    worker = PollingWorker(SerialSettings(port="x"), dummy_protocol_config(), [])
     sched = {"spec": PollingScheduleSpec(0x100, 100, 50), "next_run": 10.0}
-    PollingWorker._advance_next_run(sched, now=10.045)    # poll took 45 ms
+    worker._advance_next_run(sched, now=10.045)    # poll took 45 ms
     assert sched["next_run"] == pytest.approx(10.1)       # not 10.145
-    PollingWorker._advance_next_run(sched, now=10.13)
+    worker._advance_next_run(sched, now=10.13)
     assert sched["next_run"] == pytest.approx(10.2)
-    PollingWorker._advance_next_run(sched, now=10.75)     # stalled 550 ms
+    worker._advance_next_run(sched, now=10.75)     # stalled 550 ms
     assert sched["next_run"] == pytest.approx(10.75)      # realign, no catch-up burst
-    PollingWorker._advance_next_run(sched, now=10.76)
+    worker._advance_next_run(sched, now=10.76)
     assert sched["next_run"] == pytest.approx(10.85)
+    # Due at 10.3 … 10.7, polled once at 10.75: four polls skipped, counted.
+    assert sched["missed"] == 4 and worker.integrity_snapshot()["polls_missed"] == 4
+
+
+def test_stretch_warning_is_exact_at_the_capacity_boundary():
+    """10 polls/s fits a 100 ms gap exactly (no warning); 10.2/s does not."""
+    from PySide6.QtCore import Qt
+
+    from app.decoder.types import PollingScheduleSpec
+    from app.serial_io.serial_worker import PollingWorker, SerialSettings
+
+    def warnings_for(intervals):
+        w = PollingWorker(SerialSettings(port="x"), dummy_protocol_config(),
+                          [PollingScheduleSpec(0x100 + i, iv, 50) for i, iv in enumerate(intervals)])
+        got = []
+        w.warning_occurred.connect(got.append, Qt.ConnectionType.DirectConnection)
+        w.set_polling_global(True)
+        return got
+
+    assert warnings_for([200, 200]) == []                 # 10.0/s at 100 ms: exactly full
+    assert warnings_for([1000]) == []                     # 1/s: well below
+    assert len(warnings_for([200, 196])) == 1             # 10.1/s: over by 1 %
+    assert "polls/s" in warnings_for([50])[0]             # 20/s: twice the capacity
+
+
+def test_reenabled_schedule_waits_one_interval_and_keeps_its_count():
+    import time as _t
+
+    from app.decoder.types import PollingScheduleSpec
+    from app.serial_io.serial_worker import PollingWorker, SerialSettings
+
+    w = PollingWorker(SerialSettings(port="x"), dummy_protocol_config(), [PollingScheduleSpec(0x100, 500, 50)])
+    sched = w._schedules[0]
+    w.toggle_schedule(0x100, False)
+    w.toggle_schedule(0x100, True)
+    assert sched["next_run"] >= _t.monotonic() + 0.4      # no immediate burst after re-enable
+
+
+def test_time_with_polling_off_is_not_counted_as_missed_polls():
+    import time as _t
+
+    from app.decoder.types import PollingScheduleSpec
+    from app.serial_io.serial_worker import PollingWorker, SerialSettings
+
+    w = PollingWorker(SerialSettings(port="x"), dummy_protocol_config(), [PollingScheduleSpec(0x100, 100, 50)])
+    w._schedules[0]["next_run"] = _t.monotonic() - 5.0    # polling was off for 5 s
+    w.set_polling_global(True)
+    w._advance_next_run(w._schedules[0], _t.monotonic() + 0.01)
+    assert w.integrity_snapshot()["polls_missed"] == 0

@@ -283,10 +283,16 @@ def _polling(name: str, args, config, pipelined: bool) -> Result:
     try:
         link.worker.set_pipelining(pipelined, depth=2)
         link.worker.set_polling_global(True)
-        pump(0.2)
+        pump(5.0)                                     # past the 2.5 s boot grace
         r.check(any("polls/s" in w for w in link.warnings),
                 f"default gap: worker warns the schedule will stretch ({link.warnings[:1]})")
+        missed_stretched = link.worker.integrity_snapshot()["polls_missed"]
+        r.check(missed_stretched > 0, f"default gap: skipped polls are counted ({missed_stretched})")
         link.worker.set_polling_global(False)
+        pump(0.3)
+        missed_before = link.worker.integrity_snapshot()["polls_missed"]
+        tx_mark = len(link.tx_times)
+        good_mark = dict(link.good)
         link.worker.set_pipelining(pipelined, depth=2, gap_ms=20)
         link.warnings.clear()
         link.worker.set_polling_global(True)
@@ -297,19 +303,34 @@ def _polling(name: str, args, config, pipelined: bool) -> Result:
     finally:
         snap = link.close()
         restore_board(args.port)
-    polls = [(t, int.from_bytes(b[2:4], "little")) for t, b in zip(link.tx_times, link.tx, strict=True)
+    polls = [(t, int.from_bytes(b[2:4], "little"))
+             for t, b in zip(link.tx_times[tx_mark:], link.tx[tx_mark:], strict=True)
              if len(b) >= 4 and int.from_bytes(b[2:4], "little") in TELEMETRY]
     span = polls[-1][0] - polls[0][0] if len(polls) > 1 else 0.0
     sent = {fid: sum(1 for _t, f in polls if f == fid) for fid in TELEMETRY}
     r.data.update(polls_sent=sent, responses=dict(link.good), poll_timeouts=snap["poll_timeouts"],
                   span_s=round(span, 2))
     r.check(not link.warnings, f"20 ms gap: no stretch warning {link.warnings[:1]}")
+    missed = snap["polls_missed"] - missed_before
+    r.check(missed == 0, f"20 ms gap: no polls skipped ({missed})")
+    import statistics
+    jitter = {}
+    for s in config.polling_schedules:
+        ts = [t for t, f in polls if f == s.target_id]
+        iv = [(b - a) * 1000 for a, b in zip(ts, ts[1:], strict=False)]
+        if len(iv) > 2:
+            jitter[f"0x{s.target_id:04X}"] = {"interval_ms": s.interval_ms, "mean": round(statistics.mean(iv), 1),
+                                            "stdev": round(statistics.stdev(iv), 1),
+                                            "max_late": round(max(iv) - s.interval_ms, 1)}
+    r.data["jitter_ms"] = jitter
+    r.checks.append(f"info jitter (ms): {jitter}")
     for s in config.polling_schedules:
         expect = span * 1000 / max(s.interval_ms, 1)
-        got = link.good.get(s.target_id, 0)
+        got = link.good.get(s.target_id, 0) - good_mark.get(s.target_id, 0)
         r.check(abs(got - expect) <= 0.15 * expect + 2,
                 f"0x{s.target_id:04X} responses {got} vs {expect:.0f} for {s.interval_ms} ms over {span:.1f}s")
-        r.check(got == st[STAT_KEY[s.target_id]], f"0x{s.target_id:04X} app {got} == board replies {st[STAT_KEY[s.target_id]]}")
+        total = link.good.get(s.target_id, 0)
+        r.check(total == st[STAT_KEY[s.target_id]], f"0x{s.target_id:04X} app {total} == board replies {st[STAT_KEY[s.target_id]]}")
     r.check(snap["poll_timeouts"] == 0, f"poll timeouts {snap['poll_timeouts']} == 0")
     r.check(st["rx_frames_ok"] >= len(polls), f"board received {st['rx_frames_ok']} frames >= {len(polls)} polls sent")
     r.check(st["rx_crc_errors"] == 0, f"board saw {st['rx_crc_errors']} bad-CRC requests")

@@ -597,6 +597,8 @@ class PollingWorker(QThread):
         self._await_hit: bool = False
         # Exceptions raised by the parser while feeding received bytes.
         self._parse_errors: int = 0
+        # Polls a late schedule skipped instead of bursting to catch up.
+        self._polls_missed: int = 0
         # Logging session written from this thread (task.md Phase 1: per-
         # frame logging cost the GUI thread most of its time at high rates).
         # Read once per _accumulate call; assignment is atomic.
@@ -800,6 +802,12 @@ class PollingWorker(QThread):
         with QMutexLocker(self._mutex):
             if enabled and not self._polling_global_enabled:
                 self._flush_rx_before_polling = True
+                # Polls not sent while polling was off were not "missed":
+                # bring stale due times up to now (they fire immediately,
+                # as before) so the off period is not counted as skipped.
+                now = time.monotonic()
+                for sched in self._schedules:
+                    sched["next_run"] = max(sched["next_run"], now)
             self._polling_global_enabled = enabled
         if enabled:
             effective_gap = (
@@ -916,16 +924,24 @@ class PollingWorker(QThread):
     # Internal helpers
     # ------------------------------------------------------------------
 
-    @staticmethod
-    def _advance_next_run(sched: dict, now: float) -> None:
+    def _advance_next_run(self, sched: dict, now: float) -> None:
         """Fixed-rate schedule (Plane.md F20): the next poll is due one
         interval after this one was *due*, not after it finished. Measuring
         from completion stretched every period by the wait for its turn, the
         TX gap and the round trip (0x1000 at 100 ms ran 10-25 % slow on the
         NUCLEO rig). A schedule that is already late for its next poll is
-        realigned to ``now`` rather than firing a burst of catch-up polls."""
-        nxt = sched["next_run"] + sched["spec"].interval_ms / 1000.0
-        sched["next_run"] = nxt if nxt > now else now
+        realigned to ``now`` rather than firing a burst of catch-up polls; the
+        polls skipped that way are counted (integrity ``polls_missed``)."""
+        interval = sched["spec"].interval_ms / 1000.0
+        nxt = sched["next_run"] + interval
+        if nxt > now:
+            sched["next_run"] = nxt
+            return
+        if interval > 0:
+            missed = int((now - nxt) / interval)
+            sched["missed"] = sched.get("missed", 0) + missed
+            self._polls_missed += missed
+        sched["next_run"] = now
 
     def _is_disconnect_error(self, exc: Exception) -> bool:
         """Return True if the exception looks like a physical USB unplug or network drop."""
@@ -1077,6 +1093,7 @@ class PollingWorker(QThread):
             "purged_at_connect": self._open_purged_bytes,
             "rx_service_gap_max_ms": round(self._rx_service_gap_max * 1000.0, 1),
             "parse_errors": self._parse_errors,
+            "polls_missed": self._polls_missed,
             "session_log_errors": self._session_log_errors,
             # None = this transport cannot report driver errors (TCP/UDP, POSIX).
             "driver_errors": dict(errs) if (errs := getattr(self._serial, "comm_errors", None)) else None,

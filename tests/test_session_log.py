@@ -576,3 +576,189 @@ def test_finishing_backlog_is_reported(tmp_path, config, monkeypatch):
         release.set()
         s.stop()
         assert s.await_finished(30)
+
+
+def test_segment_that_cannot_open_is_recorded_and_raised(tmp_path, config, monkeypatch):
+    """task.md Phase 4: rotation into a segment that cannot be created
+    (permission, disk, lock). Everything already written stays intact, the
+    failure is raised (the GUI stops logging and says so) and session.json
+    records why the recording ended."""
+    import app.serial_logging.session as sm
+
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock, segment_seconds=10, fixed_step_s=1.0)
+    s.start()
+    for f in _frames(config):
+        s.log_frame(f, clock.perf)
+
+    def denied(self, *a, **k):
+        raise PermissionError(13, "Access is denied")
+
+    monkeypatch.setattr(sm.CsvSegmentWriter, "__init__", denied)
+    clock.advance(11)
+    with pytest.raises(PermissionError):
+        s.tick()
+    monkeypatch.undo()
+    assert s.segment_index is None
+    s.stop()
+    assert s.await_finished(60)
+    m = read_manifest(tmp_path / "sess")
+    assert [x["status"] for x in m["segments"]] == ["closed"]
+    assert (tmp_path / "sess" / m["segments"][0]["files"]["event_csv"]).stat().st_size > 0
+    assert any("segment 2 could not be opened" in e["text"] for e in m["events"]), m["events"]
+
+
+def test_gui_stops_logging_with_a_message_when_housekeeping_fails():
+    from unittest.mock import MagicMock
+
+    from app.ui.logging_session import LoggingSessionMixin
+
+    class Host(LoggingSessionMixin):
+        pass
+
+    host = Host()
+    host._session_log = MagicMock()
+    host._session_log.tick.side_effect = PermissionError("Access is denied")
+    host._on_logger_error = MagicMock()
+    host._on_session_tick()
+    host._on_logger_error.assert_called_once()
+    assert "Access is denied" in host._on_logger_error.call_args.args[0]
+
+
+def test_recovery_leaves_a_closed_session_untouched(tmp_path, config):
+    import hashlib
+
+    from app.serial_logging.session import recover_session
+
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock, segment_seconds=10)
+    s.start()
+    for f in _frames(config):
+        s.log_frame(f, clock.perf)
+    s.stop()
+    assert s.await_finished(60)
+    folder = tmp_path / "sess"
+    before = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in folder.iterdir() if p.is_file()}
+    assert recover_session(folder) is False
+    after = {p.name: hashlib.sha256(p.read_bytes()).hexdigest() for p in folder.iterdir() if p.is_file()}
+    assert after == before and read_manifest(folder)["status"] == "closed"
+
+
+def test_crash_during_rotation_is_recovered(tmp_path, config, monkeypatch):
+    """The process dies between closing a segment and opening the next one
+    (manifest: last segment 'closing', session 'recording')."""
+    import app.serial_logging.session as sm
+    from app.serial_logging.session import recover_session
+
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock, segment_seconds=10, fixed_step_s=1.0)
+    s.start()
+    for f in _frames(config) * 5:
+        s.log_frame(f, clock.perf)
+        clock.advance(0.5)
+    closed = []
+    # Dies after the writers closed but before finishing / opening the next
+    # segment. (A real crash cannot race recovery against live writer
+    # threads, so let them complete first.)
+    monkeypatch.setattr(SessionLog, "_finish_segment", lambda self, seg, entry: closed.append(seg))
+    monkeypatch.setattr(sm.SessionLog, "_open_segment", lambda self, *a, **k: None)
+    clock.advance(11)
+    s.tick()
+    for seg in closed:
+        seg.event.await_drain(None)
+        seg.fixed.join()
+    folder = tmp_path / "sess"
+    m = read_manifest(folder)
+    assert m["status"] == "recording" and m["segments"][-1]["status"] == "closing"
+    monkeypatch.undo()
+    assert recover_session(folder)
+    m = read_manifest(folder)
+    assert m["status"] == "recovered"
+    assert all(x["status"] in ("closed", "recovered") for x in m["segments"])
+    assert (folder / m["segments"][0]["files"]["event_csv"]).stat().st_size > 0
+
+
+def test_disk_full_while_writing_is_reported_and_recorded(tmp_path, config, monkeypatch):
+    """A write fails mid-segment (ENOSPC): the session's error callback
+    fires (the GUI stops logging and says so) and the segment is
+    closed_with_errors with the reason in session.json."""
+    import csv as _csv
+    import time as _t
+
+    import app.serial_logging.decoded_logger as dl
+
+    real_writer = _csv.writer
+
+    class FullDisk:
+        def __init__(self, fp):
+            self._w = real_writer(fp)
+            self.n = 0
+
+        def writerow(self, row):
+            self.n += 1
+            if self.n > 3:                      # header + 2 rows fit, then the disk is full
+                raise OSError(28, "No space left on device")
+            return self._w.writerow(row)
+
+    monkeypatch.setattr(dl.csv, "writer", FullDisk)
+    errors = []
+    clock = Clock()
+    s = SessionLog(tmp_path / "sess", config, SessionSettings(segment_seconds=3600), raw_capture=RawHooks(),
+                   on_error=errors.append, clock=lambda: clock.wall, perf=lambda: clock.perf,
+                   disk_free=lambda p: 1 << 40)
+    s.start()
+    deadline = _t.monotonic() + 10
+    while not errors and _t.monotonic() < deadline:     # keep logging until the writer error surfaces
+        for f in _frames(config):
+            s.log_frame(f, clock.perf)
+        clock.advance(0.1)
+        _t.sleep(0.02)
+    assert errors and "No space left" in errors[0]
+    s.stop()
+    assert s.await_finished(60)
+    seg = read_manifest(tmp_path / "sess")["segments"][0]
+    assert seg["status"] == "closed_with_errors"
+    assert any("No space left" in e for e in seg["errors"]), seg["errors"]
+
+
+def test_fixed_step_write_failure_is_reported_at_the_next_tick(tmp_path, config):
+    """The fixed-step writer thread dies on a write error (disk full): the
+    error is reported at the next tick, not an hour later at rotation, and
+    rows are no longer queued into a writer that cannot write them."""
+    import time as _t
+
+    errors = []
+    clock = Clock()
+    s = SessionLog(tmp_path / "sess", config, SessionSettings(segment_seconds=3600, fixed_step_s=0.5),
+                   raw_capture=RawHooks(), on_error=errors.append, clock=lambda: clock.wall,
+                   perf=lambda: clock.perf, disk_free=lambda p: 1 << 40)
+    s.start()
+    fixed = s._segment.fixed
+    real = fixed._writer
+
+    class FullDisk:
+        def writerow(self, row):
+            if fixed.rows_written >= 2:
+                raise OSError(28, "No space left on device")
+            return real.writerow(row)
+
+    fixed._writer = FullDisk()
+    deadline = _t.monotonic() + 10
+    while fixed.error is None and _t.monotonic() < deadline:
+        for f in _frames(config):
+            s.log_frame(f, clock.perf)
+        clock.advance(0.5)
+        _t.sleep(0.02)
+    assert fixed.error and "No space left" in fixed.error
+    s.tick()
+    assert errors and "No space left" in errors[0]
+    s.tick()
+    assert len(errors) == 1                          # reported once
+    queued = fixed._queue.qsize()
+    for _ in range(50):
+        fixed.write(["x"])
+    assert fixed._queue.qsize() == queued and fixed.dropped >= 50
+    s.stop()
+    assert s.await_finished(60)
+    seg = read_manifest(tmp_path / "sess")["segments"][0]
+    assert seg["status"] == "closed_with_errors"

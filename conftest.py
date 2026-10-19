@@ -97,13 +97,17 @@ def pytest_unconfigure(config):
     """
     if _FINAL_EXIT_STATUS is None:
         return
+    import os
+    if os.environ.get("BYTEHOUND_TEST_NORMAL_EXIT"):
+        # Diagnostics (task.md Phase 4): run the normal interpreter teardown
+        # to observe the underlying exit failure instead of hiding it.
+        return
     try:
         from PySide6.QtCore import QCoreApplication
     except Exception:
         return
     if QCoreApplication.instance() is None:
         return
-    import os
     sys.stdout.flush()
     sys.stderr.flush()
     if sys.platform == "win32":

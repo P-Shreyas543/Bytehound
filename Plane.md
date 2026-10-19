@@ -93,7 +93,7 @@ Updated after every phase. Release recommendation so far: **NOT READY**.
 - [ ] Application closed during finishing (non-daemon finishers keep the
       process alive until done) — NOT RUN
 
-**Phase 3 — serial and end-to-end integrity** — firmware 1.1.0 (`SET_SEQ`)
+**Phase 3 — serial and end-to-end integrity** — commit `5312b3b`, firmware 1.1.0 (`SET_SEQ`)
 
 - [x] Transport at 115,200 / 921,600 / 2,000,000 (existing `stream_*`),
       CPU load on every core (`cpu_load`), shutdown while streaming
@@ -123,12 +123,40 @@ Updated after every phase. Release recommendation so far: **NOT READY**.
 
 **Phase 4 — rotation, polling, shutdown**
 
-- [ ] Rotation failure injection (open/write/flush/close, disk exhaustion,
-      termination during rotation, recovery never overwrites a session)
-- [ ] Fixed-rate polling edge cases (below / equal / above TX gap, reset,
-      overrun, jitter, missed-poll accounting)
-- [ ] Test harness exit without the `TerminateProcess` workaround (subset);
-      the application's own normal and abnormal exit paths
+- [x] **Two silent-loss defects found and fixed:**
+      - the segment's event logger had no `on_error`: a write error (disk
+        full) disabled it with no report and every later frame was
+        dropped while session.json said `closed`. Now the session's error
+        handler fires (the GUI stops logging and says why) and the
+        segment is `closed_with_errors` with the reason
+      - the fixed-step writer's death was noticed only when the segment
+        closed (up to an hour) and rows kept queueing into it (up to 1M
+        in memory); now reported at the next tick and dropped + counted
+- [x] Next segment cannot be opened at rotation: raised (GUI stops logging
+      with a message, as before) and now recorded in session.json events
+- [x] Crash during rotation is recovered; recovery leaves a closed session
+      byte-for-byte untouched; an existing session is never overwritten
+      (existing test)
+- [x] Fixed-rate polling: start-to-start intervals (F20); warning exact at
+      the capacity boundary (10.0/s at 100 ms: none; 10.1/s: warns);
+      re-enable waits one interval; **missed-poll accounting added**
+      (`polls_missed` in integrity) — and fixed: time with polling off was
+      counted as missed. NUCLEO: default gap → 50 polls counted missed;
+      20 ms gap → 0 missed. Jitter at 100 ms: mean 99–100 ms, stdev 31–35
+      ms, worst 56 ms late (timed at the GUI's TX signal, so it overstates
+      wire jitter)
+- [x] Application exit, real entry point `app.main.main` with a live
+      session rotating every 2 s (`tools/exit_check.py`): **normal close
+      5/5 — exit 0, session closed, no process left** (descendants
+      tracked: a venv `python.exe` is a launcher, helpers are
+      grandchildren); **killed mid-session 5/5 — no process left,
+      recovery → `recovered`, no finished file changed**
+- [x] Test harness without the forced exit (`BYTEHOUND_TEST_NORMAL_EXIT=1`):
+      GUI subset (19 tests) exits 0 in 3/3; **full suite 669 passed, exit
+      0, no fatal error (1 run)**. The original crash was intermittent
+      (~2 of 6 runs), so one clean run does not prove it gone: the
+      workaround stays until several clean normal-exit runs are recorded
+- [ ] Frozen exe closed normally / killed — NOT RUN (Phase 5)
 
 **Phase 5 — packaging** — [x] frozen build builds (into scratch, `dist/`
 untouched); [ ] packaged workflow checks; clean Windows machine **BLOCKED**

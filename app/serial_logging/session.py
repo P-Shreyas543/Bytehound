@@ -200,6 +200,10 @@ class CsvSegmentWriter:
         self._thread.start()
 
     def write(self, row: List[Any]) -> None:
+        if self.error is not None:
+            # The writer thread has stopped: queueing would only grow memory.
+            self.dropped += 1
+            return
         try:
             self._queue.put_nowait(row)
         except queue.Full:
@@ -593,6 +597,13 @@ class SessionLog:
     def _tick(self) -> None:
         seg = self._segment
         now_perf = self._perf()
+        if seg is not None:
+            # A CSV writer thread that hit a write error (disk full) has
+            # stopped; report it now, not when the segment closes.
+            for w in (seg.fixed, seg.rejected):
+                if w is not None and w.error and not getattr(w, "_reported", False):
+                    w._reported = True
+                    self._error(w.error)
         if seg is not None and self._sampler is not None and seg.fixed is not None:
             seg.fixed.write_many(self._sampler.advance(now_perf - QUIET_MARGIN_S))
         if seg is not None and self._rotation_due(seg):
@@ -676,6 +687,21 @@ class SessionLog:
             return self._raw.stop(), False
 
     def _open_segment(self, index: int, *, raw_started: bool = False) -> None:
+        """Open segment ``index``. A failure (folder not writable, disk
+        full, file locked) is recorded in session.json before it is
+        raised: no segment is open afterwards and nothing more can be
+        written, and the folder must say why the recording stopped."""
+        try:
+            self._open_segment_files(index, raw_started=raw_started)
+        except Exception as exc:
+            _LOG.exception("Could not open segment %d", index)
+            try:
+                self._event(f"Recording stopped: segment {index} could not be opened: {exc}")
+            except Exception:
+                _LOG.exception("Could not record the failure in session.json")
+            raise
+
+    def _open_segment_files(self, index: int, *, raw_started: bool = False) -> None:
         seg = _Segment(index, self._clock(), self._perf())
         meta = self._segment_meta(index, seg.wall0)
         files: Dict[str, str] = {}
@@ -684,6 +710,9 @@ class SessionLog:
             seg.event = DecodedLogger(
                 target, self.config, metadata=meta, polling_mode=self.polling_mode,
                 keep_csv=True, time_columns=True, on_warning=self._warn,
+                # Without this a write error (disk full) disabled the logger
+                # with no report: every later frame was dropped silently.
+                on_error=self._error,
             )
             seg.event.open()
             files["event_csv"] = target.with_suffix(".csv").name
