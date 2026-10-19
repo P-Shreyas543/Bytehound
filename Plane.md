@@ -354,8 +354,23 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
       history entry; cancel / invalid leave everything unchanged). Tests use
       a temp history folder (conftest), never the user's app data
 - [ ] C5 clean-ups: dead code, Ather value rules (decision 4), clamp setting
-      (decision 5)
-- [ ] C6 fingerprint in session.json / logs; docs; packaging
+      (decision 5) — **NOT DONE: implementation discarded at the owner's
+      request (2026-10-19)**, never committed. Still true in the code: 151
+      lines of dead duplicate helpers in `config_loader.py` (shadowed, no
+      effect), the hard-coded frame 0x101 `Drive_Mode` / `Key_Switch` branch
+      in `frame_decoder.py`, the always-on negative clamp. Decisions 4 and 5
+      stay recorded but unimplemented
+- [x] **C6 fingerprint / docs / packaging:** the canonical content
+      fingerprint is recorded in `session.json → config.fingerprint`, in
+      each `config_changes[]` entry and as `config_fingerprint` in every
+      segment workbook's Metadata sheet (same config as xlsx / CSV / JSON →
+      same fingerprint; `files_sha256` kept beside it). Reference doc
+      `Documentation/config_json_format.md`; user manual updated (5f119b8).
+      Schema file ships in the frozen build (`_internal/app/resources/`,
+      checked). **Portable-zip v0.0.0 fixed** (§0.11): `find_version_file`
+      falls back to the bundled `version.json`; frozen portable build now
+      titles "v1.2.4" with no version.json beside the exe (was v0.0.0);
+      frozen `--selftest-finish` OK
 
 **Defect found by the full suite during C3 (2026-10-19), fixed:** helper
 timeout race. When a helper job hit its timeout but finished its atomic
@@ -802,7 +817,7 @@ chamber log). Today the decoded log is event-driven (one row per poll cycle).
 
 ### 0.11 Known gaps and follow-ups (don't lose these)
 
-- **Portable zip shows v0.0.0 (found 2026-10-19, pre-existing since the
+- **[FIXED in C6]** Portable zip shows v0.0.0 (found 2026-10-19, pre-existing since the
   spec was added):** the frozen app reads `version.json` beside the exe,
   but the spec bundles it into `_internal\`. The installer copies it next
   to the exe, so installed copies are fine; a zip from `build.py` is not —

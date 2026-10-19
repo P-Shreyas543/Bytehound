@@ -123,10 +123,15 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _version_file() -> Path:
+    from .updater import find_version_file
+    return find_version_file()
+
+
 def _read_version() -> str:
     try:
         import json
-        with (_project_root() / "version.json").open("r", encoding="utf-8") as fp:
+        with (_version_file()).open("r", encoding="utf-8") as fp:
             return json.load(fp).get("version", "0.0.0")
     except Exception:
         return "0.0.0"
@@ -273,7 +278,7 @@ class MainWindow(
         super().__init__()
         try:
             import json as _json
-            with (_project_root() / "version.json").open("r", encoding="utf-8") as fp:
+            with (_version_file()).open("r", encoding="utf-8") as fp:
                 self._version_info = _json.load(fp)
         except Exception:
             self._version_info = {}

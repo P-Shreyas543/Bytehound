@@ -158,6 +158,10 @@ def test_session_rotates_segments_and_records_everything(tmp_path, config):
     m = read_manifest(tmp_path / "sess")
     assert m["status"] == "closed" and m["app_version"] == "9.9.9"
     assert m["config"]["files_sha256"] and (tmp_path / "sess" / "config" / "frames.csv").exists()
+    # Content fingerprint (Part C6): equals the canonical fingerprint of the
+    # source, so the same configuration in another file format matches.
+    from app.decoder import canonical
+    assert m["config"]["fingerprint"] == canonical.fingerprint(canonical.import_config(TEMPLATE))
     segs = m["segments"]
     assert [x["index"] for x in segs] == list(range(1, len(segs) + 1)) and len(segs) >= 3
     assert all(x["status"] == "closed" for x in segs), segs
@@ -176,7 +180,9 @@ def test_session_rotates_segments_and_records_everything(tmp_path, config):
     assert first[1][0].endswith("+00:00") and "T" in first[1][0]
     wb = load_workbook(folder / segs[0]["files"]["event_xlsx"], read_only=True)
     assert wb.sheetnames == ["Metadata", "Data"]
+    meta_cells = [str(c) for row in wb["Metadata"].iter_rows(values_only=True) for c in row if c is not None]
     wb.close()
+    assert m["config"]["fingerprint"] in meta_cells          # every workbook names its configuration
 
 
 def test_fixed_step_grid_is_continuous_across_segments(tmp_path, config):
@@ -802,6 +808,9 @@ def test_config_change_during_a_gap_continues_in_a_new_segment(tmp_path, config)
     change = m["config_changes"][0]
     assert change["id"] == "config_2" and change["first_segment"] == 2 and len(change["files_sha256"]) == 64
     assert (folder / change["load"]).is_file()
+    from app.decoder import canonical
+    assert change["fingerprint"] == canonical.fingerprint(canonical.import_config(other_path))
+    assert change["fingerprint"] != m["config"]["fingerprint"]
     assert len(m["gaps"]) == 1 and m["gaps"][0]["end_utc"]
     assert any("Configuration changed to Blue01_M_CAN_4836.xlsx" in e["text"] for e in m["events"])
 

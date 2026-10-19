@@ -36,7 +36,21 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-VERSION_FILE = _project_root() / "version.json"
+def find_version_file() -> Path:
+    """``version.json`` beside the exe (installed layout: the installer puts
+    it there) or, when it is missing — a portable zip of the frozen build —
+    the copy PyInstaller bundles in ``_internal``. Without the fallback a
+    portable copy showed "v0.0.0" and the updater offered every release."""
+    primary = _project_root() / "version.json"
+    if primary.exists():
+        return primary
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled and (Path(bundled) / "version.json").exists():
+        return Path(bundled) / "version.json"
+    return primary
+
+
+VERSION_FILE = find_version_file()
 
 
 def get_current_version() -> str:

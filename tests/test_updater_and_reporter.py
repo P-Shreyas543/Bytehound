@@ -296,3 +296,22 @@ def test_updater_refuses_non_https_urls(url):
     with pytest.raises(ValueError):
         require_https(url)
     assert require_https("https://example.invalid/setup.exe")
+
+
+def test_portable_frozen_build_finds_the_bundled_version_file(tmp_path, monkeypatch):
+    """A portable zip has no version.json beside the exe (only the installer
+    puts one there): fall back to the copy bundled in _internal instead of
+    reporting v0.0.0 and offering every release as an update."""
+    import sys
+
+    from app.ui import updater
+
+    exe_dir, internal = tmp_path / "Bytehound", tmp_path / "Bytehound" / "_internal"
+    internal.mkdir(parents=True)
+    (internal / "version.json").write_text('{"version": "7.7.7"}', encoding="utf-8")
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(sys, "executable", str(exe_dir / "Bytehound.exe"))
+    monkeypatch.setattr(sys, "_MEIPASS", str(internal), raising=False)
+    assert updater.find_version_file() == internal / "version.json"
+    (exe_dir / "version.json").write_text('{"version": "8.8.8"}', encoding="utf-8")
+    assert updater.find_version_file() == exe_dir / "version.json"   # installed layout wins

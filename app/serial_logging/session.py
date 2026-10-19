@@ -148,7 +148,21 @@ def _copy_config(source: Optional[Path], dest: Path) -> Dict[str, Any]:
     # What to pass to load_config to read the copy back (offline rebuild).
     info["load"] = dest.name if source.is_dir() else f"{dest.name}/{source.name}"
     info["files_sha256"] = h.hexdigest()
+    info.update(_config_fingerprint(source))
     return info
+
+
+def _config_fingerprint(source: Path) -> Dict[str, Any]:
+    """Content fingerprint of the configuration (Part C6): the same
+    configuration saved as xlsx, CSV or JSON has the same fingerprint, unlike
+    ``files_sha256``. Best effort: a source that cannot be read gives none."""
+    try:
+        from ..decoder import canonical
+
+        return {"fingerprint": canonical.fingerprint(canonical.import_config(source))}
+    except Exception:
+        _LOG.warning("Configuration fingerprint not computed for %s", source, exc_info=True)
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -733,6 +747,7 @@ class SessionLog:
             "segment": str(index),
             "segment_started_utc": iso_utc(wall0),
             "config_files_sha256": self._config_info.get("files_sha256", ""),
+            "config_fingerprint": self._config_info.get("fingerprint", ""),
         }
 
     def _raw_meta(self, index: int, wall0: float) -> Dict[str, Any]:
