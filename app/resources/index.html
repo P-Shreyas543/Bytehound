@@ -669,6 +669,8 @@
                     <li><a href="#section-4">4. Logging and Data Analysis</a>
                         <ul class="sub-menu">
                             <li><a href="#recording-logs">Recording Logs</a></li>
+                            <li><a href="#session-folder">What a Session Folder Contains</a></li>
+                            <li><a href="#data-integrity">Data Integrity &amp; Lost Frames</a></li>
                             <li><a href="#logging-settings">Logging Settings</a></li>
                             <li><a href="#analysis-suite">The Analysis Suite</a></li>
                         </ul>
@@ -688,6 +690,8 @@
                             <li><a href="#config-fields">Sheet 8 — TxCommandFields</a></li>
                             <li><a href="#config-polling">Sheet 9 — PollingSchedule</a></li>
                             <li><a href="#sheet-serialdefaults">Sheet 10 — SerialDefaults</a></li>
+                            <li><a href="#sheet-sequencecounters">Sheet 11 — SequenceCounters</a></li>
+                            <li><a href="#config-import">Importing, Previewing &amp; Restoring a Config</a></li>
                             <li><a href="#validator-cli">Config Validator CLI</a></li>
                         </ul>
                     </li>
@@ -708,7 +712,7 @@
             <header class="content-header">
                 <button class="menu-toggle" id="menu-toggle">☰</button>
                 <div class="header-right">
-                    <span class="version-badge">Manual — Version 1.2.3</span>
+                    <span class="version-badge">Manual — Version 1.2.4</span>
                     <button class="theme-toggle" id="theme-toggle" title="Toggle Theme">🌓</button>
                 </div>
             </header>
@@ -1358,6 +1362,35 @@
                     stays high the link is choked.</td>
             </tr>
         </table>
+        <p>Three more counters appear only when they are non-zero, so a healthy link keeps the short line above:</p>
+        <table>
+            <tr>
+                <th>Counter</th>
+                <th>What it means</th>
+                <th>What to watch for</th>
+            </tr>
+            <tr>
+                <td><strong>Dropped</strong></td>
+                <td>Display updates skipped because the window could not keep up. Logging is not affected: the
+                    session is written by the capture thread, not by the window.</td>
+                <td>Occasional drops while dragging or resizing the window are harmless.</td>
+            </tr>
+            <tr>
+                <td><strong>Discarded</strong></td>
+                <td>Received bytes that could not be part of a valid frame (noise, broken frames, buffer
+                    overflow), counted from the first valid frame. Bytes before the first valid frame are the tail
+                    of a frame already in flight when you connected and are not flagged.</td>
+                <td>Should stay at 0. A rising number raises the warning badge; check wiring, baud rate and the
+                    protocol settings. While logging, every received byte is still kept in the <code>.bhraw</code>
+                    raw capture.</td>
+            </tr>
+            <tr>
+                <td><strong>Driver errors</strong></td>
+                <td>Errors reported by the serial driver itself (framing, parity, overrun): bytes were lost or
+                    damaged before they reached Bytehound.</td>
+                <td>Any value is worth investigating: baud rate, cable, USB power-saving settings.</td>
+            </tr>
+        </table>
         <div class="note">
             <strong>Errors vs decode errors.</strong> The <strong>Errors</strong> counter only tracks wire-level CRC
             failures. Configuration-level problems — for example a frame ID with no matching <code>variables</code> row,
@@ -1456,14 +1489,23 @@
         <ul>
             <li><strong>Import Config (<code>Ctrl+O</code>)</strong>
                 <br><em>What it does:</em> Opens a file selection dialog to load a new protocol definition. You can
-                select an Excel workbook (<code>.xlsx</code> or <code>.xlsm</code>) or a directory containing individual
-                CSV sheets.
+                select an Excel workbook (<code>.xlsx</code> or <code>.xlsm</code>), a Bytehound JSON configuration
+                (<code>.json</code>) or the <code>protocol.csv</code> of a folder of CSV sheets. Before anything
+                changes, a <strong>preview</strong> shows errors, warnings and what is different from the current
+                configuration; it only becomes active when you click <strong>Activate</strong>
+                (see <a href="#config-import">Importing, Previewing &amp; Restoring</a>).
                 <br><em>Why you need it:</em> Bytehound is generic; it doesn't know how your hardware packs its bytes
                 until you tell it. Importing a configuration tells the app what each byte represents, what
                 scales/offsets to apply, and how to format names.
                 <br><em>Example:</em> You are testing a new Modbus-based temperature controller. You load
                 <code>modbus_temp_sensor_map.xlsx</code>. Instantly, the main telemetry table updates to display rows
                 for "Zone 1 Temp", "Heater Power %", and "Alarm Bitfield".
+            </li>
+            <li><strong>Restore Previous Configuration…</strong>
+                <br><em>What it does:</em> Lists the last 20 configurations you activated (newest first) and brings
+                the one you choose back, through the same preview.
+                <br><em>Why you need it:</em> An imported workbook turned out to be wrong in the middle of a test.
+                Restore the one you used before without hunting for the old file.
             </li>
             <li><strong>Export Template (<code>Ctrl+E</code>)</strong>
                 <br><em>What it does:</em> Generates a fresh, blank Excel workbook containing the template structure (10
@@ -1597,8 +1639,9 @@
                 hardware behavior.
             </li>
             <li><strong>Logging Settings...</strong>
-                <br><em>What it does:</em> Opens the configuration dialog for internal rotating diagnostics and disk
-                writing schedules.
+                <br><em>What it does:</em> Opens the configuration dialog for internal rotating diagnostics, disk
+                writing schedules and logging sessions (segment length, event / fixed-step logs, free-space limits —
+                see <a href="#logging-settings">Logging Settings</a>).
                 <br><em>Understanding the Settings:</em>
                 <ul>
                     <li><strong>Log level (DEBUG / INFO / WARNING / ERROR):</strong> Controls how much diagnostic
@@ -1851,24 +1894,38 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             <li>Click <strong>Device → Start Logging</strong> (or use the toolbar). Pick the
                 filename. The button turns <span style="color:#e91e8c"><strong>pink</strong></span> while logging is
                 active.</li>
-            <li>The default folder is <code>~/Documents/Bytehound/</code>. The app writes:
-                <ul>
-                    <li><code>*.xlsx</code> — Excel workbook with two sheets: <code>Metadata</code> (app,
-                        version, port, baud, config path, session start, logging mode, etc.) and <code>Data</code> (one
-                        wide row per complete poll cycle, with a per-frame block of <code>elapsed_ms</code> +
-                        <code>frame_id</code> + signals). Group calculations configured in the <code>CalcGroups</code> sheet are written without a frame ID prefix (e.g., <code>Cell Voltages min (V)</code> instead of <code>0x0100.Cells avg (V)</code>) so that they are clean and easy to identify.</li>
-                </ul>
-            </li>
-            <li>When finished, click <strong>Device → Stop Logging</strong>. This finalises the decoded workbook.</li>
+            <li>The default folder is <code>~/Documents/Bytehound/</code>. Each recording is a <strong>session
+                    folder</strong> that can run for days or months: a new <strong>segment</strong> starts every hour
+                (configurable), so every file stays small enough for Excel. What the folder holds is described in
+                <a href="#session-folder">What a Session Folder Contains</a>. In the decoded logs, group calculations
+                from the <code>CalcGroups</code> sheet are written without a frame ID prefix (e.g.
+                <code>Cell Voltages min (V)</code>) so they are easy to identify.</li>
+            <li>When finished, click <strong>Device → Stop Logging</strong>. The last segment's <code>.xlsx</code> is
+                compiled in a separate background process, so the window stays responsive. If it takes a while you
+                can choose <strong>Continue in background</strong>; the Activity Log reports when the session is
+                complete.</li>
         </ol>
         <img src="images/logging_dialog.png" alt="Start Logging Session Configuration Dialog" class="mockup-img img-medium" />
         <div class="note">
-            Rows are streamed to a temporary file beside the log, flushed periodically (default 0.5 s, configurable
-            under <strong>Tools → Logging Settings</strong>), and compiled into the <code>.xlsx</code> on
-            <strong>Stop Logging</strong>. If the app crashes before Stop, the workbook is rebuilt from the temporary
-            file the next time Bytehound starts. A
-            session config snapshot is saved beside the log so the same decoder can be re-applied later.
+            Rows are streamed to CSV as they arrive and each segment is compiled into its <code>.xlsx</code> when it
+            closes; capture never waits for that. If the app or the PC stops while recording, restart Bytehound: it
+            finds the unfinished session, compiles what was recorded, marks the open segment and the session as
+            <code>recovered</code>, and reports it in the Activity Log. A copy of the configuration is saved in the
+            session so the same decoder can be re-applied later.
         </div>
+
+        <h4>Unplug, power cycle and changing the configuration while logging</h4>
+        <ul>
+            <li><strong>Device unplugged or link lost</strong> with <a href="#auto-reconnect">Auto-Reconnect</a> on:
+                logging keeps running. The current segment is closed, a <strong>gap</strong> is recorded with its
+                start and end time, and a new segment starts when the device is back. <strong>Stop Logging</strong>
+                stays available during the gap.</li>
+            <li><strong>Activating another configuration while logging</strong> (Import Config or Restore Previous
+                Configuration): Bytehound reconnects with it, records a short gap and continues the
+                <em>same</em> session in a new segment that uses the new configuration. No segment ever mixes two
+                configurations; each records which one it used, and the new configuration is copied into the
+                session as <code>config_2/</code>, <code>config_3/</code>, ….</li>
+        </ul>
 
         <h4>Decoded Log Cycle Buffer &amp; Synchronization</h4>
         <p>The decoded Excel workbook (<code>*_decoded.xlsx</code>) stores telemetry in a wide format, where each row represents a complete cycle of all active frames. Individual frames arrive asynchronously and are stashed in an in-memory cycle buffer. When the <strong>trigger frame</strong> (the last RX-capable frame declared in the configuration) is received:</p>
@@ -1893,6 +1950,60 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             <li>When the next trigger frame arrives, these stashed TX values are committed to the <code>*_decoded.xlsx</code> file along with the RX telemetry, creating a unified, chronological log of all input/output signals.</li>
         </ul>
 
+        <h3 id="session-folder">What a Session Folder Contains</h3>
+        <pre>&lt;session&gt;/
+  session.json              manifest: settings, segments, gaps, events, integrity counters
+  config/                   copy of the configuration the session started with
+  config_2/                 (only after a configuration change while logging)
+  seg_0001_event.csv/.xlsx  event log: one wide row per received cycle
+  seg_0001_fixed.csv/.xlsx  fixed-step log: one row per step (if enabled)
+  seg_0001_rejected.csv     frames that failed CRC / framing
+  seg_0001_sequence.csv     lost / repeated frames found by sequence counters (if configured)
+  seg_0001.bhraw            lossless raw capture of every received byte
+  seg_0002_…</pre>
+        <table>
+            <tr>
+                <th>File</th>
+                <th>Use it for</th>
+            </tr>
+            <tr>
+                <td><code>session.json</code></td>
+                <td>The record of the whole session: when each segment started and ended, its status
+                    (<code>closed</code>, <code>closed_with_errors</code>, <code>recovered</code>), row counts, file
+                    sizes and SHA-256 hashes, which configuration it used, every gap and every event (warnings,
+                    disk space, configuration changes). It is rewritten safely after every change.</td>
+            </tr>
+            <tr>
+                <td>Event log</td>
+                <td>Everything the device sent, one row per cycle, with UTC and local timestamps.</td>
+            </tr>
+            <tr>
+                <td>Fixed-step log</td>
+                <td>Rows on an exact time grid (e.g. every 1 s), each holding the newest value of every signal and
+                    its age. Best for comparing runs and for tools that expect regular samples.</td>
+            </tr>
+            <tr>
+                <td><code>.bhraw</code></td>
+                <td>Every received byte with its timestamp. If a decoded log is ever incomplete, <strong>Tools →
+                        Rebuild Decoded Log…</strong> regenerates it from this file
+                    (<code>seg_NNNN_event_rebuilt.xlsx</code>; originals are never modified).</td>
+            </tr>
+        </table>
+        <p>Timestamps are anchored to a steady clock at the start of each segment, so they never jump when Windows
+            adjusts the clock or daylight-saving time changes.</p>
+
+        <h3 id="data-integrity">Data Integrity &amp; Lost Frames</h3>
+        <p>Bytehound accounts for every received byte. Bytes that cannot form a valid frame appear as
+            <strong>Discarded</strong> in the <a href="#status-bar">status bar</a>; frames with a bad CRC or footer are
+            counted as <strong>Errors</strong> and written to <code>seg_NNNN_rejected.csv</code>; serial driver
+            errors appear as <strong>Driver errors</strong>. All of these are stored per segment in
+            <code>session.json</code>.</p>
+        <p>Frames lost <em>before</em> they reach the PC — in the device, a USB-serial adapter or the network —
+            leave no trace in the received bytes. If your device sends a rolling counter, declare it in the
+            <a href="#sheet-sequencecounters">SequenceCounters</a> sheet: Bytehound then reports each jump as lost
+            frames in the Activity Log (<code>Frames lost before reaching the PC: …</code>), counts them per segment,
+            and lists every event in <code>seg_NNNN_sequence.csv</code>.</p>
+
         <h3 id="logging-settings">Logging Settings</h3>
         <p>Under <strong>Tools → Logging Settings</strong>, you can configure application-level diagnostic logging and
             data flushing:</p>
@@ -1903,9 +2014,47 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             <li><strong>Flush interval</strong>: Controls how frequently the raw <code>*_raw.csv</code> telemetry log
                 writes to disk. The default is <code>0.5 s</code>. Set to <code>0.0</code> to flush on every write,
                 which ensures no raw data is lost if the app crashes, though it may cause a slight performance penalty
-                on slower disks. (Decoded <code>.xlsx</code> logs are always kept in memory and only written on Stop.)
+                on slower disks.
             </li>
         </ul>
+        <p>The <strong>Logging sessions</strong> part of the same dialog applies to the next session you start:</p>
+        <table>
+            <tr>
+                <th>Setting</th>
+                <th>Default</th>
+                <th>What it does</th>
+            </tr>
+            <tr>
+                <td>New segment every</td>
+                <td>60 min</td>
+                <td>Starts a new segment (CSV, <code>.xlsx</code>, raw capture) after this long. Segments also rotate
+                    before any file reaches 1,000,000 rows, so every <code>.xlsx</code> fits in one sheet.</td>
+            </tr>
+            <tr>
+                <td>Event log</td>
+                <td>on</td>
+                <td>One row per received cycle.</td>
+            </tr>
+            <tr>
+                <td>Fixed-step log, Step</td>
+                <td>off, 1 s</td>
+                <td>One row exactly every <em>Step</em> seconds on the receive clock, with the newest value of each
+                    signal and its age in ms. A busy PC only delays when rows are written, never what they
+                    contain.</td>
+            </tr>
+            <tr>
+                <td>Stale after, Stale values</td>
+                <td>3 steps, hold</td>
+                <td>A value older than this many steps is stale: either the last value is held or the cell is left
+                    blank.</td>
+            </tr>
+            <tr>
+                <td>Warn below / Stop below free space</td>
+                <td>10 GB / 2 GB</td>
+                <td>Below the first limit you get one warning; below the second, logging stops cleanly with every
+                    segment closed. Data is never deleted automatically.</td>
+            </tr>
+        </table>
 
         <h3 id="analysis-suite">The Analysis Suite</h3>
         <p>For deep-diving into saved test data and comparing multiple runs. The window is non-modal, so you can keep it
@@ -2181,9 +2330,24 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         <p>Bytehound can be run headlessly from the command line to validate configuration syntax without launching the
             GUI. Simply execute:</p>
         <pre><code>Bytehound.exe --validate config.xlsx</code></pre>
-        <p>If the configuration schema is perfect (valid byte orders, correct types, no missing required fields), the
-            CLI will print a success summary and exit with code <code>0</code>. If there are schema errors, it prints
-            the errors and exits with code <code>1</code>, failing the build pipeline instantly.</p>
+        <p>It accepts a workbook, a Bytehound <code>.json</code> configuration or a folder of CSV sheets. If the
+            configuration is valid it prints a summary, the configuration's <strong>fingerprint</strong> and any
+            <strong>warnings</strong>, and exits with code <code>0</code>. If there are errors, it prints each one
+            with where it is and exits with code <code>1</code>, failing a build pipeline instantly.</p>
+        <pre>OK: Config Blue01_M_CAN_4836.xlsx is valid.
+Loaded 39 signals across 13 frames.
+Fingerprint (SHA-256): 2c9ce7c72d9988c3df50d307f3d51772e6595f23e748ee703f9d321ae3216e2b
+WARNING: frame 0x1F0 / Balancing_Status: bytes 2..3 lie beyond the frame's payload_length 3: ...</pre>
+        <ul>
+            <li><strong>Errors</strong> stop the configuration from loading: wrong types, duplicates, overlapping
+                bytes, references to frames or signals that do not exist.</li>
+            <li><strong>Warnings</strong> never block loading but usually point at a mistake: a signal reaching
+                past the frame's <code>payload_length</code> (it can only decode if the device sends a longer
+                payload), a scale of 0, <code>min_value</code> greater than <code>max_value</code>, a bitfield bit
+                beyond the signal's width, a frame with no signals.</li>
+            <li>The <strong>fingerprint</strong> identifies the configuration's content: the same configuration
+                saved as Excel, CSV or JSON has the same fingerprint, and any real change gives a different one.</li>
+        </ul>
 
         <p>The workbook contains the following sheets <em>in this order</em>. Each section below matches one sheet tab.
         </p>
@@ -3283,6 +3447,83 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
 
         <hr>
 
+        <h3 id="sheet-sequencecounters">Sheet 11 — SequenceCounters (optional)</h3>
+        <p>Declares a rolling ("alive") counter that your device increments in a frame, so Bytehound can detect frames
+            lost <em>before</em> they reach the PC (see <a href="#data-integrity">Data Integrity</a>). Leave the sheet
+            out if your device has no such counter.</p>
+        <table>
+            <tr>
+                <th>Column</th>
+                <th>Type</th>
+                <th>Example</th>
+                <th>What it does</th>
+            </tr>
+            <tr>
+                <td><code>id_or_address</code></td>
+                <td>hex</td>
+                <td><code>0x4000</code></td>
+                <td>The frame that carries the counter.</td>
+            </tr>
+            <tr>
+                <td><code>signal_name</code></td>
+                <td>text</td>
+                <td><code>Seq</code></td>
+                <td>The counter signal — a row of that frame in the Variables sheet.</td>
+            </tr>
+            <tr>
+                <td><code>bits</code></td>
+                <td>int</td>
+                <td><code>8</code></td>
+                <td>Width at which the counter wraps (1–64). Default: the signal's size.</td>
+            </tr>
+            <tr>
+                <td><code>step</code></td>
+                <td>int</td>
+                <td><code>1</code></td>
+                <td>How much the counter increases per frame. Default 1.</td>
+            </tr>
+            <tr>
+                <td><code>enabled</code></td>
+                <td>bool</td>
+                <td><code>TRUE</code></td>
+                <td>Default TRUE.</td>
+            </tr>
+        </table>
+        <p>Each received value is compared with the previous one. A forward jump of less than half the counter range is
+            a <strong>gap</strong> (that many frames missing); the same value again is a <strong>repeat</strong>; a
+            backward jump is a <strong>reset</strong> (the device restarted — not counted as loss). Example: an 8-bit
+            counter going <code>41 → 45</code> means 3 frames were lost; <code>255 → 0</code> is a normal wrap.</p>
+
+        <h3 id="config-import">Importing, Previewing &amp; Restoring a Configuration</h3>
+        <p>Loading a configuration never changes anything until you confirm it:</p>
+        <ol>
+            <li><strong>File → Import Config</strong> (or a recent configuration) reads and checks the file. The
+                configuration that is active stays active while you look.</li>
+            <li>The <strong>preview</strong> shows:
+                <ul>
+                    <li><strong>Errors</strong> — the configuration cannot be activated; the dialog only offers
+                        <strong>Close</strong>.</li>
+                    <li><strong>Warnings</strong> — it can be activated, but check them (see
+                        <a href="#validator-cli">Config Validator</a>).</li>
+                    <li><strong>Changes</strong> against the active configuration: signals added
+                        (<code>+</code>), removed (<code>-</code>) and modified (<code>~</code>, with the old and new
+                        value of each changed column), plus changed protocol settings and tables.</li>
+                </ul>
+            </li>
+            <li>Click <strong>Activate</strong> to use it, or <strong>Cancel</strong> to keep the current one.</li>
+        </ol>
+        <p><strong>While connected</strong>, activating a configuration reconnects automatically so the device is
+            decoded with the new one straight away. <strong>While logging</strong>, the session continues in a new
+            segment (see <a href="#recording-logs">Recording Logs</a>). The preview tells you when either will
+            happen.</p>
+        <p><strong>Restore:</strong> every configuration you activate is kept (the last 20) in Bytehound's
+            application-data folder. <strong>File → Restore Previous Configuration…</strong> brings one back through
+            the same preview.</p>
+        <p><strong>JSON configurations:</strong> the Configuration Editor saves JSON in Bytehound's own format, which
+            keeps every sheet, column and value of the original exactly. A saved file is replaced only once the new
+            one is completely written, so a crash during save never leaves a damaged file. Older Bytehound versions
+            cannot open these JSON files; share an Excel or CSV export with them instead.</p>
+
         <h3 id="comprehensive-config-examples">⭐ Real-World Configuration Recipes &amp; Worked Examples</h3>
         <p>Below are concrete, battle-tested configuration patterns you can copy directly into your Excel sheets for common embedded hardware scenarios.</p>
 
@@ -3540,10 +3781,15 @@ CAN Monitor    | waveshare_can  | AA         | 55         | TRUE</pre>
 
         <h3>Data Logging &amp; Buffer Safety</h3>
         <ul>
-            <li><strong>Decoded Log Crash Safety:</strong> The Decoded Excel log (<code>*_decoded.xlsx</code>) is
-                written incrementally to temporary files (<code>.tmp_data</code> and <code>.tmp_meta</code>) during the
-                session and compiled at the end. If the application crashes, the unsaved data is not lost; Bytehound
-                automatically scans and prompts to recover these logs on the next launch.</li>
+            <li><strong>Crash Safety:</strong> Logs are written to CSV as data arrives and each segment is compiled to
+                <code>.xlsx</code> when it closes. If the application or PC stops while recording, the data already
+                written is not lost: on the next launch Bytehound finds the unfinished session, compiles it and marks
+                it <code>recovered</code>. At most the last second or so before the crash can be missing; the
+                <code>.bhraw</code> raw capture keeps every byte that reached the disk.</li>
+            <li><strong>Segment finishing:</strong> Compiling a segment's <code>.xlsx</code> runs in a separate helper
+                process with a time limit. If it fails or hangs, the segment is marked
+                <code>closed_with_errors</code> with the reason in <code>session.json</code>, and its CSV is always
+                kept.</li>
             <li><strong>Plot History Limits:</strong> Plot history is stored in a fixed-capacity ring buffer (default
                 6,000 samples per signal). In long monitoring sessions, older points will wrap around and be discarded
                 from memory to prevent memory leaks. Consequently, scrolling back to the beginning of a multi-hour test
