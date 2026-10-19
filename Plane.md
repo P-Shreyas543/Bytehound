@@ -252,6 +252,27 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
 - [ ] Scoped mypy — NOT RUN (no project configuration)
 - [ ] 24 h soak — **BLOCKED** (bench needed for a day)
 
+**Part C — canonical configuration (started 2026-10-19)**
+
+- [x] Owner decision: design document first, then build
+- [x] Requirements taken verbatim from the original protocol specification
+      (§2–§5, §9–§12), not from memory
+- [x] Inventory: 4 input forms (xlsx, CSV folder, table JSON, YAML), 11
+      tables, regression corpus of **23 configurations that all load**
+      (template, fixture, 9 root workbooks, 12 MultiCellBMSConfig LFP/NMC
+      workbooks; parsers framed / waveshare variable / waveshare 20-byte)
+- [x] Problems found for the design: duplicate helper copy (dead code),
+      Ather `0x101` branch, silent negative clamp, **non-atomic Config
+      Editor JSON save**, file-based (not canonical) fingerprint, config
+      swap while connected not restarting the worker (to be verified, C0)
+- [x] **Design for review:**
+      [Documentation/canonical_config_design.md](Documentation/canonical_config_design.md)
+      — canonical JSON v1 (pre-expansion, typed, stable ids, extensions
+      preserved), validation, fingerprint, import/export/migration,
+      lifecycle, clean-ups, tests, steps C0–C6
+- [ ] **Owner decisions 1–5** (design §9) — pending
+- [ ] C0 … C6 — not started (waiting for the decisions)
+
 **Closure — scope traceability (Parts C, D, E, G, F12)**
 
 Scope taken from the checklists in this file (§0.5–0.9), not from the part
