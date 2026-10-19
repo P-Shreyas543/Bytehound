@@ -110,7 +110,34 @@ under `MultiCellBMSConfig/LFP` and `/NMC`. They cover the `framed`,
   entry under `"extensions": {"<column>": "<text>"}` and written back on
   export (spec §3 "preserve unknown extension fields").
 
-### Shape (abbreviated)
+### Revision during C1 (2026-10-19) — shape as implemented
+
+The nested example below was the first proposal. Implemented instead, to
+guarantee identical decoding and a lossless round trip for all 23 corpus
+configurations: **typed tables with the source's own column names**.
+
+```json
+{"format": "bytehound.protocol", "schema_version": 1,
+ "tables": {"protocol": [{"profile_name": "Default", "parser_type": "framed", "header_hex": "AA 55",
+                          "frame_id_size": 2, "crc_type": "crc16_modbus", ...}],
+            "variables": [{"id_or_address": "0x1000", "signal_name": "Pack Voltage", "data_type": "uint16",
+                           "scale": 0.01, "min_value": 0.0, "enabled": true, ...}], ...},
+ "extra_tables": {"readme": [ ... ]},
+ "import": {"source_format": "xlsx", "source_name": "...", "source_sha256": "...", ...}}
+```
+
+- A value becomes a JSON number / boolean only when it converts back to the
+  same text; otherwise the original text is kept (validation decides
+  validity, conversion never alters meaning).
+- Unknown columns → per-row `extensions`; unknown sheets (11 corpus
+  workbooks have a `readme` sheet) → `extra_tables`.
+- Loading converts back to rows and runs the existing parser, so decoding
+  is identical by construction (`app/decoder/canonical.py`).
+- The nested, GUI-independent model remains the target for Part D's
+  editor, built *on top of* this lossless layer when needed; decision 1
+  (hex-string frame IDs) holds — IDs stay the sheets' text.
+
+### Shape (first proposal, superseded — kept for the record)
 
 ```json
 {

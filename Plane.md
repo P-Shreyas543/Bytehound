@@ -283,7 +283,23 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
       configuration (old frames 0x1000… vs the window's 0x6000…); the
       interactive path shows a "Reconnect required" toast, the programmatic
       path nothing. Fixed by decision 3 in C4
-- [ ] C1 … C6
+- [x] **C1 canonical model** (`app/decoder/canonical.py`): typed tables,
+      source column names, unknown columns → `extensions`, unknown sheets →
+      `extra_tables`, `import` metadata, fingerprint (SHA-256 without
+      `import`), atomic save; `load_config` and the new shared
+      `read_source_tables` accept canonical JSON (file or dict); legacy table
+      JSON unchanged. Shape revised from the nested proposal for
+      losslessness (design §3 "Revision during C1"). **Proof:** all 23
+      configurations decode identically to the C0 baseline via canonical
+      JSON (in memory and saved), round trip byte-for-byte lossless incl.
+      `readme` sheets; 64 tests (`tests/test_canonical_config.py`)
+- [ ] C2 validation + schema document
+- [ ] C3 import / export / migration; atomic Config Editor save
+- [ ] C4 lifecycle: candidate, preview diff, confirm, rollback; auto-reconnect
+      on activation (decision 3)
+- [ ] C5 clean-ups: dead code, Ather value rules (decision 4), clamp setting
+      (decision 5)
+- [ ] C6 fingerprint in session.json / logs; docs; packaging
 
 **Closure — scope traceability (Parts C, D, E, G, F12)**
 

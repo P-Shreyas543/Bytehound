@@ -13,7 +13,7 @@ from __future__ import annotations
 import csv
 import difflib
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .types import (
     FMT_SIZES,
@@ -76,31 +76,19 @@ def load_config(path: str | Path | dict) -> FrameConfig:
     """Load a config directory, an Excel workbook, or a preset dictionary."""
 
     if isinstance(path, dict):
-        tables = _coerce_mapping_tables(path)
+        from .canonical import CanonicalError, canonical_to_tables, is_canonical
+        if is_canonical(path):
+            try:
+                tables = canonical_to_tables(path)
+            except CanonicalError as exc:
+                raise ConfigError(str(exc)) from exc
+        else:
+            tables = _coerce_mapping_tables(path)
         base_label = "Preset"
     else:
         source = Path(path)
-        if source.is_file() and source.suffix.lower() in {".xlsx", ".xlsm"}:
-            tables = _read_excel_tables(source)
-            base_label = source.name
-        elif source.is_file() and source.suffix.lower() == ".json":
-            import json
-            with source.open("r", encoding="utf-8") as fp:
-                tables = _coerce_mapping_tables(json.load(fp))
-            base_label = source.name
-        elif source.is_file() and source.suffix.lower() in {".yaml", ".yml"}:
-            try:
-                import yaml
-            except ImportError as exc:
-                raise ConfigError("YAML config requires pyyaml") from exc
-            with source.open("r", encoding="utf-8") as fp:
-                tables = _coerce_mapping_tables(yaml.safe_load(fp))
-            base_label = source.name
-        elif source.is_dir():
-            tables = _read_csv_tables(source)
-            base_label = str(source)
-        else:
-            raise ConfigError(f"Config path does not exist or format unsupported: {source}")
+        tables, _fmt = read_source_tables(source)
+        base_label = str(source) if source.is_dir() else source.name
     protocol_rows = tables.get("protocol", [])
     required_cols = set(_PROTOCOL_REQUIRED)
     if protocol_rows:
@@ -176,6 +164,39 @@ def load_config(path: str | Path | dict) -> FrameConfig:
     cfg.polling_schedules = _parse_polling_schedules(tables.get("polling_schedule", []))
     cfg.sequence_counters = _parse_sequence_counters(tables.get("sequence_counters", []), cfg)
     return cfg
+
+
+def read_source_tables(source: Path) -> Tuple[Dict[str, List[Dict[str, str]]], str]:
+    """Read any supported configuration source into tables of string rows.
+
+    Returns ``(tables, format)`` with format one of ``xlsx``, ``csv``,
+    ``table_json``, ``canonical_json``, ``yaml``. Shared by ``load_config``
+    and the canonical importer, so both see exactly the same rows.
+    """
+    source = Path(source)
+    if source.is_file() and source.suffix.lower() in {".xlsx", ".xlsm"}:
+        return _read_excel_tables(source), "xlsx"
+    if source.is_file() and source.suffix.lower() == ".json":
+        import json
+        with source.open("r", encoding="utf-8") as fp:
+            data = json.load(fp)
+        from .canonical import CanonicalError, canonical_to_tables, is_canonical
+        if is_canonical(data):
+            try:
+                return canonical_to_tables(data), "canonical_json"
+            except CanonicalError as exc:
+                raise ConfigError(f"{source.name}: {exc}") from exc
+        return _coerce_mapping_tables(data), "table_json"
+    if source.is_file() and source.suffix.lower() in {".yaml", ".yml"}:
+        try:
+            import yaml
+        except ImportError as exc:
+            raise ConfigError("YAML config requires pyyaml") from exc
+        with source.open("r", encoding="utf-8") as fp:
+            return _coerce_mapping_tables(yaml.safe_load(fp)), "yaml"
+    if source.is_dir():
+        return _read_csv_tables(source), "csv"
+    raise ConfigError(f"Config path does not exist or format unsupported: {source}")
 
 
 def _coerce_mapping_tables(raw_tables: dict) -> Dict[str, List[Dict[str, str]]]:
