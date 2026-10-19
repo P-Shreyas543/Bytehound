@@ -104,6 +104,10 @@ class TelemetryPipelineMixin:
         if len(batch) > space_left:
             dropped = len(batch) - space_left
             self._backpressure_dropped_count = getattr(self, "_backpressure_dropped_count", 0) + dropped
+            # The oldest queued points are evicted: break every line there
+            # rather than joining across the skipped points (live plot P4).
+            for buf in getattr(self, "_plot_history", {}).values():
+                buf.mark_break()
             # Once saturated this fired for every batch, and each log line was
             # a file write + flush on the GUI thread (seen in stall stacks).
             now = time.monotonic()

@@ -86,6 +86,13 @@ def _configure_live_curve(curve) -> None:
         pass
 
 
+# Gap detection (live plot P1): a sample arriving more than GAP_FACTOR times
+# the signal's usual interval after the previous one, and at least GAP_MIN_S
+# later, starts a new line piece. A NaN break point is stored between the
+# two; curves are drawn with connect="finite", so nothing joins across it.
+GAP_FACTOR = 5.0
+GAP_MIN_S = 0.5
+
 # Reused for empty-buffer reads so we don't allocate a fresh np.array on
 # every redraw when a curve has no samples yet.
 _EMPTY_F64 = np.array([], dtype=float)
@@ -114,7 +121,7 @@ class TimeSeriesBuffer:
     INITIAL_CAPACITY = 256
     BYTES_PER_SAMPLE = 16  # float64 x + float64 y
 
-    __slots__ = ("_x", "_y", "_start", "_end", "_max_samples")
+    __slots__ = ("_x", "_y", "_start", "_end", "_max_samples", "_dt", "_break_next")
 
     def __init__(self, max_samples: Optional[int] = None) -> None:
         self._x = _EMPTY_F64
@@ -122,6 +129,8 @@ class TimeSeriesBuffer:
         self._start = 0
         self._end = 0
         self._max_samples = max_samples
+        self._dt: Optional[float] = None      # usual interval between samples (EMA)
+        self._break_next = False
 
     @staticmethod
     def _slack(cap: int) -> int:
@@ -182,6 +191,29 @@ class TimeSeriesBuffer:
             else:
                 # Minor jitter or out-of-order packet: clamp x to last_x to enforce monotonicity.
                 x = last
+        if self._end > self._start:
+            prev = float(self._x[self._end - 1])
+            dt = x - prev
+            typical = self._dt
+            gap = typical is not None and dt > max(GAP_MIN_S, GAP_FACTOR * typical)
+            if self._break_next or gap:
+                # Break point immediately after the last sample: a step curve
+                # holds each value until the next point, so a later break
+                # would draw the old state into the gap. x stays sorted, so
+                # the window lookups (searchsorted) are unaffected.
+                self._put(float(np.nextafter(prev, x)), math.nan)
+            if dt > 0 and not gap:
+                self._dt = dt if typical is None else typical + 0.1 * (dt - typical)
+        self._break_next = False
+        self._put(x, y)
+
+    def mark_break(self) -> None:
+        """Start a new line piece at the next sample: samples in between were
+        not plotted (display skipped them under load, P4)."""
+        if self._end > self._start:
+            self._break_next = True
+
+    def _put(self, x: float, y: float) -> None:
         if self._end >= self._x.shape[0]:
             self._make_room()
         self._x[self._end] = x
@@ -195,6 +227,8 @@ class TimeSeriesBuffer:
         self._y = _EMPTY_F64
         self._start = 0
         self._end = 0
+        self._dt = None
+        self._break_next = False
 
     def first_x(self) -> Optional[float]:
         return float(self._x[self._start]) if self._end > self._start else None

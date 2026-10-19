@@ -831,6 +831,21 @@ class PlotOrchestrationMixin:
             return
         panel = self._plot_panels[panel_idx]
         if key not in panel.assigned_keys:
+            units = []
+            for k in panel.assigned_keys:
+                u = self._signal_unit_map.get(k, "").strip()
+                if u not in units:
+                    units.append(u)
+            new_unit = self._signal_unit_map.get(key, "").strip()
+            if new_unit not in units and len(units) >= 2:
+                shown = " and ".join(repr(u) if u else "(no unit)" for u in units)
+                self._popup_warning(
+                    "Add Signal",
+                    f"Panel {panel_idx + 1} already shows {shown} on its two axes. "
+                    f"{key[1]} ({new_unit or 'no unit'}) would be a third unit, which has no axis "
+                    "of its own there. Add it to another panel.",
+                )
+                return
             panel.assigned_keys.append(key)
             self._sync_plot_keys()
             self._persist_panel_assignments()
@@ -1000,8 +1015,16 @@ class PlotOrchestrationMixin:
             panel.hline.setPos(y)
             panel.hline.setVisible(True)
 
-        # Build the readout: time + one entry per signal on THIS panel,
-        # interpolated to the cursor's x by nearest-sample lookup.
+        text = self._plot_readout_text(panel, t)
+        if hasattr(self, "_hover_label"):
+            # Cap the line length so the control bar doesn't reflow.
+            if len(text) > 120:
+                text = text[:117] + "…"
+            self._hover_label.setText(text)
+
+    def _plot_readout_text(self, panel, t: float) -> str:
+        """Time + one entry per signal on ``panel``, nearest sample to ``t``;
+        ``–`` inside a gap (a break point is the nearest sample)."""
         time_txt = self._format_plot_time(t)
         if self._plot_time_mode == "clock":
             parts: list[str] = [f"time={time_txt}"]
@@ -1043,17 +1066,47 @@ class PlotOrchestrationMixin:
                     idx = len(xs_arr) - 1
                 elif idx > 0 and (t - xs_arr[idx - 1]) < (xs_arr[idx] - t):
                     idx -= 1
+                value = float(ys_arr[idx])
+                # Inside a gap: the nearest sample is the break point, or the
+                # cursor lies between a break point and the next sample.
+                in_gap = idx > 0 and not math.isfinite(float(ys_arr[idx - 1])) and t < float(xs_arr[idx])
+                if not math.isfinite(value) or in_gap:
+                    parts.append(f"{key[1]}=–")
+                    continue
                 unit = self._signal_unit_map.get(key, "")
                 suffix = f" {unit}" if unit else ""
-                parts.append(f"{key[1]}={float(ys_arr[idx]):.2f}{suffix}")
+                parts.append(f"{key[1]}={value:.2f}{suffix}")
             except Exception:
                 continue
-        if hasattr(self, "_hover_label"):
-            # Cap the line length so the control bar doesn't reflow.
-            text = "  ·  ".join(parts)
-            if len(text) > 120:
-                text = text[:117] + "…"
-            self._hover_label.setText(text)
+        return "  ·  ".join(parts)
+
+    def _is_step_signal(self, key: Tuple[int, str]) -> bool:
+        """Booleans, enums and bitfields hold a state until the next sample:
+        drawn as steps, not ramps (live plot P2)."""
+        cfg = getattr(self, "_config", None)
+        if cfg is None or not isinstance(key[0], int):
+            return False
+        fid, name = key
+        signals = getattr(cfg, "signals_by_frame", None) or {}
+        enums = getattr(cfg, "enums", None) or {}
+        bitfields = getattr(cfg, "bitfields", None) or {}
+        spec = next((s for s in signals.get(fid, []) if s.signal_name == name), None)
+        names = {name} | ({spec.source_name} if spec is not None and spec.source_name else set())
+        if any((fid, n) in enums or (fid, n) in bitfields for n in names):
+            return True
+        return bool(spec is not None and spec.is_boolean)
+
+    def _drop_curve(self, panel, key: Tuple[int, str]) -> None:
+        curve = panel.curves.pop(key, None)
+        if curve is None:
+            return
+        for owner in (panel.plot_item, panel.right_vb, panel.legend):
+            if owner is None:
+                continue
+            try:
+                owner.removeItem(curve)
+            except Exception:
+                pass
 
     def _toggle_plot_key(self, key: Tuple[int, str]) -> None:
         """Toggle a signal in Panel 0 (right-click shortcut from data table)."""
@@ -1233,7 +1286,19 @@ class PlotOrchestrationMixin:
                 label = f"{fid_str} {key[1]}"
 
                 unit = self._signal_unit_map.get(key, "").strip() if hasattr(self, "_signal_unit_map") else ""
-                is_right = (right_unit is not None and unit != left_unit)
+                if unit != left_unit and unit != right_unit:
+                    # A third unit (layouts saved before the add-time check):
+                    # drawing it would read it off the second unit's axis.
+                    self._drop_curve(panel, key)
+                    logged = self.__dict__.setdefault("_third_unit_logged", set())
+                    if (panel.index, key) not in logged:
+                        logged.add((panel.index, key))
+                        self._log_activity(
+                            f"[WARN] Panel {panel.index + 1}: {key[1]} ({unit or 'no unit'}) is not drawn — "
+                            f"the panel's axes show {left_unit or '(no unit)'} and {right_unit}. Move it to another panel."
+                        )
+                    continue
+                is_right = right_unit is not None and unit == right_unit
                 target_vb = panel.right_vb if is_right else pi.getViewBox()
 
                 curve = panel.curves.get(key)
@@ -1271,7 +1336,8 @@ class PlotOrchestrationMixin:
                         curve = None
 
                 if curve is None:
-                    curve = pg.PlotDataItem(name=label, pen=pg.mkPen(color, width=1.8))
+                    curve = pg.PlotDataItem(name=label, pen=pg.mkPen(color, width=1.8),
+                                            stepMode="right" if self._is_step_signal(key) else None)
                     _configure_live_curve(curve)
                     panel.curves[key] = curve
                     curve._bh_color = color  # type: ignore[attr-defined]
@@ -1323,6 +1389,7 @@ class PlotOrchestrationMixin:
                         x_values, y_values,
                         autoDownsample=True,
                         clipToView=True,
+                        connect="finite",     # break at gaps (NaN points, P1 / P4)
                     )
                     curve._bh_last_sig = signature  # type: ignore[attr-defined]
                 except Exception:

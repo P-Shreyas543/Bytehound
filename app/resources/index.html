@@ -1260,10 +1260,25 @@
 
         <div class="note">
             In Live mode the X-axis is anchored at <strong>0 seconds</strong> (session start) and expands to the current
-            elapsed time. Plot samples are kept in a bounded in-memory history (default 6,000 points per signal), so
-            very long sessions may show older time ranges with sparse or no plotted points even though the axis still
-            starts at zero.
+            elapsed time. Plot samples are kept in memory within a budget shared by all plotted signals (default
+            512 MB, <strong>Tools → Plot Settings</strong>); when it is full the oldest plot samples are dropped, so a
+            very long session may show its early part empty even though the axis still starts at zero. Logs and raw
+            captures are never affected.
         </div>
+
+        <h4>Reading the live plot</h4>
+        <ul>
+            <li><strong>Breaks in a line are real gaps.</strong> When a signal stops arriving for much longer than its
+                usual interval (an unplug, a reconnect, a silent device) the line stops and starts again after the
+                gap, instead of a straight line across it. The same happens where the display had to skip points
+                under heavy load (the <strong>Dropped</strong> counter). Hovering inside a gap shows <code>–</code>.</li>
+            <li><strong>States are drawn as steps.</strong> On/off signals and signals with Enums or Bitfields hold
+                their value until the next sample, so a change appears exactly when it was received.</li>
+            <li><strong>Two units per panel.</strong> A panel has a left and a right axis, one unit each. Adding a
+                signal with a third unit is refused with a message; put it on another panel. (A layout saved by an
+                older version that already holds a third unit leaves that signal out and says so in the Activity
+                Log.)</li>
+        </ul>
 
         <h3 id="bitfields">Bitfields Panel</h3>
         <p>If your hardware packs multiple Boolean flags into a single integer signal (like Fault states, Relay
@@ -1660,11 +1675,10 @@
                 <br><em>What it does:</em> Opens settings for the Live Plot panel.
                 <br><em>Understanding the Settings:</em>
                 <ul>
-                    <li><strong>Cap live plot memory history</strong> — checkbox that enables a hard limit on how many
-                        samples the Live Plot stores per signal. When checked, set the <strong>Memory cap limit</strong>
-                        spinbox to the desired maximum (1 000 – 10 000 000 samples). When unchecked the history grows
-                        unbounded for the lifetime of the session; on long or high-rate sessions this can consume
-                        significant RAM.</li>
+                    <li><strong>Plot history memory</strong> — memory for the Live Plot history, shared by all
+                        plotted signals (64 – 16,384 MB, default 512 MB). When it is full the oldest plot samples are
+                        dropped; plotting more signals leaves less history for each. Logs and raw captures are not
+                        affected.</li>
                     <li><strong>Default display window</strong> — controls how wide the Live Plot X-axis is when first
                         switched to Live mode. Options: <em>30 seconds</em>, <em>1 minute</em>, <em>2 minutes</em>,
                         <em>5 minutes</em> (default), <em>10 minutes</em>, <em>30 minutes</em>, or <em>All session</em>.
@@ -3790,10 +3804,10 @@ CAN Monitor    | waveshare_can  | AA         | 55         | TRUE</pre>
                 process with a time limit. If it fails or hangs, the segment is marked
                 <code>closed_with_errors</code> with the reason in <code>session.json</code>, and its CSV is always
                 kept.</li>
-            <li><strong>Plot History Limits:</strong> Plot history is stored in a fixed-capacity ring buffer (default
-                6,000 samples per signal). In long monitoring sessions, older points will wrap around and be discarded
-                from memory to prevent memory leaks. Consequently, scrolling back to the beginning of a multi-hour test
-                in the Live Plot is not supported; use the Analysis Suite on the saved log files instead.</li>
+            <li><strong>Plot History Limits:</strong> Plot history is kept in memory within a budget shared by all
+                plotted signals (default 512 MB, <strong>Tools → Plot Settings</strong>). When it is full the oldest
+                plot samples are dropped, so scrolling back to the beginning of a multi-hour test in the Live Plot may
+                show nothing there; use the Analysis Suite on the saved session instead.</li>
             <li><strong>Raw Console and Log line limits:</strong> The Raw Console is capped at 3,000 blocks/lines of
                 history, and the Activity Log is capped at 5,000 blocks. Old messages are automatically truncated from
                 the display buffer.</li>

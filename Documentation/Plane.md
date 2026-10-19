@@ -423,7 +423,7 @@ not-done item needs an owner scope decision before release.**
 
 | ID | Expected (summary of the checklist) | Status | Evidence / where | Depends on | Critical? |
 |---|---|---|---|---|---|
-| C | Versioned canonical JSON config + schema; in-house validation (overlaps, bounds, duplicates, circular calcs); fingerprint in every log; CSV/xlsx/JSON/YAML import → canonical, lossless export; import preview + rollback; remove dead `config_loader.py` copy; move Ather branch out of the decoder; document negative clamp; CRC set limited to what exists | **NOT RUN** (not started; 0 of 9) | §0.5 | — | No for the current formats (existing loaders work and are tested); **yes** for the protocol spec's acceptance |
+| C | Versioned canonical JSON config + schema; in-house validation (overlaps, bounds, duplicates, circular calcs); fingerprint in every log; CSV/xlsx/JSON/YAML import → canonical, lossless export; import preview + rollback; remove dead `config_loader.py` copy; move Ather branch out of the decoder; document negative clamp; CRC set limited to what exists | **Partial — 6 of 9 PASS** (canonical JSON + schema, validation, fingerprint in every log, lossless import/export, preview + rollback, CRC unchanged; C1–C4, C6). **Open (3):** dead loader code, Ather 0x101 branch, negative clamp — C5 discarded at owner request | §0.5, §0.0 C-steps | — | No for the current formats (existing loaders work and are tested); **yes** for the protocol spec's acceptance |
 | D | Protocol Studio: config management, model/view signal editor, frame layout view, decoder test bench (`.bhraw` replay) | **NOT RUN** (0 of 4) | §0.6 | C | No |
 | E | Spec regression tests (CRC vectors, framing, byte order, bitfields, round-trips, migrations); full pytest + smoke + frozen check; docs (JSON format, import, session format, long-run guide); known limitations | **Partial**: full pytest (671 passed), frozen self-tests, long-run lab guide, hardware plan, limitations list (§0.11 + this section) **PASS**; spec regression tests / JSON docs **NOT RUN** (need C) | §0.7, this section | C | Partial: the done half is; the C half follows C |
 | G | Menus/shortcuts (8), responsiveness (3), visual quality (5), interaction (6), verification (2) | **Partial**: responsiveness — segment finishing off the GUI, logging on the worker, bounded flush, card re-polish, console limit, stop-wait, latency gate **PASS** at 3,000 fps (9/9, caveat in Phase 1); "nothing slow on the GUI thread" for config load / import / export **NOT RUN**; budgets in CI **NOT RUN** (probe exists, not wired to CI); menus, visual, interaction, screenshot review **NOT RUN** (0 of 21) | §0.9, Phase 1 | — | Responsiveness: **yes** (done for logging); the rest: No |
@@ -586,26 +586,38 @@ decoding is unchanged by construction. This JSON is also the C++ "JSON
 Configuration Contract" (Phase 1 below); the Python app is the converter that
 turns customers' Excel/CSV profiles into it.
 
-- [ ] Versioned canonical JSON + documented schema
-- [ ] Structural + semantic validation in-house (no `jsonschema` dependency):
+Status per item (2026-10-19; steps C0–C6 in §0.0 have the evidence):
+
+- [x] Versioned canonical JSON + documented schema — C1 (8cfe737), schema
+      file C2, reference `Documentation/config_json_format.md` (C6)
+- [x] Structural + semantic validation in-house (no `jsonschema` dependency):
       overlaps, bounds, duplicates, invalid scaling, missing frames, circular
-      calc references
-- [ ] JSON load/save, migrations, deterministic fingerprint (SHA-256 of
-      canonical JSON) recorded in every log and session manifest
-- [ ] CSV / xlsx / legacy-table-JSON / YAML import → canonical; export back
-      without loss; document anything a format cannot hold
-- [ ] Import preview (errors, warnings, added / modified / removed signals),
+      calc references — C2 (4fe6e7d). Circular calc references cannot occur:
+      calculation groups take inputs only from decoded signals, never from
+      other calculations (`frame_decoder._calculate_groups`)
+- [x] JSON load/save, migrations, deterministic fingerprint (SHA-256 of
+      canonical JSON) recorded in every log and session manifest — C1, C3
+      (migration registry), C6 (d009450: session.json + workbook metadata)
+- [x] CSV / xlsx / legacy-table-JSON / YAML import → canonical; export back
+      without loss; document anything a format cannot hold — C1, C3 (46
+      export round trips identical); limits in config_json_format.md §6
+- [x] Import preview (errors, warnings, added / modified / removed signals),
       explicit confirm; a failed import never replaces the active config;
-      previous config kept for rollback
+      previous config kept for rollback — C4 (4a92459)
 - [ ] Remove dead duplicate helpers in `config_loader.py` (lines 327–476: an
       older copy incl. a broken `_parse_protocol`; Python uses the later copy)
+      — C5, implemented then **discarded at the owner's request**; still open
 - [ ] Move the Ather-specific branch in `frame_decoder.py` (frame `0x101`,
       `Drive_Mode`, `Key_Switch`) out of the generic decoder into
       configuration — decode output must stay identical (regression test)
+      — C5, discarded; still open (decision 4 recorded)
 - [ ] Document or configure the silent clamp of small negatives to 0 when
-      `min_value >= 0` (`frame_decoder.py`)
-- [ ] CRC stays limited to `crc16_modbus`, `crc16_ccitt`, `crc32`, `none` —
+      `min_value >= 0` (`frame_decoder.py`) — C5, discarded; still open
+      (decision 5 recorded)
+- [x] CRC stays limited to `crc16_modbus`, `crc16_ccitt`, `crc32`, `none` —
       no invented parameters; schema covers exactly what is implemented
+      (unchanged by C1–C6; the schema does not enumerate CRC types beyond
+      the loader's own check)
 
 ### 0.6 Part D — Protocol Studio (protocol spec, phase 5)
 
@@ -937,9 +949,25 @@ performance → L3 UX (owner picks).
 - [ ] L0 baseline: measure M1–M5 (redraw cost at 3,000 fps with 8 × 8
       signals, budget-full trimming, "All session" after hours, hover /
       legend, visual checks)
-- [ ] L1 correctness — P1 gaps drawn as straight lines; P2 states drawn as
-      ramps; P3 third unit drawn on the second unit's axis; P4 points
-      skipped under load joined silently; P5 manual wrong about history size
+- [x] **L1 correctness (P1–P5) done:** P1 — a sample arriving more than
+      5× the signal's usual interval (and ≥ 0.5 s) after the previous one
+      stores a NaN break point right after the last sample; curves draw with
+      `connect="finite"`, so unplugs / silent devices / reconnects show as
+      gaps (break placed immediately after the last sample so a step curve
+      never holds an old state into the gap — caught on the first
+      screenshot, fixed and pinned by a test). P2 — boolean / enum /
+      bitfield signals drawn with `stepMode="right"`. P3 — adding a third
+      unit to a panel is refused with a message; a saved layout holding one
+      leaves that signal undrawn and says so in the Activity Log (never
+      drawn against the second unit's axis). P4 — when the display queue
+      evicts points under load, every history is marked to break before its
+      next sample. Hover readout shows `–` anywhere inside a gap. P5 — three
+      manual passages corrected (512 MB shared budget, Plot Settings
+      description) + "Reading the live plot" notes. **Evidence:** 15 new
+      tests; 10 failed on the old code for exactly these reasons and pass
+      now; existing plot / buffer tests unchanged and passing; offscreen
+      screenshot: Pack Voltage breaks at the 8–12 s outage, BMS State drawn
+      as steps ending at its last sample
 - [ ] L2 performance (only what L0 shows over budget)
 - [ ] L3 UX (U1–U5; owner chooses)
 

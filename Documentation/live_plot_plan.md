@@ -1,6 +1,6 @@
 # Live Plot review plan
 
-**Status:** PLAN — not started (owner request, 2026-10-19). Tracked in
+**Status:** L1 (P1–P5) done 2026-10-19; L0, L2, L3 open (owner request, 2026-10-19). Tracked in
 [Plane.md](Plane.md) as Part I.
 
 **Scope:** the Live Plot dock — `app/ui/plot_orchestration.py` (grid,
