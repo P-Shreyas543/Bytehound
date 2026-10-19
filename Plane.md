@@ -250,7 +250,17 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
       pass, 2× except/continue (code quality, not addressed in this pass),
       subprocess use (reviewed: installer launch, fixed argv, no shell)
 - [ ] Scoped mypy — NOT RUN (no project configuration)
-- [ ] 24 h soak — **BLOCKED** (bench needed for a day)
+- [ ] 24 h soak — **RUNNING** (handed over 2026-10-19): test build
+      `Bytehound_soak_4fe6e7d.zip` (commit 4fe6e7d, exe SHA-256
+      e201e628…c3ec79611; suite 868 passed, frozen validate / capture /
+      finish self-tests and GUI start/close OK) on a separate lab PC with a
+      real BMS, Blue01-style config, Waveshare USB-CAN at 2 Mbaud. Kit:
+      SOAK_TEST.txt (procedure, pass criteria) + soak_monitor.ps1
+      (memory / handles / threads per minute). No sequence counters in
+      that config, so F12 is not exercised; judged on discarded bytes,
+      parse errors, gaps, segment status and resource trend. Also to
+      report: whether 0x1F0 Balancing_Status / BMS_Operation_State ever
+      decode (C2 finding). Result: pending
 
 **Part C — canonical configuration (started 2026-10-19)**
 
@@ -771,6 +781,13 @@ chamber log). Today the decoded log is event-driven (one row per poll cycle).
 
 ### 0.11 Known gaps and follow-ups (don't lose these)
 
+- **Portable zip shows v0.0.0 (found 2026-10-19, pre-existing since the
+  spec was added):** the frozen app reads `version.json` beside the exe,
+  but the spec bundles it into `_internal\`. The installer copies it next
+  to the exe, so installed copies are fine; a zip from `build.py` is not —
+  title "v0.0.0" and the updater treats every release as newer. Fix: fall
+  back to `sys._MEIPASS` (or copy it in `build.py`). Soak zip had it
+  copied by hand.
 - **Needs lab hardware / real data (cannot be done in software):**
   `Documentation/hardware_validation_plan.md` H1–H11 (incl.
   `smoke_headless.py` phases 2–10 on the simulator, 24 h per baud rate,
