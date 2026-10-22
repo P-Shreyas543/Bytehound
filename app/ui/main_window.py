@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
@@ -1818,6 +1819,9 @@ class MainWindow(
             return
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self._activity_log.appendPlainText(f"{timestamp}  {text}")
+        # Also into the log files (bytehound.log and the session's log.txt):
+        # the Activity Log is the readable record of what happened.
+        logging.getLogger("bytehound.activity").info(text)
 
         lower_text = text.lower()
         if "queue full" in lower_text or "saturated" in lower_text or "dropped" in lower_text:

@@ -218,6 +218,7 @@ class LoggingSessionMixin:
         if getattr(self, "_integrity", None):
             session.set_integrity(self._integrity)
 
+        self._attach_session_logfile(folder, settings)
         self._logging = True
         self._logging_action.setText("Stop Logging")
         self._style_action_btn(self._logging_action, _BTN_PINK)   # active → pink
@@ -324,6 +325,8 @@ class LoggingSessionMixin:
                 self._log_activity(f"Logging session saved: {session.folder}")
             self._offer_rebuild_if_dropped(session)
 
+        if session is not None:
+            self._detach_session_logfile(session)
         self._logging = False
         self._log_started = None
         self._log_started_perf = None
@@ -333,6 +336,52 @@ class LoggingSessionMixin:
         self._set_status("Logging stopped")
         if was_logging:
             self._log_activity("Logging stopped")
+
+    # -- per-session log.txt (owner request 2026-10-22) -------------------
+    # Every session folder gets the application log of that recording, so a
+    # zipped session is self-explanatory when shared for debugging.
+
+    SESSION_LOG_NAME = "log.txt"
+
+    def _attach_session_logfile(self, folder: Path, settings) -> None:
+        self._detach_session_logfile(None)               # never two at once
+        try:
+            handler = logging.FileHandler(Path(folder) / self.SESSION_LOG_NAME, mode="a", encoding="utf-8")
+        except OSError as exc:
+            self._log_activity(f"[WARN] Session log.txt not created: {exc}")
+            return
+        handler.setFormatter(logging.Formatter(
+            fmt="%(asctime)s.%(msecs)03d %(levelname)s %(name)s: %(message)s", datefmt="%Y-%m-%d %H:%M:%S"))
+        logging.getLogger().addHandler(handler)
+        self._session_log_handler = handler
+        import platform
+        version = self._version_info.get("version", "") if hasattr(self, "_version_info") else ""
+        conn = getattr(self, "_saved_settings", None)
+        log = logging.getLogger("bytehound.session")
+        log.info("==== Bytehound %s — session log ====", version)
+        log.info("Session folder: %s", folder)
+        log.info("Configuration: %s", getattr(self, "_config_path", ""))
+        if conn is not None:
+            log.info("Connection: %s %s @ %s baud", getattr(conn, "connection_type", "serial"),
+                     getattr(conn, "port", ""), getattr(conn, "baud_rate", ""))
+        log.info("Settings: %s", self._session_settings_summary(settings))
+        log.info("System: %s, Python %s", platform.platform(), platform.python_version())
+
+    def _detach_session_logfile(self, session) -> None:
+        """Close the session's log.txt — once its background finishing (xlsx,
+        caches) is done, so the end of the story is in the file too."""
+        handler = getattr(self, "_session_log_handler", None)
+        if handler is None:
+            return
+        if session is not None and session.is_finishing():
+            from PySide6.QtCore import QTimer
+            QTimer.singleShot(1000, lambda s=session: self._detach_session_logfile(s))
+            return
+        if session is not None:
+            logging.getLogger("bytehound.session").info("==== session log closed ====")
+        self._session_log_handler = None
+        logging.getLogger().removeHandler(handler)
+        handler.close()
 
     def _offer_rebuild_if_dropped(self, session: SessionLog) -> None:
         """F10: if the decoded log had to drop frames, rebuild it from the
