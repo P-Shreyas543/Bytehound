@@ -327,6 +327,7 @@ class LoggingSessionMixin:
 
         if session is not None:
             self._detach_session_logfile(session)
+            self._schedule_auto_merge(session)
         self._logging = False
         self._log_started = None
         self._log_started_perf = None
@@ -382,6 +383,50 @@ class LoggingSessionMixin:
         self._session_log_handler = None
         logging.getLogger().removeHandler(handler)
         handler.close()
+
+    # -- merge when logging stops (configuration logging sheet / settings) --
+
+    def _schedule_auto_merge(self, session) -> None:
+        settings = getattr(self, "_settings", None)
+        if settings is None:
+            return
+        split = str(settings.value("logging/merge_on_stop", "none"))
+        if split not in ("one", "day"):
+            return
+        keep_csv = str(settings.value("logging/merge_keep_csv", "true")).lower() == "true"
+        self._auto_merge_when_finished(session, "none" if split == "one" else "day", keep_csv)
+
+    def _auto_merge_when_finished(self, session, split: str, keep_csv: bool) -> None:
+        """Merge once the session's background finishing is done; reported in
+        the Activity Log and with a toast, never with a dialog."""
+        from PySide6.QtCore import QTimer
+        if session.is_finishing():
+            QTimer.singleShot(1000, lambda: self._auto_merge_when_finished(session, split, keep_csv))
+            return
+        from .session_merge_ui import MergeRunner
+        folder = Path(session.folder)
+        runner = MergeRunner(self)
+        self.__dict__.setdefault("_auto_merge_runners", []).append(runner)
+        label = "one workbook" if split == "none" else "one workbook per day"
+        self._log_activity(f"[SESSION] Merging {folder.name} into {label} (in the background)")
+
+        def done(results: list) -> None:
+            rows = sum(int(r["rows"]) for r in results)
+            self._log_activity(f"[SESSION] Merged {folder.name}: {len(results)} workbook(s), {rows:,} rows "
+                               f"in {folder / 'merged'}")
+            if hasattr(self, "_toast"):
+                self._toast(f"Session merged: {folder.name}")
+            self._auto_merge_runners.remove(runner)
+
+        def failed(message: str) -> None:
+            self._log_activity(f"[WARN] Automatic merge of {folder.name} failed: {message} "
+                               "(Tools > Merge Session can retry)")
+            self._auto_merge_runners.remove(runner)
+
+        runner.finished.connect(done)
+        runner.failed.connect(failed)
+        runner.cancelled.connect(lambda: self._auto_merge_runners.remove(runner))
+        runner.start(folder, "event", split, "", keep_csv)
 
     def _offer_rebuild_if_dropped(self, session: SessionLog) -> None:
         """F10: if the decoded log had to drop frames, rebuild it from the

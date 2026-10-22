@@ -1116,10 +1116,12 @@ class PlotOrchestrationMixin:
         return bool(spec is not None and spec.is_boolean)
 
     @staticmethod
-    def _signal_staleness(buf, now: float) -> Tuple[bool, float]:
+    def _signal_staleness(buf, now: float, late_after: Optional[float] = None) -> Tuple[bool, float]:
         """(stale, seconds since the last sample). Stale = older than the gap
         rule (P1): GAP_FACTOR × the signal's usual interval, at least
-        GAP_MIN_S; 5 s while its interval is not known yet."""
+        GAP_MIN_S; 5 s while its interval is not known yet. A frame with an
+        expected period (Frames ``expected_period_ms``) uses ``late_after``
+        instead: 3 expected periods, known from the first sample on."""
         if not buf:
             return False, 0.0
         last = buf.last_x()
@@ -1127,7 +1129,10 @@ class PlotOrchestrationMixin:
             return False, 0.0
         age = max(0.0, now - last)
         dt = getattr(buf, "_dt", None)
-        limit = max(GAP_MIN_S, GAP_FACTOR * dt) if dt else 5.0
+        if late_after is not None:
+            limit = late_after
+        else:
+            limit = max(GAP_MIN_S, GAP_FACTOR * dt) if dt else 5.0
         return age > limit, age
 
     @staticmethod
@@ -1468,7 +1473,9 @@ class PlotOrchestrationMixin:
                 # and its legend says for how long. Checked before the
                 # unchanged-data skip: it becomes stale exactly when nothing new
                 # arrives.
-                stale, age = self._signal_staleness(buf, current_t)
+                monitor = getattr(self, "_rate_monitor", None)
+                late_after = monitor.late_after_s(key[0]) if monitor else None
+                stale, age = self._signal_staleness(buf, current_t, late_after)
                 style = (color, stale)
                 if getattr(curve, "_bh_style", None) != style:
                     try:

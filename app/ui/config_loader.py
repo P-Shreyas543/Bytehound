@@ -355,6 +355,8 @@ class ConfigLoaderMixin:
                 self._settings.setValue("conn/baud", str(baud))
                 if hasattr(self, "_welcome_dashboard") and self._welcome_dashboard is not None:
                     self._welcome_dashboard.set_baud(baud)
+        self._apply_config_logging_defaults()
+        self._install_rate_monitor()
         if remember:
             self._remember_config(path)
         self._refresh_action_state()
@@ -364,6 +366,62 @@ class ConfigLoaderMixin:
         # reach; the previous configuration is freed first (app/gc_tuning).
         from ..gc_tuning import refreeze
         refreeze()
+
+    def _apply_config_logging_defaults(self) -> None:
+        """The configuration's ``logging`` sheet sets Logging Settings (a
+        blank cell keeps the user's value); applies to the next session."""
+        d = getattr(self._config, "logging", None)
+        if d is None:
+            return
+        s = self._settings
+        if d.segment_minutes is not None:
+            s.setValue("logging/segment_minutes", d.segment_minutes)
+        if d.event_log is not None:
+            s.setValue("logging/event_log", "true" if d.event_log else "false")
+        if d.fixed_step_s is not None:
+            s.setValue("logging/fixed_step_enabled", "true" if d.fixed_step_s else "false")
+            if d.fixed_step_s:
+                s.setValue("logging/fixed_step_s", d.fixed_step_s)
+        if d.stale_steps is not None:
+            s.setValue("logging/stale_steps", d.stale_steps)
+        if d.stale_values is not None:
+            s.setValue("logging/stale_policy", d.stale_values)
+        if d.merge_on_stop is not None:
+            s.setValue("logging/merge_on_stop", d.merge_on_stop)
+        if d.merge_keep_csv is not None:
+            s.setValue("logging/merge_keep_csv", "true" if d.merge_keep_csv else "false")
+        summary = d.summary()
+        if summary:
+            note = " (from the next session)" if getattr(self, "_logging", False) else ""
+            self._log_activity(f"[CONFIG] Logging settings from the configuration{note}: {summary}")
+
+    def _install_rate_monitor(self) -> None:
+        """Frames with ``expected_period_ms`` are watched: the Activity Log
+        says once when one stops or slows down and once when it is back."""
+        from PySide6.QtCore import QTimer
+
+        from ..decoder.rate_monitor import FrameRateMonitor
+
+        self._rate_monitor = FrameRateMonitor.from_config(self._config)
+        timer = getattr(self, "_rate_timer", None)
+        if timer is None:
+            timer = self._rate_timer = QTimer(self)
+            timer.setInterval(500)
+            timer.timeout.connect(self._check_frame_rates)
+        if self._rate_monitor:
+            timer.start()
+        else:
+            timer.stop()
+
+    def _check_frame_rates(self) -> None:
+        import time
+
+        monitor = getattr(self, "_rate_monitor", None)
+        if not monitor or self._serial is None:
+            return
+        for _fid, state, message in monitor.check(time.perf_counter()):
+            tag = "[INFO]" if state == "ok" else "[WARN]"
+            self._log_activity(f"{tag} [RATE] {message}")
 
     def _on_load_recent_config(self) -> None:
         path_text = self._recent_config_combo.currentText()

@@ -63,7 +63,7 @@ KNOWN_COLUMNS: Dict[str, Dict[str, str]] = {
     },
     "frames": {
         "frame_id": _T, "frame_name": _T, "payload_length": "int", "direction": _T, "enabled": "bool",
-        "description": _T,
+        "description": _T, "expected_period_ms": "float",
     },
     "variables": {
         "id_or_address": _T, "signal_name": _T, "data_type": _T, "count": "int", "start_index": "int",
@@ -97,6 +97,10 @@ KNOWN_COLUMNS: Dict[str, Dict[str, str]] = {
                           "enabled": "bool"},
     "value_rules": {"id_or_address": _T, "signal_name": _T, "source_byte": "int", "match_values": _T,
                     "value_if_match": "float", "value_otherwise": "float", "enabled": "bool"},
+    "derived": {"name": _T, "expression": _T, "unit": _T, "kind": _T, "frame_id": _T, "enabled": "bool",
+                "description": _T},
+    "logging": {"segment_minutes": "int", "event_log": "bool", "fixed_step_s": _T, "stale_steps": "int",
+                "stale_values": _T, "merge_on_stop": _T, "merge_keep_csv": "bool"},
 }
 
 def _typed(text: str, kind: str) -> Any:

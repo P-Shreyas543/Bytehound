@@ -752,7 +752,11 @@ class PollingWorker(QThread):
 
     def set_session_sink(self, session) -> None:
         """Log every frame decoded from now on to ``session`` (a SessionLog),
-        or stop logging with ``None``. Thread-safe."""
+        or stop logging with ``None``. Thread-safe. A new session starts its
+        running integrals (Ah, Wh …) from 0."""
+        if session is not None and session is not self._session_sink:
+            from ..decoder.frame_decoder import reset_integrals
+            reset_integrals(self._signal_state)
         self._session_sink = session
 
     def start_raw_capture(self, path, metadata: Optional[dict] = None) -> None:
@@ -1033,7 +1037,7 @@ class PollingWorker(QThread):
                 decoded = None
             else:
                 try:
-                    decoded = decode_frame(cfg, p.frame_id, p.payload, self._signal_state)
+                    decoded = decode_frame(cfg, p.frame_id, p.payload, self._signal_state, t=rx_perf)
                 except Exception:  # pragma: no cover - defensive: decode bugs
                     # Don't kill the worker on a decode error. Fall back to
                     # letting the GUI re-decode (which will surface the error

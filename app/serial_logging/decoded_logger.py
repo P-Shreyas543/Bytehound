@@ -723,6 +723,16 @@ class DecodedLogger:
                 column_by_key[(frame_id, signal_name)] = pos
                 block[signal_name] = pos
 
+            # Derived channels (Power, Ah …) in the block of the frame that
+            # triggers them, after the group calculations.
+            for d in getattr(self._config, "derived", []):
+                if d.frame_id != frame_id:
+                    continue
+                pos = len(columns)
+                columns.append(f"{prefix}{_signal_label(d.name, d.unit)}")
+                column_by_key[(frame_id, d.name)] = pos
+                block[d.name] = pos
+
             block_by_frame[frame_id] = block
 
         return (

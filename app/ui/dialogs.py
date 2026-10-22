@@ -538,6 +538,14 @@ class LoggingSettingsDialog(QDialog):
         form.addRow("Stale values", self._stale_combo)
         form.addRow("Warn below free space", self._disk_warn_spin)
         form.addRow("Stop below free space", self._disk_stop_spin)
+        self._merge_combo = QComboBox(self)
+        self._merge_combo.addItems(["Off", "One workbook", "One workbook per day"])
+        self._merge_combo.setToolTip(
+            "When logging stops, join the session's hourly files for analysis "
+            "(as Tools > Merge Session), in the background.")
+        self._merge_csv_chk = QCheckBox("Keep the merged CSV (opens ~100x faster in the Analysis Suite)", self)
+        form.addRow("Merge when logging stops", self._merge_combo)
+        form.addRow("", self._merge_csv_chk)
         layout.addLayout(form)
 
         note = QLabel(
@@ -596,6 +604,9 @@ class LoggingSettingsDialog(QDialog):
             w.setEnabled(fixed_on)
         self._disk_warn_spin.setValue(int(num("logging/disk_warn_gb", 10)))
         self._disk_stop_spin.setValue(int(num("logging/disk_stop_gb", 2)))
+        merge = str(s.value("logging/merge_on_stop", "none"))
+        self._merge_combo.setCurrentIndex({"one": 1, "day": 2}.get(merge, 0))
+        self._merge_csv_chk.setChecked(flag("logging/merge_keep_csv", True))
 
     def _on_accept(self) -> None:
         self._settings.setValue("logging/level", self._level_combo.currentText())
@@ -612,6 +623,8 @@ class LoggingSettingsDialog(QDialog):
         s.setValue("logging/stale_policy", "blank" if self._stale_combo.currentIndex() == 1 else "hold")
         s.setValue("logging/disk_warn_gb", max(self._disk_warn_spin.value(), self._disk_stop_spin.value()))
         s.setValue("logging/disk_stop_gb", self._disk_stop_spin.value())
+        s.setValue("logging/merge_on_stop", ("none", "one", "day")[self._merge_combo.currentIndex()])
+        s.setValue("logging/merge_keep_csv", "true" if self._merge_csv_chk.isChecked() else "false")
         self.accept()
 
     def get_values(self) -> Tuple[str, float]:

@@ -85,7 +85,7 @@ class TelemetryPipelineMixin:
                 if decoded is None:
                     if not hasattr(self, "_signal_state"):
                         self._signal_state = {}
-                    decoded = decode_frame(config, packet.frame_id, packet.payload, self._signal_state)
+                    decoded = decode_frame(config, packet.frame_id, packet.payload, self._signal_state, t=t)
                 session.log_frame(decoded, t)
             elif not getattr(packet, "ok", True):
                 # Rejected frames (CRC / framing) are evidence, not noise: keep
@@ -353,10 +353,13 @@ class TelemetryPipelineMixin:
             self._latest_payload_by_frame = {}
         if packet.frame_id is not None:
             self._latest_payload_by_frame[packet.frame_id] = bytes(packet.payload)
+            monitor = getattr(self, "_rate_monitor", None)
+            if monitor:
+                monitor.note(packet.frame_id, rx_perf if rx_perf is not None else now)
         if not hasattr(self, "_signal_state"):
             self._signal_state = {}
         decoded = pre_decoded if pre_decoded is not None else decode_frame(
-            self._config, packet.frame_id, packet.payload, self._signal_state
+            self._config, packet.frame_id, packet.payload, self._signal_state, t=rx_perf
         )
         # The decoded log was already written on arrival (_log_batch)
         self._apply_decoded(decoded, rx_perf=rx_perf)

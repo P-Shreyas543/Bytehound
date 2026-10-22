@@ -277,6 +277,8 @@ aliases:
 | `PollingSchedule`   | `polling_schedule`   |
 | `SequenceCounters`  | `sequence_counters`  |
 | `ValueRules`        | `value_rules`        |
+| `Derived`           | `derived`            |
+| `Logging`           | `logging`            |
 
 ### 5.1 `protocol` (required, exactly one enabled row)
 
@@ -308,6 +310,7 @@ aliases:
 | `frame_name`     | str  | Display name                           |
 | `payload_length` | int? | If set, decoder warns on mismatch      |
 | `direction`      | str  | `rx` (default)                         |
+| `expected_period_ms` | float? | 1–3600000; watched by `app/decoder/rate_monitor.py` (late after 3 periods, slow when the 10 s average > 1.5 periods; reported on change only) |
 | `enabled`        | bool | Default true                           |
 | `description`    | str  | Optional                               |
 
@@ -473,6 +476,48 @@ rule as rows (`Drive_Mode`: byte 0 in `7`; `Key_Switch`: byte 0 in `6,7`),
 so it decodes exactly as before; importing it shows the rows explicitly. A
 `value_rules` table that is present (even with every row disabled) replaces
 the migration.
+
+### 5.14 `derived` (optional)
+
+Values computed from other signals, evaluated when `frame_id` arrives from
+the newest value of every input; they behave like calculated signals
+(table, plot, event and fixed-step logs, Analysis Suite).
+
+| Column        | Type | Notes                                                                 |
+|---------------|------|-----------------------------------------------------------------------|
+| `name`        | str  | Unique; not a CalcGroups name                                         |
+| `expression`  | str  | `[Signal]`, `[0x1000.Signal]` (if ambiguous) or an earlier derived name; numbers, `+ - * / ** %`, `abs min max sqrt exp log log10 sin cos tan` (`app/decoder/expressions.py`, parsed — no Python evaluation) |
+| `unit`        | str  | Optional                                                              |
+| `kind`        | enum | `value` (default) \| `integral` (∫ dt, seconds) \| `integral_hours` (∫ dt / 3600: A → Ah, W → Wh) |
+| `frame_id`    | hex? | Default: the frame of the first referenced signal                    |
+| `enabled`     | bool | Default true                                                          |
+| `description` | str  | Optional                                                              |
+
+Integrals use the frames' receive times (trapezoid), restart at 0 when a
+logging session starts, and skip an interval longer than max(2 s, 5 × the
+usual interval) (a gap). Without receive times (offline decode) integrals do
+not start.
+
+### 5.15 `logging` (optional, one row)
+
+Recording defaults for this experiment. On activation each non-blank cell
+is written to the matching Logging Settings key (`app/ui/config_loader.py`
+`_apply_config_logging_defaults`); blank = keep the user's value. A
+running session is not changed.
+
+| Column            | Type   | Settings key                                         |
+|-------------------|--------|------------------------------------------------------|
+| `segment_minutes` | int    | `logging/segment_minutes` (15–1440)                  |
+| `event_log`       | bool   | `logging/event_log`                                  |
+| `fixed_step_s`    | float  | `logging/fixed_step_s` (0.01–60); `off`/`0` → `logging/fixed_step_enabled=false` |
+| `stale_steps`     | int    | `logging/stale_steps` (1–1000)                       |
+| `stale_values`    | enum   | `logging/stale_policy`: `hold` \| `blank`            |
+| `merge_on_stop`   | enum   | `logging/merge_on_stop`: `none` \| `one` \| `day`     |
+| `merge_keep_csv`  | bool   | `logging/merge_keep_csv`                             |
+
+With `merge_on_stop` set, stopping a session waits for its background
+finishing, then runs `merge_job` in a child process (`MergeRunner`) into
+`<session>/merged`; the result goes to the Activity Log and a toast.
 
 ### Validation rules (loader must enforce)
 

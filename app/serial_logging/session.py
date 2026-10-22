@@ -285,6 +285,8 @@ def fixed_step_columns(config: FrameConfig) -> List[Tuple[Key, str]]:
         if getattr(calc, "enabled", True):
             name = f"{calc.group} {calc.stat}"
             cols.append((("calc", name), f"{name} ({calc.unit})" if calc.unit else name))
+    for d in getattr(config, "derived", []):
+        cols.append((("calc", d.name), f"{d.name} ({d.unit})" if d.unit else d.name))
     return cols
 
 

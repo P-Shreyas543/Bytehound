@@ -28,6 +28,8 @@ from .types import (
     PollingScheduleSpec,
     ProtocolConfig,
     ReadWrite,
+    DerivedSpec,
+    LoggingDefaults,
     SequenceCounterSpec,
     SignalSpec,
     ValueRuleSpec,
@@ -175,7 +177,131 @@ def config_from_tables(tables: Dict[str, List[Dict[str, str]]], base_label: str 
         # built-in frame 0x101 rule keeps decoding exactly as before.
         rule_rows = legacy_value_rule_rows(cfg)
     cfg.value_rules = _parse_value_rules(rule_rows, cfg)
+    cfg.derived = _parse_derived(tables.get("derived", []), cfg)
+    cfg.logging = _parse_logging(tables.get("logging", []))
     return cfg
+
+
+def _parse_logging(rows: List[Dict[str, str]]) -> Optional[LoggingDefaults]:
+    """Optional ``logging`` table: the first non-blank row. Every column is
+    optional; a blank cell leaves the user's setting unchanged."""
+    row = next((r for r in rows if not _is_blank_row(r)), None)
+    if row is None:
+        return None
+
+    def text(key: str) -> str:
+        return str(row.get(key, "") or "").strip()
+
+    def number(key: str, lo: float, hi: float, kind=float):
+        t = text(key)
+        if not t:
+            return None
+        try:
+            v = kind(float(t))
+        except ValueError:
+            raise ConfigError(f"logging.{key}: {t!r} is not a number") from None
+        if not lo <= v <= hi:
+            raise ConfigError(f"logging.{key}: {v} is outside {lo:g}..{hi:g}")
+        return v
+
+    def flag(key: str):
+        t = text(key)
+        return None if not t else _to_bool(t, default=True, field_name=f"logging.{key}")
+
+    def choice(key: str, allowed):
+        t = text(key).lower()
+        if not t:
+            return None
+        if t not in allowed:
+            raise ConfigError(f"logging.{key}: must be one of {', '.join(allowed)}, not {t!r}")
+        return t
+
+    step_text = text("fixed_step_s").lower()
+    if step_text in ("off", "0", "0.0", "none", "false"):
+        fixed = 0.0
+    else:
+        fixed = number("fixed_step_s", 0.01, 60.0)
+    return LoggingDefaults(
+        segment_minutes=number("segment_minutes", 15, 1440, int),
+        event_log=flag("event_log"),
+        fixed_step_s=fixed,
+        stale_steps=number("stale_steps", 1, 1000, int),
+        stale_values=choice("stale_values", ("hold", "blank")),
+        merge_on_stop=choice("merge_on_stop", ("none", "one", "day")),
+        merge_keep_csv=flag("merge_keep_csv"),
+    )
+
+
+_DERIVED_REQUIRED = {"name", "expression"}
+DERIVED_KINDS = ("value", "integral", "integral_hours")
+
+
+def _parse_derived(rows: List[Dict[str, str]], cfg: FrameConfig) -> List[DerivedSpec]:
+    """Optional ``derived`` table: name, expression, unit, kind, frame_id,
+    enabled, description. References are ``[Signal]`` (unique name),
+    ``[0x1000.Signal]`` or an earlier derived row — so there are no cycles."""
+    from .expressions import ExpressionError, compile_expression
+
+    _optional_columns_ok(rows, _DERIVED_REQUIRED, "derived")
+    by_name: Dict[str, List] = {}
+    for s in cfg.all_signals:
+        by_name.setdefault(s.signal_name, []).append(s)
+    calc_names = {f"{c.group} {c.stat}" for c in cfg.calc_groups}
+    out: List[DerivedSpec] = []
+    known: Dict[str, DerivedSpec] = {}
+    for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row):
+            continue
+        if not _to_bool(row.get("enabled", "true"), default=True, field_name="derived.enabled"):
+            continue
+        name = str(row["name"]).strip()
+        where = f"derived row {row_no} ({name or 'no name'})"
+        if not name:
+            raise ConfigError(f"{where}: name is required")
+        if name in known or name in calc_names:
+            raise ConfigError(f"{where}: the name is already used")
+        try:
+            expr = compile_expression(row["expression"])
+        except ExpressionError as exc:
+            raise ConfigError(f"{where}: {exc}") from None
+        inputs = []
+        for ref in expr.refs:
+            if ref in known:
+                inputs.append(("derived", ref))
+                continue
+            fid_text, _, sig_name = ref.partition(".")
+            if sig_name and fid_text.lower().startswith("0x"):
+                fid = _parse_frame_id(fid_text, field_name="derived.expression")
+                if not any(s.signal_name == sig_name for s in cfg.signals_by_frame.get(fid, [])):
+                    raise ConfigError(f"{where}: frame 0x{fid:X} has no signal {sig_name!r}")
+                inputs.append((fid, sig_name))
+                continue
+            matches = by_name.get(ref, [])
+            if not matches:
+                raise ConfigError(f"{where}: unknown signal [{ref}] (derived rows can use earlier rows only)")
+            if len({s.frame_id for s in matches}) > 1:
+                frames = ", ".join(f"[0x{s.frame_id:X}.{ref}]" for s in matches)
+                raise ConfigError(f"{where}: [{ref}] is in more than one frame; write one of {frames}")
+            inputs.append((matches[0].frame_id, ref))
+        if not inputs:
+            raise ConfigError(f"{where}: the expression uses no signal")
+        kind = str(row.get("kind", "") or "value").strip().lower()
+        if kind not in DERIVED_KINDS:
+            raise ConfigError(f"{where}: kind must be one of {', '.join(DERIVED_KINDS)}, not {kind!r}")
+        fid_text = str(row.get("frame_id", "") or "").strip()
+        if fid_text:
+            frame_id = _parse_frame_id(fid_text, field_name="derived.frame_id")
+            if frame_id not in cfg.frames and frame_id not in cfg.signals_by_frame:
+                raise ConfigError(f"{where}: unknown frame 0x{frame_id:X}")
+        else:
+            first = inputs[0]
+            frame_id = known[first[1]].frame_id if first[0] == "derived" else first[0]
+        spec = DerivedSpec(name=name, expression=expr.text, unit=str(row.get("unit", "") or "").strip(),
+                           kind=kind, frame_id=frame_id, inputs=tuple(inputs),
+                           description=str(row.get("description", "") or ""))
+        known[name] = spec
+        out.append(spec)
+    return out
 
 
 # The decoder used to override two signals of frame 0x101 by name (Ather
@@ -394,6 +520,11 @@ def _normalize_table_name(name: str) -> str:
         "valuerules": "value_rules",
         "value_rule": "value_rules",
         "value_rules": "value_rules",
+        "derived": "derived",
+        "logging": "logging",
+        "logging_defaults": "logging",
+        "derivedsignals": "derived",
+        "derived_signals": "derived",
     }
     return aliases.get(normalized, normalized)
 
@@ -744,6 +875,15 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
             )
 
         payload_length = _to_optional_int(row.get("payload_length", ""), field_name="payload_length")
+        period_text = str(row.get("expected_period_ms", "") or "").strip()
+        expected_period = None
+        if period_text:
+            try:
+                expected_period = float(period_text)
+            except ValueError:
+                raise ConfigError(f"frames row {row_no}: expected_period_ms {period_text!r} is not a number") from None
+            if not 1 <= expected_period <= 3_600_000:
+                raise ConfigError(f"frames row {row_no}: expected_period_ms must be 1..3600000 ms")
         if frame_id in frames:
             existing = frames[frame_id]
             merged_dir = "rxtx" if existing.direction != direction else direction
@@ -755,6 +895,7 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
                 enabled=enabled or existing.enabled,
                 description=existing.description or row.get("description", ""),
                 direction=merged_dir,
+                expected_period_ms=existing.expected_period_ms or expected_period,
             )
             continue
 
@@ -765,6 +906,7 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
             enabled=enabled,
             description=row.get("description", ""),
             direction=direction,
+            expected_period_ms=expected_period,
         )
     return frames
 

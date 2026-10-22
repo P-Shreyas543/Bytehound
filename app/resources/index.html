@@ -692,6 +692,8 @@
                             <li><a href="#sheet-serialdefaults">Sheet 10 — SerialDefaults</a></li>
                             <li><a href="#sheet-sequencecounters">Sheet 11 — SequenceCounters</a></li>
                             <li><a href="#sheet-valuerules">Sheet 12 — ValueRules</a></li>
+                            <li><a href="#sheet-derived">Sheet 13 — Derived (Power, Ah, Wh)</a></li>
+                            <li><a href="#sheet-logging">Sheet 14 — Logging (how to record, merge at stop)</a></li>
                             <li><a href="#config-import">Importing, Previewing &amp; Restoring a Config</a></li>
                             <li><a href="#validator-cli">Config Validator CLI</a></li>
                         </ul>
@@ -2736,6 +2738,16 @@ enabled                = TRUE</pre>
                     Auto-created frames default to <code>rxtx</code>.</td>
             </tr>
             <tr>
+                <td><code>expected_period_ms</code></td>
+                <td>number</td>
+                <td><em>(blank = not watched)</em></td>
+                <td>How often the device sends this frame, e.g. <code>200</code> for 5 Hz. The Activity Log says
+                    once when the frame stops (nothing for 3 periods) or slows down (average over 10 s more than
+                    1.5 periods), and once when it is back to normal. The live plot marks its signals stale (dashed)
+                    after 3 periods instead of waiting for its usual rate to be learned. A frame is watched from its
+                    first arrival, so a frame that never comes is not reported.</td>
+            </tr>
+            <tr>
                 <td><code>enabled</code></td>
                 <td>TRUE/FALSE</td>
                 <td><code>TRUE</code> <em>(default)</em></td>
@@ -3614,6 +3626,115 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
             equivalent rules (<code>Drive_Mode</code>: byte 0 = 7; <code>Key_Switch</code>: byte 0 = 6 or 7), and the
             import preview and saved JSON show them. Add a ValueRules sheet to change or disable them.
         </div>
+
+        <h3 id="sheet-derived">Sheet 13 — Derived (optional): Power, Ah, Wh</h3>
+        <p>Values computed live from other signals — a formula, or the running integral of one. They appear like
+            any other value: in the table, the live plot, the event and fixed-step logs and the Analysis Suite.</p>
+        <table>
+            <tr>
+                <th>Column</th>
+                <th>Example</th>
+                <th>What it does</th>
+            </tr>
+            <tr>
+                <td><code>name</code></td>
+                <td><code>Power</code></td>
+                <td>Name of the new value (must be unique).</td>
+            </tr>
+            <tr>
+                <td><code>expression</code></td>
+                <td><code>[CellVoltage] * [CellCurrent]</code></td>
+                <td>The formula. Signals in square brackets; write <code>[0x1000.CellVoltage]</code> if the name
+                    exists in more than one frame; an earlier Derived row can be used by its name. Allowed:
+                    numbers, <code>+ - * / ** %</code>, brackets and <code>abs min max sqrt exp log log10 sin cos
+                    tan</code>.</td>
+            </tr>
+            <tr>
+                <td><code>unit</code></td>
+                <td><code>W</code></td>
+                <td>Unit shown in the table, plot and log column.</td>
+            </tr>
+            <tr>
+                <td><code>kind</code></td>
+                <td><code>integral_hours</code></td>
+                <td><code>value</code> (default) — the formula itself; <code>integral</code> — its running
+                    integral over seconds; <code>integral_hours</code> — over hours, so current gives
+                    <strong>Ah</strong> and power gives <strong>Wh</strong>.</td>
+            </tr>
+            <tr>
+                <td><code>frame_id</code></td>
+                <td><em>(blank)</em></td>
+                <td>Frame whose arrival updates the value; default: the frame of the first signal used.</td>
+            </tr>
+            <tr>
+                <td><code>enabled</code>, <code>description</code></td>
+                <td></td>
+                <td>As in the other sheets.</td>
+            </tr>
+        </table>
+        <p>Example for a single-cell rig:</p>
+        <pre>name      expression                      unit  kind
+Power     [CellVoltage] * [CellCurrent]   W     value
+Charge    [CellCurrent]                   Ah    integral_hours
+Energy    [Power]                         Wh    integral_hours</pre>
+        <div class="note">
+            Integrals start from 0 when logging starts. An interval much longer than usual (an unplug, a silent
+            device) is not integrated — the outage is never filled in with a guessed line. Formulas cannot do
+            anything except arithmetic on signal values.
+        </div>
+
+        <h3 id="sheet-logging">Sheet 14 — Logging (optional): how this experiment is recorded</h3>
+        <p>One row. When the configuration is activated, its values become the <strong>Logging
+            Settings</strong> (the same way Serial Defaults set the baud rate); a blank cell keeps your own
+            setting. The Activity Log lists what was set. A session already running keeps its settings — the new
+            ones apply from the next session.</p>
+        <table>
+            <tr>
+                <th>Column</th>
+                <th>Example</th>
+                <th>What it does</th>
+            </tr>
+            <tr>
+                <td><code>segment_minutes</code></td>
+                <td><code>60</code></td>
+                <td>Length of each segment file (15–1440).</td>
+            </tr>
+            <tr>
+                <td><code>event_log</code></td>
+                <td><code>true</code></td>
+                <td>Write the event log (a row per frame).</td>
+            </tr>
+            <tr>
+                <td><code>fixed_step_s</code></td>
+                <td><code>1</code></td>
+                <td>Fixed-step log interval in seconds (0.01–60); <code>off</code> turns it off.</td>
+            </tr>
+            <tr>
+                <td><code>stale_steps</code></td>
+                <td><code>3</code></td>
+                <td>A value older than this many steps is stale.</td>
+            </tr>
+            <tr>
+                <td><code>stale_values</code></td>
+                <td><code>hold</code></td>
+                <td><code>hold</code> the last value or leave it <code>blank</code> when stale.</td>
+            </tr>
+            <tr>
+                <td><code>merge_on_stop</code></td>
+                <td><code>one</code></td>
+                <td>When logging stops, merge the session's segment files in the background (as
+                    <strong>Tools → Merge Session</strong>): <code>none</code>, <code>one</code> workbook, or one
+                    per <code>day</code>. Output goes to <code>&lt;session&gt;/merged</code>.</td>
+            </tr>
+            <tr>
+                <td><code>merge_keep_csv</code></td>
+                <td><code>true</code></td>
+                <td>Also keep the merged CSV (opens about 100× faster in the Analysis Suite).</td>
+            </tr>
+        </table>
+        <p>The merge option is also in <strong>Settings → Logging Settings</strong> (“Merge when logging
+            stops”). The merge never blocks the window; the Activity Log and a short notice say when it is done.
+            If it fails, Tools → Merge Session can run it again.</p>
 
         <h3 id="config-import">Importing, Previewing &amp; Restoring a Configuration</h3>
         <p>Loading a configuration never changes anything until you confirm it:</p>

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import struct
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Union
@@ -42,7 +43,11 @@ def decode_frame(
     frame_id: int,
     payload: bytes,
     state_dict: Optional[Dict[str, Dict[str, float]]] = None,
+    t: Optional[float] = None,
 ) -> DecodedFrame:
+    """Decode one frame. ``state_dict`` carries values between frames (calc
+    groups, derived inputs, running integrals); ``t`` is the frame's receive
+    time in seconds (``time.perf_counter()``), needed only for integrals."""
     if state_dict is None:
         state_dict = {}
 
@@ -58,6 +63,8 @@ def decode_frame(
     frame_name = config.frame_names.get(frame_id, "")
     decoded = [_decode_signal(config, spec, payload) for spec in specs]
     calculations = _calculate_groups(config, frame_id, frame_name, decoded, state_dict)
+    if config.derived:
+        calculations += _evaluate_derived(config, frame_id, frame_name, decoded, state_dict, t)
     warnings = _payload_warnings(config, frame_id, payload, specs)
     return DecodedFrame(
         frame_id=frame_id,
@@ -382,6 +389,85 @@ def _calculate_groups(
             )
         )
     return out
+
+
+_DERIVED_LATEST = "__derived_latest__"
+_DERIVED_INTEGRALS = "__derived_integrals__"
+# An integral interval much longer than usual is a gap (unplug, silent
+# device): it is not integrated, never bridged by a straight line.
+_INTEGRAL_GAP_FACTOR = 5.0
+_INTEGRAL_GAP_MIN_S = 2.0
+
+
+def reset_integrals(state_dict: Dict) -> None:
+    """Start every running integral (Ah, Wh …) again from 0 — at the start
+    of a logging session."""
+    state_dict.pop(_DERIVED_INTEGRALS, None)
+
+
+def _evaluate_derived(config: FrameConfig, frame_id: int, frame_name: str, decoded: List[DecodedSignal],
+                      state_dict: Dict, t: Optional[float]) -> List[DecodedSignal]:
+    latest = state_dict.setdefault(_DERIVED_LATEST, {})
+    for s in decoded:
+        if s.status == "ok" and s.scaled_value is not None:
+            latest[(frame_id, s.signal_name)] = float(s.scaled_value)
+    integrals = state_dict.setdefault(_DERIVED_INTEGRALS, {})
+    out: List[DecodedSignal] = []
+    for d in config.derived:
+        if d.frame_id != frame_id:
+            continue
+        expr = _compiled(d.expression)
+        values = {}
+        for ref, key in zip(expr.refs, d.inputs, strict=True):
+            v = latest.get(key)
+            if v is None:
+                break
+            values[ref] = v
+        else:
+            try:
+                value = float(expr.evaluate(values))
+            except (ArithmeticError, ValueError, TypeError):
+                continue
+            if not math.isfinite(value):
+                continue
+            if d.kind != "value":
+                st = integrals.get(d.name)          # [last_t, last_value, total, typical_dt]
+                if t is None:
+                    if st is None:
+                        continue
+                elif st is None:
+                    st = integrals[d.name] = [t, value, 0.0, None]
+                else:
+                    dt = t - st[0]
+                    if dt > 0:
+                        typical = st[3]
+                        gap = typical is not None and dt > max(_INTEGRAL_GAP_MIN_S, _INTEGRAL_GAP_FACTOR * typical)
+                        if not gap:
+                            area = 0.5 * (value + st[1]) * dt
+                            st[2] += area / 3600.0 if d.kind == "integral_hours" else area
+                            st[3] = dt if typical is None else typical + 0.1 * (dt - typical)
+                        st[0] = t
+                    st[1] = value
+                value = st[2]
+            latest[("derived", d.name)] = value
+            display = f"{value:.6g} {d.unit}".strip() if d.unit else f"{value:.6g}"
+            out.append(DecodedSignal(
+                frame_id=frame_id, frame_name=frame_name, signal_name=d.name, raw_value=None,
+                scaled_value=value, unit=d.unit, status="ok", group="Derived",
+                display_value=display, is_calculated=True,
+            ))
+    return out
+
+
+_COMPILED: Dict[str, object] = {}
+
+
+def _compiled(text: str):
+    expr = _COMPILED.get(text)
+    if expr is None:
+        from .expressions import compile_expression
+        expr = _COMPILED[text] = compile_expression(text)
+    return expr
 
 
 def _payload_warnings(

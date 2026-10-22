@@ -52,7 +52,7 @@ names as written:
 `protocol` (required) · `frames` · `variables` (or legacy `frame_config`;
 one of them required) · `bitfields` · `enums` · `calc_groups` ·
 `tx_commands` · `tx_command_fields` · `serial_defaults` ·
-`polling_schedule` · `sequence_counters` · `value_rules`
+`polling_schedule` · `sequence_counters` · `value_rules` · `derived` · `logging`
 
 - **One entry per sheet row, before expansion.** A `variables` row with
   `count: 8` stays one row; the loader expands it to 8 signals exactly as it

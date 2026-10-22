@@ -1131,6 +1131,8 @@ class MainWindow(
         """
         self._ui_timer.stop()
         self._wire_recorded_connected = False
+        if getattr(self, "_rate_monitor", None) is not None:
+            self._rate_monitor.reset()      # an unplug is not a late frame
         if hasattr(self, "_y_autofit_timer"):
             self._y_autofit_timer.stop()
         if self._logging and keep_logging and self._session_log is not None:
@@ -1662,6 +1664,7 @@ class MainWindow(
         # Add calc groups to available triggers
         for calc in self._config.calc_groups:
             signals.append(f"{calc.group} {calc.stat}")
+        signals += [d.name for d in getattr(self._config, "derived", [])]
 
         dlg = PlotTriggerDialog(signals, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:

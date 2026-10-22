@@ -215,7 +215,7 @@ def rebuild_decoded_log(
             for packet in parser.extract_all():
                 if not packet.ok or packet.frame_id is None:
                     continue
-                decoded = decode_frame(config, packet.frame_id, packet.payload, signal_state)
+                decoded = decode_frame(config, packet.frame_id, packet.payload, signal_state, t=t_perf)
                 # Never drop on rebuild: wait for room instead.
                 while logger.pending_rows() >= 50_000:
                     time.sleep(0.01)
