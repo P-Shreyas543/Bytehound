@@ -733,7 +733,7 @@
 
         <h3 id="what-is-it">What is the Bytehound?</h3>
         <p>Bytehound is a hardware-agnostic telemetry and control dashboard for serial devices. It reads framed UART/USB
-            byte streams or Modbus RTU traffic, decodes the payload using a workbook or CSV configuration that you
+            byte streams or Waveshare USB-CAN adapter traffic, decodes the payload using a workbook or CSV configuration that you
             define, and displays the results in live tables, plots, logs, and command panels — all without writing
             Python code.</p>
 
@@ -813,7 +813,7 @@
                     <rect x="240" y="70" width="150" height="70" rx="8" fill="url(#grad-parser)" />
                     <text x="315" y="100" fill="#ffffff" font-size="13" font-weight="bold" text-anchor="middle">Packet
                         Parser</text>
-                    <text x="315" y="118" fill="#ecfeff" font-size="11" text-anchor="middle">Framed or Modbus RTU</text>
+                    <text x="315" y="118" fill="#ecfeff" font-size="11" text-anchor="middle">Framed or Waveshare CAN</text>
                 </g>
 
                 <!-- 3. Frame Decoder -->
@@ -927,8 +927,7 @@
         <ol>
             <li>Connect your hardware to your computer using a USB cable or Serial adapter.</li>
             <li>Make sure your loaded config matches the bytes your device sends. For a framed protocol that usually
-                means <code>[Header] + [ID] + [Length] + [Data] + [CRC]</code>; for Modbus RTU, set
-                <code>parser_type = modbus_rtu</code>; for Waveshare USB-CAN-A adapters, set
+                means <code>[Header] + [ID] + [Length] + [Data] + [CRC]</code>; for Waveshare USB-CAN-A adapters, set
                 <code>parser_type = waveshare_can</code>. See <a href="#section-5">Section 5</a> for protocol details.</li>
             <li>Launch <strong>Bytehound</strong>. A bundled example config loads automatically; use <strong>Import
                     Config</strong> if you want to load your own Excel workbook or CSV config folder.</li>
@@ -1352,7 +1351,7 @@
             </tr>
             <tr>
                 <td><strong>Errors</strong></td>
-                <td>Wire-level parse failures such as CRC mismatch (including Modbus CRC) or footer mismatch. The frame
+                <td>Wire-level parse failures such as CRC mismatch or footer mismatch. The frame
                     had the right header/length framing, but the integrity check failed.</td>
                 <td>Should stay at 0 on a healthy link. A slowly climbing number suggests electrical noise, a bad cable,
                     or a baud-rate mismatch. A fast climb almost always means the protocol settings (CRC type, byte
@@ -1361,8 +1360,7 @@
             <tr>
                 <td><strong>Timeouts</strong></td>
                 <td>Poll requests that did not get a response within the configured <code>timeout_ms</code>. Primarily
-                    relevant when <strong>Auto-Fetch</strong> is on; Modbus manual sends also wait for a response and
-                    can increment this counter.</td>
+                    relevant when <strong>Auto-Fetch</strong> is on.</td>
                 <td>0 on a request/response device that is keeping up. A few timeouts on first connect are normal (the
                     device may still be booting). A continuously rising count means the device is missing requests — try
                     a longer <code>timeout_ms</code> or a slower <code>interval_ms</code>.</td>
@@ -1522,8 +1520,8 @@
                 <br><em>Why you need it:</em> Bytehound is generic; it doesn't know how your hardware packs its bytes
                 until you tell it. Importing a configuration tells the app what each byte represents, what
                 scales/offsets to apply, and how to format names.
-                <br><em>Example:</em> You are testing a new Modbus-based temperature controller. You load
-                <code>modbus_temp_sensor_map.xlsx</code>. Instantly, the main telemetry table updates to display rows
+                <br><em>Example:</em> You are testing a new temperature controller. You load
+                <code>temp_controller_map.xlsx</code>. Instantly, the main telemetry table updates to display rows
                 for "Zone 1 Temp", "Heater Power %", and "Alarm Bitfield".
             </li>
             <li><strong>Restore Previous Configuration…</strong>
@@ -1605,8 +1603,7 @@
                 the on-wire packet structure.
                 <br><em>Tabs and Options:</em>
                 <ul>
-                    <li><strong>RX Frames / Registers:</strong> Shows the byte layout of incoming frames or Modbus read
-                        registers. Use the dropdown to inspect each frame's variables.</li>
+                    <li><strong>RX Frames / Registers:</strong> Shows the byte layout of incoming frames. Use the dropdown to inspect each frame's variables.</li>
                     <li><strong>TX Commands:</strong> Shows the byte layout of outgoing command packets, including
                         static payload bytes, command fields, and any automatic packet padding. Use the dropdown to
                         choose any configured command.</li>
@@ -1641,8 +1638,8 @@
             <li><strong>Start / Stop Auto-Fetch (<code>F10</code>)</strong>
                 <br><em>What it does:</em> Toggles active register polling on devices that follow a request/response
                 (polled) protocol rather than streaming data continuously.
-                <br><em>Example:</em> Your Modbus sensor requires a "Read Input Registers" command to be sent before it
-                replies with the temperature. Enabling Auto-Fetch starts sending these commands automatically at
+                <br><em>Example:</em> Your sensor must receive a "read" request frame before it replies with the
+                temperature. Enabling Auto-Fetch starts sending these commands automatically at
                 intervals defined in the <code>polling_schedule</code> sheet.
             </li>
             <li><strong>Start / Stop Logging (<code>Ctrl+L</code>)</strong>
@@ -1798,13 +1795,6 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
                     placed at the exact <code>start_byte</code> offset (zero-padded payload). Header, length, CRC, and
                     footer are all added automatically per the Protocol sheet.</td>
             </tr>
-            <tr>
-                <td><strong>Modbus RTU</strong></td>
-                <td>An FC 06 (single-register) request is built when the encoded payload is 2 bytes; FC 16
-                    (multi-register) is used for longer payloads. The raw value is encoded using the signal's
-                    <code>scale</code>, <code>offset</code>, and byte order, and CRC16/Modbus is appended automatically.
-                </td>
-            </tr>
         </table>
 
         <div class="warning">
@@ -1848,20 +1838,6 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             bytes of the frame would be the CRC + footer, and the zero-padding would sit <em>between</em> the payload
             and the CRC. <code>tx_pad_length</code> is the <strong>total frame length on the wire</strong>, including
             CRC and footer.
-        </div>
-
-        <h4>Modbus RTU — single-register write (FC 06)</h4>
-        <p>With <code>parser_type = modbus_rtu</code> and <code>modbus_node_address = 1</code>, writing <code>123</code>
-            to register address <code>0x0050</code>:</p>
-        <pre><code>TX, 01 06 00 50 00 7B 99 8C</code></pre>
-        <pre>01             ← node address (from Protocol.modbus_node_address)
-06             ← function code: 06 = Write Single Register
-00 50          ← target register address 0x0050 (big-endian, per Modbus spec)
-00 7B          ← value to write, big-endian uint16 = 0x007B = 123
-99 8C          ← CRC16/Modbus over preceding bytes, little-endian (per Modbus spec)</pre>
-        <div class="note">
-            Modbus byte order is fixed by the spec: addresses and values are big-endian, the CRC is little-endian. The
-            Protocol sheet's <code>byte_order</code> fields are ignored for Modbus.
         </div>
 
         <h4>Quick reference — where each byte comes from</h4>
@@ -2442,14 +2418,13 @@ WARNING: frame 0x1F0 / Balancing_Status: bytes 2..3 lie beyond the frame's paylo
                 <td><code>header_hex</code></td>
                 <td>hex bytes</td>
                 <td><code>AA 55</code></td>
-                <td>Fixed start-of-frame marker the parser searches for. Space-separated hex bytes. <em>Ignored when
-                        parser_type = modbus_rtu.</em></td>
+                <td>Fixed start-of-frame marker the parser searches for. Space-separated hex bytes.</td>
             </tr>
             <tr>
                 <td><code>frame_id_size</code></td>
                 <td>integer</td>
                 <td><code>2</code></td>
-                <td>How many bytes carry the frame ID after the header. <em>Ignored for modbus_rtu.</em></td>
+                <td>How many bytes carry the frame ID after the header.</td>
             </tr>
             <tr>
                 <td><code>frame_id_byte_order</code></td>
@@ -2461,8 +2436,7 @@ WARNING: frame 0x1F0 / Balancing_Status: bytes 2..3 lie beyond the frame's paylo
                 <td><code>length_size</code></td>
                 <td>integer</td>
                 <td><code>1</code></td>
-                <td>How many bytes carry the payload-length field. <em>Ignored for modbus_rtu (length is implicit in
-                        each FC).</em></td>
+                <td>How many bytes carry the payload-length field.</td>
             </tr>
             <tr>
                 <td><code>length_meaning</code></td>
@@ -2472,34 +2446,34 @@ WARNING: frame 0x1F0 / Balancing_Status: bytes 2..3 lie beyond the frame's paylo
                     payload bytes), <code>frame_total</code> (header + frame_id + length + payload + CRC + footer — the
                     full frame size), <code>header_to_crc</code> (everything except the footer),
                     <code>payload_plus_crc</code> (payload + CRC bytes). The parser and TX builder honour the chosen
-                    value end-to-end. <em>Ignored for modbus_rtu.</em></td>
+                    value end-to-end.</td>
             </tr>
             <tr>
                 <td><code>crc_type</code></td>
                 <td>enum</td>
                 <td><code>crc16_modbus</code></td>
                 <td>Checksum algorithm: <code>crc16_modbus</code>, <code>crc16_ccitt</code>, <code>crc32</code>, or
-                    <code>none</code>. For modbus_rtu the CRC is always CRC16/Modbus regardless of this field.</td>
+                    <code>none</code>. <code>crc16_modbus</code> is only the name of the CRC-16 algorithm (also called
+                    CRC-16/MODBUS: polynomial 0xA001 reflected, start 0xFFFF) — Bytehound does not speak the Modbus
+                    protocol.</td>
             </tr>
             <tr>
                 <td><code>crc_size</code></td>
                 <td>integer</td>
                 <td><code>2</code></td>
-                <td>How many bytes the CRC occupies at the end of the frame. <em>Ignored for modbus_rtu.</em></td>
+                <td>How many bytes the CRC occupies at the end of the frame.</td>
             </tr>
             <tr>
                 <td><code>crc_byte_order</code></td>
                 <td>enum</td>
                 <td><code>little</code></td>
-                <td><code>big</code> or <code>little</code> byte order for the CRC field. <em>Ignored for
-                        modbus_rtu.</em></td>
+                <td><code>big</code> or <code>little</code> byte order for the CRC field.</td>
             </tr>
             <tr>
                 <td><code>footer_hex</code></td>
                 <td>hex bytes</td>
                 <td><em>(leave blank)</em></td>
-                <td>Optional end-of-frame marker. Leave blank if your protocol has no footer. <em>Ignored for
-                        modbus_rtu.</em></td>
+                <td>Optional end-of-frame marker. Leave blank if your protocol has no footer.</td>
             </tr>
             <tr>
                 <td><code>raw_log_format</code></td>
@@ -2659,16 +2633,12 @@ WARNING: frame 0x1F0 / Balancing_Status: bytes 2..3 lie beyond the frame's paylo
             shrink the command. Also, <code>tx_pad_length</code> must be at least <code>crc_size + len(footer)</code>,
             otherwise there's no room for the CRC and the app rejects the config.
         </div>
-        <div class="note">
-            <strong>Not for Modbus RTU.</strong> Modbus has its own fixed-per-FC framing — <code>tx_pad_length</code> is
-            ignored when <code>parser_type = modbus_rtu</code>.
-        </div>
 
         <p><strong>Bundled template content</strong> (the single enabled row that <em>File → Export Template</em> writes
             — blanks or 0 for <code>length_byte_order</code>, <code>crc_coverage</code>, <code>escape_mode</code>, and
             <code>tx_pad_length</code> mean "use the sensible default" / variable length):</p>
         <pre>profile_name           = Default
-parser_type            = framed              ← `framed`, `modbus_rtu`, or `waveshare_can`
+parser_type            = framed              ← `framed` or `waveshare_can`
 header_hex             = AA 55
 frame_id_size          = 2
 frame_id_byte_order    = little
@@ -2684,7 +2654,6 @@ escape_mode            =                     ← defaults to none
 raw_log_format         = hex                 ← `hex` = spaced, `compact` = contiguous
 inter_frame_delay_ms   = 10
 tx_pad_length          =                     ← variable-length TX (blank or 0 disables fixed padding)
-modbus_node_address    = 1                   ← Modbus slave address (ignored when parser_type = framed)
 enabled                = TRUE</pre>
 
         <hr>
@@ -2784,9 +2753,8 @@ enabled                = TRUE</pre>
                 <td><code>id_or_address</code></td>
                 <td>hex <em>(required)</em></td>
                 <td><code>0x0010</code></td>
-                <td>Frame ID (framed) or Modbus register address this signal lives in. If the ID is not declared in the
-                    Frames sheet, the loader auto-creates a frame named <code>Node 0x&lt;id&gt;</code> — convenient for
-                    Modbus configs that skip the Frames sheet entirely.</td>
+                <td>Frame ID this signal lives in. If the ID is not declared in the Frames sheet, the loader
+                    auto-creates a frame named <code>Node 0x&lt;id&gt;</code>.</td>
             </tr>
             <tr>
                 <td><code>signal_name</code></td>
@@ -2902,9 +2870,8 @@ enabled                = TRUE</pre>
         </div>
         <div class="note">
             <strong>Frame auto-creation.</strong> If <code>id_or_address</code> refers to a frame ID that does not exist
-            in the Frames sheet, the loader silently creates one named <code>Node 0x&lt;id&gt;</code>. This is the
-            recommended workflow for Modbus configs — declare your registers in Variables only and omit the Frames sheet
-            altogether.
+            in the Frames sheet, the loader silently creates one named <code>Node 0x&lt;id&gt;</code>. Declaring frames in the Frames
+            sheet is still recommended: it gives them names, a payload length check and a direction.
         </div>
         <p><strong>Bundled template content</strong> (showing the key columns; <code>read_write</code>,
             <code>min_value</code>, <code>max_value</code>, <code>description</code>, <code>enabled</code> omitted for
@@ -3239,7 +3206,7 @@ Cell Voltages | min|max|diff|avg   | V    | 0x2000   | TRUE</pre>
                 <td><code>id_or_address</code></td>
                 <td>hex <em>(required)</em></td>
                 <td><code>0x0090</code></td>
-                <td>Frame ID (or Modbus register address) of the outgoing packet. Must be non-empty; use a
+                <td>Frame ID of the outgoing packet. Must be non-empty; use a
                     <code>0x</code> prefix for clarity.</td>
             </tr>
             <tr>
@@ -3272,19 +3239,10 @@ Cell Voltages | min|max|diff|avg   | V    | 0x2000   | TRUE</pre>
         </div>
         <div class="note">
             <strong>Reusing Addresses for Telemetry and Commands:</strong>
-            Yes, you can (and often should) use the same <code>id_or_address</code> (frame ID or Modbus register
-            address) in both the <strong>Variables</strong> sheet (Sheet 3) and the <strong>TxCommands</strong> sheet
+            Yes, you can (and often should) use the same <code>id_or_address</code> (frame ID) in both the <strong>Variables</strong> sheet (Sheet 3) and the <strong>TxCommands</strong> sheet
             (Sheet 7).
-            <ul>
-                <li>In a custom <strong>framed</strong> protocol, telemetry variables you read from the device can share
-                    a frame ID with commands you write to the device. The device's firmware parses the frame ID to
-                    decide how to process it.</li>
-                <li>In a <strong>Modbus RTU</strong> protocol, a register address (like <code>0x1000</code>) represents
-                    a specific physical memory location on the slave device. You read its value by defining it in the
-                    <strong>Variables</strong> sheet and setting a poll interval in the <strong>PollingSchedule</strong>
-                    sheet. You write a value to it by defining a command with the same address in the
-                    <strong>TxCommands</strong> sheet.</li>
-            </ul>
+            Telemetry variables you read from the device can share a frame ID with commands you write to the
+            device; the device's firmware parses the frame ID to decide how to process it.
             Make sure that if you define a frame in the <strong>Frames</strong> sheet (Sheet 2) that is used for both RX
             and TX, its <code>direction</code> column is set to <code>rxtx</code> (which is the default). If it is set
             to <code>rx</code> (receive-only), the app will hide any TX commands using that frame ID to prevent
@@ -3412,7 +3370,7 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
                 <td><code>id_or_address</code></td>
                 <td>hex <em>(required)</em></td>
                 <td><code>0x0010</code></td>
-                <td>Frame ID (or Modbus register address) to request. Must be non-empty; bare values such as
+                <td>Frame ID to request. Must be non-empty; bare values such as
                     <code>0010</code> are treated as hex, so use a <code>0x</code> prefix for clarity.</td>
             </tr>
             <tr>
@@ -3730,6 +3688,12 @@ Energy    [Power]                         Wh    integral_hours</pre>
                 <td><code>merge_keep_csv</code></td>
                 <td><code>true</code></td>
                 <td>Also keep the merged CSV (opens about 100× faster in the Analysis Suite).</td>
+            </tr>
+            <tr>
+                <td><code>merge_kind</code></td>
+                <td><code>both</code></td>
+                <td>Which logs to merge: <code>event</code>, <code>fixed</code> (fixed-step) or <code>both</code>
+                    (default). A log the session does not have is skipped.</td>
             </tr>
         </table>
         <p>The merge option is also in <strong>Settings → Logging Settings</strong> (“Merge when logging
@@ -4056,10 +4020,6 @@ CAN Monitor    | waveshare_can  | AA         | 55         | TRUE</pre>
                 <code>tx_commands</code>, duplicate <code>enums</code> values, duplicate <code>bit_index</code>/labels
                 on the same bitfield signal, duplicate calculations, or duplicate polling schedules—the loader will
                 raise a validation <code>ConfigError</code> rather than silently overwriting.</li>
-            <li><strong>Modbus RTU Specifications:</strong> The Modbus RTU protocol specifies big-endian encoding for
-                register addresses and data values, and little-endian encoding for the CRC checksum. Custom
-                <code>byte_order</code> configurations in the Protocol sheet are ignored when
-                <code>parser_type = modbus_rtu</code> is selected.</li>
             <li><strong>Polling vs. Streaming:</strong> Do not enable <strong>Auto-Fetch (F10)</strong> on a device that
                 is already streaming data automatically (unsolicited). Sending poll requests to a streaming device will
                 cause transmission collisions and corrupt the incoming data packets.</li>

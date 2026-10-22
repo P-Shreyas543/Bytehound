@@ -175,7 +175,7 @@ def test_event_and_fixed_step_logs_carry_the_derived_columns(cfg, tmp_path):
         with (tmp_path / "sess" / seg["files"][key]).open(encoding="utf-8-sig", newline="") as fp:
             rows = list(csv.reader(fp))
         header = rows[0]
-        idx = next(i for i, h in enumerate(header) if h.endswith(col))
+        idx = header.index(f"0x1000.{col}")                  # same name in both logs
         values = [float(r[idx]) for r in rows[1:] if r[idx] != ""]
         assert values, (key, col)
         if col.startswith("Charge"):

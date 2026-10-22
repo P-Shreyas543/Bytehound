@@ -390,6 +390,8 @@ class ConfigLoaderMixin:
             s.setValue("logging/merge_on_stop", d.merge_on_stop)
         if d.merge_keep_csv is not None:
             s.setValue("logging/merge_keep_csv", "true" if d.merge_keep_csv else "false")
+        if d.merge_kind is not None:
+            s.setValue("logging/merge_kind", d.merge_kind)
         summary = d.summary()
         if summary:
             note = " (from the next session)" if getattr(self, "_logging", False) else ""

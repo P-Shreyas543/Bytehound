@@ -100,7 +100,8 @@ KNOWN_COLUMNS: Dict[str, Dict[str, str]] = {
     "derived": {"name": _T, "expression": _T, "unit": _T, "kind": _T, "frame_id": _T, "enabled": "bool",
                 "description": _T},
     "logging": {"segment_minutes": "int", "event_log": "bool", "fixed_step_s": _T, "stale_steps": "int",
-                "stale_values": _T, "merge_on_stop": _T, "merge_keep_csv": "bool"},
+                "stale_values": _T, "merge_on_stop": _T, "merge_keep_csv": "bool",
+                "merge_kind": _T},
 }
 
 def _typed(text: str, kind: str) -> Any:

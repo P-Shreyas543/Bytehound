@@ -85,7 +85,7 @@ directories. Branding files themselves are tracked.
 **Goal.** A hardware-agnostic desktop telemetry/control dashboard that:
 
 - Connects to a serial port (UART/USB).
-- Parses framed packets *or* Modbus RTU using a user-supplied Excel/CSV
+- Parses framed packets *or* Waveshare USB-CAN traffic using a user-supplied Excel/CSV
   config — no Python edits required.
 - Decodes raw bytes into named, scaled engineering values, enums, and
   bitfields.
@@ -140,7 +140,7 @@ Bytehound/
 │   │   └── template_io.py              # export blank template + snapshot config
 │   ├── protocol/
 │   │   ├── crc.py                      # CRC16/MODBUS, CRC16/CCITT, CRC32
-│   │   ├── packet_parser.py            # framed + Modbus RTU stream parsers
+│   │   ├── packet_parser.py            # framed + Waveshare CAN stream parsers
 │   │   └── packet_builder.py           # mirror of parser, for TX
 │   ├── serial_io/
 │   │   └── serial_worker.py            # QThread: open port, poll, RX/TX
@@ -229,7 +229,7 @@ signals/slots.
 ```
 serial.Serial.read(in_waiting)                       # capture process / worker thread
     ├─> RawCapture.write(RX, t_perf, bytes)          # while logging: lossless .bhraw
-    └─> ParserProtocol.feed(bytes)                   # FramedParser or ModbusRtuParser
+    └─> ParserProtocol.feed(bytes)                   # FramedParser or WaveshareCanParser
          └─> ParsedPacket  (raw, frame_id, payload, ok, error)
               └─> decode_frame(config, ...) -> DecodedFrame
                    └─> packets_received([(packet, decoded, rx_perf), ...])   # batched
@@ -298,7 +298,7 @@ aliases:
 | `escape_mode`           | enum    | Only `none` is supported                               |
 | `raw_log_format`        | str     | `hex` (spaced) or `compact` (contiguous) — drives RawLogger hex column |
 | `enabled`               | bool    | Default true                                           |
-| `parser_type`           | enum    | `framed` (default) \| `modbus_rtu`                     |
+| `parser_type`           | enum    | `framed` (default) \| `waveshare_can` \| `waveshare_can_20_bytes` |
 | `tx_pad_length`         | int?    | Pad TX to this many bytes (optional; 0, blank, or unset = variable-length TX) |
 | `inter_frame_delay_ms`  | int     | Default 10                                             |
 
@@ -320,7 +320,7 @@ If `frames` is omitted, frame definitions are auto-derived from `variables`.
 
 | Column          | Type  | Notes                                                                                  |
 |-----------------|-------|----------------------------------------------------------------------------------------|
-| `id_or_address` | hex   | Frame ID (framed) or register address (Modbus)                                         |
+| `id_or_address` | hex   | Frame ID                                                                               |
 | `signal_name`   | str   | Required, unique within frame                                                          |
 | `data_type`     | enum  | `uint8 \| int8 \| uint16 \| int16 \| uint32 \| int32 \| float32 \| float64 \| single \| double`            |
 | `count`         | int   | Default 1; >1 expands into `name 1`, `name 2`, … with consecutive byte offsets         |
@@ -329,7 +329,7 @@ If `frames` is omitted, frame definitions are auto-derived from `variables`.
 | `offset`        | float | Default 0.0                                                                            |
 | `unit`          | str   | Display unit                                                                           |
 | `group`         | str   | Used by `calc_groups`                                                                  |
-| `register_type` | str   | Modbus register class (informational)                                                  |
+| `register_type` | str   | Informational only (not used by the decoder)                                           |
 | `read_write`    | str   | `R` (default) \| `W` \| `RW`                                                           |
 | `min_value`     | float?| For UI clamping                                                                        |
 | `max_value`     | float?| For UI clamping                                                                        |
@@ -412,7 +412,7 @@ fields are bit-packed sequentially into byte flags (up to 8 bits per byte).
 
 | Column          | Type | Notes                                                    |
 |-----------------|------|----------------------------------------------------------|
-| `id_or_address` | hex  | Target frame ID (framed) or register addr (Modbus)       |
+| `id_or_address` | hex  | Target frame ID                                          |
 | `interval_ms`   | int  | Polling cadence                                          |
 | `timeout_ms`    | int  | Per-request response wait                                |
 | `enabled`       | bool | Default true                                             |
@@ -514,6 +514,7 @@ running session is not changed.
 | `stale_values`    | enum   | `logging/stale_policy`: `hold` \| `blank`            |
 | `merge_on_stop`   | enum   | `logging/merge_on_stop`: `none` \| `one` \| `day`     |
 | `merge_keep_csv`  | bool   | `logging/merge_keep_csv`                             |
+| `merge_kind`      | enum   | `logging/merge_kind`: `event` \| `fixed` \| `both` (default; logs the session lacks are skipped) |
 
 With `merge_on_stop` set, stopping a session waits for its background
 finishing, then runs `merge_job` in a child process (`MergeRunner`) into
@@ -554,12 +555,13 @@ Algorithm (`FramedParser._try_parse_one`):
 8. On any mismatch, emit `ParsedPacket(ok=False, error=...)` and **advance by 1 byte**
    (resync). On success, advance by full frame size.
 
-### 6.2 Modbus RTU parser
+### 6.2 Waveshare USB-CAN parser
 
-Lightweight implementation supporting function codes 3, 4, 6, 16 and exception
-responses (FC ≥ 0x80). CRC is fixed at CRC16/MODBUS, byte order little-endian.
-Parser returns the slave address as `frame_id`; the worker rewrites it to the
-register address for downstream decoding.
+`WaveshareCanParser` reads the Waveshare USB-CAN-A serial protocols:
+variable length (`waveshare_can`, 0xAA … 0x55) and fixed 20 bytes
+(`waveshare_can_20_bytes`, 0xAA 0x55 … checksum). The CAN ID becomes the
+`frame_id`. (Modbus RTU was removed; `parser_type = modbus_rtu` is rejected
+at load time.)
 
 ### 6.3 CRC implementations ([app/protocol/crc.py](../app/protocol/crc.py))
 
@@ -572,12 +574,6 @@ register address for downstream decoding.
 
 Mirror of the parser. Inputs: `ProtocolConfig`, `frame_id`, `payload`. Output:
 fully wrapped bytes ready to write to the wire.
-
-For Modbus, `build_modbus_packet`:
-
-- Empty payload → FC 03 read, qty=1.
-- 2-byte payload → FC 06 single-register write.
-- Larger payload → FC 16 multi-register write.
 
 `tx_pad_length` (if set and > 0) zero-pads `coverage` (header..payload) before CRC so
 every TX frame is exactly `tx_pad_length` bytes on the wire — required for
@@ -665,8 +661,7 @@ individual schedule rows at runtime via `toggle_schedule(target_id, enabled)`.
 Each iteration, **in this priority order**:
 
 1. **Priority TX**: drain at most one entry from the priority TX queue, write
-   it, emit `tx_recorded`. For Modbus, block briefly to await the response so
-   the next request doesn't collide.
+   it, emit `tx_recorded`.
 2. **Polling**: if `_polling_global_enabled` is true *and* the boot-grace gate
    has cleared (see below), scan the schedule list **round-robin** starting at
    `_sched_cursor`, find the first enabled schedule whose `next_run <= now`,
@@ -1186,8 +1181,9 @@ panels independently of the main window.
   for float types. Pressing Enter submits the write. Writable range shown in
   tooltip. If no writable signals are defined, a spanning informational row
   is shown instead of a blank table.
-  Write is currently implemented for **Modbus RTU** only; framed-protocol write
-  shows a not-yet-implemented popup.
+  A write builds a complete framed packet for the signal's frame (header,
+  length, CRC, footer per the Protocol sheet) and is recorded in the
+  Activity Log with the raw hex.
 - **Live Plot** (multi-grid `pg.GraphicsLayoutWidget`):
 
   #### Architecture
@@ -1562,7 +1558,6 @@ Pytest suite under `tests/`. Required coverage:
 - `test_packet_builder.py` / `test_packet_parser.py` — round-trip a built
   packet through the parser; CRC mismatch is rejected; truncated input waits;
   garbage prefix is resynced.
-- `test_modbus_framing.py` — FC 03/04/06/16 and exception responses.
 - `test_frame_decoder.py` — short-payload status, scaling, enum lookup,
   bitfield split, calculated groups.
 - `test_calculations.py` — each stat (`min/max/diff/sum/avg`).

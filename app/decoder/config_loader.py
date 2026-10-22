@@ -229,6 +229,7 @@ def _parse_logging(rows: List[Dict[str, str]]) -> Optional[LoggingDefaults]:
         stale_values=choice("stale_values", ("hold", "blank")),
         merge_on_stop=choice("merge_on_stop", ("none", "one", "day")),
         merge_keep_csv=flag("merge_keep_csv"),
+        merge_kind=choice("merge_kind", ("event", "fixed", "both")),
     )
 
 

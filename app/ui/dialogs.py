@@ -544,7 +544,10 @@ class LoggingSettingsDialog(QDialog):
             "When logging stops, join the session's hourly files for analysis "
             "(as Tools > Merge Session), in the background.")
         self._merge_csv_chk = QCheckBox("Keep the merged CSV (opens ~100x faster in the Analysis Suite)", self)
+        self._merge_kind_combo = QComboBox(self)
+        self._merge_kind_combo.addItems(["Event + fixed-step logs", "Event log", "Fixed-step log"])
         form.addRow("Merge when logging stops", self._merge_combo)
+        form.addRow("Logs to merge", self._merge_kind_combo)
         form.addRow("", self._merge_csv_chk)
         layout.addLayout(form)
 
@@ -607,6 +610,8 @@ class LoggingSettingsDialog(QDialog):
         merge = str(s.value("logging/merge_on_stop", "none"))
         self._merge_combo.setCurrentIndex({"one": 1, "day": 2}.get(merge, 0))
         self._merge_csv_chk.setChecked(flag("logging/merge_keep_csv", True))
+        kind = str(s.value("logging/merge_kind", "both"))
+        self._merge_kind_combo.setCurrentIndex({"event": 1, "fixed": 2}.get(kind, 0))
 
     def _on_accept(self) -> None:
         self._settings.setValue("logging/level", self._level_combo.currentText())
@@ -625,6 +630,7 @@ class LoggingSettingsDialog(QDialog):
         s.setValue("logging/disk_stop_gb", self._disk_stop_spin.value())
         s.setValue("logging/merge_on_stop", ("none", "one", "day")[self._merge_combo.currentIndex()])
         s.setValue("logging/merge_keep_csv", "true" if self._merge_csv_chk.isChecked() else "false")
+        s.setValue("logging/merge_kind", ("both", "event", "fixed")[self._merge_kind_combo.currentIndex()])
         self.accept()
 
     def get_values(self) -> Tuple[str, float]:

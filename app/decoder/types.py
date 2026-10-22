@@ -427,6 +427,7 @@ class LoggingDefaults:
     stale_values: Optional[str] = None          # hold | blank
     merge_on_stop: Optional[str] = None         # none | one | day
     merge_keep_csv: Optional[bool] = None
+    merge_kind: Optional[str] = None            # event | fixed | both
 
     def summary(self) -> str:
         parts = []
@@ -445,6 +446,9 @@ class LoggingDefaults:
                           "day": "merge per day at stop"}[self.merge_on_stop])
         if self.merge_keep_csv is not None:
             parts.append("keep merged CSV" if self.merge_keep_csv else "no merged CSV")
+        if self.merge_kind is not None:
+            parts.append({"both": "merge event + fixed-step logs", "event": "merge the event log",
+                          "fixed": "merge the fixed-step log"}[self.merge_kind])
         return ", ".join(parts)
 
 
