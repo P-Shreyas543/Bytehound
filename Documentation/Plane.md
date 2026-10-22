@@ -425,6 +425,13 @@ Opening the session folder (`session.json`) remains the fastest route for
 whole recordings: 65 h in 6.6 s, any hour in 24 ms. 5 tests. The owner's
 soak exports were regenerated with their CSVs.
 
+**Release v1.2.4 FINAL BUILD (2026-10-23)** from 6d926c8 (+ sha commit
+dfcdfd7): adds per-session log.txt and the title-bar filter fix to the
+previous rebuild. Installer SHA-256 `fa0c90d8…` = version.json; release exe:
+title v1.2.4, start/close with no errors in its log, `--selftest-merge`,
+`--selftest-finish`, `--selftest-capture` PASS, no leftover processes. Full
+suite on the code: 951 passed. Supersedes both earlier builds.
+
 **Release v1.2.4 REBUILT (2026-10-22, later the same day)** from f187d99 (+
 sha commit 6dbaf4d) to include the Restore-crash fix, live-plot U1/U2 and
 the Analysis Suite loading work: installer SHA-256 `4c664e35…` = version.json;
