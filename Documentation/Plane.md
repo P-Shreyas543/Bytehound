@@ -425,8 +425,13 @@ passes one Excel sheet or gets slow to open), merge in a **child process**
 per segment, every 10,000 rows and inside the xlsx compiler; a cancelled or
 failed merge removes everything it wrote). Logic moved to
 `app/serial_logging/session_merge.py`; the CLI tool is a thin wrapper. 14
-tests (incl. the real child process, cancel, refusals). Frozen-build check
-of the menu action: NOT RUN. Also converted for the owner: an unfinished
+tests (incl. the real child process, cancel, refusals). **Frozen build
+verified (commit d1a2071, PyInstaller):** `Bytehound.exe --selftest-merge`
+PASS (merge in a child of the exe, xlsx with every row), together with
+`--selftest-finish`, `--selftest-capture`, `--validate` (Ather, value-rule
+migration) PASS, GUI start/close OK, no leftover processes, portable title
+from the bundled version.json. The menu dialog itself was not clicked in
+the frozen build (same code path as the self-test below the dialog). Also converted for the owner: an unfinished
 v1.2.3 single-file log (`EKF_SoC_Cycles.xlsx.tmp_data`, 341,319 rows,
 ~47.4 h) compiled to xlsx with the app's recovery compiler — all rows
 present.
