@@ -409,6 +409,18 @@ New test `test_job_that_finishes_while_being_stopped_keeps_its_result`
 (fails without the fix, passes with it); the session timeout test now uses
 jobs that really hang instead of racing a 0.1 ms timeout against real ones.
 
+**Release v1.2.4 built (2026-10-22, not yet published)** — `python build.py
+--release` from a clean tree at 49b7c0e (+ the sha commit 80a8a3d):
+`installer_output/Bytehound_Setup_1.2.4.exe` 65.2 MB, SHA-256
+`0af060db…` = `version.json`; `dist/Bytehound_1.2.4.zip` 110.3 MB. Release
+exe checked: title v1.2.4, start/close, `--selftest-merge`, `--selftest-finish`,
+`--selftest-capture`, `--validate` PASS, no leftover processes. The installer
+itself was not run here (same AppId as the copy installed on this PC — it
+would replace it). Release notes in `version.json` (short) and
+`Documentation/release_notes_draft.md` (full). Soak evidence covers the C4
+code (65 h); later changes covered by the full suite (937) and frozen
+self-tests only. Publishing (push, tag, upload) is the owner's step.
+
 **Session merge for analysis (2026-10-22, owner request)** —
 `tools/merge_session.py <session> [--split day] [--kind fixed] [--csv]`
 joins a session's hourly segment CSVs in order and compiles one workbook (or
