@@ -250,19 +250,32 @@ device; `tools/hil/net_device.py` + `tools/hil/net_hil.py`)
       pass, 2× except/continue (code quality, not addressed in this pass),
       subprocess use (reviewed: installer launch, fixed argv, no shell)
 - [ ] Scoped mypy — NOT RUN (no project configuration)
-- [ ] 24 h soak — **RUNNING** (started 2026-10-19 afternoon) on a separate
-      lab PC: **`Bytehound_Setup_1.2.4.exe`** (installer SHA-256
-      5787911b…fa230b60, built 15:31 by the owner with `build.py`). Its app
-      code is exactly the C4 commit (no app file changed after the build;
-      full suite on that code: 880 passed); bundled manual is the pre-update
-      text. Real BMS, Blue01-style config, Waveshare USB-CAN at 2 Mbaud.
-      Owner cannot run extra tooling: judged on session.json (segment
-      status, gaps, integrity counters), bytehound.log, end status-bar
-      screenshot and, if provided, Task Manager memory at start and end
-      (otherwise memory trend = NOT MEASURED). F12 not exercised (no
-      sequence counters in that config). Also asked: do 0x1F0
-      Balancing_Status / BMS_Operation_State ever decode (C2 finding).
-      The earlier zip (4fe6e7d) was superseded before it ran. Result: pending
+- [x] **Soak — PASS for the tested configuration (analysed 2026-10-22):**
+      **65.3 h** (2026-10-19 10:06 → 10-22 03:24 UTC), app 1.2.4 installer
+      build (app code = C4 commit), real BMS over **RS485 serial, COM3 @
+      115,200 baud** (not CAN — corrected), config
+      `Blue01_M_4836_RS485_config.xlsx` (framed AA 55, **crc none**, 9
+      frames, 67 signals; validates with no warnings; no frame 0x1F0, so the
+      C2 0x1F0 question does not apply). Load: **18.0 frames/s** in every
+      segment (light: ~370 B/s). Results: **66/66 segments `closed`**, 0
+      gaps, 0 events, session closed by Stop (last heartbeat 8 s before),
+      **4,231,307 frames, 0 rejected / discarded / parse errors / driver
+      errors / missed polls / log errors / dropped rows**; read-loop gap max
+      **47 ms**; segment joins 8–19 ms; 470,146 log rows, timestamps never
+      backwards, largest row gap **0.534 s** (cadence 0.5 s) → no stall in
+      65 h; every file present with the recorded size and SHA-256; CSV and
+      sampled xlsx row counts = manifest; analysis caches + summary present.
+      **Raw capture re-parsed independently: 4,231,314 frames, 0 bad** — the
+      decoded log holds the same (470,146 cycles × 9 frames). **Finding
+      (Low):** the per-segment integrity counters come from the periodic
+      snapshot (~10/s via the GUI thread), so they lag the exact rotation /
+      stop moment by a fraction of a second; here 124 bytes (~6 frames,
+      ~0.3 s) are uncounted in the counters — not missing from the raw
+      capture or the log. Fix candidate: take a fresh snapshot at rotation
+      and stop. **NOT MEASURED:** memory / handle trend (no Task Manager
+      figures or `bytehound.log` in the hand-over), UI responsiveness during
+      the run. **Limits:** one configuration, low frame rate, CRC off (a
+      corrupted value with intact framing would not be detectable)
 
 **Part C — canonical configuration (started 2026-10-19)**
 
