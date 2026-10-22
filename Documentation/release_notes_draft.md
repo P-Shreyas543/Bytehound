@@ -70,11 +70,16 @@ Version number to confirm before publishing (see the end of this file).
   straight line across them.
 - On/off, enum and bitfield signals are drawn as steps.
 - A panel no longer draws a third unit against the wrong axis.
+- A signal that stops arriving is drawn dashed with "(no data for N s)" in
+  the legend; periods with a lost connection are shaded.
 
 ### Analysis Suite
 
 - Opens months-long logging sessions quickly; exact statistics for any
   range; math channels on sessions.
+- Loading shows progress (file, rows read) with Cancel; a workbook with a
+  CSV beside it is loaded from the CSV (~100x faster); workbooks keep
+  clock time.
 
 ### Reliability and security
 
@@ -88,7 +93,8 @@ Version number to confirm before publishing (see the end of this file).
 
 - 65-hour run on a real BMS (RS485, 115,200 baud): 4.23 million frames,
   zero errors, every hourly segment closed and complete.
-- Automated test suite: 926 tests passing.
+- Automated test suite: 949 tests (948 passing in the last full run; one
+  timing-sensitive test failed once under load and passes when re-run).
 
 ### Known limitations
 
