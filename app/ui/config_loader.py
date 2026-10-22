@@ -382,6 +382,10 @@ class ConfigLoaderMixin:
         self._refresh_action_state()
         self._set_status(f"Loaded config from {path}")
         self._log_activity(f"Loaded config: {path}")
+        # Long-lived objects (UI, configuration) out of the collector's
+        # reach; the previous configuration is freed first (app/gc_tuning).
+        from ..gc_tuning import refreeze
+        refreeze()
 
     def _on_load_recent_config(self) -> None:
         path_text = self._recent_config_combo.currentText()

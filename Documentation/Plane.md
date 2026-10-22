@@ -1041,10 +1041,26 @@ performance → L3 UX (owner picks).
       now; existing plot / buffer tests unchanged and passing; offscreen
       screenshot: Pack Voltage breaks at the 8–12 s outage, BMS State drawn
       as steps ending at its last sample
-- [ ] L2 performance — required by L0 (M1, M3): send each curve at most
-      ~2 points per screen pixel column (min/max per bucket, so spikes stay
-      visible) instead of every sample, and re-decimate "All session" only
-      when its view changes; target: gate met with the plot running
+- [~] **L2 performance (2026-10-22) — PARTIAL: gate met on a quiet PC, not
+      under background load.** Changes: (1) curves drawn at screen
+      resolution — `peak_decimate` keeps min/max per bucket and every gap
+      (0.28 ms for 180k samples), pyqtgraph gets ~2 points per pixel
+      column; Explore re-reduces the visible range shortly after pan/zoom,
+      so zooming in shows every sample; (2) the live X range is moved only
+      when it shifts ≥ 1 pixel (setXRange cascaded through all 8 linked
+      panels' layout on every redraw — the 302 ms stall); (3) redraws paced
+      by one pixel of time (10–30 per s) and ≤ 4× their own cost; (4)
+      `app/gc_tuning.refreeze()` on configuration activation: long-lived
+      objects frozen out of full collections (gen-2 pauses 40–58 ms → 23–37
+      ms), previous configuration freed (tested). **Probe, 3,000 fps, 15
+      signals, 5-min window, 3 × 60 s:** before L2 p99 83–89 / max 134–257;
+      after: p99 **38.9** / 50.2 / 82.9 ms, max 130 / 262 / 177 ms, redraw
+      p50 4.9 / 6.9 / 13.7 ms — the spread follows background load (system
+      busy 22 / 32 / 47 %; the app uses ~1 core: capture thread and GUI share
+      Python's GIL). Same load with no plot: p99 21 ms. 12 new tests.
+      Further options (not done): incremental (cached) reduction per curve;
+      capture process mode. Real BMS rates (18 fps in the soak) are ~170×
+      lighter than this load
 - [ ] L3 UX (U1–U5; owner chooses)
 
 ## Objective

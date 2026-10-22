@@ -256,6 +256,58 @@ class TimeSeriesBuffer:
         return xs[i:], ys[i:]
 
 
+def peak_decimate(x: np.ndarray, y: np.ndarray, max_points: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Reduce (x, y) to about ``max_points`` points for drawing (live plot L2).
+
+    Each bucket of consecutive samples becomes two points — its minimum and
+    maximum, at the bucket's first and last x — so spikes stay visible at any
+    zoom. NaN break points (gaps, P1) are kept: every piece between them is
+    reduced on its own and the breaks are carried through, so a gap is never
+    bridged. Series already short enough are returned unchanged (no copy).
+    pyqtgraph then handles a few thousand points per curve instead of every
+    sample in the window (L0: that cost ~11 ms per redraw at 3,000 frames/s).
+    """
+    n = len(x)
+    if n <= max_points or max_points < 4:
+        return x, y
+    nan_idx = np.flatnonzero(np.isnan(y))
+    starts = np.concatenate(([0], nan_idx + 1))
+    ends = np.concatenate((nan_idx, [n]))
+    buckets_total = max_points // 2
+    out_x: List[np.ndarray] = []
+    out_y: List[np.ndarray] = []
+    for k_piece, (a, b) in enumerate(zip(starts, ends, strict=True)):
+        m = int(b - a)
+        if m > 0:
+            xs, ys = x[a:b], y[a:b]
+            k = max(1, int(buckets_total * m / n))
+            if m <= 2 * k:
+                out_x.append(xs)
+                out_y.append(ys)
+            else:
+                per = m // k
+                t = per * k
+                yy = ys[:t].reshape(k, per)
+                xx = xs[:t].reshape(k, per)
+                px = np.empty(2 * k)
+                py = np.empty(2 * k)
+                px[0::2] = xx[:, 0]
+                px[1::2] = xx[:, -1]
+                py[0::2] = yy.min(axis=1)
+                py[1::2] = yy.max(axis=1)
+                out_x.append(px)
+                out_y.append(py)
+                if t < m:                                # leftover samples: one more min/max pair
+                    tail = ys[t:]
+                    out_x.append(np.array([xs[t], xs[-1]]))
+                    out_y.append(np.array([tail.min(), tail.max()]))
+        if k_piece < len(nan_idx):                       # carry the break through
+            i = int(nan_idx[k_piece])
+            out_x.append(x[i:i + 1])
+            out_y.append(y[i:i + 1])
+    return np.concatenate(out_x), np.concatenate(out_y)
+
+
 # Backwards-compatible alias for any code still importing the old name.
 _RingBuffer = TimeSeriesBuffer
 

@@ -43,6 +43,7 @@ from .plot_panel import (
     _TimeAxisItem,
     _configure_live_curve,
     _format_elapsed_time,
+    peak_decimate,
 )
 from .analysis_widgets import OverlayViewBox
 
@@ -336,6 +337,7 @@ class PlotOrchestrationMixin:
         QSettings (used on startup).  Otherwise assigned keys from the old
         panels are redistributed across new panels in order.
         """
+        self._plot_applied_x = None
         if pg is None or self._gl_widget is None:
             return
 
@@ -919,6 +921,7 @@ class PlotOrchestrationMixin:
         """
         if self._plot_range_changing or not getattr(self, "_initial_show_done", True):
             return
+        self._plot_applied_x = None          # the view now differs from what Live last applied
         self._plot_range_changing = True
         try:
             if self._plot_panels:
@@ -931,6 +934,19 @@ class PlotOrchestrationMixin:
             # User pan/zoom is functionally the same as Pausing.
             self._set_plot_live(False, source="pan")
             self._log_activity("[ACTION] Plot switched to Explore mode (user pan/zoom)")
+        # Re-reduce the curves for the new range shortly after the user stops
+        # panning/zooming (curves are drawn at screen resolution, L2); also
+        # when no data is arriving.
+        timer = getattr(self, "_explore_redraw_timer", None)
+        if timer is None:
+            from PySide6.QtCore import QTimer
+
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(80)
+            timer.timeout.connect(self._redraw_plot)
+            self._explore_redraw_timer = timer
+        timer.start()
 
     def _set_plot_live(self, live: bool, *, source: str = "") -> None:
         """Single source of truth for ``_plot_live`` + the tri-state button.
@@ -945,6 +961,7 @@ class PlotOrchestrationMixin:
         pan/zoom during the previous freeze. X-axis range is left to
         _redraw_plot so the data-aware window logic stays centralised.
         """
+        self._plot_applied_x = None          # Live must re-apply its X range in full
         was_live = self._plot_live
         self._plot_live = live
         if live and not was_live and pg is not None and self._plot_panels:
@@ -1171,6 +1188,17 @@ class PlotOrchestrationMixin:
         # visible regardless of the current Window dropdown setting.
         window_t_min = self._visible_window_t_min() if self._plot_live else None
 
+        # Draw at most ~2 points per pixel column per curve (L2). In Explore
+        # the visible X range is reduced on its own, so zooming in shows full
+        # detail; the range is part of the skip signature.
+        first_vb = self._plot_panels[0].plot_item.getViewBox()
+        width_px = float(first_vb.width()) if first_vb is not None else 0.0
+        max_points = max(500, int(2 * width_px)) if width_px > 0 else 4000
+        view_x: Optional[Tuple[float, float]] = None
+        if not self._plot_live and first_vb is not None:
+            x0, x1 = first_vb.viewRange()[0]
+            view_x = (float(x0), float(x1))
+
         color_offset = 0
         # Track the oldest sample we want to *show*. For finite windows this
         # is just window_t_min; for "All session" it is the first sample we
@@ -1366,7 +1394,8 @@ class PlotOrchestrationMixin:
                 # hidden by the X range and clipToView; they are trimmed from
                 # the curve data on its next real update.
                 last_x = buf.last_x() if (buf is not None and xs_len) else None
-                signature = (xs_len, last_x, window_t_min is None, self._plot_window_seconds)
+                signature = (xs_len, last_x, window_t_min is None, self._plot_window_seconds,
+                             max_points, view_x)
                 if getattr(curve, "_bh_last_sig", None) == signature:
                     continue
 
@@ -1383,11 +1412,17 @@ class PlotOrchestrationMixin:
                     x_values, y_values = buf.arrays_since(window_t_min)
                 else:
                     x_values, y_values = buf.arrays()
+                    if view_x is not None and len(x_values) > max_points:
+                        # Explore: only the visible range (+1 sample each side).
+                        i0 = max(0, int(np.searchsorted(x_values, view_x[0])) - 1)
+                        i1 = int(np.searchsorted(x_values, view_x[1], side="right")) + 1
+                        x_values, y_values = x_values[i0:i1], y_values[i0:i1]
+                x_values, y_values = peak_decimate(x_values, y_values, max_points)
 
                 try:
                     curve.setData(
                         x_values, y_values,
-                        autoDownsample=True,
+                        autoDownsample=False,  # reduced above (L2)
                         clipToView=True,
                         connect="finite",     # break at gaps (NaN points, P1 / P4)
                     )
@@ -1429,7 +1464,16 @@ class PlotOrchestrationMixin:
                     x_min = oldest_x or 0.0
                     span = max(current_t - x_min, _PLOT_INITIAL_WINDOW_S)
                     x_max = x_min + span * 1.05
-                first_pi.setXRange(x_min, x_max, padding=0)
+                # Move the axis only when it shifts by at least one pixel
+                # (L2): setXRange cascades through every X-linked panel's
+                # layout and axes, and a 5 min window on ~900 px moves one
+                # pixel every ~0.3 s — most 30 Hz updates changed nothing.
+                last = getattr(self, "_plot_applied_x", None)
+                px = (x_max - x_min) / max(1.0, width_px)
+                self._plot_pixel_time_s = px          # paces the redraws (_plot_redraw_due)
+                if last is None or abs(last[0] - x_min) >= px or abs(last[1] - x_max) >= px:
+                    first_pi.setXRange(x_min, x_max, padding=0)
+                    self._plot_applied_x = (x_min, x_max)
             finally:
                 self._plot_range_changing = False
 

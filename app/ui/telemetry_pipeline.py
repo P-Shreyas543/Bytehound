@@ -91,6 +91,23 @@ class TelemetryPipelineMixin:
             out.append((packet, decoded, rx_perf))
         return out
 
+    def _plot_redraw_due(self, now: float) -> bool:
+        """When the live plot redraws (L2):
+
+        * at most 30 times a second;
+        * no more often than one pixel column of time: in a 5-minute window
+          a pixel is ~0.3 s of data, so 30 redraws a second recomputed the
+          same pixels ~10 times (capped at 10 redraws a second, so the
+          newest point never lags by more than 0.1 s);
+        * never more often than four times the last redraw's cost, so a
+          heavy plot (many signals, hours of "All session") uses at most
+          ~25 % of the GUI thread.
+        """
+        cost = getattr(self, "_plot_redraw_cost_s", 0.0)
+        pixel = min(getattr(self, "_plot_pixel_time_s", 0.0), 0.1)
+        interval = max(self._plot_redraw_interval_s, pixel, 4.0 * cost)
+        return (now - self._plot_last_redraw) >= interval
+
     def _on_packets_received(self, batch: list) -> None:
         """Slot called by the worker's batch signal. Queues for the 60Hz UI timer.
 
@@ -250,8 +267,10 @@ class TelemetryPipelineMixin:
         self._table_model.commit_staged()
         # Redraw the plot once for the entire batch.
         now = time.monotonic()
-        if (now - self._plot_last_redraw) >= self._plot_redraw_interval_s:
+        if self._plot_redraw_due(now):
+            t0 = time.perf_counter()
             self._redraw_plot()
+            self._plot_redraw_cost_s = time.perf_counter() - t0
             self._plot_last_redraw = now
         # Invalidate the hover crosshair cache now that plot_history has changed
         if hasattr(self, "_hover_cache"):
