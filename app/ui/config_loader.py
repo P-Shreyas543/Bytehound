@@ -106,28 +106,6 @@ class ConfigLoaderMixin:
 
         dlg.exec()
 
-    def _on_export_excel_template(self) -> None:
-        """File → Export Config Template (Excel)…"""
-        from ..decoder.template_io import export_excel_template
-
-        self._log_activity("[ACTION] Export Excel template")
-        target_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Save Bytehound Config Template",
-            "bytehound_config_template.xlsx",
-            "Excel Workbook (*.xlsx);;All Files (*.*)",
-        )
-        if not target_path:
-            return
-
-        try:
-            export_excel_template(None, target_path)
-            self._popup_info("Template Exported", f"Successfully created template at:\n{target_path}")
-            self._log_activity(f"Exported template to: {target_path}")
-        except Exception as exc:
-            self._popup_critical("Export Failed", f"Could not create template: {exc}")
-            self._log_activity(f"Failed to export template: {exc}")
-
     def _on_load_config(self) -> None:
         self._log_activity("[ACTION] Load config (file dialog)")
         # Start picker at the directory of the currently-loaded config, or current working dir.
@@ -292,7 +270,7 @@ class ConfigLoaderMixin:
         current = getattr(self, "_config_fingerprint", None)
         entries = [e for e in self._config_history().entries() if e.fingerprint != current]
         if not entries:
-            self._popup_info("Restore Configuration", "No earlier configuration is stored yet.")
+            self._popup_information("Restore Configuration", "No earlier configuration is stored yet.")
             return
         labels = [e.label for e in entries]
         choice, ok = QInputDialog.getItem(self, "Restore Configuration",
