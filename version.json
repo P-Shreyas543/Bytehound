@@ -1,17 +1,17 @@
 {
-    "version": "1.2.3",
-    "document_version": "1.2.3",
+    "version": "1.2.4",
+    "document_version": "1.2.4",
     "Developer": "Shreyas P",
     "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "DECIBELS LAB PRIVATE LIMITED",
     "publisher_webpage": "https://lms.decibelslab.com/",
-    "build_date": "2026-08-28",
+    "build_date": "2026-10-22",
     "license": "MIT",
     "license_url": "https://bytehound.shreyasp182002.workers.dev/LICENSE",
     "homepage": "https://bytehound.shreyasp182002.workers.dev/",
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
-    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.2.3.exe",
-    "release_notes": "v1.2.3 Release - Waveshare CAN Variable-Length Renaming, Dedicated 20-Byte Preset & Self-Healing Stream Resynchronization.\n\nChanges:\n  - Explicit 'waveshare_can_variable_length' Parser: Renamed parser type identifier across all UI dialogs, wizards, and Excel template validators for maximum clarity while preserving full backward compatibility with 'waveshare_can'.\n  - Out-of-the-Box Fixed 20-Byte Preset: Added dedicated 'Waveshare USB-CAN (Fixed 20-Byte)' preset to the preset catalog and Welcome Dashboard for 1-click loading.\n  - Self-Healing Sliding-Window Resync: Enhanced fixed 20-byte CAN parser with dynamic boundary sliding window recovery (k=19 byte detection) so physical line drops or high-baud FIFO glitches immediately re-align on the next packet without cascading checksum errors.\n  - Startup Serial Buffer Purge: Automatically flushes serial input buffers upon opening COM ports to eliminate cold-boot stale byte fragments.\n  - Robust Logging Timestamps: Bulletproofed timestamp ingestion across Raw and Decoded loggers to seamlessly support datetime, epoch floats, and automatic clock fallbacks.\n  - High-DPI Warning Cleanup: Suppressed benign Qt Windows GDI platform display enumeration warnings.",
-    "sha256": "6c1d785744697fbc22e25467ad7f8aefc4656b73ff35fc00d6a7bcc6a64677d6"
+    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.2.4.exe",
+    "release_notes": "v1.2.4 Release - Long-duration logging, data-integrity checks and safer configuration changes.\n\nChanges:\n  - Recordings are now sessions split into hourly files; logging survives unplugs and reconnects.\n  - New: Tools > Merge Session joins a session into one workbook or one per day.\n  - Optional fixed-step log and lossless raw capture; crash-safe recording.\n  - Every received byte accounted for; optional sequence counters detect lost frames.\n  - Import preview, restore previous configuration, configuration fingerprint in every log.\n  - Activating a configuration while connected now takes effect immediately.\n  - Live plot shows gaps as gaps and states as steps, and stays responsive with many signals.\n  - Fixes for silent data-loss cases and an override of frame 0x101 signals in every configuration.\n  - Verified: 65 h on a real BMS, 4.23 M frames, zero errors.",
+    "sha256": "5787911b5bd4a842beddab82c3ead952f0fadf8191e9b21260d6943bfa230b60"
 }
