@@ -214,6 +214,11 @@ class UIBuildersMixin:
         self._rebuild_log_action.setToolTip("Regenerate a decoded log from a raw capture (.bhraw)")
         self._rebuild_log_action.triggered.connect(self._on_rebuild_decoded_log)
 
+        self._merge_session_action = QAction(_icon("mdi6.table-merge-cells", _ic), "Merge Session...", self)
+        self._merge_session_action.setToolTip(
+            "Join a session's hourly segments into one workbook, or one per day, for analysis")
+        self._merge_session_action.triggered.connect(self._on_merge_session)
+
         self._plot_settings_action = QAction(_icon("mdi6.chart-line", _ic), "Plot Settings...", self)
         self._plot_settings_action.triggered.connect(self._on_plot_settings)
 
@@ -262,6 +267,7 @@ class UIBuildersMixin:
         tools_menu.addAction(self._analysis_action)
         tools_menu.addAction(self._logging_settings_action)
         tools_menu.addAction(self._rebuild_log_action)
+        tools_menu.addAction(self._merge_session_action)
         tools_menu.addAction(self._plot_settings_action)
         _add_sep()
 

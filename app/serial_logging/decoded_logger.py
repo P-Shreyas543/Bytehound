@@ -779,13 +779,21 @@ def _typed_cell(cell: str) -> Any:
         return cell
 
 
+class CompileCancelled(Exception):
+    """``compile_csv_to_xlsx`` was asked to stop; nothing was written."""
+
+
 def compile_csv_to_xlsx(
-    data_path: Path, metadata: Mapping[str, Any], target_path: Path
+    data_path: Path, metadata: Mapping[str, Any], target_path: Path,
+    progress: Optional[Callable[[int], None]] = None,
+    cancel: Optional[Callable[[], bool]] = None,
 ) -> Optional[Exception]:
     """Write ``data_path`` (CSV with a header row) to ``target_path`` as an
     xlsx with a ``Metadata`` sheet and ``Data`` / ``Data_2`` … sheets of at
     most ``MAX_ROWS_PER_SHEET`` rows each. Saved atomically. Returns the
-    exception on failure instead of raising."""
+    exception on failure instead of raising. ``progress(rows)`` and
+    ``cancel()`` are checked every 10,000 rows; a cancel returns
+    ``CompileCancelled`` and leaves no target file."""
     from openpyxl import Workbook as _Workbook
 
     wb = _Workbook(write_only=True)
@@ -796,6 +804,7 @@ def compile_csv_to_xlsx(
             meta_ws.append([key, str(metadata[key]).replace("\n", " ").strip()])
 
         sheet_index = 1
+        written = 0
         data_ws = wb.create_sheet(title=DecodedLogger.DATA_SHEET)
         header_row = None
         current_sheet_rows = 0
@@ -813,6 +822,19 @@ def compile_csv_to_xlsx(
                     current_sheet_rows = 1
                 data_ws.append([_typed_cell(c) for c in row])
                 current_sheet_rows += 1
+                written += 1
+                if written % 10_000 == 0:
+                    if cancel is not None and cancel():
+                        # Finish the open sheet streams so openpyxl does not
+                        # leave half-closed generators behind; nothing is saved.
+                        for ws in list(getattr(wb, "_sheets", [])):
+                            try:
+                                ws.close()
+                            except Exception:
+                                pass
+                        return CompileCancelled()
+                    if progress is not None:
+                        progress(written)
         save_workbook_atomic(wb, target_path)
         return None
     except Exception as exc:  # reported to the caller, never swallowed

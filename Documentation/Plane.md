@@ -417,8 +417,19 @@ timestamp) with the app's own compiler (Metadata + Data, `Data_2` past
 Excel's row limit); a configuration change starts a new part instead of
 mixing columns; recorded gaps listed in Metadata; session folder never
 modified. 5 tests. Applied to the 65 h soak: 4 day workbooks, rows 60,424 /
-172,800 / 172,798 / 64,124 = 470,146 (all rows). Follow-up (open): offer it
-in the app (Tools menu) — the frozen build has no Python tools.
+172,800 / 172,798 / 64,124 = 470,146 (all rows). **In the app (done
+2026-10-22): Tools → Merge Session…** — folder picker, options dialog (log,
+one workbook / per day, keep CSV, output folder; warns when a single workbook
+passes one Excel sheet or gets slow to open), merge in a **child process**
+(no GUI / capture stall through the GIL) with progress and Cancel (checked
+per segment, every 10,000 rows and inside the xlsx compiler; a cancelled or
+failed merge removes everything it wrote). Logic moved to
+`app/serial_logging/session_merge.py`; the CLI tool is a thin wrapper. 14
+tests (incl. the real child process, cancel, refusals). Frozen-build check
+of the menu action: NOT RUN. Also converted for the owner: an unfinished
+v1.2.3 single-file log (`EKF_SoC_Cycles.xlsx.tmp_data`, 341,319 rows,
+~47.4 h) compiled to xlsx with the app's recovery compiler — all rows
+present.
 
 **Repository reorganisation (2026-10-19, owner request)** — industry-standard
 layout, no behaviour change:

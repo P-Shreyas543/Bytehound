@@ -231,6 +231,7 @@ from app.ui.tx_panel import TxPanelMixin
 from app.ui.ui_builders import UIBuildersMixin
 from app.ui.updater_wiring import UpdaterWiringMixin
 from app.ui.report_issue import ReportIssueMixin
+from app.ui.session_merge_ui import SessionMergeMixin
 
 
 class MainWindow(
@@ -239,6 +240,7 @@ class MainWindow(
     PlotOrchestrationMixin,
     ConfigLoaderMixin,
     LoggingSessionMixin,
+    SessionMergeMixin,
     PollingSessionMixin,
     DetailTabsMixin,
     TxPanelMixin,

@@ -1672,6 +1672,14 @@
                         degrade performance on older or slower drives.</li>
                 </ul>
             </li>
+            <li><strong>Merge Session...</strong>
+                <br><em>What it does:</em> Joins a recorded session's hourly segments into <strong>one
+                    workbook</strong>, or <strong>one workbook per day</strong> (split at midnight, local time), for
+                analysis. Pick the session folder, choose the event or fixed-step log and the output, then
+                <strong>Merge</strong>. The merge runs in the background with a progress bar and a
+                <strong>Cancel</strong> button; logging and the live view keep running. See
+                <a href="#session-folder">What a Session Folder Contains</a>.
+            </li>
             <li><strong>Plot Settings...</strong>
                 <br><em>What it does:</em> Opens settings for the Live Plot panel.
                 <br><em>Understanding the Settings:</em>
@@ -2004,6 +2012,16 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
                     (<code>seg_NNNN_event_rebuilt.xlsx</code>; originals are never modified).</td>
             </tr>
         </table>
+        <h4>One file for analysis: Tools → Merge Session…</h4>
+        <p>Hourly segments keep every file a manageable size while recording. For analysis, <strong>Tools → Merge
+                Session…</strong> joins them in order into one workbook, or one workbook per calendar day, with the
+            same columns and number format, and a Metadata sheet listing the time span, the segments included and any
+            recorded gaps. A session larger than one Excel sheet (1,048,576 rows) continues on <code>Data_2</code>,
+            <code>Data_3</code> …; one workbook per day keeps each file on one sheet and opens much faster. If the
+            configuration changed during the session, a new file starts at that point so different columns are never
+            mixed. The merged files are written to the session's <code>merged</code> folder (or one you choose); the
+            session itself is not changed, and a cancelled merge leaves nothing behind.</p>
+
         <p>Timestamps are anchored to a steady clock at the start of each segment, so they never jump when Windows
             adjusts the clock or daylight-saving time changes.</p>
 

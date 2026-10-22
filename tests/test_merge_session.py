@@ -1,4 +1,5 @@
-"""tools/merge_session.py: a session's hourly segments joined into one
+"""Session merge (app/serial_logging/session_merge.py, Tools → Merge Session…,
+tools/merge_session.py): a session's hourly segments joined into one
 workbook, or one per day, without touching the session folder."""
 
 from __future__ import annotations
@@ -14,7 +15,8 @@ from openpyxl import load_workbook
 from app.decoder.config_loader import load_config
 from app.decoder.frame_decoder import decode_frame
 from app.serial_logging.session import SessionLog, SessionSettings, read_manifest
-from tools.merge_session import merge
+from app.serial_logging.session_merge import MergeCancelled, MergeError, merge, merge_job, session_summary
+from tools.merge_session import main as merge_cli
 
 ROOT = Path(__file__).resolve().parents[1]
 TEMPLATE = ROOT / "app" / "resources" / "config_template"
@@ -88,7 +90,7 @@ def test_one_workbook_holds_every_row_in_order(tmp_path):
     out = merge(folder)
     assert len(out) == 1
     total = sum(s["rows"]["event"] for s in m["segments"])
-    header, data, meta = _xlsx_rows(out[0]["xlsx"])
+    header, data, meta = _xlsx_rows(Path(out[0]["xlsx"]))
     assert len(m["segments"]) == 3 and len(data) == total == out[0]["rows"]
     with (folder / m["segments"][0]["files"]["event_csv"]).open(encoding="utf-8") as f:
         assert list(header) == next(csv.reader(f))                 # same columns as the segments
@@ -107,8 +109,8 @@ def test_split_by_day_cuts_exactly_at_local_midnight(tmp_path):
     total = sum(s["rows"]["event"] for s in m["segments"])
     assert sum(w["rows"] for w in out) == total
     for w in out:
-        day = w["xlsx"].stem.rsplit("_", 1)[-1]
-        header, data, _meta = _xlsx_rows(w["xlsx"])
+        day = Path(w["xlsx"]).stem.rsplit("_", 1)[-1]
+        header, data, _meta = _xlsx_rows(Path(w["xlsx"]))
         ti = header.index("time_local")
         assert data and all(str(r[ti]).startswith(day) for r in data)
 
@@ -118,22 +120,22 @@ def test_a_configuration_change_starts_a_new_part(tmp_path):
     m = _record(folder, time.time() - 7200, 1500, change_at=700)
     assert [s["config"] for s in m["segments"]][-1] == "config_2"
     out = merge(folder, keep_csv=True)
-    assert len(out) == 2 and out[1]["xlsx"].stem.endswith("_part2")
-    h1, d1, _ = _xlsx_rows(out[0]["xlsx"])
-    h2, d2, _ = _xlsx_rows(out[1]["xlsx"])
+    assert len(out) == 2 and Path(out[1]["xlsx"]).stem.endswith("_part2")
+    h1, d1, _ = _xlsx_rows(Path(out[0]["xlsx"]))
+    h2, d2, _ = _xlsx_rows(Path(out[1]["xlsx"]))
     assert h1 != h2 and len(d1) + len(d2) == sum(s["rows"]["event"] for s in m["segments"])
-    assert all(w["csv"].exists() for w in out)                      # --csv keeps the merged CSV
+    assert all(Path(w["csv"]).exists() for w in out)                      # --csv keeps the merged CSV
 
 
 def test_fixed_step_log_merges_and_missing_kind_is_explained(tmp_path):
     folder = tmp_path / "sess"
     m = _record(folder, time.time() - 7200, 1300, fixed=True)
     out = merge(folder, kind="fixed")
-    _h, data, _ = _xlsx_rows(out[0]["xlsx"])
+    _h, data, _ = _xlsx_rows(Path(out[0]["xlsx"]))
     assert len(data) == sum(s["rows"]["fixed"] for s in m["segments"])
     plain = tmp_path / "plain"
     _record(plain, time.time() - 7200, 100)
-    with pytest.raises(SystemExit, match="no fixed log"):
+    with pytest.raises(MergeError, match="no fixed log"):
         merge(plain, kind="fixed")
 
 
@@ -144,5 +146,76 @@ def test_a_recording_session_is_refused(tmp_path):
     m = json.loads((folder / "session.json").read_text(encoding="utf-8"))
     m["status"] = "recording"
     (folder / "session.json").write_text(json.dumps(m), encoding="utf-8")
-    with pytest.raises(SystemExit, match="still recording"):
+    with pytest.raises(MergeError, match="still recording"):
         merge(folder)
+
+
+def test_cancel_leaves_nothing_behind(tmp_path):
+    folder = tmp_path / "sess"
+    _record(folder, time.time() - 7200, 1790)
+    out = tmp_path / "out"
+    calls = {"n": 0}
+
+    def cancel():
+        calls["n"] += 1
+        return calls["n"] > 1                  # cancel after the first segment
+
+    with pytest.raises(MergeCancelled):
+        merge(folder, out=out, cancel=cancel)
+    assert list(out.iterdir()) == []
+
+
+def test_progress_reports_rows(tmp_path):
+    folder = tmp_path / "sess"
+    m = _record(folder, time.time() - 7200, 1790)
+    seen = []
+    merge(folder, progress=lambda phase, done, total: seen.append((phase, done, total)))
+    total = sum(s["rows"]["event"] for s in m["segments"])
+    assert seen and all(t in (total, seen[-1][2]) for _p, _d, t in seen)
+    assert any(p.startswith("Writing workbook 1 of 1") for p, _d, _t in seen)
+
+
+def test_summary_and_child_process_job(tmp_path):
+    """What the Tools dialog shows, and the job it runs in a child process."""
+    import multiprocessing as mp
+
+    folder = tmp_path / "sess"
+    m = _record(folder, time.time() - 7200, 1790, fixed=True)
+    info = session_summary(folder)
+    assert info["segments"] == len(m["segments"]) and set(info["rows"]) == {"event", "fixed"}
+    with pytest.raises(MergeError, match="not a session folder"):
+        session_summary(tmp_path)
+    ctx = mp.get_context("spawn")
+    q, ev = ctx.Queue(), ctx.Event()
+    proc = ctx.Process(target=merge_job, args=(str(folder), "event", "none", str(tmp_path / "o"), False, q, ev))
+    proc.start()
+    msgs = []
+    while True:
+        msg = q.get(timeout=120)
+        msgs.append(msg)
+        if msg[0] in ("done", "error", "cancelled"):
+            break
+    proc.join(30)
+    assert msgs[-1][0] == "done", msgs[-1]
+    assert Path(msgs[-1][1][0]["xlsx"]).exists()
+
+
+def test_command_line(tmp_path, capsys):
+    folder = tmp_path / "sess"
+    _record(folder, time.time() - 7200, 100)
+    assert merge_cli([str(folder), "--out", str(tmp_path / "o")]) == 0
+    assert "rows=" in capsys.readouterr().out
+    assert merge_cli([str(tmp_path)]) == 1                         # not a session: message, exit 1
+
+
+def test_compiler_cancel_mid_write_writes_nothing(tmp_path):
+    from app.serial_logging.decoded_logger import CompileCancelled, compile_csv_to_xlsx
+
+    src = tmp_path / "big.csv"
+    rows = "".join(f"{i},{i * 2}\n" for i in range(25_000))
+    src.write_text("a,b\n" + rows, encoding="utf-8")
+    seen = []
+    exc = compile_csv_to_xlsx(src, {"k": "v"}, tmp_path / "out.xlsx", progress=seen.append,
+                              cancel=lambda: len(seen) >= 1)
+    assert isinstance(exc, CompileCancelled) and seen == [10_000]
+    assert not (tmp_path / "out.xlsx").exists() and not list(tmp_path.glob("*.partial"))
