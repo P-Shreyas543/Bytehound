@@ -409,6 +409,22 @@ New test `test_job_that_finishes_while_being_stopped_keeps_its_result`
 (fails without the fix, passes with it); the session timeout test now uses
 jobs that really hang instead of racing a 0.1 ms timeout against real ones.
 
+**Analysis Suite loading (2026-10-22, owner report: "pain to analyse")** —
+measured: a merged day workbook (60,424 rows) took 95 s and a full day
+(172,800 rows) 296 s through `pd.read_excel`, with only a wait cursor (one
+progress update at 100 %). Changes: (1) progress dialog for every load
+(file, step, %, Cancel; shown after 0.4 s so quick loads do not flash);
+(2) workbooks read in streaming mode with row progress against the row
+count in their Metadata, a cancel check every 2,000 rows, chunked
+conversion (77 s for the 60k-row day; ~24 s of it opening the shared-text
+table, shown as busy); (3) a workbook with a CSV next to it is loaded from
+the CSV (0.8 s for the same 60k rows; same data — tested); (4) workbook and
+CSV now share the session-log handling, so a workbook keeps clock time
+(it used to lose it); (5) Merge Session keeps the merged CSV by default.
+Opening the session folder (`session.json`) remains the fastest route for
+whole recordings: 65 h in 6.6 s, any hour in 24 ms. 5 tests. The owner's
+soak exports were regenerated with their CSVs.
+
 **Release v1.2.4 built (2026-10-22, not yet published)** — `python build.py
 --release` from a clean tree at 49b7c0e (+ the sha commit 80a8a3d):
 `installer_output/Bytehound_Setup_1.2.4.exe` 65.2 MB, SHA-256
@@ -922,6 +938,14 @@ chamber log). Today the decoded log is event-driven (one row per poll cycle).
 
 ### 0.11 Known gaps and follow-ups (don't lose these)
 
+- **Flaky test (seen 2026-10-22, 1 of ~25 full runs):**
+  `test_raw_capture.py::test_rebuild_matches_live_decoded_log` received 213
+  of 600 frames within its 10 s deadline in a full run, passes alone (3/3).
+  Its fake TCP device sends 37-byte chunks with `time.sleep(0.0005)`, which
+  Windows rounds up to ~15.6 ms (~4 s per run normally, longer under load).
+  Not related to the change in that run (it uses none of the modified
+  modules). To fix: send larger chunks or wait on the device thread instead
+  of a fixed deadline.
 - **[FIXED in C6]** Portable zip shows v0.0.0 (found 2026-10-19, pre-existing since the
   spec was added):** the frozen app reads `version.json` beside the exe,
   but the spec bundles it into `_internal\`. The installer copies it next

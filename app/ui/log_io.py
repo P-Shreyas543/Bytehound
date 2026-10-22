@@ -67,8 +67,13 @@ class LogLoaderThread(QThread):
     """Loads one .xlsx (Bytehound decoded or Dyno) or _decoded.csv log in a
     background thread."""
     sigFinished = Signal(str, str, object)   # (log_id, path, LogEntry or None)
-    sigProgress = Signal(int)                # Progress percentage (0-100)
+    sigProgress = Signal(int)                # Progress percentage (0-100); -1 = unknown
+    sigStatus = Signal(str)                  # what the loader is doing, for the progress dialog
+    sigCancelled = Signal(str)               # (path) stopped by requestInterruption()
     error = Signal(str, str)                # (path, error_message)
+
+    # Rows between progress reports / cancel checks while reading a workbook.
+    _XLSX_CHUNK = 2000
 
     def __init__(self, path: str, log_id: str, color: str, parent=None):
         super().__init__(parent)
@@ -81,8 +86,15 @@ class LogLoaderThread(QThread):
             ext = os.path.splitext(self._path)[1].lower()
             if ext == ".csv":
                 self._load_csv()
-            else:
-                self._load_xlsx()
+                return
+            twin = os.path.splitext(self._path)[0] + ".csv"
+            if os.path.isfile(twin) and os.path.getsize(twin) > 0:
+                # Session segments (and merged sessions saved with their CSV)
+                # keep the same rows as CSV: ~100x faster to read than xlsx.
+                self.sigStatus.emit(f"Reading {os.path.basename(twin)} (the CSV saved with this workbook)…")
+                self._load_csv(source=twin)
+                return
+            self._load_xlsx()
         except Exception as exc:
             self.error.emit(self._path, str(exc))
 
@@ -109,11 +121,17 @@ class LogLoaderThread(QThread):
 
         return sheet_candidates, col_candidates, scale_mapping
 
-    def _load_csv(self):
-        """Parse a legacy _decoded.csv file (pre-xlsx Bytehound versions)."""
+    def _load_csv(self, source: Optional[str] = None):
+        """Parse a CSV log: a session segment / merged session, or a legacy
+        _decoded.csv. ``source`` is the file to read when it is not
+        ``self._path`` (the CSV twin of a workbook); the entry keeps
+        ``self._path`` so the user sees the file they opened."""
         import pandas as pd
+        self.sigProgress.emit(-1)
+        if source is None:
+            self.sigStatus.emit(f"Reading {os.path.basename(self._path)}…")
         try:
-            df = pd.read_csv(self._path, comment='#')
+            df = pd.read_csv(source or self._path, comment='#')
         except Exception as e:
             self.error.emit(self._path, f"Failed to parse CSV: {e}")
             return
@@ -133,37 +151,7 @@ class LogLoaderThread(QThread):
                 elapsed_scale = scale_mapping.get(col, 1.0)
                 break
 
-        session_layout = "time_utc" in df.columns or "elapsed_s" in df.columns
-        if session_layout:
-            # A session segment (event or fixed-step CSV): absolute time per
-            # row, frame-block bookkeeping columns that are not signals.
-            from ..serial_logging.session_analysis import _is_signal_column
-            if "time_utc" in df.columns:
-                ts = pd.to_datetime(df["time_utc"], utc=True, errors="coerce", format="ISO8601")
-                valid = ts.dropna()
-                if valid.empty:
-                    self.error.emit(self._path, "No valid time_utc values found.")
-                    return
-                first_ts_posix = valid.iloc[0].timestamp()
-                elapsed_arr = (ts - valid.iloc[0]).dt.total_seconds().to_numpy(dtype=np.float64)
-            else:
-                elapsed_arr = pd.to_numeric(df["elapsed_s"], errors='coerce').to_numpy(dtype=np.float64)
-            data_columns = [c for c in df.columns if _is_signal_column(str(c))]
-            columns: dict[str, np.ndarray] = {}
-            for col in data_columns:
-                arr = pd.to_numeric(df[col], errors='coerce').to_numpy(dtype=np.float64)
-                if not np.all(np.isnan(arr)):
-                    columns[col] = arr
-            if not columns:
-                self.error.emit(self._path, "No numeric columns found in CSV.")
-                return
-            entry = LogEntry(
-                id=self._log_id, path=self._path, name=_test_name_from_path(self._path),
-                color=self._color, start_timestamp=first_ts_posix, elapsed=elapsed_arr, columns=columns,
-            )
-            _CSV_CACHE[self._path] = entry
-            self.sigProgress.emit(100)
-            self.sigFinished.emit(self._log_id, self._path, entry)
+        if self._finish_session_layout(df):
             return
 
         if elapsed_col:
@@ -211,41 +199,128 @@ class LogLoaderThread(QThread):
         self.sigProgress.emit(100)
         self.sigFinished.emit(self._log_id, self._path, entry)
 
+    def _finish_session_layout(self, df) -> bool:
+        """A session log (segment or merged session; CSV or workbook): time
+        from ``time_utc`` (clock time available) or ``elapsed_s``, frame-block
+        bookkeeping columns dropped. Returns False if ``df`` is not one."""
+        import pandas as pd
+        if "time_utc" not in df.columns and "elapsed_s" not in df.columns:
+            return False
+        from ..serial_logging.session_analysis import _is_signal_column
+        self.sigStatus.emit(f"Preparing {os.path.basename(self._path)}…")
+        first_ts_posix: float | None = None
+        if "time_utc" in df.columns:
+            ts = pd.to_datetime(df["time_utc"], utc=True, errors="coerce", format="ISO8601")
+            valid = ts.dropna()
+            if valid.empty:
+                self.error.emit(self._path, "No valid time_utc values found.")
+                return True
+            first_ts_posix = valid.iloc[0].timestamp()
+            elapsed_arr = (ts - valid.iloc[0]).dt.total_seconds().to_numpy(dtype=np.float64)
+        else:
+            elapsed_arr = pd.to_numeric(df["elapsed_s"], errors='coerce').to_numpy(dtype=np.float64)
+        data_columns = [c for c in df.columns if _is_signal_column(str(c))]
+        columns: dict[str, np.ndarray] = {}
+        for col in data_columns:
+            arr = pd.to_numeric(df[col], errors='coerce').to_numpy(dtype=np.float64)
+            if not np.all(np.isnan(arr)):
+                columns[str(col)] = arr
+        if not columns:
+            self.error.emit(self._path, "No numeric columns found.")
+            return True
+        entry = LogEntry(
+            id=self._log_id, path=self._path, name=_test_name_from_path(self._path),
+            color=self._color, start_timestamp=first_ts_posix, elapsed=elapsed_arr, columns=columns,
+        )
+        _CSV_CACHE[self._path] = entry
+        self.sigProgress.emit(100)
+        self.sigFinished.emit(self._log_id, self._path, entry)
+        return True
+
+    def _read_xlsx_streaming(self):
+        """Read the data sheet(s) row by row (read-only mode): progress every
+        ``_XLSX_CHUNK`` rows against the row count the workbook's Metadata
+        records (sessions and merged sessions), cancellable, converted in
+        chunks to keep memory down. Returns a DataFrame, or None if
+        cancelled."""
+        import pandas as pd
+        from openpyxl import load_workbook
+
+        sheet_candidates, _cols, _scales = self._get_schema_settings()
+        name = os.path.basename(self._path)
+        self.sigStatus.emit(f"Opening {name}…")
+        wb = load_workbook(self._path, read_only=True, data_only=True)
+        try:
+            names = wb.sheetnames
+            matching: list[str] = []
+            for cand in sheet_candidates:
+                matching = [s for s in names if s == cand or s.startswith(f"{cand}_")]
+                if matching:
+                    break
+            if not matching:
+                matching = ([s for s in names if s == "Data" or s.startswith("Data_")]
+                            or [s for s in names if s == "Record" or s.startswith("Record_")]
+                            or [names[0]])
+            total = None
+            if "Metadata" in names:
+                for row in wb["Metadata"].iter_rows(values_only=True):
+                    if row and str(row[0]).strip() == "rows" and len(row) > 1:
+                        try:
+                            total = int(str(row[1]).strip())
+                        except ValueError:
+                            total = None
+                        break
+            header = None
+            chunks = []
+            buf: list = []
+            done = 0
+            for sheet in matching:
+                rows = wb[sheet].iter_rows(values_only=True)
+                first = next(rows, None)
+                if first is None:
+                    continue
+                if header is None:
+                    header = [str(c) if c is not None else "" for c in first]
+                for row in rows:
+                    buf.append(row)
+                    done += 1
+                    if done % self._XLSX_CHUNK == 0:
+                        if self.isInterruptionRequested():
+                            return None
+                        chunks.append(pd.DataFrame(buf, columns=header))
+                        buf = []
+                        if total:
+                            self.sigProgress.emit(min(99, int(100 * done / total)))
+                            self.sigStatus.emit(f"Reading {name}: {done:,} of {total:,} rows")
+                        else:
+                            self.sigStatus.emit(f"Reading {name}: {done:,} rows")
+            if buf:
+                chunks.append(pd.DataFrame(buf, columns=header))
+            if header is None:
+                return pd.DataFrame()
+            return pd.concat(chunks, ignore_index=True) if chunks else pd.DataFrame(columns=header)
+        finally:
+            wb.close()
+
     def _load_xlsx(self):
         """Parse a .xlsx file. Supports multi-sheet datasets (Data, Data_2, Data_3...) using high-performance pandas."""
         import pandas as pd
         sheet_candidates, col_candidates, scale_mapping = self._get_schema_settings()
         try:
-            xls = pd.ExcelFile(self._path)
-
-            # Find all matching data sheets (e.g., Data, Data_2, Data_3 or Record, Record_2...)
-            matching_sheets = []
-            for cand in sheet_candidates:
-                matched = [s for s in xls.sheet_names if s == cand or s.startswith(f"{cand}_")]
-                if matched:
-                    matching_sheets = matched
-                    break
-
-            if not matching_sheets:
-                matched_data = [s for s in xls.sheet_names if s == "Data" or s.startswith("Data_")]
-                if matched_data:
-                    matching_sheets = matched_data
-                else:
-                    matched_record = [s for s in xls.sheet_names if s == "Record" or s.startswith("Record_")]
-                    matching_sheets = matched_record if matched_record else [xls.sheet_names[0]]
-
-            if len(matching_sheets) == 1:
-                df = pd.read_excel(xls, sheet_name=matching_sheets[0])
-            else:
-                dfs = [pd.read_excel(xls, sheet_name=s) for s in matching_sheets]
-                df = pd.concat(dfs, ignore_index=True)
+            df = self._read_xlsx_streaming()
         except Exception as e:
             self.error.emit(self._path, f"Failed to parse Excel: {e}")
+            return
+        if df is None:
+            self.sigCancelled.emit(self._path)
             return
 
         if df.empty:
             self.error.emit(self._path, "Log file contains no recorded data (empty sheet). Please verify data was received during logging.")
             return
+        if self._finish_session_layout(df):
+            return
+        self.sigStatus.emit(f"Preparing {os.path.basename(self._path)}…")
 
         headers = [str(c) if c else "" for c in df.columns]
 
@@ -525,6 +600,7 @@ class SessionLoaderThread(QThread):
     """Opens a logging session folder (building missing analysis caches)."""
     sigFinished = Signal(str, str, object)
     sigProgress = Signal(int)
+    sigStatus = Signal(str)
     error = Signal(str, str)
 
     def __init__(self, folder: str, log_id: str, color: str, kind: str = "event", parent=None):
@@ -542,7 +618,14 @@ class SessionLoaderThread(QThread):
                 self.error.emit(self._folder, f"This session has no {self._kind} log segments.")
                 return
             missing = len(src.missing_caches())
-            src.ensure_caches(lambda done, total: self.sigProgress.emit(int(100 * done / max(total, 1))))
+            name = os.path.basename(os.path.normpath(self._folder))
+            self.sigStatus.emit(f"Opening session {name}: {len(src.segments)} segment(s)"
+                                + (f", building {missing} analysis cache(s)" if missing else "") + "…")
+
+            def caches(done, total):
+                self.sigProgress.emit(int(100 * done / max(total, 1)))
+                self.sigStatus.emit(f"Session {name}: analysis caches {done} of {total}")
+            src.ensure_caches(caches)
             name = os.path.basename(os.path.normpath(self._folder))
             if self._kind != "event":
                 name += f" ({self._kind}-step)" if self._kind == "fixed" else f" ({self._kind})"

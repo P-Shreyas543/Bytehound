@@ -2109,6 +2109,18 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             <li>Supported formats: Bytehound decoded <code>.xlsx</code>, legacy decoded <code>.csv</code>, and external
                 Dyno-style <code>.xlsx</code> exports.</li>
         </ol>
+        <div class="note">
+            <strong>Loading large files.</strong> A progress window shows each file being loaded, how far it is, and a
+            <strong>Cancel</strong> button. Reading an Excel workbook is slow for big logs (a full day of data can
+            take minutes), so:
+            <ul>
+                <li><strong>Whole recordings:</strong> use <strong>File → Open Logging Session…</strong> and pick the
+                    session folder — a 65-hour session opens in seconds and zooms to any hour instantly.</li>
+                <li><strong>Workbooks with a CSV next to them</strong> (every hourly segment, and Merge Session output
+                    when "keep the merged CSV" is ticked — the default) are loaded from the CSV automatically,
+                    about 100× faster, with the same data.</li>
+            </ul>
+        </div>
         <ul>
             <li><strong>Visibility:</strong> use the checkbox beside each log to show or hide it.</li>
             <li><strong>Color:</strong> click the colored dot to change the log color.</li>

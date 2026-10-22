@@ -73,7 +73,8 @@ class MergeSessionDialog(QDialog):
         box.addWidget(self._daily)
         form.addRow("Output:", box)
 
-        self._csv = QCheckBox("Also keep the merged CSV", self)
+        self._csv = QCheckBox("Also keep the merged CSV (the Analysis Suite opens it ~100× faster)", self)
+        self._csv.setChecked(True)
         form.addRow("", self._csv)
 
         self._out = QLineEdit(str(self._folder / "merged"), self)

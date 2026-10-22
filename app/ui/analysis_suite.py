@@ -1895,10 +1895,100 @@ class AnalysisSuiteWindow(QMainWindow):
         sp = self._split_session_path(path)
         if sp is not None:
             thread = SessionLoaderThread(sp[0], log_id, color, sp[1], self)
+            label = f"Session {os.path.basename(os.path.normpath(sp[0]))}"
         else:
             thread = LogLoaderThread(path, log_id, color, self)
+            label = os.path.basename(path)
         thread.sigProgress.connect(self._on_load_progress)
+        self._track_load(thread, label)
         return thread
+
+    # -- load progress dialog (owner request 2026-10-22) -------------------
+    # Loading a large workbook took minutes with only a wait cursor. Every
+    # load now shows what it is doing, how far it is, and can be cancelled.
+
+    def _track_load(self, thread, label: str) -> None:
+        states = self.__dict__.setdefault("_load_states", {})
+        states[thread] = {"label": label, "status": "Waiting…", "pct": -1}
+        thread.sigProgress.connect(lambda pct, t=thread: self._load_state(t, pct=pct))
+        if hasattr(thread, "sigStatus"):
+            thread.sigStatus.connect(lambda text, t=thread: self._load_state(t, status=text))
+        if hasattr(thread, "sigCancelled"):
+            thread.sigCancelled.connect(lambda _p, t=thread: self._status.showMessage(
+                f"Loading cancelled: {states.get(t, {}).get('label', '')}", 5000))
+        thread.finished.connect(lambda t=thread: self._load_done(t))
+        timer = getattr(self, "_load_dialog_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(400)          # quick loads never flash a dialog
+            timer.timeout.connect(self._show_load_dialog)
+            self._load_dialog_timer = timer
+        if not timer.isActive() and getattr(self, "_load_dialog", None) is None:
+            timer.start()
+
+    def _show_load_dialog(self) -> None:
+        if not getattr(self, "_load_states", None) or getattr(self, "_load_dialog", None) is not None:
+            return
+        from PySide6.QtWidgets import QProgressDialog
+        dlg = QProgressDialog("", "Cancel", 0, 100, self)
+        dlg.setWindowTitle("Loading")
+        dlg.setWindowModality(Qt.WindowModality.NonModal)
+        dlg.setMinimumWidth(480)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.canceled.connect(self._cancel_loads)
+        self._load_dialog = dlg
+        self._refresh_load_dialog()
+        dlg.show()
+
+    def _load_state(self, thread, *, pct=None, status=None) -> None:
+        st = getattr(self, "_load_states", {}).get(thread)
+        if st is None:
+            return
+        if pct is not None:
+            st["pct"] = int(pct)
+        if status is not None:
+            st["status"] = status
+        self._refresh_load_dialog()
+
+    def _refresh_load_dialog(self) -> None:
+        dlg = getattr(self, "_load_dialog", None)
+        states = list(getattr(self, "_load_states", {}).values())
+        if dlg is None or not states:
+            return
+        lines = [f"{st['status']}" + (f"  ({st['pct']}%)" if st["pct"] >= 0 else "") for st in states]
+        more = f"\n… and {len(lines) - 6} more" if len(lines) > 6 else ""
+        dlg.setLabelText("\n".join(lines[:6]) + more)
+        known = [st["pct"] for st in states if st["pct"] >= 0]
+        if len(known) == len(states):
+            dlg.setRange(0, 100)
+            dlg.setValue(int(sum(known) / len(known)))
+        else:
+            dlg.setRange(0, 0)                  # unknown length: busy indicator
+
+    def _cancel_loads(self) -> None:
+        dlg = getattr(self, "_load_dialog", None)
+        if dlg is not None:
+            dlg.setLabelText("Cancelling…")
+        for t in list(getattr(self, "_load_states", {})):
+            t.requestInterruption()
+
+    def _load_done(self, thread) -> None:
+        states = getattr(self, "_load_states", {})
+        states.pop(thread, None)
+        if states:
+            self._refresh_load_dialog()
+            return
+        timer = getattr(self, "_load_dialog_timer", None)
+        if timer is not None:
+            timer.stop()
+        dlg = getattr(self, "_load_dialog", None)
+        if dlg is not None:
+            dlg.reset()
+            dlg.close()
+            dlg.deleteLater()
+            self._load_dialog = None
 
     def _open_logging_session(self, folder: str | None = None):
         """Open a logging session folder: the event log, the fixed-step log,

@@ -103,7 +103,7 @@ def test_options_dialog(qapp, tmp_path):
     assert "Data_2" in dlg._note.text()                  # over one Excel sheet: says so
     dlg._daily.setChecked(True)
     kind, split, out, keep = dlg.values()
-    assert (kind, split, keep) == ("event", "day", False)
+    assert (kind, split, keep) == ("event", "day", True)    # CSV kept by default: fast Analysis Suite load
     assert Path(out) == tmp_path / "session_x" / "merged"
     dlg._kind.setCurrentIndex(1)
     assert dlg.values()[0] == "fixed"
