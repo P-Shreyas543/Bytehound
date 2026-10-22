@@ -117,3 +117,6 @@ USBCANV2.12_English/
 # Tests that use them skip when the folder is absent; the product's own
 # template (app/resources/config_template) and test fixtures stay tracked.
 configs/
+
+# Recorded sessions handed over for analysis (zipped session folders): customer data
+session_*.zip
