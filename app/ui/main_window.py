@@ -1158,6 +1158,8 @@ class MainWindow(
             self._warning_badge.setVisible(False)
         if hasattr(self, "_reconnect_timer") and self._reconnect_timer.isActive():
             self._reconnect_timer.stop()
+        if not keep_logging:
+            self._plot_gap_end()             # no reconnect is coming: close an open gap (U2)
 
     def _capture_in_process(self) -> bool:
         """Run serial capture on a QThread (default) or in a separate process.
@@ -1240,6 +1242,7 @@ class MainWindow(
                 from .logging_session import _attach_session_sink
                 _attach_session_sink(self._serial, self._session_log)
             if is_retry:
+                self._plot_gap_end()
                 self._restore_polling_after_reconnect()
             else:
                 self._resume_polling = False
@@ -1310,6 +1313,8 @@ class MainWindow(
     def _on_connection_lost(self) -> None:
         """Called when the worker detects a physical USB unplug."""
         auto = bool(self._saved_settings and getattr(self._saved_settings, "auto_reconnect", False))
+        if auto:
+            self._plot_gap_begin()           # shaded on the plot until reconnected (U2)
         # Disconnecting un-ticks Auto-Fetch; remember it so the reconnect can
         # restore polling instead of leaving a polled device silent.
         self._resume_polling = auto and self._polling_action.isChecked()

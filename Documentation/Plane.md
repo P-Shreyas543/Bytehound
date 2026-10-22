@@ -1073,7 +1073,16 @@ performance → L3 UX (owner picks).
       Further options (not done): incremental (cached) reduction per curve;
       capture process mode. Real BMS rates (18 fps in the soak) are ~170×
       lighter than this load
-- [ ] L3 UX (U1–U5; owner chooses)
+- [~] **L3 UX — U1 and U2 done (2026-10-22, owner go-ahead):** U1 — a signal
+      older than the gap rule (5 × its interval, ≥ 0.5 s) is drawn dashed and
+      faded and its legend says "(no data for N s / min / h)"; checked before
+      the unchanged-data skip; reverts with the next sample. U2 — with
+      auto-reconnect on, connection lost → reconnect is recorded on the plot
+      clock and shaded in every panel (open gap grows with the clock); a user
+      disconnect closes an open gap; a new session clock clears them. 5
+      tests; screenshot checked. U3 (third axis), U4 (Live/Explore clarity +
+      cursors), U5 (export visible window), U6 (long history from the
+      session's caches): open
 
 ## Objective
 

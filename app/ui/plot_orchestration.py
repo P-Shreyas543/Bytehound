@@ -38,6 +38,8 @@ except ImportError:  # pragma: no cover
     pg = None
 
 from .plot_panel import (
+    GAP_FACTOR,
+    GAP_MIN_S,
     PlotPanel,
     _PLOT_INITIAL_WINDOW_S,
     _TimeAxisItem,
@@ -1113,6 +1115,87 @@ class PlotOrchestrationMixin:
             return True
         return bool(spec is not None and spec.is_boolean)
 
+    @staticmethod
+    def _signal_staleness(buf, now: float) -> Tuple[bool, float]:
+        """(stale, seconds since the last sample). Stale = older than the gap
+        rule (P1): GAP_FACTOR × the signal's usual interval, at least
+        GAP_MIN_S; 5 s while its interval is not known yet."""
+        if not buf:
+            return False, 0.0
+        last = buf.last_x()
+        if last is None:
+            return False, 0.0
+        age = max(0.0, now - last)
+        dt = getattr(buf, "_dt", None)
+        limit = max(GAP_MIN_S, GAP_FACTOR * dt) if dt else 5.0
+        return age > limit, age
+
+    @staticmethod
+    def _format_age(seconds: float) -> str:
+        s = int(seconds)
+        if s < 120:
+            return f"{s} s"
+        if s < 7200:
+            return f"{s // 60} min"
+        return f"{s // 3600} h {(s % 3600) // 60} min"
+
+    @staticmethod
+    def _set_legend_text(panel, curve, text: str) -> None:
+        legend = panel.legend if panel.legend is not None else getattr(panel.plot_item, "legend", None)
+        if legend is None:
+            return
+        for sample, lbl in getattr(legend, "items", []):
+            if getattr(sample, "item", None) is curve:
+                try:
+                    lbl.setText(text)
+                except Exception:
+                    pass
+                return
+
+    # -- U2: recorded gaps (connection lost → auto-reconnect) ---------------
+
+    def _plot_gap_begin(self) -> None:
+        gaps = self.__dict__.setdefault("_plot_gaps", [])
+        if gaps and gaps[-1][1] is None:
+            return
+        gaps.append([self._session_elapsed_s(), None])
+
+    def _plot_gap_end(self) -> None:
+        gaps = getattr(self, "_plot_gaps", None)
+        if gaps and gaps[-1][1] is None:
+            gaps[-1][1] = self._session_elapsed_s()
+
+    def _clear_plot_gaps(self) -> None:
+        self._plot_gaps = []
+        for panel in getattr(self, "_plot_panels", []):
+            self._update_gap_regions(panel, 0.0)
+
+    def _update_gap_regions(self, panel, now: float) -> None:
+        """Shade every recorded gap in ``panel``; an open gap grows with the clock."""
+        if pg is None:
+            return
+        gaps = getattr(self, "_plot_gaps", [])
+        regions = panel.__dict__.setdefault("_bh_gap_regions", [])
+        pi = panel.plot_item
+        while len(regions) > len(gaps):
+            item = regions.pop()
+            try:
+                pi.removeItem(item)
+            except Exception:
+                pass
+        for i, (start, end) in enumerate(gaps):
+            span = (float(start), float(end if end is not None else max(now, start)))
+            if i < len(regions):
+                if tuple(regions[i].getRegion()) != span:
+                    regions[i].setRegion(span)
+                continue
+            item = pg.LinearRegionItem(values=span, movable=False,
+                                       brush=pg.mkBrush(148, 163, 184, 45), pen=pg.mkPen(None))
+            item.setZValue(-10)
+            item.setToolTip("No data: connection lost, waiting for auto-reconnect")
+            pi.addItem(item, ignoreBounds=True)
+            regions.append(item)
+
     def _drop_curve(self, panel, key: Tuple[int, str]) -> None:
         curve = panel.curves.pop(key, None)
         if curve is None:
@@ -1369,6 +1452,8 @@ class PlotOrchestrationMixin:
                     _configure_live_curve(curve)
                     panel.curves[key] = curve
                     curve._bh_color = color  # type: ignore[attr-defined]
+                    curve._bh_style = (color, False)  # type: ignore[attr-defined]
+                    curve._bh_label = label  # type: ignore[attr-defined]
                     try:
                         target_vb.addItem(curve)
                     except Exception:
@@ -1378,13 +1463,29 @@ class PlotOrchestrationMixin:
                             pi.legend.addItem(curve, name=label)
                         except Exception:
                             pass
-                else:
-                    if getattr(curve, "_bh_color", None) != color:
-                        try:
+
+                # U1: a signal that stopped arriving is drawn dashed and faded
+                # and its legend says for how long. Checked before the
+                # unchanged-data skip: it becomes stale exactly when nothing new
+                # arrives.
+                stale, age = self._signal_staleness(buf, current_t)
+                style = (color, stale)
+                if getattr(curve, "_bh_style", None) != style:
+                    try:
+                        if stale:
+                            faded = QColor(color)
+                            faded.setAlpha(110)
+                            curve.setPen(pg.mkPen(faded, width=1.8, style=Qt.PenStyle.DashLine))
+                        else:
                             curve.setPen(pg.mkPen(color, width=1.8))
-                        except Exception:
-                            pass
-                        curve._bh_color = color  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    curve._bh_style = style  # type: ignore[attr-defined]
+                    curve._bh_color = color  # type: ignore[attr-defined]
+                text = f"{label}  (no data for {self._format_age(age)})" if stale else label
+                if getattr(curve, "_bh_label", None) != text:
+                    self._set_legend_text(panel, curve, text)
+                    curve._bh_label = text  # type: ignore[attr-defined]
 
                 # Skip setData when this curve hasn't changed since the last
                 # redraw. Signature mixes length, right-most timestamp, and
@@ -1434,6 +1535,7 @@ class PlotOrchestrationMixin:
                     pass
 
             color_offset += len(panel.assigned_keys)
+            self._update_gap_regions(panel, current_t)
 
         # Live mode X range. Three cases:
         #   - No data yet: anchor [0, INITIAL_WINDOW] so the axis reads 0 at

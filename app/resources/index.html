@@ -1273,6 +1273,13 @@
                 usual interval (an unplug, a reconnect, a silent device) the line stops and starts again after the
                 gap, instead of a straight line across it. The same happens where the display had to skip points
                 under heavy load (the <strong>Dropped</strong> counter). Hovering inside a gap shows <code>–</code>.</li>
+            <li><strong>A signal that stops arriving is marked.</strong> When a signal has not been received for
+                much longer than its usual interval, its line is drawn <em>dashed and faded</em> and its legend entry
+                says for how long (e.g. <code>(no data for 12 s)</code>). It returns to normal with the next
+                sample.</li>
+            <li><strong>Lost connections are shaded.</strong> With Auto-Reconnect on, the time between losing the
+                device and reconnecting is shaded grey in every panel (an outage still in progress grows with the
+                clock).</li>
             <li><strong>States are drawn as steps.</strong> On/off signals and signals with Enums or Bitfields hold
                 their value until the next sample, so a change appears exactly when it was received.</li>
             <li><strong>Two units per panel.</strong> A panel has a left and a right axis, one unit each. Adding a

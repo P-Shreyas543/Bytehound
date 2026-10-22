@@ -35,6 +35,9 @@ class TelemetryPipelineMixin:
     def _reset_session_clock(self) -> None:
         self._session_started = datetime.now()
         self._session_started_perf = time.perf_counter()
+        # Gap times are on this clock: a new clock starts without them (U2).
+        if hasattr(self, "_clear_plot_gaps"):
+            self._clear_plot_gaps()
 
     def _session_elapsed_s(self, t_perf: Optional[float] = None) -> float:
         start = getattr(self, "_session_started_perf", None)
