@@ -1,6 +1,6 @@
 {
-    "version": "1.2.4",
-    "document_version": "1.2.4",
+    "version": "1.2.5",
+    "document_version": "1.2.5",
     "Developer": "Shreyas P",
     "developer_github": "https://github.com/P-Shreyas543",
     "publisher": "DECIBELS LAB PRIVATE LIMITED",
@@ -11,7 +11,7 @@
     "homepage": "https://bytehound.shreyasp182002.workers.dev/",
     "issue_url": "https://bytehound.shreyasp182002.workers.dev/report_issue",
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
-    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.2.4.exe",
-    "release_notes": "v1.2.4 Release - Long-duration logging, data-integrity checks and safer configuration changes.\n\nChanges:\n  - Recordings are now sessions split into hourly files; logging survives unplugs and reconnects.\n  - New: Tools > Merge Session joins a session into one workbook or one per day.\n  - Optional fixed-step log and lossless raw capture; crash-safe recording.\n  - Every session folder includes log.txt (the application log of that recording) for easy debugging and sharing.\n  - Log CSVs open correctly in Excel (units such as degC) and show clean values (25.9, not 25.900000000000002).\n  - Every received byte accounted for; optional sequence counters detect lost frames.\n  - Import preview, restore previous configuration, configuration fingerprint in every log.\n  - Activating a configuration while connected now takes effect immediately.\n  - Live plot shows gaps as gaps and states as steps, marks signals that stopped arriving, shades lost-connection periods, and stays responsive with many signals.\n  - Analysis Suite: progress and Cancel while loading; workbooks with a CSV beside them load ~100x faster.\n  - Fixes for silent data-loss cases and an override of frame 0x101 signals in every configuration.\n  - Verified: 65 h on a real BMS, 4.23 M frames, zero errors.",
-    "sha256": "ec0bc1b0b8ef106ea130611b8bdb072a176e43a4f76dab7d59e56fafe5691634"
+    "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.2.5.exe",
+    "release_notes": "v1.2.5 Release - Long-duration logging, data-integrity checks, experiment configuration sheets.\n\nChanges:\n  - Recordings are now sessions split into hourly files; logging survives unplugs and reconnects\n  - Tools > Merge Session, and automatic merge when logging stops (event, fixed-step or both)\n  - New Derived sheet: Power, Ah, Wh computed live and logged\n  - Logging sheet: a configuration sets how its experiment is recorded\n  - Expected frame rate per frame: warns once when a frame stops or slows down\n  - Optional fixed-step log and lossless raw capture; crash-safe recording; log.txt in every session\n  - Log CSVs open cleanly in Excel (units such as degC, no float noise)\n  - Every received byte accounted for; optional sequence counters detect lost frames\n  - Import preview, restore previous configuration, configuration fingerprint in every log\n  - Live plot shows gaps as gaps and states as steps, marks stopped signals; Analysis Suite loads with progress\n  - Verified: 65 h on a real BMS, 4.23 M frames, zero errors",
+    "sha256": ""
 }
