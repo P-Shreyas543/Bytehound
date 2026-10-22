@@ -220,9 +220,10 @@ def _run_app() -> int:
     font.setStyleHint(QFont.StyleHint.SansSerif)
     app.setFont(font)
 
-    titlebar_filter = TitleBarThemeFilter(settings)
+    # Parented to the application, so Qt keeps the filter alive as long as the
+    # app runs (it used to be stored as an ad-hoc attribute on QApplication).
+    titlebar_filter = TitleBarThemeFilter(settings, app)
     app.installEventFilter(titlebar_filter)
-    app._titlebar_filter = titlebar_filter  # keep reference alive
 
     window = MainWindow()
     app.aboutToQuit.connect(window.close)
