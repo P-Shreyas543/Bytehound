@@ -409,6 +409,17 @@ New test `test_job_that_finishes_while_being_stopped_keeps_its_result`
 (fails without the fix, passes with it); the session timeout test now uses
 jobs that really hang instead of racing a 0.1 ms timeout against real ones.
 
+**Session merge for analysis (2026-10-22, owner request)** —
+`tools/merge_session.py <session> [--split day] [--kind fixed] [--csv]`
+joins a session's hourly segment CSVs in order and compiles one workbook (or
+one per local calendar day, cut exactly at midnight on each row's
+timestamp) with the app's own compiler (Metadata + Data, `Data_2` past
+Excel's row limit); a configuration change starts a new part instead of
+mixing columns; recorded gaps listed in Metadata; session folder never
+modified. 5 tests. Applied to the 65 h soak: 4 day workbooks, rows 60,424 /
+172,800 / 172,798 / 64,124 = 470,146 (all rows). Follow-up (open): offer it
+in the app (Tools menu) — the frozen build has no Python tools.
+
 **Repository reorganisation (2026-10-19, owner request)** — industry-standard
 layout, no behaviour change:
 - **Device configurations are local only:** every customer / device
