@@ -26,6 +26,9 @@ Version number to confirm before publishing (see the end of this file).
 - **`log.txt` in every session folder:** the application log of that
   recording (version, configuration, connection, every event), so a zipped
   session explains itself when shared.
+- **Log CSVs open cleanly in Excel:** units such as °C display correctly
+  and values are written without binary noise (25.9, not
+  25.900000000000002).
 - **New: Tools → Merge Session…** joins a session's hourly files into one
   workbook, or one workbook per day, for analysis. Runs in the background
   with progress and Cancel.
@@ -96,7 +99,7 @@ Version number to confirm before publishing (see the end of this file).
 
 - 65-hour run on a real BMS (RS485, 115,200 baud): 4.23 million frames,
   zero errors, every hourly segment closed and complete.
-- Automated test suite: 951 tests passing.
+- Automated test suite: 952 tests passing.
 
 ### Known limitations
 
