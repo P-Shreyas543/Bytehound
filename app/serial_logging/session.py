@@ -48,7 +48,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Protocol, Tupl
 
 from ..decoder.frame_decoder import DecodedFrame
 from ..decoder.types import FrameConfig
-from .decoded_logger import DecodedLogger, finalize_temp_log
+from .decoded_logger import CSV_ENCODING, DecodedLogger, csv_cell, finalize_temp_log
 
 _LOG = logging.getLogger("bytehound.serial_logging.session")
 
@@ -207,7 +207,7 @@ class CsvSegmentWriter:
         self.rows_written = 0
         self.dropped = 0
         self.error: Optional[str] = None
-        self._fp = self.data_path.open("w", encoding="utf-8", newline="")
+        self._fp = self.data_path.open("w", encoding=CSV_ENCODING, newline="")
         self._writer = csv.writer(self._fp)
         self._writer.writerow(header)
         self._fp.flush()
@@ -245,7 +245,7 @@ class CsvSegmentWriter:
                 item = self._queue.get()
                 if item is _STOP:
                     break
-                self._writer.writerow(item)
+                self._writer.writerow([csv_cell(c) for c in item])
                 self.rows_written += 1
                 now = time.monotonic()
                 if now - last_flush >= self._flush_interval:

@@ -92,7 +92,7 @@ def test_one_workbook_holds_every_row_in_order(tmp_path):
     total = sum(s["rows"]["event"] for s in m["segments"])
     header, data, meta = _xlsx_rows(Path(out[0]["xlsx"]))
     assert len(m["segments"]) == 3 and len(data) == total == out[0]["rows"]
-    with (folder / m["segments"][0]["files"]["event_csv"]).open(encoding="utf-8") as f:
+    with (folder / m["segments"][0]["files"]["event_csv"]).open(encoding="utf-8-sig") as f:
         assert list(header) == next(csv.reader(f))                 # same columns as the segments
     ti = header.index("time_utc")
     times = [r[ti] for r in data]

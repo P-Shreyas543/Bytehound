@@ -41,6 +41,7 @@ from typing import Callable, Dict, Iterable, List, Optional, Sequence, Tuple
 import numpy as np
 
 from ._isolated import run_isolated, timeout_for
+from .decoded_logger import CSV_ENCODING, csv_cell
 from .session import read_manifest
 
 _LOG = logging.getLogger("bytehound.serial_logging.session_analysis")
@@ -686,7 +687,7 @@ class SessionSource:
         path = Path(path)
         segs = self._overlapping(t0, t1)
         rows = 0
-        with path.open("w", newline="", encoding="utf-8") as fp:
+        with path.open("w", newline="", encoding=CSV_ENCODING) as fp:
             w = csv.writer(fp)
             w.writerow(["time_utc", "elapsed_s", *params])
             for i, s in enumerate(segs):
@@ -699,7 +700,7 @@ class SessionSource:
                 vals = [a[f"c/{p}"][sel] if a[f"c/{p}"].size else np.full(ts.size, np.nan) for p in params]
                 for k in range(ts.size):
                     w.writerow([iso_utc(self.start_epoch + ts[k]), f"{ts[k]:.3f}",
-                                *("" if not np.isfinite(v[k]) else repr(float(v[k])) for v in vals)])
+                                *("" if not np.isfinite(v[k]) else csv_cell(float(v[k])) for v in vals)])
                 rows += int(ts.size)
                 if progress:
                     progress(int(100 * (i + 1) / max(1, len(segs))))

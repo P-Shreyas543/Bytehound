@@ -25,7 +25,7 @@ import csv
 from pathlib import Path
 from typing import Callable, Dict, List, Optional
 
-from .decoded_logger import CompileCancelled, compile_csv_to_xlsx
+from .decoded_logger import CSV_ENCODING, CompileCancelled, compile_csv_to_xlsx
 from .session import MANIFEST_NAME, read_manifest
 
 Progress = Callable[[str, int, int], None]
@@ -72,7 +72,7 @@ class _Part:
     def __init__(self, path: Path, header: List[str]) -> None:
         self.csv_path = path
         self.header = header
-        self.fp = path.open("w", encoding="utf-8", newline="")
+        self.fp = path.open("w", encoding=CSV_ENCODING, newline="")
         self.writer = csv.writer(self.fp)
         self.writer.writerow(header)
         self.rows = 0
@@ -135,7 +135,7 @@ def merge(folder: Path, kind: str = "event", split: str = "none", out: Optional[
         for seg_index, path in sources:
             if stopped():
                 raise MergeCancelled()
-            with path.open("r", encoding="utf-8", newline="") as f:
+            with path.open("r", encoding=CSV_ENCODING, newline="") as f:
                 reader = csv.reader(f)
                 header = next(reader, None)
                 if header is None:

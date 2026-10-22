@@ -56,6 +56,7 @@ from __future__ import annotations
 import csv
 import json
 import logging
+import math
 import os
 import queue
 import shutil
@@ -250,7 +251,7 @@ class DecodedLogger:
 
         # Open temp CSV file
         try:
-            self._fp = self._tmp_data_path.open("w", encoding="utf-8", newline="")
+            self._fp = self._tmp_data_path.open("w", encoding=CSV_ENCODING, newline="")
             self._writer = csv.writer(self._fp)
             self._writer.writerow(self._columns)
             self._fp.flush()
@@ -495,7 +496,7 @@ class DecodedLogger:
         if writer is None:
             return False
         try:
-            writer.writerow(row)
+            writer.writerow([csv_cell(c) for c in row])
             self.rows_written += 1
             return True
         except Exception as exc:
@@ -768,6 +769,21 @@ def _read_metadata(meta_path: Path, fallback: Optional[Mapping[str, Any]] = None
     return dict(fallback or {})
 
 
+# Session CSVs (event, fixed-step, merged) are written as UTF-8 with a BOM so
+# Excel opens them with the right encoding (°C, µ …); every reader uses the
+# same codec, which accepts files with or without the BOM (older logs).
+CSV_ENCODING = "utf-8-sig"
+
+
+def csv_cell(value: Any) -> Any:
+    """A value as written to a log CSV. Floats get 15 significant digits:
+    raw × scale in binary floating point gives 25.900000000000002 for 25.9;
+    the 16th-17th digit is that noise, far below any sensor's resolution."""
+    if isinstance(value, float) and not isinstance(value, bool) and math.isfinite(value):
+        return format(value, ".15g")
+    return value
+
+
 def _typed_cell(cell: str) -> Any:
     if cell == "":
         return ""
@@ -808,7 +824,7 @@ def compile_csv_to_xlsx(
         data_ws = wb.create_sheet(title=DecodedLogger.DATA_SHEET)
         header_row = None
         current_sheet_rows = 0
-        with data_path.open("r", encoding="utf-8", newline="") as f:
+        with data_path.open("r", encoding=CSV_ENCODING, newline="") as f:
             for row in csv.reader(f):
                 if header_row is None:
                     header_row = row

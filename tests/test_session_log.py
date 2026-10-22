@@ -81,7 +81,8 @@ def _session(tmp_path, config, clock, **settings_kw) -> tuple[SessionLog, RawHoo
 
 
 def _csv_rows(path: Path) -> List[List[str]]:
-    with path.open(newline="", encoding="utf-8") as fp:
+    # Session CSVs carry a UTF-8 BOM (for Excel); read them as the app does.
+    with path.open(newline="", encoding="utf-8-sig") as fp:
         return list(csv.reader(fp))
 
 
@@ -833,3 +834,34 @@ def test_config_change_during_a_gap_continues_in_a_new_segment(tmp_path, config)
     pick = _segment_configs(folder, m, config)             # offline rebuild: each its own config
     assert pick(seg1).protocol == config.protocol
     assert pick(seg2).protocol == other.protocol
+
+
+def test_csvs_open_cleanly_in_excel_and_carry_no_float_noise(tmp_path, config):
+    """Owner check 2026-10-23: the CSVs showed 25.900000000000002 for 25.9,
+    and °C as Â°C when opened in Excel (UTF-8 without a BOM)."""
+    from app.serial_logging.decoded_logger import csv_cell
+
+    assert csv_cell(259 * 0.1) == "25.9" and csv_cell(0.1 + 0.2) == "0.3"
+    assert csv_cell(3.717) == "3.717" and csv_cell(-0.006) == "-0.006"
+    assert csv_cell(4294967295.0) == "4294967295" and csv_cell(7) == 7 and csv_cell("x") == "x"
+    nan = csv_cell(float("nan"))
+    assert isinstance(nan, float) and nan != nan                        # non-finite left as is
+
+    clock = Clock()
+    s, _ = _session(tmp_path, config, clock, segment_seconds=3600, fixed_step_s=1.0)
+    s.start()
+    for f in _frames(config) * 10:
+        s.log_frame(f, clock.perf)
+        clock.advance(0.5)
+    s.stop()
+    assert s.await_finished(60)
+    seg = read_manifest(tmp_path / "sess")["segments"][0]
+    for key in ("event_csv", "fixed_csv"):
+        raw = (tmp_path / "sess" / seg["files"][key]).read_bytes()
+        assert raw.startswith(b"\xef\xbb\xbf"), key                   # BOM: Excel reads UTF-8
+        text = raw.decode("utf-8-sig")
+        assert "0000000000" not in text and "9999999999" not in text, key   # no binary float noise
+    # Files without a BOM (older sessions) still read the same way.
+    plain = tmp_path / "old.csv"
+    plain.write_text("time_utc,a\n2026-01-01T00:00:00+00:00,1\n", encoding="utf-8")
+    assert _csv_rows(plain)[0] == ["time_utc", "a"]

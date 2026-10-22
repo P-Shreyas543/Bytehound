@@ -129,7 +129,7 @@ def test_worker_detects_gaps_reports_them_and_counts_them(tmp_path):
     assert session.await_finished(60)
     seg = read_manifest(tmp_path / "sess")["segments"][0]
     assert seg["sequence_events"] == 4
-    rows = (tmp_path / "sess" / seg["files"]["sequence_csv"]).read_text(encoding="utf-8").splitlines()
+    rows = (tmp_path / "sess" / seg["files"]["sequence_csv"]).read_text(encoding="utf-8-sig").splitlines()
     assert rows[0].startswith("time_utc,time_local,elapsed_ms,frame_id,kind,expected,received,missing")
     assert [r.split(",")[4:] for r in rows[1:]] == [
         ["gap", "3", "5", "2"], ["repeat", "7", "6", "0"], ["gap", "7", "20", "13"], ["reset", "21", "2", "0"]]
