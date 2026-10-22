@@ -219,3 +219,10 @@ def test_compiler_cancel_mid_write_writes_nothing(tmp_path):
                               cancel=lambda: len(seen) >= 1)
     assert isinstance(exc, CompileCancelled) and seen == [10_000]
     assert not (tmp_path / "out.xlsx").exists() and not list(tmp_path.glob("*.partial"))
+
+
+def test_selftest_merge_passes_in_this_environment():
+    """The check the frozen build runs (Bytehound.exe --selftest-merge)."""
+    from app.serial_logging.selftest import selftest_merge
+
+    assert selftest_merge(rows=200) == 0

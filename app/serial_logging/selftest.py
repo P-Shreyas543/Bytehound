@@ -81,3 +81,87 @@ def selftest_finish(rows: int = 600) -> int:
         return 1
     say(f"OK: session finished in a helper process ({folder})")
     return 0
+
+
+def selftest_merge(rows: int = 600) -> int:
+    """``Bytehound --selftest-merge``: Tools → Merge Session… in this build.
+
+    Records a short session, then merges it exactly as the menu action does:
+    ``session_merge.merge_job`` in a spawned child process, reporting over a
+    queue. Checks the child ran, finished, and wrote a workbook with every
+    row. In a frozen build the child is the application executable started
+    in multiprocessing mode, which is what this verifies."""
+    import multiprocessing as mp
+    import queue as _queue
+
+    from ..decoder.config_loader import load_config
+    from ..decoder.frame_decoder import decode_frame
+    from .session import SessionLog, SessionSettings, read_manifest
+    from .session_merge import merge_job
+
+    def say(msg: str) -> None:
+        _LOG.info("selftest-merge: %s", msg)
+        if sys.stdout is not None:
+            print(msg)
+
+    failures = []
+    template = Path(__file__).resolve().parents[1] / "resources" / "config_template"
+    config = load_config(template)
+    folder = Path(tempfile.mkdtemp(prefix="bh_selftest_merge_")) / "session"
+    session = SessionLog(folder, config, SessionSettings(segment_seconds=3600), config_source=template)
+    session.start()
+    frames = [decode_frame(config, fid, bytes((i * 7 + fid) & 0xFF for i in range(f.payload_length)), {})
+              for fid, f in config.frames.items()]
+    t = time.perf_counter()
+    for i in range(rows):
+        for f in frames:
+            session.log_frame(f, t + i * 0.01)
+    session.stop()
+    if not session.await_finished(300):
+        failures.append("segment finishing did not complete within 300 s")
+    expected = sum(s["rows"]["event"] for s in read_manifest(folder)["segments"])
+
+    ctx = mp.get_context("spawn")
+    q, cancel = ctx.Queue(), ctx.Event()
+    proc = ctx.Process(target=merge_job, name="BytehoundMerge", daemon=True,
+                       args=(str(folder), "event", "none", None, False, q, cancel))
+    t0 = time.monotonic()
+    proc.start()
+    say(f"merge child pid {proc.pid} (application {os.getpid()})")
+    result = None
+    while time.monotonic() - t0 < 300:
+        try:
+            msg = q.get(timeout=1.0)
+        except _queue.Empty:
+            if not proc.is_alive():
+                failures.append(f"merge child exited without a result (exit code {proc.exitcode})")
+                break
+            continue
+        if msg[0] in ("done", "error", "cancelled"):
+            result = msg
+            break
+    proc.join(10)
+    if result is None and not failures:
+        failures.append("no result from the merge child within 300 s")
+    elif result is not None and result[0] != "done":
+        failures.append(f"merge reported {result[0]}: {result[1:] }")
+    elif result is not None:
+        xlsx = Path(result[1][0]["xlsx"])
+        say(f"merged in {time.monotonic() - t0:.1f}s -> {xlsx.name}")
+        try:
+            from openpyxl import load_workbook
+            wb = load_workbook(xlsx, read_only=True)
+            data_rows = sum(1 for _ in wb["Data"].iter_rows()) - 1
+            wb.close()
+            if data_rows != expected:
+                failures.append(f"merged xlsx has {data_rows} rows, session has {expected}")
+            say(f"merged xlsx readable: {data_rows} rows")
+        except Exception as exc:
+            failures.append(f"merged xlsx unreadable: {exc}")
+
+    if failures:
+        for f in failures:
+            say(f"FAIL: {f}")
+        return 1
+    say(f"OK: session merged in a child process ({folder})")
+    return 0
