@@ -425,7 +425,13 @@ Opening the session folder (`session.json`) remains the fastest route for
 whole recordings: 65 h in 6.6 s, any hour in 24 ms. 5 tests. The owner's
 soak exports were regenerated with their CSVs.
 
-**Release v1.2.4 built (2026-10-22, not yet published)** — `python build.py
+**Release v1.2.4 REBUILT (2026-10-22, later the same day)** from f187d99 (+
+sha commit 6dbaf4d) to include the Restore-crash fix, live-plot U1/U2 and
+the Analysis Suite loading work: installer SHA-256 `4c664e35…` = version.json;
+release exe self-tests (merge, finish, capture) PASS, title v1.2.4,
+start/close, no leftover processes. Supersedes the first build below.
+
+**Release v1.2.4 first build (superseded)** — `python build.py
 --release` from a clean tree at 49b7c0e (+ the sha commit 80a8a3d):
 `installer_output/Bytehound_Setup_1.2.4.exe` 65.2 MB, SHA-256
 `0af060db…` = `version.json`; `dist/Bytehound_1.2.4.zip` 110.3 MB. Release
