@@ -23,6 +23,9 @@ Version number to confirm before publishing (see the end of this file).
   Rebuild Decoded Log* regenerates any decoded log from it.
 - **Crash-safe.** Logs are written as data arrives; after a crash or power
   cut the next start recovers the session.
+- **`log.txt` in every session folder:** the application log of that
+  recording (version, configuration, connection, every event), so a zipped
+  session explains itself when shared.
 - **New: Tools → Merge Session…** joins a session's hourly files into one
   workbook, or one workbook per day, for analysis. Runs in the background
   with progress and Cancel.
@@ -93,8 +96,7 @@ Version number to confirm before publishing (see the end of this file).
 
 - 65-hour run on a real BMS (RS485, 115,200 baud): 4.23 million frames,
   zero errors, every hourly segment closed and complete.
-- Automated test suite: 949 tests (948 passing in the last full run; one
-  timing-sensitive test failed once under load and passes when re-run).
+- Automated test suite: 951 tests passing.
 
 ### Known limitations
 
