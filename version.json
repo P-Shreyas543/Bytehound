@@ -13,5 +13,5 @@
     "manifest_url": "https://bytehound.shreyasp182002.workers.dev/version.json",
     "installer_url": "https://bytehound.shreyasp182002.workers.dev/Bytehound_Setup_1.2.4.exe",
     "release_notes": "v1.2.4 Release - Long-duration logging, data-integrity checks and safer configuration changes.\n\nChanges:\n  - Recordings are now sessions split into hourly files; logging survives unplugs and reconnects.\n  - New: Tools > Merge Session joins a session into one workbook or one per day.\n  - Optional fixed-step log and lossless raw capture; crash-safe recording.\n  - Every received byte accounted for; optional sequence counters detect lost frames.\n  - Import preview, restore previous configuration, configuration fingerprint in every log.\n  - Activating a configuration while connected now takes effect immediately.\n  - Live plot shows gaps as gaps and states as steps, and stays responsive with many signals.\n  - Fixes for silent data-loss cases and an override of frame 0x101 signals in every configuration.\n  - Verified: 65 h on a real BMS, 4.23 M frames, zero errors.",
-    "sha256": "5787911b5bd4a842beddab82c3ead952f0fadf8191e9b21260d6943bfa230b60"
+    "sha256": "0af060db1093c379c35e76cbe5ed1ab96165b044178e6d4eaf1aaba82410e59d"
 }
