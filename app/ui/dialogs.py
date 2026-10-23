@@ -1209,7 +1209,26 @@ class ReportIssueDialog(QDialog):
 
         form.addRow("Attachments", list_container)
 
+        # What else is sent. Reports become public GitHub issues, so nothing
+        # beyond what the user typed is included without their say-so.
+        self._diag_chk = QCheckBox(
+            "Include app version, connection details and the last 200 log lines "
+            "(your user folder name is hidden)", self)
+        self._diag_chk.setChecked(True)
+        self._config_chk = QCheckBox("Include the loaded configuration file", self)
+        self._config_chk.setChecked(False)
+        self._config_chk.setToolTip("Only if the configuration may be made public - it describes your device.")
+        form.addRow("Also send", self._diag_chk)
+        form.addRow("", self._config_chk)
+
         layout.addLayout(form)
+
+        notice = QLabel(
+            "Reports are posted as a <b>public</b> GitHub issue - anyone can read them. "
+            "Do not include passwords, customer names or confidential data.", self)
+        notice.setWordWrap(True)
+        notice.setStyleSheet("color: #D97706;")
+        layout.addWidget(notice)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -1329,6 +1348,12 @@ class ReportIssueDialog(QDialog):
             QMessageBox.warning(self, "Validation Error", "Description is required.")
             return
         self.accept()
+
+    def include_diagnostics(self) -> bool:
+        return self._diag_chk.isChecked()
+
+    def include_config(self) -> bool:
+        return self._config_chk.isChecked()
 
     def get_data(self) -> tuple[str, str, list[dict]]:
         return (

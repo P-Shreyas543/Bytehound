@@ -1731,10 +1731,14 @@
             <li><strong>Report Issue...</strong>
                 <br><em>What it does:</em> Opens a dialog to report software issues directly from within the
                 application.
-                <br><em>How it works:</em> Enter a title and description, and optionally include the tail of the
-                application diagnostics log. When you submit, a background thread securely forwards your report along
-                with complete runtime context (OS, Python, Qt versions, active configuration path, connection status,
-                packet counters) to our issue tracking server.
+                <br><em>How it works:</em> Enter a title and description and attach files or screenshots if they
+                help. Two options decide what else is sent: <strong>diagnostics</strong> (on by default — app
+                version, OS, connection type and counters, logging settings and the last 200 lines of the
+                application log, with your user folder name hidden) and <strong>the loaded configuration
+                file</strong> (off by default). The report is sent over HTTPS and posted as a GitHub issue.
+                <div class="warning">Reports are <strong>public</strong>: anyone can read them on GitHub. Do not
+                    include passwords, customer names or confidential data, and attach a configuration only if it
+                    may be made public.</div>
             </li>
             <li><strong>About Bytehound</strong>
                 <br><em>What it does:</em> Opens a window showing copyright notices, version info, credits, and links to
@@ -3927,6 +3931,14 @@ CAN Monitor    | waveshare_can  | AA         | 55         | TRUE</pre>
             <strong>Light</strong> choices. If anything looks inconsistent in <strong>System</strong>, choose Dark or
             Light directly.
         </div>
+
+        <h3 id="install-warning">“Windows protected your PC” when installing</h3>
+        <p>The installer is not code-signed yet, so Windows SmartScreen does not know the publisher and shows a
+            blue <em>Windows protected your PC</em> box. Click <strong>More info → Run anyway</strong> (or, before
+            running it: right-click the installer → <strong>Properties</strong> → tick <strong>Unblock</strong> →
+            OK). To check the file is genuine, compare its SHA-256 (PowerShell:
+            <code>Get-FileHash Bytehound_Setup_x.y.z.exe</code>) with <code>sha256</code> in the published
+            <code>version.json</code>. The in-app updater does this check for you.</p>
 
         <h3 id="check-for-updates">Check for Updates</h3>
         <p>Open <strong>Help → Check for Updates</strong>. The app will:</p>

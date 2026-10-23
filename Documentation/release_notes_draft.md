@@ -102,10 +102,22 @@ Changes since **v1.2.3** (2026-08-28), branch `production-hardening`.
   CSV beside it is loaded from the CSV (~100x faster); workbooks keep
   clock time.
 
+### Installing on Windows
+
+The installer is not code-signed yet, so Windows may show **"Windows
+protected your PC"**. Click **More info → Run anyway** (or right-click the
+installer → Properties → tick **Unblock** → OK, then run it). To check the
+file, compare `Get-FileHash Bytehound_Setup_1.2.5.exe` (PowerShell) with
+`sha256` in `version.json`.
+
 ### Reliability and security
 
 - Update and issue-report links must use HTTPS; downloaded installers are
   re-verified before they run.
+- **Report Issue** says clearly that reports are public GitHub issues; the
+  loaded configuration is attached only when you tick it (before, it was
+  always attached), the whole settings store is no longer sent, your user
+  folder name is hidden, and reports now include the app version.
 - Test-only packages are no longer bundled in the application.
 - Portable (zip) copies show the correct version and no longer offer every
   release as an update.
@@ -116,7 +128,7 @@ Changes since **v1.2.3** (2026-08-28), branch `production-hardening`.
   zero errors, every hourly segment closed and complete.
 - The new configuration sheets on the real single-cell rig (charge /
   discharge run: Ah and Wh match current × time; automatic merge at stop).
-- Automated test suite: 985 tests passing.
+- Automated test suite: 992 tests passing.
 
 ### Known limitations
 

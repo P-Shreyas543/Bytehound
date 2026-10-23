@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import platform
+import re
 import sys
 import urllib.error
 import urllib.request
@@ -126,12 +127,17 @@ class IssueReporter(QThread):
             with urllib.request.urlopen(
                 req, data=json.dumps(data).encode("utf-8"), timeout=15
             ) as response:
-                if response.status == 201:
+                if response.status in (200, 201):
                     self.finished.emit(True, "Issue reported successfully.")
                 else:
                     self.finished.emit(False, f"Status code: {response.status}")
         except urllib.error.HTTPError as e:
-            self.finished.emit(False, f"HTTP {e.code}: {e.reason}")
+            detail = ""
+            try:
+                detail = e.read(300).decode("utf-8", errors="replace").strip()
+            except Exception:
+                pass
+            self.finished.emit(False, f"HTTP {e.code}: {e.reason}" + (f" ({detail})" if detail else ""))
         except Exception as e:
             self.finished.emit(False, str(e))
 
@@ -144,9 +150,11 @@ class ReportIssueMixin:
         dlg = ReportIssueDialog(self)
         if dlg.exec() == ReportIssueDialog.DialogCode.Accepted:
             title, description, attachments = dlg.get_data()
+            include_diag = dlg.include_diagnostics()
 
-            # Automatically attach the loaded configuration file if present
-            if getattr(self, "_config_path", None) is not None:
+            # The loaded configuration only when the user ticked it: reports
+            # are public and a configuration describes their device.
+            if dlg.include_config() and getattr(self, "_config_path", None) is not None:
                 from pathlib import Path
                 config_path = Path(self._config_path)
                 if config_path.is_file():
@@ -170,13 +178,16 @@ class ReportIssueMixin:
                     except Exception as e:
                         _LOG.warning("Failed to automatically attach configuration file: %s", e)
 
-            diagnostics = self._gather_issue_diagnostics()
-
-            log_path = self._find_log_file_path()
-            if log_path:
-                log_content = self._read_log_tail(log_path, lines=200)
+            if include_diag:
+                diagnostics = _redact(self._gather_issue_diagnostics())
+                log_path = self._find_log_file_path()
+                if log_path:
+                    log_content = _redact(self._read_log_tail(log_path, lines=200))
+                else:
+                    log_content = "(log file not found)"
             else:
-                log_content = "(log file not found)"
+                diagnostics = f"Bytehound {self._version_info.get('version', '?')} (diagnostics not included)"
+                log_content = None
 
             self._progress_dialog = QProgressDialog(
                 "Submitting issue report...", "Cancel", 0, 0, self
@@ -193,12 +204,20 @@ class ReportIssueMixin:
                 title, description, diagnostics, log_content, attachments, worker_url, self
             )
             self._reporter.finished.connect(self._on_report_finished)
-            self._progress_dialog.canceled.connect(self._reporter.requestInterruption)
+            self._report_cancelled = False
+            self._progress_dialog.canceled.connect(self._on_report_cancelled)
             self._reporter.start()
+
+    def _on_report_cancelled(self) -> None:
+        # A request already on its way cannot be recalled; stop waiting for it.
+        self._report_cancelled = True
+        self._log_activity("[INFO] Issue report cancelled (it may still arrive if it was already sent)")
 
     def _on_report_finished(self, success: bool, message: str) -> None:
         if getattr(self, "_progress_dialog", None) is not None:
             self._progress_dialog.close()
+        if getattr(self, "_report_cancelled", False):
+            return
 
         if success:
             self._popup_information("Report Issue", message)
@@ -239,6 +258,7 @@ class ReportIssueMixin:
                 )
 
         diag = [
+            f"Bytehound: {self._version_info.get('version', '?')}",
             f"Captured: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
             "",
             "--- Runtime ---",
@@ -264,12 +284,35 @@ class ReportIssueMixin:
             f"TX bytes:    {self._tx_bytes}",
         ]
 
+        # Only settings that explain behaviour; never the whole store (it
+        # holds recent file paths, hosts and other personal values).
         diag.append("")
-        diag.append("--- QSettings ---")
+        diag.append("--- Settings ---")
         try:
             for key in sorted(self._settings.allKeys()):
-                diag.append(f"{key}: {self._settings.value(key)}")
+                if key.startswith(_SAFE_SETTING_PREFIXES):
+                    diag.append(f"{key}: {self._settings.value(key)}")
         except Exception as e:
-            diag.append(f"(failed to dump QSettings: {e})")
+            diag.append(f"(failed to read settings: {e})")
 
         return "\n".join(diag)
+
+
+_SAFE_SETTING_PREFIXES = ("logging/", "plot/", "polling/", "theme", "ui/")
+
+
+def _redact(text: str) -> str:
+    """Hide the user's home folder (and so their user name) in text that
+    goes into a public report."""
+    import os
+    from pathlib import Path
+
+    home = str(Path.home())
+    out = text
+    for variant in {home, home.replace("\\", "/"), home.replace("\\", "\\\\")}:
+        out = out.replace(variant, "%USERPROFILE%")
+    user = os.environ.get("USERNAME") or os.environ.get("USER") or ""
+    if len(user) >= 3:
+        # Whole words only, so a short name does not mangle signal names.
+        out = re.sub(rf"(?<![A-Za-z0-9]){re.escape(user)}(?![A-Za-z0-9])", "<user>", out)
+    return out
