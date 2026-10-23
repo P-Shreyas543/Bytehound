@@ -15,13 +15,35 @@ from .logging_session import _format_number
 class TelemetryPipelineMixin:
     """Mixin for MainWindow."""
 
+    BACKPRESSURE_HIGH_WATERMARK = 4000
+    BACKPRESSURE_LOW_WATERMARK = 1000
+
     def _on_packets_received(self, batch: list) -> None:
         """Slot called by the worker's batch signal. Queues for the 60Hz UI timer.
 
         The underlying deque is bounded (maxlen=10_000) so a stalled Qt event
-        loop cannot cause an OOM crash — oldest packets are silently dropped.
+        loop cannot cause an OOM crash. When near capacity, backpressure throttling
+        is signaled to the worker to pause autonomous polling.
         """
+        current_len = len(self._pending_packets)
+        space_left = (self._pending_packets.maxlen - current_len) if self._pending_packets.maxlen else 10_000
+        if len(batch) > space_left:
+            dropped = len(batch) - space_left
+            self._backpressure_dropped_count = getattr(self, "_backpressure_dropped_count", 0) + dropped
+            import logging
+            logging.getLogger("bytehound.ui").warning(
+                "UI event queue saturated: dropped %d packets (total dropped: %d)",
+                dropped, self._backpressure_dropped_count
+            )
+
         self._pending_packets.extend(batch)
+
+        # PuTTY-inspired backpressure signaling to the worker
+        if len(self._pending_packets) >= self.BACKPRESSURE_HIGH_WATERMARK:
+            if hasattr(self, "_serial") and self._serial is not None:
+                if not getattr(self, "_ui_backpressured", False):
+                    self._ui_backpressured = True
+                    self._serial.set_backpressure(True)
 
     def _flush_ui(self) -> None:
         """Drain the pending packet queue and refresh the UI at 60 Hz.
@@ -53,6 +75,13 @@ class TelemetryPipelineMixin:
         # makes a single attribute assignment atomic.
         pending = self._pending_packets
         self._pending_packets = deque(maxlen=10_000)
+
+        # Release backpressure once queue has been drained
+        if getattr(self, "_ui_backpressured", False):
+            if hasattr(self, "_serial") and self._serial is not None:
+                self._ui_backpressured = False
+                self._serial.set_backpressure(False)
+
         if not pending:
             return
 

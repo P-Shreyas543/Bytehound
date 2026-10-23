@@ -1523,3 +1523,7 @@ The build is "done" when:
    `dist/Bytehound/Bytehound.exe` that launches and works
    identically to the dev run, with no PyQt5/6/PySide2 in the bundle.
 10. **Tests:** `pytest -q` is green on Windows + Python 3.10.
+
+## Single-Cell Cycler Packaging Addendum
+
+The dedicated application is built from `single_cell_cycler/build.py` in directory mode. It packages the guarded recipes directory only when present, includes PySide6 and pyqtgraph plot dependencies, and creates the Inno Setup installer from `installer.iss`. The production alert contract includes `BMS Serial / Device ID`.

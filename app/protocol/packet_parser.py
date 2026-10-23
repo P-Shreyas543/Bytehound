@@ -346,6 +346,7 @@ class FramedParser(ParserProtocol):
     def __init__(self, protocol: ProtocolConfig) -> None:
         self.protocol = protocol
         self._buf = bytearray()
+        self._offset = 0
         # When escape_mode != "none" an outer unframer extracts complete
         # inner-frame blobs from the on-wire stream; those blobs are then
         # appended to ``_buf`` and the existing header-search logic processes
@@ -356,14 +357,28 @@ class FramedParser(ParserProtocol):
             else None
         )
 
+    def _compact_if_needed(self) -> None:
+        if self._offset > 0:
+            if self._offset >= len(self._buf):
+                self._buf.clear()
+                self._offset = 0
+            elif self._offset >= 8192:
+                del self._buf[:self._offset]
+                self._offset = 0
+
     def feed(self, data: bytes) -> None:
+        self._compact_if_needed()
         if self._unframer is None:
             self._buf.extend(data)
         else:
             self._unframer.feed(data)
             for inner in self._unframer.extract_frames():
                 self._buf.extend(inner)
-        _trim_if_overflow(self._buf, "FramedParser")
+        if len(self._buf) - self._offset > _MAX_BUFFER_BYTES:
+            if self._offset > 0:
+                del self._buf[:self._offset]
+                self._offset = 0
+            _trim_if_overflow(self._buf, "FramedParser")
 
     def extract_all(self) -> List[ParsedPacket]:
         out: List[ParsedPacket] = []
@@ -371,14 +386,15 @@ class FramedParser(ParserProtocol):
             pkt, consumed = self._try_parse_one()
             if pkt is None and consumed == 0:
                 break
-            del self._buf[:consumed]
+            self._offset += consumed
             if pkt is not None:
                 out.append(pkt)
+        self._compact_if_needed()
         return out
 
     @property
     def buffered_bytes(self) -> int:
-        return len(self._buf)
+        return len(self._buf) - self._offset
 
     def _try_parse_one(self) -> Tuple[Optional[ParsedPacket], int]:
         pc = self.protocol
@@ -386,24 +402,25 @@ class FramedParser(ParserProtocol):
         if len(header) == 0:
             raise ValueError("Protocol header must not be empty")
 
-        if len(self._buf) < len(header):
+        avail = len(self._buf) - self._offset
+        if avail < len(header):
             return None, 0
 
-        idx = self._buf.find(header)
+        idx = self._buf.find(header, self._offset)
         if idx == -1:
-            skip = max(0, len(self._buf) - (len(header) - 1))
+            skip = max(0, avail - (len(header) - 1))
             return None, skip
-        if idx > 0:
-            return None, idx
+        if idx > self._offset:
+            return None, idx - self._offset
 
         fixed_size = (
             len(header) + pc.frame_id_size + pc.length_size
             + pc.crc_size + len(pc.footer)
         )
-        if len(self._buf) < fixed_size:
+        if avail < fixed_size:
             return None, 0
 
-        buf_mv = memoryview(self._buf)
+        buf_mv = memoryview(self._buf)[self._offset:]
 
         length_off = len(header) + pc.frame_id_size
         length_bytes_mv = buf_mv[length_off : length_off + pc.length_size]
@@ -427,7 +444,7 @@ class FramedParser(ParserProtocol):
         if total_size > _MAX_BUFFER_BYTES - 65536:
             return None, 1
 
-        if len(self._buf) < total_size:
+        if avail < total_size:
             return None, 0
 
         raw = bytes(buf_mv[:total_size])
@@ -485,10 +502,25 @@ class WaveshareCanParser(ParserProtocol):
     def __init__(self, protocol: ProtocolConfig) -> None:
         self.protocol = protocol
         self._buf = bytearray()
+        self._offset = 0
+
+    def _compact_if_needed(self) -> None:
+        if self._offset > 0:
+            if self._offset >= len(self._buf):
+                self._buf.clear()
+                self._offset = 0
+            elif self._offset >= 8192:
+                del self._buf[:self._offset]
+                self._offset = 0
 
     def feed(self, data: bytes) -> None:
+        self._compact_if_needed()
         self._buf.extend(data)
-        _trim_if_overflow(self._buf, "WaveshareCanParser")
+        if len(self._buf) - self._offset > _MAX_BUFFER_BYTES:
+            if self._offset > 0:
+                del self._buf[:self._offset]
+                self._offset = 0
+            _trim_if_overflow(self._buf, "WaveshareCanParser")
 
     def extract_all(self) -> List[ParsedPacket]:
         out: List[ParsedPacket] = []
@@ -496,17 +528,19 @@ class WaveshareCanParser(ParserProtocol):
             pkt, consumed = self._try_parse_one()
             if pkt is None and consumed == 0:
                 break
-            del self._buf[:consumed]
+            self._offset += consumed
             if pkt is not None:
                 out.append(pkt)
+        self._compact_if_needed()
         return out
 
     @property
     def buffered_bytes(self) -> int:
-        return len(self._buf)
+        return len(self._buf) - self._offset
 
     def _try_parse_one(self) -> Tuple[Optional[ParsedPacket], int]:
-        if len(self._buf) < 1:
+        avail = len(self._buf) - self._offset
+        if avail < 1:
             return None, 0
 
         is_fixed = (
@@ -516,43 +550,45 @@ class WaveshareCanParser(ParserProtocol):
 
         if is_fixed:
             # Fixed 20-byte Protocol: Frame header must be AA 55
-            idx = 0
+            idx = self._offset
             while idx < len(self._buf):
                 pos = self._buf.find(0xAA, idx)
                 if pos == -1:
-                    return None, len(self._buf)
+                    return None, avail
                 if pos + 1 < len(self._buf):
                     if self._buf[pos + 1] == 0x55:
-                        if pos > 0:
-                            return None, pos
+                        if pos > self._offset:
+                            return None, pos - self._offset
                         break
                     else:
                         idx = pos + 1
                 else:
-                    if pos > 0:
-                        return None, pos
+                    if pos > self._offset:
+                        return None, pos - self._offset
                     return None, 0
 
-            if len(self._buf) < 19:
+            if avail < 19:
                 return None, 0
 
+            buf_mv = memoryview(self._buf)[self._offset:]
+
             # 1. Check for 19-byte frame (Waveshare firmware sometimes omits the 0x00 pad byte):
-            chk_19 = (sum(self._buf[:18]) + 1) & 0xFF
+            chk_19 = (sum(buf_mv[:18]) + 1) & 0xFF
             is_19 = False
-            if self._buf[18] == chk_19:
+            if buf_mv[18] == chk_19:
                 # If followed immediately by next AA 55 header or buffer boundary
                 if (
-                    len(self._buf) == 19
-                    or (len(self._buf) >= 21 and self._buf[19] == 0xAA and self._buf[20] == 0x55)
-                    or (len(self._buf) == 20 and self._buf[19] == 0xAA)
+                    avail == 19
+                    or (avail >= 21 and buf_mv[19] == 0xAA and buf_mv[20] == 0x55)
+                    or (avail == 20 and buf_mv[19] == 0xAA)
                 ):
                     is_19 = True
 
             if is_19:
-                raw = bytes(self._buf[:19])
-                dlc = min(self._buf[9], 8)
-                frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
-                payload = bytes(self._buf[10 : 10 + dlc])
+                raw = bytes(buf_mv[:19])
+                dlc = min(buf_mv[9], 8)
+                frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
+                payload = bytes(buf_mv[10 : 10 + dlc])
                 pkt = ParsedPacket(
                     raw=raw,
                     frame_id=frame_id,
@@ -563,9 +599,9 @@ class WaveshareCanParser(ParserProtocol):
                 return pkt, 19
 
             # 2. Check if the next header is already at index 19 (meaning 1 byte was dropped on the wire)
-            if len(self._buf) >= 21 and self._buf[19] == 0xAA and self._buf[20] == 0x55:
+            if avail >= 21 and buf_mv[19] == 0xAA and buf_mv[20] == 0x55:
                 pkt = ParsedPacket(
-                    raw=bytes(self._buf[:19]),
+                    raw=bytes(buf_mv[:19]),
                     frame_id=0,
                     payload=b"",
                     ok=False,
@@ -574,25 +610,25 @@ class WaveshareCanParser(ParserProtocol):
                 return pkt, 19
 
             # If exactly 20 bytes and byte 19 is 0xAA, wait for byte 20 to check if it's 0x55 (next packet header)
-            if len(self._buf) == 20 and self._buf[19] == 0xAA:
+            if avail == 20 and buf_mv[19] == 0xAA:
                 return None, 0
 
-            if len(self._buf) < 20:
+            if avail < 20:
                 return None, 0
 
             # 3. Verify standard 20-byte checksum: (sum of first 19 bytes + 1) & 0xFF
-            expected_chk = (sum(self._buf[:19]) + 1) & 0xFF
-            received_chk = self._buf[19]
+            expected_chk = (sum(buf_mv[:19]) + 1) & 0xFF
+            received_chk = buf_mv[19]
             if expected_chk != received_chk:
                 # Resynchronize: check if another 0xAA 0x55 header is present starting at index 1
                 next_header = -1
-                for k in range(1, len(self._buf) - 1):
-                    if self._buf[k] == 0xAA and self._buf[k + 1] == 0x55:
+                for k in range(1, avail - 1):
+                    if buf_mv[k] == 0xAA and buf_mv[k + 1] == 0x55:
                         next_header = k
                         break
                 advance_bytes = next_header if next_header != -1 else 1
                 pkt = ParsedPacket(
-                    raw=bytes(self._buf[:advance_bytes if next_header != -1 else 20]),
+                    raw=bytes(buf_mv[:advance_bytes if next_header != -1 else 20]),
                     frame_id=0,
                     payload=b"",
                     ok=False,
@@ -600,10 +636,10 @@ class WaveshareCanParser(ParserProtocol):
                 )
                 return pkt, advance_bytes
 
-            raw = bytes(self._buf[:20])
-            dlc = min(self._buf[9], 8)
-            frame_id = int.from_bytes(self._buf[5:9], byteorder='little')
-            payload = bytes(self._buf[10 : 10 + dlc])
+            raw = bytes(buf_mv[:20])
+            dlc = min(buf_mv[9], 8)
+            frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
+            payload = bytes(buf_mv[10 : 10 + dlc])
 
             pkt = ParsedPacket(
                 raw=raw,
@@ -615,18 +651,18 @@ class WaveshareCanParser(ParserProtocol):
             return pkt, 20
 
         # Variable-Length Protocol (waveshare_can):
-        # Find 0xAA header index
-        idx = self._buf.find(0xAA)
+        idx = self._buf.find(0xAA, self._offset)
         if idx == -1:
-            return None, len(self._buf)
-        if idx > 0:
-            return None, idx
+            return None, avail
+        if idx > self._offset:
+            return None, idx - self._offset
 
-        # Header AA is at index 0. We need type byte at index 1.
-        if len(self._buf) < 2:
+        # Header AA is at index 0 relative to offset. We need type byte at index 1.
+        if avail < 2:
             return None, 0
 
-        type_byte = self._buf[1]
+        buf_mv = memoryview(self._buf)[self._offset:]
+        type_byte = buf_mv[1]
         # Check if type_byte is valid for Variable-Length Protocol (starts with 0xC0 or 0xE0)
         if (type_byte & 0xC0) != 0xC0:
             # Not a valid frame start. Drop the 0xAA byte to resync.
@@ -641,19 +677,19 @@ class WaveshareCanParser(ParserProtocol):
         id_size = 4 if is_extended else 2
         total_size = 1 + 1 + id_size + dlc + 1  # header + type + id + data + footer
 
-        if len(self._buf) < total_size:
+        if avail < total_size:
             return None, 0
 
-        footer_byte = self._buf[total_size - 1]
+        footer_byte = buf_mv[total_size - 1]
         if footer_byte != 0x55:
             return None, 1
 
-        raw = bytes(self._buf[:total_size])
+        raw = bytes(buf_mv[:total_size])
         id_offset = 2
-        fid_bytes = bytes(self._buf[id_offset : id_offset + id_size])
+        fid_bytes = bytes(buf_mv[id_offset : id_offset + id_size])
         frame_id = int.from_bytes(fid_bytes, byteorder='little')
         payload_offset = id_offset + id_size
-        payload = bytes(self._buf[payload_offset : payload_offset + dlc])
+        payload = bytes(buf_mv[payload_offset : payload_offset + dlc])
 
         pkt = ParsedPacket(
             raw=raw,

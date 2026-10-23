@@ -106,3 +106,7 @@ The application must dynamically load its runtime telemetry structure from eithe
 * **Robust Exception Handling**: Intercept all unhandled exceptions globally and redirect tracebacks to a rotating `bytehound.log` file.
 * **Diagnostics Screen**: Provide a modal crash dialog on uncaught exceptions, allowing users to copy the error traceback directly to their clipboard for bug reporting.
 * **CLI Validation Tool**: Support a validation CLI option (`python -m app.main --validate <config_file>`) to allow automated continuous integration checking of Excel/CSV configurations.
+
+## Current Single-Cell Cycler Requirements Status
+
+The dedicated single-cell implementation satisfies the long-run requirements with per-user frozen-build logs, asynchronous CSV rotation at 256 MB, low-disk protection below 1 GB, serial auto-reconnect, and non-blocking webhook retries. Remote alerts carry a configurable BMS Serial / Device ID; the current frame protocol has no device-identity telemetry field, so USB serial/COM is the fallback.

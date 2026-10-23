@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Battery Test Certificate — CERT-C1-20260929-141333</title>
+    <style>
+        :root {
+            --bg: #0f172a;
+            --card: #1e293b;
+            --border: #334155;
+            --text: #f8fafc;
+            --text-muted: #94a3b8;
+            --accent: #38bdf8;
+            --success: #10b981;
+            --warning: #f59e0b;
+        }
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body {
+            background-color: var(--bg);
+            color: var(--text);
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            padding: 32px 20px;
+            font-size: 13px;
+            line-height: 1.5;
+        }
+        .container {
+            max-width: 960px;
+            margin: 0 auto;
+        }
+        .header {
+            display: flex;
+            justify-content: space-between;
+            align-items: flex-start;
+            border-bottom: 2px solid var(--border);
+            padding-bottom: 18px;
+            margin-bottom: 24px;
+        }
+        .brand {
+            font-size: 22px;
+            font-weight: 800;
+            letter-spacing: 2px;
+            color: var(--accent);
+        }
+        .cert-badge {
+            background: #064e3b;
+            color: #34d399;
+            border: 1px solid var(--success);
+            padding: 4px 12px;
+            border-radius: 999px;
+            font-weight: 700;
+            font-size: 11px;
+            display: inline-block;
+            margin-top: 4px;
+        }
+        .grid-kpi {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+            gap: 12px;
+            margin-bottom: 24px;
+        }
+        .kpi-card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            padding: 14px;
+        }
+        .kpi-title {
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 4px;
+        }
+        .kpi-val {
+            font-size: 20px;
+            font-weight: 800;
+            color: #ffffff;
+        }
+        .section-title {
+            font-size: 15px;
+            font-weight: 700;
+            color: var(--accent);
+            margin: 20px 0 10px 0;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+        .chart-box {
+            margin-bottom: 20px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 8px;
+            overflow: hidden;
+            margin-bottom: 24px;
+        }
+        th {
+            background: #0b1120;
+            color: var(--text-muted);
+            font-size: 11px;
+            font-weight: 700;
+            text-align: right;
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+        }
+        th:first-child { text-align: center; }
+        td {
+            padding: 8px 12px;
+            border-bottom: 1px solid #1e293b;
+            text-align: right;
+        }
+        tr:nth-child(even) { background: #162032; }
+        tr:hover { background: #1e293b; }
+        .footer-signatures {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 40px;
+            margin-top: 40px;
+            padding-top: 20px;
+            border-top: 1px dashed var(--border);
+        }
+        .sig-line {
+            border-top: 1px solid #64748b;
+            margin-top: 40px;
+            padding-top: 6px;
+            color: var(--text-muted);
+            font-size: 11px;
+        }
+        @media print {
+            body { background: #ffffff !important; color: #000000 !important; padding: 0; }
+            .container { max-width: 100%; }
+            .header, table, .kpi-card, svg { border-color: #cbd5e1 !important; }
+            .kpi-card { background: #f8fafc !important; }
+            .kpi-val { color: #0f172a !important; }
+            .brand { color: #0284c7 !important; }
+            table { background: #ffffff !important; }
+            th { background: #f1f5f9 !important; color: #475569 !important; }
+            td { border-bottom-color: #e2e8f0 !important; color: #0f172a !important; }
+            .no-print { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <!-- Header -->
+        <div class="header">
+            <div>
+                <div class="brand">BYTEHOUND</div>
+                <div style="font-size:16px; font-weight:700; margin-top:2px;">Cell Cycler Qualification & Characterization Report</div>
+                <div style="color:var(--text-muted); font-size:12px; margin-top:4px;">
+                    Recipe: <strong>CCCV Cycling (15 Cycles)</strong> | Chemistry: <strong>NMC</strong>
+                </div>
+            </div>
+            <div style="text-align:right;">
+                <div class="cert-badge">IEC 62660-1 / USABC COMPLIANT</div>
+                <div style="font-size:12px; color:var(--text-muted); margin-top:6px;">ID: <strong>CERT-C1-20260929-141333</strong></div>
+                <div style="font-size:11px; color:var(--text-muted);">Date: 2026-09-29 14:13</div>
+            </div>
+        </div>
+
+        <!-- Executive KPIs -->
+        <div class="grid-kpi">
+            <div class="kpi-card">
+                <div class="kpi-title">Capacity Retention</div>
+                <div class="kpi-val" style="color:#34d399;">100.0%</div>
+                <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Loss: 0.0% (0.0 mAh)</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Initial vs Final Capacity</div>
+                <div class="kpi-val">0 → 0 <span style="font-size:12px; font-weight:500;">mAh</span></div>
+                <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Nominal: 3000 mAh</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Delivered Throughput</div>
+                <div class="kpi-val" style="color:#38bdf8;">0.00 <span style="font-size:12px; font-weight:500;">Wh</span></div>
+                <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">0.00 Ah Discharged</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">Avg Coulombic Efficiency</div>
+                <div class="kpi-val" style="color:#34d399;">0.00%</div>
+                <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Completed: 0 Cycles</div>
+            </div>
+            <div class="kpi-card">
+                <div class="kpi-title">DCIR Pulse Resistance</div>
+                <div class="kpi-val" style="color:#f59e0b;">0.0 <span style="font-size:12px; font-weight:500;">mΩ</span></div>
+                <div style="font-size:10px; color:var(--text-muted); margin-top:2px;">Initial: 0.0 mΩ</div>
+            </div>
+        </div>
+
+        <!-- Embedded Vector Charts -->
+        <div class="section-title">📊 Electrochemical Degradation Metrics</div>
+        <div class="chart-box">
+            <svg width="720" height="240" style="background:#0f172a; border-radius:6px;"><text x="50%" y="50%" fill="#94a3b8" text-anchor="middle">No Cycle Data Available</text></svg>
+        </div>
+        <div class="chart-box">
+            <svg width="720" height="180" style="background:#0f172a; border-radius:6px;"><text x="50%" y="50%" fill="#94a3b8" text-anchor="middle">No Standardized Pulse DCIR Recorded</text></svg>
+        </div>
+
+        <!-- Cycle Audit Table -->
+        <div class="section-title">📋 Cycle Metrology Audit Log</div>
+        <table>
+            <thead>
+                <tr>
+                    <th>Cycle</th>
+                    <th>Q_chg (mAh)</th>
+                    <th>Q_dis (mAh)</th>
+                    <th>E_chg (mWh)</th>
+                    <th>E_dis (mWh)</th>
+                    <th>η_CE (%)</th>
+                    <th>η_EE (%)</th>
+                    <th>R₁₀ₛ (mΩ)</th>
+                    <th>Duration</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr><td colspan="9" style="text-align:center; padding:18px;">No cycles completed yet.</td></tr>
+            </tbody>
+        </table>
+
+        <!-- Signatures & Lab Certification -->
+        <div class="footer-signatures">
+            <div>
+                <div style="font-weight:700; color:#e2e8f0;">Test Engineer Verification</div>
+                <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Operator: Lab Operator</div>
+                <div class="sig-line">Signature & Date</div>
+            </div>
+            <div>
+                <div style="font-weight:700; color:#e2e8f0;">Laboratory Quality Manager</div>
+                <div style="font-size:11px; color:var(--text-muted); margin-top:2px;">Facility: Automated Cell Cycler Station</div>
+                <div class="sig-line">Approval & Date</div>
+            </div>
+        </div>
+
+        <div style="text-align:center; margin-top:32px; color:var(--text-muted); font-size:10px;">
+            Generated autonomously by Bytehound Single-Cell BMS Cycler • Cryptographically Logged
+        </div>
+    </div>
+</body>
+</html>

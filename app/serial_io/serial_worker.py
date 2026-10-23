@@ -307,6 +307,7 @@ class PollingWorker(QThread):
     # Hardware-safety signals
     connection_lost = Signal()   # USB physically unplugged
     device_timeout = Signal()    # connected but no data for WATCHDOG_TIMEOUT s
+    backpressure_changed = Signal(bool)  # emitted when backpressure throttle engages/releases
 
     # Diagnostics — UI can surface "avg poll latency 12 ms" per target.
     # Args: (target_id, latency_ms). target_id == -1 for non-addressable
@@ -421,6 +422,10 @@ class PollingWorker(QThread):
         self._last_frame_error_msg: str = ""
         self._consecutive_frame_errors: int = 0
 
+        # Backpressure state (PuTTY-inspired downstream consumer flow control)
+        self._backpressure_throttled: bool = False
+        self._backpressure_events: int = 0
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
@@ -428,6 +433,35 @@ class PollingWorker(QThread):
     @property
     def is_open(self) -> bool:
         return self._serial is not None and self._serial.is_open
+
+    def set_backpressure(self, throttled: bool) -> None:
+        """Signal downstream consumer backpressure status (e.g. from UI).
+
+        When throttled=True, scheduled polling is suspended and the batching
+        window is slightly lengthened to let downstream consumers drain.
+        """
+        changed = False
+        with QMutexLocker(self._mutex):
+            if self._backpressure_throttled != throttled:
+                self._backpressure_throttled = throttled
+                changed = True
+                if throttled:
+                    self._backpressure_events += 1
+                    _LOG.debug("PollingWorker: Backpressure throttle engaged (event #%d)", self._backpressure_events)
+                else:
+                    _LOG.debug("PollingWorker: Backpressure throttle released")
+        if changed:
+            self.backpressure_changed.emit(throttled)
+
+    @property
+    def is_backpressured(self) -> bool:
+        with QMutexLocker(self._mutex):
+            return self._backpressure_throttled
+
+    @property
+    def backpressure_events(self) -> int:
+        with QMutexLocker(self._mutex):
+            return self._backpressure_events
 
     def open(self) -> None:
         if self.is_open:
@@ -652,9 +686,13 @@ class PollingWorker(QThread):
         self._last_emit_time = time.monotonic()
 
     def _should_flush(self) -> bool:
+        with QMutexLocker(self._mutex):
+            throttled = self._backpressure_throttled
+        target_size = _BATCH_SIZE * 2 if throttled else _BATCH_SIZE
+        target_interval = _BATCH_INTERVAL * 2 if throttled else _BATCH_INTERVAL
         return (
-            len(self._batch) >= _BATCH_SIZE
-            or (time.monotonic() - self._last_emit_time) >= _BATCH_INTERVAL
+            len(self._batch) >= target_size
+            or (time.monotonic() - self._last_emit_time) >= target_interval
         )
 
     def _accumulate(self, packets: Iterable[ParsedPacket]) -> None:
@@ -859,6 +897,7 @@ class PollingWorker(QThread):
                     pipelining = self._pipelining_enabled
                     pipe_depth = self._pipeline_depth
                     flush_rx_before_polling = self._flush_rx_before_polling
+                    backpressured = self._backpressure_throttled
                     if flush_rx_before_polling:
                         self._flush_rx_before_polling = False
 
@@ -896,8 +935,9 @@ class PollingWorker(QThread):
                 # only still get polled). Hammering polls during an Arduino
                 # bootloader window leaves the link stuck — the device cannot
                 # answer, timeouts accumulate, and we never get out.
+                # Also pause when backpressure is active from downstream UI/consumers.
                 grace_expired = (time.monotonic() - self._open_time) > POLLING_BOOT_GRACE
-                if polling_enabled and (self._rx_bytes > 0 or grace_expired):
+                if polling_enabled and not backpressured and (self._rx_bytes > 0 or grace_expired):
                     if pipelining:
                         # Pipelined: fire as many due polls as the depth budget
                         # allows; responses are matched by frame_id in the RX

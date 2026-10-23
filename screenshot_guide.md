@@ -41,3 +41,7 @@ Save all image files in the directory:
    .venv\Scripts\python.exe generate_docx.py
    ```
 5. Open the compiled document `Documentation/Bytehound_User_Manual.docx` in Word, select all text (`Ctrl+A`), and press `F9` to refresh the dynamic Table of Contents.
+
+## Single-Cell Cycler Release Screenshots
+
+For the current application, capture at minimum: the COM15 connection/pre-flight state, Live Charts including dQ/dV and aging tabs, the recipe preview, the safety panel, and the Webhook dialog showing the BMS Serial / ID field. The final frozen executable and installer are under `dist/` after running `single_cell_cycler/build.py`.

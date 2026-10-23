@@ -77,3 +77,7 @@ To prevent unauthorized code execution during updates, the update system verifie
 * **Cryptographic Verification**: During update checks, Bytehound fetches the developer-signed `version.json` file from a secure remote URL. It extracts the `sha256` hash of the target update executable.
 * **Post-Download Checksum**: When download completes, the updater calculates the SHA-256 hash of the local file and compares it case-insensitively with the expected manifest hash.
 * **Download Abort**: If the hashes do not match, or if the update manifest lacks a `sha256` signature, the updater deletes the downloaded file and halts installation.
+
+## Single-Cell Cycler Operational Security Note
+
+Webhook messages should be treated as operational telemetry. Configure the real BMS Serial / Device ID in the application, avoid placing secrets in Markdown or source control, and use the generated installer from a trusted release directory. The application stores frozen-build logs under the user-local Bytehound directory rather than writing into protected `Program Files` folders.

@@ -112,3 +112,14 @@ Help → View Documentation opens [`app/resources/index.html`](app/resources/ind
 ## License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
+
+## Single-Cell Cycler Release Notes
+
+The production single-cell BMS application lives under [`single_cell_cycler/`](single_cell_cycler/). Its current Windows release includes:
+
+- Rich webhook alerts with a configurable `BMS Serial / Device ID` on every event. If no BMS ID is entered, the USB adapter serial number or COM port is used as a fallback.
+- Automatic serial reconnect handling, webhook retry with exponential backoff, asynchronous CSV log rotation at 256 MB, and low-disk protection below 1 GB free space.
+- dQ/dV, aging, profile preview, live chart, analysis, and export/report verification coverage.
+- PyInstaller plus Inno Setup packaging through [`single_cell_cycler/build.py`](single_cell_cycler/build.py) and [`installer.iss`](installer.iss).
+
+For the single-cell operator workflow, use [`single_cell_cycler/README.md`](single_cell_cycler/README.md) and [`single_cell_cycler/TRACKER.md`](single_cell_cycler/TRACKER.md).

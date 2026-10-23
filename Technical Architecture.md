@@ -205,3 +205,14 @@ graph LR
 3. **Branding Insertion**: Post-compile, `build.py` copies icon (`.ico`) and logo (`.png`) assets from the `branding/` folder to the root of the distribution directory. (This matches the runtime `_find_logo` search order, which checks next to the executable before looking in nested directories).
 4. **Installer Compilation**: It executes Inno Setup (`ISCC.exe installer.iss`), creating a silent offline wizard (`Bytehound_Setup_X.Y.Z.exe`).
 5. **SHA-256 Validation**: The script calculates the SHA-256 hash of the final installer file and writes it into `version.json`. The local manifest updates dynamically, ensuring that the auto-updater can verify the payload during future downloads.
+
+## 6. Single-Cell Cycler Reliability Extensions
+
+The dedicated `single_cell_cycler` application extends the base architecture with:
+
+- A serial worker watchdog that retries initial port opens and reconnects after serial I/O errors.
+- A background webhook queue with three-attempt exponential retry behavior. Every alert carries the configured `BMS Serial / Device ID`; when absent, the connected USB serial number or COM port is used.
+- An asynchronous CSV logger with 256 MB part-file rotation and a 1 GB free-space guard. Frozen-build logs are redirected to `%LOCALAPPDATA%\Bytehound\SingleCellCycler\logs` because `Program Files` is not user-writable.
+- PySide6 plot tabs for live telemetry, dQ/dV, aging, and profile visualization, with automated headless coverage.
+
+The BMS serial number is intentionally a configuration value today: the current telemetry frame map contains no serial-number frame. A future firmware protocol revision can replace the fallback with a device-reported identifier without changing the alert contract.

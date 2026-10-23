@@ -1019,11 +1019,13 @@ class ThemingMixin:
         dark = (effective == "dark")
         from PySide6.QtGui import QPalette
         accent = QApplication.palette().color(QPalette.ColorRole.Highlight)
+        from PySide6.QtWidgets import QMainWindow, QDialog
         for w in QApplication.topLevelWidgets():
-            QTimer.singleShot(0, lambda _w=w, _d=dark, _a=accent: (
-                _apply_windows_dark_titlebar(_w, _d),
-                _apply_windows_accent_titlebar(_w, _a)
-            ))
+            if isinstance(w, (QMainWindow, QDialog)):
+                QTimer.singleShot(0, lambda _w=w, _d=dark, _a=accent: (
+                    _apply_windows_dark_titlebar(_w, _d),
+                    _apply_windows_accent_titlebar(_w, _a)
+                ))
         # Status-badge colours come from a custom delegate that reads the
         # current theme on every paint. Force a repaint of the table viewport
         # so the badges pick up the new colour pair immediately, without

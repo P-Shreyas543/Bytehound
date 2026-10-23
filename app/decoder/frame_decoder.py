@@ -312,8 +312,6 @@ def _calculate_groups(
     decoded: List[DecodedSignal],
     state_dict: Dict[str, Dict[str, Any]],
 ) -> List[DecodedSignal]:
-    import logging
-    logger = logging.getLogger("bytehound.decoder.calculations")
     out: List[DecodedSignal] = []
 
     # Update state_dict with the current frame's valid signals
@@ -365,8 +363,11 @@ def _calculate_groups(
         display_val = f"{value:.6g} {unit}".strip() if unit else f"{value:.6g}"
         signal_name = f"{calc.group} {calc.stat}"
 
-        raw_val_str = f"{raw_value:.6g}" if isinstance(raw_value, float) else str(raw_value)
-        logger.debug("Calculated %s: scaled = %s (raw = %s)", signal_name, display_val, raw_val_str)
+        # Do not emit one log record per calculated signal/frame.  At normal
+        # telemetry rates this can produce thousands of records per minute and
+        # make both the file handler and the UI feel sluggish when DEBUG is
+        # enabled.  Calculation details are already available in the decoded
+        # frame and can be inspected from the live table/log.
 
         out.append(
             DecodedSignal(

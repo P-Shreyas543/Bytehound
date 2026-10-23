@@ -1,0 +1,9 @@
+﻿OK  version.json: valid JSON, 13 top-level keys
+OK  config/webhook_settings.json: valid JSON, 11 top-level keys
+
+=== LINE ENDING AUDIT ===
+LF only files: 68
+CRLF only files: 2
+  CRLF: .\config\webhook_settings.json
+  CRLF: .\ui\widgets\step_tracker_table.py
+Mixed line-ending files: 0

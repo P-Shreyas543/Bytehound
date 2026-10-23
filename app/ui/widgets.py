@@ -98,7 +98,7 @@ def _pad_dock_content(dock: "QDockWidget", margin: int = 12) -> None:
     if layout is not None:
         layout.setContentsMargins(margin, margin, margin, margin)
         return
-    shim = QWidget()
+    shim = QWidget(dock)  # parent=dock prevents it becoming a top-level window
     shim_layout = QVBoxLayout(shim)
     shim_layout.setContentsMargins(margin, margin, margin, margin)
     shim_layout.addWidget(inner)
@@ -111,6 +111,9 @@ def _apply_windows_dark_titlebar(widget, dark: bool) -> None:
     No-op on non-Windows or if the DWM call is unavailable.
     """
     if sys.platform != "win32":
+        return
+    from PySide6.QtWidgets import QMainWindow, QDialog
+    if not isinstance(widget, (QMainWindow, QDialog)):
         return
     try:
         import ctypes
@@ -142,6 +145,9 @@ def _apply_windows_accent_titlebar(widget, color) -> None:
     Only effective on Windows 11+.
     """
     if sys.platform != "win32":
+        return
+    from PySide6.QtWidgets import QMainWindow, QDialog
+    if not isinstance(widget, (QMainWindow, QDialog)):
         return
     try:
         import ctypes
@@ -443,7 +449,7 @@ class FrameFormatWidget(QWidget):
         self._main_layout.setSpacing(6)
 
         # Dropdown selection layout for RX
-        self._rx_container = QWidget()
+        self._rx_container = QWidget(self)
         rx_layout = QVBoxLayout(self._rx_container)
         rx_layout.setContentsMargins(0, 0, 0, 0)
         rx_layout.setSpacing(6)
@@ -451,11 +457,11 @@ class FrameFormatWidget(QWidget):
         selector_layout = QHBoxLayout()
         selector_layout.setContentsMargins(0, 0, 0, 0)
 
-        self._select_lbl = QLabel("Select Frame Structure:")
+        self._select_lbl = QLabel("Select Frame Structure:", self._rx_container)
         self._select_lbl.setStyleSheet("font-weight: bold; font-size: 11px;")
         selector_layout.addWidget(self._select_lbl)
 
-        self._combo = QComboBox()
+        self._combo = QComboBox(self._rx_container)
         self._combo.setMinimumWidth(220)
 
         self._combo.addItem("All Frames (General Template)", userData=None)
@@ -474,7 +480,7 @@ class FrameFormatWidget(QWidget):
 
         rx_layout.addLayout(selector_layout)
 
-        self._scroll_area = QScrollArea()
+        self._scroll_area = QScrollArea(self._rx_container)
         self._scroll_area.setWidgetResizable(True)
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -487,7 +493,7 @@ class FrameFormatWidget(QWidget):
             self._tab_widget = QTabWidget(self)
             self._tab_widget.addTab(self._rx_container, "RX Frames / Registers")
 
-            self._tx_container = QWidget()
+            self._tx_container = QWidget(self)
             tx_layout = QVBoxLayout(self._tx_container)
             tx_layout.setContentsMargins(4, 4, 4, 4)
             tx_layout.setSpacing(6)
@@ -496,11 +502,11 @@ class FrameFormatWidget(QWidget):
             tx_selector_layout.setContentsMargins(0, 0, 0, 0)
 
             tx_lbl_text = "Select TX Command:"
-            self._tx_select_lbl = QLabel(tx_lbl_text)
+            self._tx_select_lbl = QLabel(tx_lbl_text, self._tx_container)
             self._tx_select_lbl.setStyleSheet("font-weight: bold; font-size: 11px;")
             tx_selector_layout.addWidget(self._tx_select_lbl)
 
-            self._tx_combo = QComboBox()
+            self._tx_combo = QComboBox(self._tx_container)
             self._tx_combo.setMinimumWidth(220)
 
             default_tx_item = "All Commands (General Template)"
@@ -520,7 +526,7 @@ class FrameFormatWidget(QWidget):
 
             tx_layout.addLayout(tx_selector_layout)
 
-            self._tx_scroll_area = QScrollArea()
+            self._tx_scroll_area = QScrollArea(self._tx_container)
             self._tx_scroll_area.setWidgetResizable(True)
             self._tx_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
             self._tx_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -560,7 +566,7 @@ class FrameFormatWidget(QWidget):
         from PySide6.QtWidgets import QGridLayout, QLabel
         from PySide6.QtCore import Qt
 
-        grid_widget = QWidget()
+        grid_widget = QWidget(self)
         grid_widget.setStyleSheet("background: transparent;")
         layout = QGridLayout(grid_widget)
         layout.setSpacing(4)
@@ -578,7 +584,7 @@ class FrameFormatWidget(QWidget):
 
         total_bytes = sum(size for _, size, _, _ in fields)
         for i in range(total_bytes):
-            lbl = QLabel(f"Byte {i}")
+            lbl = QLabel(f"Byte {i}", grid_widget)
             lbl.setStyleSheet("font-size: 9px; font-weight: bold; margin-bottom: 2px;")
             lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
             layout.addWidget(lbl, 0, i)

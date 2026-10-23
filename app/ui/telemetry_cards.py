@@ -41,9 +41,9 @@ class SignalCardWidget(QFrame):
         # Header row: Name + Quick Plot Feedback Button
         h_layout = QHBoxLayout()
         h_layout.setSpacing(4)
-        name_label = QLabel(self.signal_name)
+        name_label = QLabel(self.signal_name, self)
 
-        self.plot_btn = QPushButton()
+        self.plot_btn = QPushButton(self)
         self.plot_btn.setObjectName("quickPlotBtn")
         self.plot_btn.setCheckable(True)
         self.plot_btn.setToolTip("Click to add signal to Live Plot")
@@ -58,10 +58,10 @@ class SignalCardWidget(QFrame):
         # Value + Unit Row
         val_h = QHBoxLayout()
         val_h.setSpacing(6)
-        self.val_label = QLabel("--")
+        self.val_label = QLabel("--", self)
         self.val_label.setAccessibleName(f"{self.signal_name} value")
 
-        self.unit_label = QLabel(self.unit)
+        self.unit_label = QLabel(self.unit, self)
         self.unit_label.setStyleSheet("margin-top: 6px;")
 
         val_h.addWidget(self.val_label)
@@ -69,23 +69,25 @@ class SignalCardWidget(QFrame):
         val_h.addStretch()
 
         # Optional Range Progress Bar / Gauge
-        self.range_bar = QProgressBar()
-        self.range_bar.setFixedHeight(5)
-        self.range_bar.setTextVisible(False)
         has_range = (self.min_val is not None and self.max_val is not None and self.max_val > self.min_val)
-        self.range_bar.setVisible(has_range and not self.is_boolean)
+        if has_range and not self.is_boolean:
+            self.range_bar = QProgressBar(self)
+            self.range_bar.setFixedHeight(5)
+            self.range_bar.setTextVisible(False)
+        else:
+            self.range_bar = None
 
         # Status badge & Range text row
         stat_h = QHBoxLayout()
         stat_h.setSpacing(6)
-        self.status_pill = QLabel("OK")
+        self.status_pill = QLabel("OK", self)
         self.status_pill.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_pill.setProperty("status_type", "ok")
 
         range_text = ""
         if has_range:
             range_text = f"[{self.min_val:g} .. {self.max_val:g}]"
-        self.range_label = QLabel(range_text)
+        self.range_label = QLabel(range_text, self)
         self.range_label.setObjectName("hintLabel")
 
         stat_h.addWidget(self.status_pill)
@@ -95,7 +97,7 @@ class SignalCardWidget(QFrame):
 
         layout.addLayout(h_layout)
         layout.addLayout(val_h)
-        if has_range and not self.is_boolean:
+        if self.range_bar is not None:
             layout.addWidget(self.range_bar)
         layout.addLayout(stat_h)
 
@@ -139,7 +141,7 @@ class SignalCardWidget(QFrame):
 
         if isinstance(value, float):
             self.val_label.setText(f"{value:.3f}")
-            if self.min_val is not None and self.max_val is not None and self.max_val > self.min_val:
+            if self.range_bar is not None and self.min_val is not None and self.max_val is not None and self.max_val > self.min_val:
                 pct = int(max(0.0, min(100.0, ((value - self.min_val) / (self.max_val - self.min_val)) * 100)))
                 self.range_bar.setValue(pct)
         else:
@@ -205,18 +207,18 @@ class TelemetryCardsView(QWidget):
         main_layout.addLayout(ctrl_bar)
 
         # Scroll Area for Card Grids
-        self.scroll_area = QScrollArea()
+        self.scroll_area = QScrollArea(self)
         self.scroll_area.setWidgetResizable(True)
         self.scroll_area.setStyleSheet("QScrollArea { border: none; background-color: transparent; }")
 
-        self.content_widget = QWidget()
+        self.content_widget = QWidget(self.scroll_area)
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setSpacing(16)
 
         self.scroll_area.setWidget(self.content_widget)
         main_layout.addWidget(self.scroll_area)
 
-        self.empty_label = QLabel("No signals match the search filter.")
+        self.empty_label = QLabel("No signals match the search filter.", self)
         self.empty_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.empty_label.setObjectName("hintLabel")
         self.empty_label.hide()
@@ -277,12 +279,12 @@ class TelemetryCardsView(QWidget):
         self._current_cols = self._calculate_columns()
         col_count = self._current_cols
         for grp_name, specs in groups.items():
-            grp_box = QGroupBox(f" {grp_name} ({len(specs)} signals)")
+            grp_box = QGroupBox(f" {grp_name} ({len(specs)} signals)", self.content_widget)
             grid = QGridLayout(grp_box)
             grid.setSpacing(12)
 
             for i, spec in enumerate(specs):
-                card = SignalCardWidget(spec)
+                card = SignalCardWidget(spec, parent=grp_box)
                 card.quick_plot_requested.connect(self.quick_plot_requested.emit)
                 self._cards[spec.signal_name] = card
                 row = i // col_count
