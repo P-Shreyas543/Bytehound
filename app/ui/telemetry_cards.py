@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame,
     QGridLayout, QScrollArea, QGroupBox, QLineEdit, QProgressBar, QComboBox
@@ -115,6 +114,22 @@ class SignalCardWidget(QFrame):
         self.plot_btn.style().unpolish(self.plot_btn)
         self.plot_btn.style().polish(self.plot_btn)
 
+    @staticmethod
+    def _set_state(widget, prop: str, value: str) -> None:
+        """Set a style property and re-polish only when it changes: a
+        re-polish per value update cost ~1000 style passes a second at
+        high frame rates (measured on the NUCLEO HIL rig)."""
+        if widget.property(prop) == value:
+            return
+        widget.setProperty(prop, value)
+        widget.style().unpolish(widget)
+        widget.style().polish(widget)
+
+    @staticmethod
+    def _set_text(widget, text: str) -> None:
+        if widget.text() != text:
+            widget.setText(text)
+
     def update_value(self, value: float | int | str, status: str = "ok") -> None:
         if self.is_boolean:
             try:
@@ -123,48 +138,36 @@ class SignalCardWidget(QFrame):
             except (ValueError, TypeError):
                 is_on = str(value).strip().lower() in ("1", "true", "on", "active")
             if is_on:
-                self.val_label.setText("ACTIVE (1)")
-                self.val_label.setProperty("value_state", "active")
-                self.status_pill.setText("ON")
-                self.status_pill.setProperty("status_type", "ok")
+                self._set_text(self.val_label, "ACTIVE (1)")
+                self._set_state(self.val_label, "value_state", "active")
+                self._set_text(self.status_pill, "ON")
+                self._set_state(self.status_pill, "status_type", "ok")
             else:
-                self.val_label.setText("OFF (0)")
-                self.val_label.setProperty("value_state", "inactive")
-                self.status_pill.setText("OFF")
-                self.status_pill.setProperty("status_type", "inactive")
-            
-            self.val_label.style().unpolish(self.val_label)
-            self.val_label.style().polish(self.val_label)
-            self.status_pill.style().unpolish(self.status_pill)
-            self.status_pill.style().polish(self.status_pill)
+                self._set_text(self.val_label, "OFF (0)")
+                self._set_state(self.val_label, "value_state", "inactive")
+                self._set_text(self.status_pill, "OFF")
+                self._set_state(self.status_pill, "status_type", "inactive")
             return
 
         if isinstance(value, float):
-            self.val_label.setText(f"{value:.3f}")
+            self._set_text(self.val_label, f"{value:.3f}")
             if self.range_bar is not None and self.min_val is not None and self.max_val is not None and self.max_val > self.min_val:
                 pct = int(max(0.0, min(100.0, ((value - self.min_val) / (self.max_val - self.min_val)) * 100)))
-                self.range_bar.setValue(pct)
+                if self.range_bar.value() != pct:
+                    self.range_bar.setValue(pct)
         else:
-            self.val_label.setText(str(value))
+            self._set_text(self.val_label, str(value))
 
         status_lower = str(status).lower()
         if "error" in status_lower or "fault" in status_lower:
-            self.status_pill.setText("ERROR")
-            self.status_pill.setProperty("status_type", "error")
-            self.val_label.setProperty("value_state", "error")
+            pill, state = "ERROR", "error"
         elif "warn" in status_lower:
-            self.status_pill.setText("WARN")
-            self.status_pill.setProperty("status_type", "warn")
-            self.val_label.setProperty("value_state", "warn")
+            pill, state = "WARN", "warn"
         else:
-            self.status_pill.setText("OK")
-            self.status_pill.setProperty("status_type", "ok")
-            self.val_label.setProperty("value_state", "ok")
-            
-        self.val_label.style().unpolish(self.val_label)
-        self.val_label.style().polish(self.val_label)
-        self.status_pill.style().unpolish(self.status_pill)
-        self.status_pill.style().polish(self.status_pill)
+            pill, state = "OK", "ok"
+        self._set_text(self.status_pill, pill)
+        self._set_state(self.status_pill, "status_type", state)
+        self._set_state(self.val_label, "value_state", state)
 
 
 class TelemetryCardsView(QWidget):
@@ -313,7 +316,7 @@ class TelemetryCardsView(QWidget):
             grp_box.setVisible(visible_count > 0)
             if visible_count > 0:
                 any_visible = True
-                
+
         self.empty_label.setVisible(not any_visible and bool(self._cards))
         self.scroll_area.setVisible(any_visible or not bool(self._cards))
 

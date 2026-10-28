@@ -21,18 +21,15 @@ from datetime import datetime
 from pathlib import Path
 from logging.handlers import RotatingFileHandler
 
-import qdarktheme
 _PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(_PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(_PROJECT_ROOT))
 
-
-from PySide6.QtCore import QSettings
-from PySide6.QtGui import QFont, QIcon
-from PySide6.QtWidgets import QApplication
-
-from app.ui.main_window import MainWindow, APP_ORG, APP_NAME, APP_DISPLAY_NAME, _find_logo
-from app.ui.widgets import TitleBarThemeFilter
+# GUI modules are imported inside _run_app(), not here. Capture processes are
+# started with multiprocessing "spawn", which re-imports this script in every
+# child (and a frozen build runs it before freeze_support()); module-level GUI
+# imports would load all of Qt Widgets, pyqtgraph and the main window into
+# each capture process for nothing.
 
 _LOG_MAX_BYTES = 5 * 1024 * 1024
 _LOG_BACKUP_COUNT = 3
@@ -41,6 +38,7 @@ _CRASH_DIALOG_OPEN = False
 
 
 def _fallback_log_dir() -> Path:
+    from app.ui.main_window import APP_NAME
     if sys.platform == "win32":
         base = Path(os.getenv("APPDATA") or Path.home())
         return base / APP_NAME / "logs"
@@ -134,6 +132,7 @@ def _show_crash_dialog(exc_type, exc, tb) -> None:
     import traceback
     try:
         from PySide6.QtWidgets import QApplication, QMessageBox
+        from app.ui.main_window import APP_NAME
     except Exception:
         return
     app = QApplication.instance()
@@ -176,7 +175,13 @@ def _run_app() -> int:
     os.environ.setdefault("QT_SCALE_FACTOR_ROUNDING_POLICY", "PassThrough")
     os.environ.setdefault("QT_LOGGING_RULES", "qt.qpa.*=false")
 
-    from PySide6.QtCore import Qt, qInstallMessageHandler, QtMsgType
+    import qdarktheme
+    from PySide6.QtCore import QSettings, Qt, qInstallMessageHandler, QtMsgType
+    from PySide6.QtGui import QFont, QIcon
+    from PySide6.QtWidgets import QApplication
+
+    from app.ui.main_window import MainWindow, APP_ORG, APP_NAME, APP_DISPLAY_NAME, _find_logo
+    from app.ui.widgets import TitleBarThemeFilter
 
     def _qt_message_handler(msg_type, context, message):
         # Filter benign Windows GDI display enumeration warnings
@@ -215,9 +220,10 @@ def _run_app() -> int:
     font.setStyleHint(QFont.StyleHint.SansSerif)
     app.setFont(font)
 
-    titlebar_filter = TitleBarThemeFilter(settings)
+    # Parented to the application, so Qt keeps the filter alive as long as the
+    # app runs (it used to be stored as an ad-hoc attribute on QApplication).
+    titlebar_filter = TitleBarThemeFilter(settings, app)
     app.installEventFilter(titlebar_filter)
-    app._titlebar_filter = titlebar_filter  # keep reference alive
 
     window = MainWindow()
     app.aboutToQuit.connect(window.close)
@@ -238,25 +244,60 @@ def main(argv: list[str] | None = None) -> int:
         metavar="CONFIG_FILE",
         help="Validate a config file without opening the GUI and exit. Returns 0 if valid, 1 otherwise.",
     )
+    parser.add_argument(
+        "--selftest-capture",
+        action="store_true",
+        help="Stream test frames through a capture process over loopback and exit. Returns 0 on success.",
+    )
+    parser.add_argument(
+        "--selftest-finish",
+        action="store_true",
+        help="Record and finish a short session through the helper process and exit. Returns 0 on success.",
+    )
+    parser.add_argument(
+        "--selftest-merge",
+        action="store_true",
+        help="Record a short session and merge it as Tools > Merge Session does (child process). Returns 0 on success.",
+    )
     args, remaining = parser.parse_known_args(argv)
     # Strip our own flags so Qt sees a clean argv.
     sys.argv = [sys.argv[0], *remaining]
 
     configure_logging(
         level=logging.INFO,
-        console=bool(args.validate or args.profile)
+        console=bool(args.validate or args.profile or args.selftest_capture or args.selftest_finish
+                     or args.selftest_merge)
     )
 
     if args.validate:
-        try:
-            from app.decoder.config_loader import load_config
-            config = load_config(args.validate)
-            print(f"OK: Config {args.validate} is valid.")
-            print(f"Loaded {len(config.all_signals)} signals across {len(config.frames)} frames.")
-            return 0
-        except Exception as e:
-            print(f"ERROR: Config validation failed for {args.validate}\n{e}", file=sys.stderr)
+        # Structure, loader rules and semantic warnings (Plane.md Part C2).
+        from app.decoder.validation import validate
+        report = validate(args.validate)
+        if not report.ok:
+            details = "\n".join(str(i) for i in report.errors)
+            print(f"ERROR: Config validation failed for {args.validate}\n{details}", file=sys.stderr)
             return 1
+        config = report.config
+        assert config is not None  # a report without errors always carries the config
+        print(f"OK: Config {args.validate} is valid.")
+        print(f"Loaded {len(config.all_signals)} signals across {len(config.frames)} frames.")
+        if report.fingerprint:
+            print(f"Fingerprint (SHA-256): {report.fingerprint}")
+        for w in report.warnings:
+            print(str(w))
+        return 0
+
+    if args.selftest_capture:
+        from app.serial_io.capture_process import selftest
+        return selftest()
+
+    if args.selftest_finish:
+        from app.serial_logging.selftest import selftest_finish
+        return selftest_finish()
+
+    if args.selftest_merge:
+        from app.serial_logging.selftest import selftest_merge
+        return selftest_merge()
 
     if not args.profile:
         return _run_app()

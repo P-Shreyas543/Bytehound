@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import sys
+import time
 from collections import defaultdict, deque
 from datetime import datetime
 from pathlib import Path
@@ -69,7 +71,7 @@ _WINDOW_STATE_VERSION = 3
 # Bumped when default QSettings values change so users get migrated to
 # the new defaults without losing values they explicitly customised. The
 # migration runs once on launch; see _migrate_settings.
-_SETTINGS_MIGRATION_VERSION = 2
+_SETTINGS_MIGRATION_VERSION = 3
 
 
 def _migrate_settings(settings) -> None:
@@ -103,6 +105,11 @@ def _migrate_settings(settings) -> None:
             if old_gap == 30:
                 settings.setValue("poll/pipeline_tx_gap_ms", 100)
 
+    # v2 -> v3: the per-signal sample cap became a shared memory budget
+    # (plot/history_budget_mb). The old key is no longer read.
+    if stored_version < 3:
+        settings.remove("plot/history_max_samples")
+
     settings.setValue("settings/migration_version", _SETTINGS_MIGRATION_VERSION)
 
 
@@ -117,10 +124,15 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
+def _version_file() -> Path:
+    from .updater import find_version_file
+    return find_version_file()
+
+
 def _read_version() -> str:
     try:
         import json
-        with (_project_root() / "version.json").open("r", encoding="utf-8") as fp:
+        with (_version_file()).open("r", encoding="utf-8") as fp:
             return json.load(fp).get("version", "0.0.0")
     except Exception:
         return "0.0.0"
@@ -178,10 +190,10 @@ def _format_serial_open_error(port: str, exc: BaseException) -> str:
 from .dialogs import ConnectionDialog, AboutDialog
 from ..decoder.template_io import export_excel_template
 from ..decoder.types import FrameConfig
-from ..serial_logging.decoded_logger import DecodedLogger
-from ..serial_logging.raw_logger import RawLogger
+from ..serial_logging.session import SessionLog
 from ..protocol.packet_parser import ParserProtocol
 from ..serial_io.serial_worker import PollingWorker, SerialSettings
+from ..serial_io import capture_process
 
 
 
@@ -220,6 +232,7 @@ from app.ui.tx_panel import TxPanelMixin
 from app.ui.ui_builders import UIBuildersMixin
 from app.ui.updater_wiring import UpdaterWiringMixin
 from app.ui.report_issue import ReportIssueMixin
+from app.ui.session_merge_ui import SessionMergeMixin
 
 
 class MainWindow(
@@ -228,6 +241,7 @@ class MainWindow(
     PlotOrchestrationMixin,
     ConfigLoaderMixin,
     LoggingSessionMixin,
+    SessionMergeMixin,
     PollingSessionMixin,
     DetailTabsMixin,
     TxPanelMixin,
@@ -238,15 +252,28 @@ class MainWindow(
     ParameterEditorMixin,
     QMainWindow,
 ):
+    def _history_cap_per_signal(self, n_signals: int) -> int:
+        """Samples each signal may keep so all of them fit the memory budget."""
+        budget = self._plot_history_budget_mb * 1_000_000
+        per_signal = budget // max(1, n_signals)
+        # bytes_for(cap) = (cap + cap/8) * 16  →  cap ≈ per_signal / 18
+        cap = int(per_signal / (TimeSeriesBuffer.BYTES_PER_SAMPLE * 1.125))
+        return max(1_000, cap)
+
+    def _rebalance_history_caps(self, n_signals: Optional[int] = None) -> int:
+        cap = self._history_cap_per_signal(len(self._plot_history) if n_signals is None else n_signals)
+        self._plot_history_max_samples = cap
+        for buf in self._plot_history.values():
+            buf.set_max_samples(cap)
+        return cap
+
     def _make_history_buffer(self) -> "TimeSeriesBuffer":
         """Factory for per-signal entries in ``self._plot_history``.
 
-        Append-only chunked store. ``_plot_history_max_samples`` acts as a
-        soft cap (``None`` = unbounded — keep every sample for the whole
-        session). Existing buffers keep their cap until cleared; the cap
-        is reapplied when the user changes the display window.
+        The plot-history memory budget is shared by every signal, so adding a
+        signal lowers everyone's cap (and trims the longest histories).
         """
-        cap = getattr(self, "_plot_history_max_samples", None)
+        cap = self._rebalance_history_caps(len(self._plot_history) + 1)
         return TimeSeriesBuffer(cap)
 
 
@@ -254,7 +281,7 @@ class MainWindow(
         super().__init__()
         try:
             import json as _json
-            with (_project_root() / "version.json").open("r", encoding="utf-8") as fp:
+            with (_version_file()).open("r", encoding="utf-8") as fp:
                 self._version_info = _json.load(fp)
         except Exception:
             self._version_info = {}
@@ -284,8 +311,8 @@ class MainWindow(
         self._rx_bytes = 0
         self._tx_bytes = 0
         self._logging = False
-        self._raw_logger: Optional[RawLogger] = None
-        self._decoded_logger: Optional[DecodedLogger] = None
+        # Active logging session (folder of rotated segments), or None.
+        self._session_log: Optional[SessionLog] = None
         self._settings = QSettings(APP_ORG, APP_NAME)
         _migrate_settings(self._settings)
         self._apply_logging_level(str(self._settings.value("logging/level", "INFO")))
@@ -295,17 +322,12 @@ class MainWindow(
 
         # Timer removed; using PollingWorker QThread
 
-        # Live-plot history. One TimeSeriesBuffer per signal.
-        # Default soft cap of 100,000 samples per signal acts as a marathon-run
-        # safety valve to prevent RAM exhaustion (OOM crashes) during 2-3 day runs.
-        raw_cap = self._settings.value("plot/history_max_samples", 100_000)
-        try:
-            cap_int = int(raw_cap)
-        except (TypeError, ValueError):
-            cap_int = 100_000
-        if cap_int <= 0:
-            cap_int = 100_000  # Enforce marathon-run safety cap
-        self._plot_history_max_samples: Optional[int] = cap_int
+        # Live-plot history. One TimeSeriesBuffer per signal, all sharing one
+        # memory budget (Tools → Plot Settings) so a marathon run with many
+        # signals can't exhaust RAM.
+        from .dialogs import read_plot_history_budget_mb
+        self._plot_history_budget_mb = read_plot_history_budget_mb(self._settings)
+        self._plot_history_max_samples: int = self._history_cap_per_signal(1)
         # Display window in seconds. 0 / None means "All session".
         raw_window = self._settings.value("plot/window_seconds", 300)  # default 5 min
         try:
@@ -323,7 +345,7 @@ class MainWindow(
         self._wire_recorded_connected = False
         self._plot_keys: List[Tuple[int, str]] = []  # union of all panel keys
         self._curve_icon_cache: Dict[Tuple[int, str, str], QIcon] = {}
-        self._session_started = datetime.now()
+        self._reset_session_clock()
         self._plot_time_mode = str(self._settings.value("plot/time_mode", "elapsed"))
         if self._plot_time_mode not in ("elapsed", "clock"):
             self._plot_time_mode = "elapsed"
@@ -358,6 +380,11 @@ class MainWindow(
         self._ui_timer = QTimer(self)
         self._ui_timer.setInterval(16)  # ~60 Hz
         self._ui_timer.timeout.connect(self._flush_ui)
+        # 1 Hz session housekeeping: rotation, disk guard, fixed-step rows
+        # for quiet periods. Runs during reconnect gaps too.
+        self._session_timer = QTimer(self)
+        self._session_timer.setInterval(1000)
+        self._session_timer.timeout.connect(self._on_session_tick)
 
         # Reconnect timer for exponential backoff on USB disconnect
         self._reconnect_timer = QTimer(self)
@@ -393,6 +420,9 @@ class MainWindow(
         self._default_geometry = self.saveGeometry()
         self._restore_window_state()
         QTimer.singleShot(100, self._check_and_recover_temp_logs)
+        if self._capture_in_process():
+            # Spawn the capture process now so Connect doesn't wait for it.
+            QTimer.singleShot(500, capture_process.prewarm)
 
         if hasattr(self, "_welcome_dashboard") and self._welcome_dashboard is not None:
             from app.serial_io.serial_worker import list_available_ports
@@ -401,7 +431,7 @@ class MainWindow(
             self._welcome_dashboard.preset_selected.connect(self._on_load_preset)
             self._welcome_dashboard.open_wizard_requested.connect(self._on_open_protocol_wizard)
             self._welcome_dashboard.open_manual_requested.connect(self._on_view_docs)
-            self._welcome_dashboard.recent_config_selected.connect(lambda p: self._load_config_from_path(Path(p)))
+            self._welcome_dashboard.recent_config_selected.connect(lambda p: self._import_config_interactive(Path(p)))
             ports = list_available_ports()
             self._welcome_dashboard.update_ports(ports)
             self._welcome_dashboard.set_recent_configs(self._recent_paths())
@@ -1082,7 +1112,7 @@ class MainWindow(
         self._set_status(f"Exported Excel template to {target}")
         self._log_activity(f"[ACTION] Exported Excel template: {target}")
 
-    def _disconnect(self, *, reason: str = "Disconnected") -> None:
+    def _disconnect(self, *, reason: str = "Disconnected", keep_logging: bool = False) -> None:
         """Single shutdown path for every disconnect scenario.
 
         Guarantees the safe sequence:
@@ -1094,12 +1124,24 @@ class MainWindow(
           6. Update the UI chrome
 
         Idempotent — safe to call even when already disconnected.
+
+        ``keep_logging`` (auto-reconnect after an unplug): the logging session
+        stays open — the current segment is closed, a gap is recorded and a
+        new segment starts when the device is back (Plane.md F11).
         """
         self._ui_timer.stop()
         self._wire_recorded_connected = False
+        if getattr(self, "_rate_monitor", None) is not None:
+            self._rate_monitor.reset()      # an unplug is not a late frame
         if hasattr(self, "_y_autofit_timer"):
             self._y_autofit_timer.stop()
-        if self._logging:
+        if self._logging and keep_logging and self._session_log is not None:
+            self._session_log.connection_lost(reason)
+            self._update_logging_label()
+            self._log_activity(
+                "[INFO] Logging continues: the gap is recorded and a new segment starts on reconnect"
+            )
+        elif self._logging:
             title = "Closing" if reason == "Application closed" else "Saving Log"
             self._stop_logging(title=title)
             self._log_activity("[INFO] Logging auto-stopped on disconnect")
@@ -1119,20 +1161,40 @@ class MainWindow(
             self._warning_badge.setVisible(False)
         if hasattr(self, "_reconnect_timer") and self._reconnect_timer.isActive():
             self._reconnect_timer.stop()
+        if not keep_logging:
+            self._plot_gap_end()             # no reconnect is coming: close an open gap (U2)
+
+    def _capture_in_process(self) -> bool:
+        """Run serial capture on a QThread (default) or in a separate process.
+
+        Process mode is opt-in: benchmarks (fix.md) show the GUI process
+        spends more time unpickling decoded batches than it saves on decode,
+        so it is slower than the thread at high frame rates.
+        """
+        if getattr(self, "_capture_forced_thread", False):
+            return False
+        return str(self._settings.value("capture/mode", "thread")) == "process"
+
+    def _make_capture_worker(self, settings: SerialSettings):
+        cls = capture_process.CaptureClient if self._capture_in_process() else PollingWorker
+        return cls(
+            settings,
+            self._config.protocol,
+            self._config.polling_schedules,
+            decode_config=self._config,
+        )
 
     def _attempt_connect(self, settings: SerialSettings, is_retry: bool = False) -> bool:
         self._seen_decode_warnings.clear()
         if hasattr(self, "_warning_badge") and self._warning_badge is not None:
             self._warning_badge.setVisible(False)
         try:
-            self._serial = PollingWorker(
-                settings,
-                self._config.protocol,
-                self._config.polling_schedules,
-                decode_config=self._config,
-            )
+            self._serial = self._make_capture_worker(settings)
             self._serial.packets_received.connect(self._on_packets_received)
             self._serial.metrics_updated.connect(self._on_metrics_updated)
+            self._serial.integrity_updated.connect(self._on_integrity_updated)
+            self._integrity = {}
+            self._integrity_baseline = None
             self._serial.error_occurred.connect(self._on_serial_error)
             self._serial.warning_occurred.connect(self._on_serial_warning)
             self._serial.tx_recorded.connect(self._on_tx_recorded)
@@ -1143,11 +1205,26 @@ class MainWindow(
                 self._wire_recorded_connected = False
             self._serial.connection_lost.connect(self._on_connection_lost)
             self._serial.device_timeout.connect(self._on_device_timeout)
-            self._serial.open()
+            try:
+                self._serial.open()
+            except capture_process.CaptureProcessError as exc:
+                # The capture process itself failed (not the port): use the
+                # in-thread worker for the rest of this session.
+                import logging
+                logging.getLogger("bytehound.ui").warning("Capture process unavailable: %s", exc)
+                self._log_activity(f"[WARN] Capture process unavailable ({exc}); using in-app capture thread")
+                self._serial.deleteLater()
+                self._serial = None
+                self._capture_forced_thread = True
+                return self._attempt_connect(settings, is_retry)
             self._serial.set_polling_global(self._polling_action.isChecked())
-            self._session_started = datetime.now()
-            for buf in self._plot_history.values():
-                buf.clear()
+            if not is_retry:
+                # A new connection starts a new session. An auto-reconnect
+                # keeps the clock and plot history: the outage shows as a
+                # gap instead of wiping the graph and restarting at 0.
+                self._reset_session_clock()
+                for buf in self._plot_history.values():
+                    buf.clear()
             self._ui_timer.start()
 
             self._set_connection_ui(True)
@@ -1159,6 +1236,19 @@ class MainWindow(
                 self._log_activity(f"Connected to {settings.port} @ {settings.baud_rate}")
             self._saved_settings = settings
             self._reconnect_attempts = 0
+            if self._logging and self._session_log is not None and self._session_log.segment_index is None:
+                self._session_log.connection_restored()
+                self._update_logging_label()
+                self._log_activity("[INFO] Logging resumed in a new segment")
+            if self._logging and self._session_log is not None:
+                # A reconnect creates a new worker: hand it the session.
+                from .logging_session import _attach_session_sink
+                _attach_session_sink(self._serial, self._session_log)
+            if is_retry:
+                self._plot_gap_end()
+                self._restore_polling_after_reconnect()
+            else:
+                self._resume_polling = False
             if hasattr(self, "_reconnect_timer") and self._reconnect_timer.isActive():
                 self._reconnect_timer.stop()
             return True
@@ -1225,8 +1315,14 @@ class MainWindow(
 
     def _on_connection_lost(self) -> None:
         """Called when the worker detects a physical USB unplug."""
+        auto = bool(self._saved_settings and getattr(self._saved_settings, "auto_reconnect", False))
+        if auto:
+            self._plot_gap_begin()           # shaded on the plot until reconnected (U2)
+        # Disconnecting un-ticks Auto-Fetch; remember it so the reconnect can
+        # restore polling instead of leaving a polled device silent.
+        self._resume_polling = auto and self._polling_action.isChecked()
         try:
-            self._disconnect(reason="USB device disconnected")
+            self._disconnect(reason="USB device disconnected", keep_logging=auto)
         except Exception:
             # _disconnect can fail if the serial port is in a bad state
             import logging
@@ -1287,6 +1383,12 @@ class MainWindow(
         dropped = getattr(self, "_backpressure_dropped_count", 0)
         if dropped > 0:
             dropped_str = f"  |  Dropped: {dropped:>4d}"
+        lost = self._integrity_lost_bytes()
+        if lost:
+            dropped_str += f"  |  Discarded: {self._fmt_bytes(lost)}"
+        driver_errs = self._driver_error_total(getattr(self, "_integrity", {}) or {})
+        if driver_errs:
+            dropped_str += f"  |  Driver errors: {driver_errs}"
         self._counts_label.setText(
             f"Frames: {self._packet_count:>6d}"
             f"  |  Errors: {self._error_count:>4d}"
@@ -1297,6 +1399,69 @@ class MainWindow(
             f"{dropped_str}"
         )
 
+    @staticmethod
+    def _lost_bytes(snap: dict) -> int:
+        return (
+            snap.get("discarded_bytes", 0)
+            + snap.get("overflow_bytes", 0)
+            + snap.get("unframer_dropped_bytes", 0)
+        )
+
+    @staticmethod
+    def _driver_error_total(snap: dict) -> int:
+        return sum((snap.get("driver_errors") or {}).values())
+
+    def _integrity_lost_bytes(self) -> int:
+        return self._lost_bytes(getattr(self, "_integrity", {}) or {})
+
+    def _on_integrity_updated(self, snap: dict) -> None:
+        """Track byte accounting; warn when received bytes are discarded.
+
+        Bytes skipped before the first good frame are the tail of a frame
+        already in flight when we connected — normal, counted, not flagged.
+        Anything discarded after that is noise, corruption or a framing
+        problem and raises the warning badge (Plane.md F3).
+        """
+        prev = getattr(self, "_integrity", {}) or {}
+        self._integrity = snap
+        if self._session_log is not None:
+            self._session_log.set_integrity(snap)
+        new_driver = self._driver_error_total(snap) - self._driver_error_total(prev)
+        if new_driver > 0:
+            # The serial driver / UART lost or mangled bytes before they
+            # reached us (Plane.md F7): always worth flagging.
+            errs = {k: v for k, v in (snap.get("driver_errors") or {}).items() if v}
+            msg = (
+                f"Serial driver reported errors: {errs}. Bytes were lost or corrupted before "
+                f"reaching Bytehound — check baud rate, cable and USB power settings."
+            )
+            self._log_activity(f"[WARN] {msg}")
+            if getattr(self, "_warning_badge", None) is not None:
+                self._warning_badge.setVisible(True)
+                self._warning_badge.setToolTip(msg)
+        if getattr(self, "_integrity_baseline", None) is None:
+            if snap.get("frames_ok", 0) > 0:
+                self._integrity_baseline = self._lost_bytes(snap)
+            return
+        lost_now = self._lost_bytes(snap)
+        if lost_now > self._lost_bytes(prev) and lost_now > self._integrity_baseline:
+            msg = (
+                f"Received bytes discarded: {lost_now - self._integrity_baseline} B since the "
+                f"first valid frame (noise {snap.get('discarded_bytes', 0)} B, "
+                f"buffer overflow {snap.get('overflow_bytes', 0)} B, escape errors "
+                f"{snap.get('unframer_dropped_bytes', 0)} B). Check wiring, baud rate and "
+                f"protocol settings. While logging, every received byte is also kept in the "
+                f".bhraw raw capture."
+            )
+            now = time.monotonic()
+            if now - getattr(self, "_integrity_last_warn", 0.0) >= 10.0:
+                self._integrity_last_warn = now
+                self._log_activity(f"[WARN] {msg}")
+            if getattr(self, "_warning_badge", None) is not None:
+                self._warning_badge.setVisible(True)
+                self._warning_badge.setToolTip(msg)
+        self._refresh_counts_label()
+
     def _on_metrics_updated(self, timeouts: int, crc: int, rx_bytes: int) -> None:
         self._timeouts = timeouts
         self._rx_bytes = rx_bytes
@@ -1306,35 +1471,39 @@ class MainWindow(
     def _on_tx_recorded(self, packet: bytes) -> None:
         self._tx_bytes += len(packet)
         self._refresh_counts_label()
+        if self._session_log is not None and self._config:
+            self._log_tx_decoded(packet)
+
+    def _log_tx_decoded(self, packet: bytes) -> None:
+        """Add a sent command's values to the decoded log.
+
+        Runs from tx_recorded, which is always connected; it used to hang off the
+        Raw Console's wire signal, so TX rows were only logged while that panel
+        was on screen. Payload-less poll requests are skipped: they carry no
+        values, and in polling mode they share the response's frame ID, so
+        logging them split every cycle row in two.
+        """
+        from ..decoder.frame_decoder import decode_frame
+        try:
+            parser = self._tx_logger_parser
+            if parser is None:
+                from ..protocol.packet_parser import create_parser
+                parser = create_parser(self._config.protocol)
+            parser.feed(packet)
+            if not hasattr(self, "_tx_signal_state"):
+                self._tx_signal_state = {}
+            for p in parser.extract_all():
+                if not (p.ok and p.frame_id is not None and p.payload):
+                    continue
+                decoded = decode_frame(self._config, p.frame_id, p.payload, self._tx_signal_state)
+                self._session_log.log_frame(decoded, time.perf_counter())
+        except Exception as e:
+            import logging
+            logging.getLogger("bytehound.ui").exception("Failed to parse/decode TX packet: %s", e)
 
     def _on_wire_recorded(self, direction: str, packet: bytes, timestamp: datetime) -> None:
+        """Raw Console display only (connected while the console is visible)."""
         direction = direction.upper()
-        if self._raw_logger:
-            self._raw_logger.log(direction, packet, timestamp=timestamp)
-        if direction == "TX" and self._decoded_logger and self._config:
-            import time
-            from ..decoder.frame_decoder import decode_frame
-            try:
-                parser = self._tx_logger_parser
-                if parser is None:
-                    from ..protocol.packet_parser import create_parser
-                    parser = create_parser(self._config.protocol)
-                parser.feed(packet)
-                parsed = parser.extract_all()
-                if not hasattr(self, "_tx_signal_state"):
-                    self._tx_signal_state = {}
-                for p in parsed:
-                    if p.ok and p.frame_id is not None:
-                        decoded = decode_frame(self._config, p.frame_id, p.payload, self._tx_signal_state)
-                        if self._log_started_perf is not None:
-                            elapsed_ms = int((time.perf_counter() - self._log_started_perf) * 1000)
-                        else:
-                            t0 = self._log_started or self._session_started or datetime.now()
-                            elapsed_ms = int((datetime.now() - t0).total_seconds() * 1000)
-                        self._decoded_logger.log_frame(decoded, elapsed_ms)
-            except Exception as e:
-                import logging
-                logging.getLogger("bytehound.ui").exception("Failed to parse/decode TX packet: %s", e)
         if hasattr(self, "_console_dock") and self._console_dock is not None and self._console_dock.isVisible():
             formatted_line = (
                 f"{timestamp.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, "
@@ -1370,22 +1539,14 @@ class MainWindow(
         return interval
 
 
-    def _build_log_metadata(
-        self,
-        choice: str,
-        raw_path: Optional[Path],
-        decoded_path: Optional[Path],
-    ) -> Dict[str, str]:
+    def _build_log_metadata(self, decoded_path: Path) -> Dict[str, str]:
         metadata: Dict[str, str] = {
             "app": APP_NAME,
             "app_version": _read_version(),
             "session_started": (self._log_started or self._session_started).strftime("%Y-%m-%d %H:%M:%S"),
-            "logging_mode": choice,
+            "logging_mode": "Decoded",
+            "decoded_file": decoded_path.name,
         }
-        if raw_path is not None:
-            metadata["raw_file"] = raw_path.name
-        if decoded_path is not None:
-            metadata["decoded_file"] = decoded_path.name
         if self._config_path is not None:
             metadata["config_source"] = str(self._config_path)
         if self._serial is not None:
@@ -1503,6 +1664,7 @@ class MainWindow(
         # Add calc groups to available triggers
         for calc in self._config.calc_groups:
             signals.append(f"{calc.group} {calc.stat}")
+        signals += [d.name for d in getattr(self._config, "derived", [])]
 
         dlg = PlotTriggerDialog(signals, parent=self)
         if dlg.exec() == QDialog.DialogCode.Accepted:
@@ -1563,7 +1725,7 @@ class MainWindow(
         self._clear_action.setEnabled(ready)
         # Logging requires an active connection; _set_connection_ui controls this.
         # Only set enabled=True here if we're currently connected.
-        self._logging_action.setEnabled(ready and self._serial is not None)
+        self._logging_action.setEnabled(ready and (self._serial is not None or self._logging))
         # Flip the central stack: empty-state when no config, table view
         # once one is loaded. Guarded for the brief window during __init__
         # where _refresh_action_state can fire before _build_main_layout
@@ -1580,13 +1742,14 @@ class MainWindow(
             self._connect_action,
             _BTN_PINK if connected else _BTN_GREEN,
         )
-        # Logging button: green = connected & ready, yellow = disabled (no device)
+        # Logging button: pink = recording, green = connected & ready,
+        # yellow = disabled (no device). A session waiting for a reconnect is
+        # still recording, so Stop Logging stays available during the gap.
         self._style_action_btn(
             self._logging_action,
-            _BTN_GREEN if connected else _BTN_YELLOW,
+            _BTN_PINK if self._logging else (_BTN_GREEN if connected else _BTN_YELLOW),
         )
-        # Logging action only enabled while connected
-        self._logging_action.setEnabled(connected)
+        self._logging_action.setEnabled(connected or self._logging)
         if not connected:
             # Reset polling button colour and state too when disconnecting
             self._style_action_btn(self._polling_action, _BTN_GREEN)
@@ -1659,6 +1822,9 @@ class MainWindow(
             return
         timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
         self._activity_log.appendPlainText(f"{timestamp}  {text}")
+        # Also into the log files (bytehound.log and the session's log.txt):
+        # the Activity Log is the readable record of what happened.
+        logging.getLogger("bytehound.activity").info(text)
 
         lower_text = text.lower()
         if "queue full" in lower_text or "saturated" in lower_text or "dropped" in lower_text:
@@ -1687,17 +1853,10 @@ class MainWindow(
             if reply != QMessageBox.StandardButton.Yes:
                 event.ignore()
                 return
-        # Capture logger refs BEFORE _disconnect() nulls them in
-        # _stop_logging(). After logger.close() returns, the writer thread
-        # may still be draining a slow disk — we own the only handle that
-        # lets us wait for it before the interpreter kills the daemon
-        # thread mid-flush.
-        loggers = [
-            (name, lg) for name, lg in (
-                ("raw log", self._raw_logger),
-                ("decoded log", self._decoded_logger),
-            ) if lg is not None
-        ]
+        # Capture the session BEFORE _disconnect() nulls it in
+        # _stop_logging(): its last segment may still be compiling / hashing,
+        # and we own the only handle that lets us wait for it.
+        loggers = [("logging session", self._session_log)] if self._session_log is not None else []
         # _disconnect() guarantees: stop timer → flush logs → stop worker → null.
         self._disconnect(reason="Application closed")
         # Block on any logger writer threads that didn't drain within their
@@ -1707,6 +1866,7 @@ class MainWindow(
         if drainers:
             self._wait_for_logger_drain(drainers)
         self._save_window_state()
+        capture_process.shutdown_pool()
         super().closeEvent(event)
 
     # ------------------------------------------------------------------

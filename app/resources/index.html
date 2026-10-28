@@ -669,6 +669,8 @@
                     <li><a href="#section-4">4. Logging and Data Analysis</a>
                         <ul class="sub-menu">
                             <li><a href="#recording-logs">Recording Logs</a></li>
+                            <li><a href="#session-folder">What a Session Folder Contains</a></li>
+                            <li><a href="#data-integrity">Data Integrity &amp; Lost Frames</a></li>
                             <li><a href="#logging-settings">Logging Settings</a></li>
                             <li><a href="#analysis-suite">The Analysis Suite</a></li>
                         </ul>
@@ -688,6 +690,11 @@
                             <li><a href="#config-fields">Sheet 8 — TxCommandFields</a></li>
                             <li><a href="#config-polling">Sheet 9 — PollingSchedule</a></li>
                             <li><a href="#sheet-serialdefaults">Sheet 10 — SerialDefaults</a></li>
+                            <li><a href="#sheet-sequencecounters">Sheet 11 — SequenceCounters</a></li>
+                            <li><a href="#sheet-valuerules">Sheet 12 — ValueRules</a></li>
+                            <li><a href="#sheet-derived">Sheet 13 — Derived (Power, Ah, Wh)</a></li>
+                            <li><a href="#sheet-logging">Sheet 14 — Logging (how to record, merge at stop)</a></li>
+                            <li><a href="#config-import">Importing, Previewing &amp; Restoring a Config</a></li>
                             <li><a href="#validator-cli">Config Validator CLI</a></li>
                         </ul>
                     </li>
@@ -708,7 +715,7 @@
             <header class="content-header">
                 <button class="menu-toggle" id="menu-toggle">☰</button>
                 <div class="header-right">
-                    <span class="version-badge">Manual — Version 1.2.3</span>
+                    <span class="version-badge">Manual — Version 1.2.5</span>
                     <button class="theme-toggle" id="theme-toggle" title="Toggle Theme">🌓</button>
                 </div>
             </header>
@@ -726,7 +733,7 @@
 
         <h3 id="what-is-it">What is the Bytehound?</h3>
         <p>Bytehound is a hardware-agnostic telemetry and control dashboard for serial devices. It reads framed UART/USB
-            byte streams or Modbus RTU traffic, decodes the payload using a workbook or CSV configuration that you
+            byte streams or Waveshare USB-CAN adapter traffic, decodes the payload using a workbook or CSV configuration that you
             define, and displays the results in live tables, plots, logs, and command panels — all without writing
             Python code.</p>
 
@@ -806,7 +813,7 @@
                     <rect x="240" y="70" width="150" height="70" rx="8" fill="url(#grad-parser)" />
                     <text x="315" y="100" fill="#ffffff" font-size="13" font-weight="bold" text-anchor="middle">Packet
                         Parser</text>
-                    <text x="315" y="118" fill="#ecfeff" font-size="11" text-anchor="middle">Framed or Modbus RTU</text>
+                    <text x="315" y="118" fill="#ecfeff" font-size="11" text-anchor="middle">Framed or Waveshare CAN</text>
                 </g>
 
                 <!-- 3. Frame Decoder -->
@@ -920,8 +927,7 @@
         <ol>
             <li>Connect your hardware to your computer using a USB cable or Serial adapter.</li>
             <li>Make sure your loaded config matches the bytes your device sends. For a framed protocol that usually
-                means <code>[Header] + [ID] + [Length] + [Data] + [CRC]</code>; for Modbus RTU, set
-                <code>parser_type = modbus_rtu</code>; for Waveshare USB-CAN-A adapters, set
+                means <code>[Header] + [ID] + [Length] + [Data] + [CRC]</code>; for Waveshare USB-CAN-A adapters, set
                 <code>parser_type = waveshare_can</code>. See <a href="#section-5">Section 5</a> for protocol details.</li>
             <li>Launch <strong>Bytehound</strong>. A bundled example config loads automatically; use <strong>Import
                     Config</strong> if you want to load your own Excel workbook or CSV config folder.</li>
@@ -1245,7 +1251,7 @@
         <ul>
             <li><strong>Pause Plot</strong>: Automatically freezes the plot (switches to Explore mode) so you don't lose
                 the event off the left edge of the screen.</li>
-            <li><strong>Start Logging</strong>: Automatically begins recording a Raw + Decoded telemetry session,
+            <li><strong>Start Logging</strong>: Automatically begins recording a decoded telemetry session,
                 capturing the event as it happens without manual intervention.</li>
         </ul>
         <p>The trigger disarms automatically after firing once. A <span
@@ -1256,10 +1262,32 @@
 
         <div class="note">
             In Live mode the X-axis is anchored at <strong>0 seconds</strong> (session start) and expands to the current
-            elapsed time. Plot samples are kept in a bounded in-memory history (default 6,000 points per signal), so
-            very long sessions may show older time ranges with sparse or no plotted points even though the axis still
-            starts at zero.
+            elapsed time. Plot samples are kept in memory within a budget shared by all plotted signals (default
+            512 MB, <strong>Tools → Plot Settings</strong>); when it is full the oldest plot samples are dropped, so a
+            very long session may show its early part empty even though the axis still starts at zero. Logs and raw
+            captures are never affected.
         </div>
+
+        <h4>Reading the live plot</h4>
+        <ul>
+            <li><strong>Breaks in a line are real gaps.</strong> When a signal stops arriving for much longer than its
+                usual interval (an unplug, a reconnect, a silent device) the line stops and starts again after the
+                gap, instead of a straight line across it. The same happens where the display had to skip points
+                under heavy load (the <strong>Dropped</strong> counter). Hovering inside a gap shows <code>–</code>.</li>
+            <li><strong>A signal that stops arriving is marked.</strong> When a signal has not been received for
+                much longer than its usual interval, its line is drawn <em>dashed and faded</em> and its legend entry
+                says for how long (e.g. <code>(no data for 12 s)</code>). It returns to normal with the next
+                sample.</li>
+            <li><strong>Lost connections are shaded.</strong> With Auto-Reconnect on, the time between losing the
+                device and reconnecting is shaded grey in every panel (an outage still in progress grows with the
+                clock).</li>
+            <li><strong>States are drawn as steps.</strong> On/off signals and signals with Enums or Bitfields hold
+                their value until the next sample, so a change appears exactly when it was received.</li>
+            <li><strong>Two units per panel.</strong> A panel has a left and a right axis, one unit each. Adding a
+                signal with a third unit is refused with a message; put it on another panel. (A layout saved by an
+                older version that already holds a third unit leaves that signal out and says so in the Activity
+                Log.)</li>
+        </ul>
 
         <h3 id="bitfields">Bitfields Panel</h3>
         <p>If your hardware packs multiple Boolean flags into a single integer signal (like Fault states, Relay
@@ -1323,7 +1351,7 @@
             </tr>
             <tr>
                 <td><strong>Errors</strong></td>
-                <td>Wire-level parse failures such as CRC mismatch (including Modbus CRC) or footer mismatch. The frame
+                <td>Wire-level parse failures such as CRC mismatch or footer mismatch. The frame
                     had the right header/length framing, but the integrity check failed.</td>
                 <td>Should stay at 0 on a healthy link. A slowly climbing number suggests electrical noise, a bad cable,
                     or a baud-rate mismatch. A fast climb almost always means the protocol settings (CRC type, byte
@@ -1332,8 +1360,7 @@
             <tr>
                 <td><strong>Timeouts</strong></td>
                 <td>Poll requests that did not get a response within the configured <code>timeout_ms</code>. Primarily
-                    relevant when <strong>Auto-Fetch</strong> is on; Modbus manual sends also wait for a response and
-                    can increment this counter.</td>
+                    relevant when <strong>Auto-Fetch</strong> is on.</td>
                 <td>0 on a request/response device that is keeping up. A few timeouts on first connect are normal (the
                     device may still be booting). A continuously rising count means the device is missing requests — try
                     a longer <code>timeout_ms</code> or a slower <code>interval_ms</code>.</td>
@@ -1356,6 +1383,35 @@
                     wall-clock latency between consecutive RX frames, not request-response latency.</td>
                 <td>For a 10 ms streamer expect ~10 ms here. A spike to hundreds of ms means the device hiccuped; if it
                     stays high the link is choked.</td>
+            </tr>
+        </table>
+        <p>Three more counters appear only when they are non-zero, so a healthy link keeps the short line above:</p>
+        <table>
+            <tr>
+                <th>Counter</th>
+                <th>What it means</th>
+                <th>What to watch for</th>
+            </tr>
+            <tr>
+                <td><strong>Dropped</strong></td>
+                <td>Display updates skipped because the window could not keep up. Logging is not affected: the
+                    session is written by the capture thread, not by the window.</td>
+                <td>Occasional drops while dragging or resizing the window are harmless.</td>
+            </tr>
+            <tr>
+                <td><strong>Discarded</strong></td>
+                <td>Received bytes that could not be part of a valid frame (noise, broken frames, buffer
+                    overflow), counted from the first valid frame. Bytes before the first valid frame are the tail
+                    of a frame already in flight when you connected and are not flagged.</td>
+                <td>Should stay at 0. A rising number raises the warning badge; check wiring, baud rate and the
+                    protocol settings. While logging, every received byte is still kept in the <code>.bhraw</code>
+                    raw capture.</td>
+            </tr>
+            <tr>
+                <td><strong>Driver errors</strong></td>
+                <td>Errors reported by the serial driver itself (framing, parity, overrun): bytes were lost or
+                    damaged before they reached Bytehound.</td>
+                <td>Any value is worth investigating: baud rate, cable, USB power-saving settings.</td>
             </tr>
         </table>
         <div class="note">
@@ -1456,14 +1512,23 @@
         <ul>
             <li><strong>Import Config (<code>Ctrl+O</code>)</strong>
                 <br><em>What it does:</em> Opens a file selection dialog to load a new protocol definition. You can
-                select an Excel workbook (<code>.xlsx</code> or <code>.xlsm</code>) or a directory containing individual
-                CSV sheets.
+                select an Excel workbook (<code>.xlsx</code> or <code>.xlsm</code>), a Bytehound JSON configuration
+                (<code>.json</code>) or the <code>protocol.csv</code> of a folder of CSV sheets. Before anything
+                changes, a <strong>preview</strong> shows errors, warnings and what is different from the current
+                configuration; it only becomes active when you click <strong>Activate</strong>
+                (see <a href="#config-import">Importing, Previewing &amp; Restoring</a>).
                 <br><em>Why you need it:</em> Bytehound is generic; it doesn't know how your hardware packs its bytes
                 until you tell it. Importing a configuration tells the app what each byte represents, what
                 scales/offsets to apply, and how to format names.
-                <br><em>Example:</em> You are testing a new Modbus-based temperature controller. You load
-                <code>modbus_temp_sensor_map.xlsx</code>. Instantly, the main telemetry table updates to display rows
+                <br><em>Example:</em> You are testing a new temperature controller. You load
+                <code>temp_controller_map.xlsx</code>. Instantly, the main telemetry table updates to display rows
                 for "Zone 1 Temp", "Heater Power %", and "Alarm Bitfield".
+            </li>
+            <li><strong>Restore Previous Configuration…</strong>
+                <br><em>What it does:</em> Lists the last 20 configurations you activated (newest first) and brings
+                the one you choose back, through the same preview.
+                <br><em>Why you need it:</em> An imported workbook turned out to be wrong in the middle of a test.
+                Restore the one you used before without hunting for the old file.
             </li>
             <li><strong>Export Template (<code>Ctrl+E</code>)</strong>
                 <br><em>What it does:</em> Generates a fresh, blank Excel workbook containing the template structure (10
@@ -1538,8 +1603,7 @@
                 the on-wire packet structure.
                 <br><em>Tabs and Options:</em>
                 <ul>
-                    <li><strong>RX Frames / Registers:</strong> Shows the byte layout of incoming frames or Modbus read
-                        registers. Use the dropdown to inspect each frame's variables.</li>
+                    <li><strong>RX Frames / Registers:</strong> Shows the byte layout of incoming frames. Use the dropdown to inspect each frame's variables.</li>
                     <li><strong>TX Commands:</strong> Shows the byte layout of outgoing command packets, including
                         static payload bytes, command fields, and any automatic packet padding. Use the dropdown to
                         choose any configured command.</li>
@@ -1574,20 +1638,13 @@
             <li><strong>Start / Stop Auto-Fetch (<code>F10</code>)</strong>
                 <br><em>What it does:</em> Toggles active register polling on devices that follow a request/response
                 (polled) protocol rather than streaming data continuously.
-                <br><em>Example:</em> Your Modbus sensor requires a "Read Input Registers" command to be sent before it
-                replies with the temperature. Enabling Auto-Fetch starts sending these commands automatically at
+                <br><em>Example:</em> Your sensor must receive a "read" request frame before it replies with the
+                temperature. Enabling Auto-Fetch starts sending these commands automatically at
                 intervals defined in the <code>polling_schedule</code> sheet.
             </li>
             <li><strong>Start / Stop Logging (<code>Ctrl+L</code>)</strong>
-                <br><em>What it does:</em> Opens the session recording dialog and begins logging data.
-                <br><em>Modes:</em>
-                <ul>
-                    <li><em>Raw only:</em> Records raw incoming and outgoing hexadecimal bytes with timestamps directly
-                        to a <code>*_raw.csv</code> file. Safest for deep diagnostics.</li>
-                    <li><em>Decoded only:</em> Buffers decoded variables into memory and formats them as a wide Excel
-                        spreadsheet (<code>*_decoded.xlsx</code>) with metadata, written on Stop.</li>
-                    <li><em>Raw + Decoded:</em> Records both files simultaneously (highly recommended).</li>
-                </ul>
+                <br><em>What it does:</em> Asks for a file name and begins recording decoded variables as a wide
+                Excel spreadsheet (<code>.xlsx</code>) with metadata, written on Stop.
                 <div class="note">
                     <strong>Note:</strong> Logging works passively. You do <strong>not</strong> need to enable Auto-Fetch to log data if your device already streams it continuously. Enabling Auto-Fetch on a continuous streamer will cause collisions.
                 </div>
@@ -1604,8 +1661,9 @@
                 hardware behavior.
             </li>
             <li><strong>Logging Settings...</strong>
-                <br><em>What it does:</em> Opens the configuration dialog for internal rotating diagnostics and disk
-                writing schedules.
+                <br><em>What it does:</em> Opens the configuration dialog for internal rotating diagnostics, disk
+                writing schedules and logging sessions (segment length, event / fixed-step logs, free-space limits —
+                see <a href="#logging-settings">Logging Settings</a>).
                 <br><em>Understanding the Settings:</em>
                 <ul>
                     <li><strong>Log level (DEBUG / INFO / WARNING / ERROR):</strong> Controls how much diagnostic
@@ -1620,15 +1678,22 @@
                         degrade performance on older or slower drives.</li>
                 </ul>
             </li>
+            <li><strong>Merge Session...</strong>
+                <br><em>What it does:</em> Joins a recorded session's hourly segments into <strong>one
+                    workbook</strong>, or <strong>one workbook per day</strong> (split at midnight, local time), for
+                analysis. Pick the session folder, choose the event or fixed-step log and the output, then
+                <strong>Merge</strong>. The merge runs in the background with a progress bar and a
+                <strong>Cancel</strong> button; logging and the live view keep running. See
+                <a href="#session-folder">What a Session Folder Contains</a>.
+            </li>
             <li><strong>Plot Settings...</strong>
                 <br><em>What it does:</em> Opens settings for the Live Plot panel.
                 <br><em>Understanding the Settings:</em>
                 <ul>
-                    <li><strong>Cap live plot memory history</strong> — checkbox that enables a hard limit on how many
-                        samples the Live Plot stores per signal. When checked, set the <strong>Memory cap limit</strong>
-                        spinbox to the desired maximum (1 000 – 10 000 000 samples). When unchecked the history grows
-                        unbounded for the lifetime of the session; on long or high-rate sessions this can consume
-                        significant RAM.</li>
+                    <li><strong>Plot history memory</strong> — memory for the Live Plot history, shared by all
+                        plotted signals (64 – 16,384 MB, default 512 MB). When it is full the oldest plot samples are
+                        dropped; plotting more signals leaves less history for each. Logs and raw captures are not
+                        affected.</li>
                     <li><strong>Default display window</strong> — controls how wide the Live Plot X-axis is when first
                         switched to Live mode. Options: <em>30 seconds</em>, <em>1 minute</em>, <em>2 minutes</em>,
                         <em>5 minutes</em> (default), <em>10 minutes</em>, <em>30 minutes</em>, or <em>All session</em>.
@@ -1666,10 +1731,14 @@
             <li><strong>Report Issue...</strong>
                 <br><em>What it does:</em> Opens a dialog to report software issues directly from within the
                 application.
-                <br><em>How it works:</em> Enter a title and description, and optionally include the tail of the
-                application diagnostics log. When you submit, a background thread securely forwards your report along
-                with complete runtime context (OS, Python, Qt versions, active configuration path, connection status,
-                packet counters) to our issue tracking server.
+                <br><em>How it works:</em> Enter a title and description and attach files or screenshots if they
+                help. Two options decide what else is sent: <strong>diagnostics</strong> (on by default — app
+                version, OS, connection type and counters, logging settings and the last 200 lines of the
+                application log, with your user folder name hidden) and <strong>the loaded configuration
+                file</strong> (off by default). The report is sent over HTTPS and posted as a GitHub issue.
+                <div class="warning">Reports are <strong>public</strong>: anyone can read them on GitHub. Do not
+                    include passwords, customer names or confidential data, and attach a configuration only if it
+                    may be made public.</div>
             </li>
             <li><strong>About Bytehound</strong>
                 <br><em>What it does:</em> Opens a window showing copyright notices, version info, credits, and links to
@@ -1730,13 +1799,6 @@ encoded_bytes = raw → data_type (uint8/16/32, int8/16/32, float32/64) → byte
                     placed at the exact <code>start_byte</code> offset (zero-padded payload). Header, length, CRC, and
                     footer are all added automatically per the Protocol sheet.</td>
             </tr>
-            <tr>
-                <td><strong>Modbus RTU</strong></td>
-                <td>An FC 06 (single-register) request is built when the encoded payload is 2 bytes; FC 16
-                    (multi-register) is used for longer payloads. The raw value is encoded using the signal's
-                    <code>scale</code>, <code>offset</code>, and byte order, and CRC16/Modbus is appended automatically.
-                </td>
-            </tr>
         </table>
 
         <div class="warning">
@@ -1780,20 +1842,6 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             bytes of the frame would be the CRC + footer, and the zero-padding would sit <em>between</em> the payload
             and the CRC. <code>tx_pad_length</code> is the <strong>total frame length on the wire</strong>, including
             CRC and footer.
-        </div>
-
-        <h4>Modbus RTU — single-register write (FC 06)</h4>
-        <p>With <code>parser_type = modbus_rtu</code> and <code>modbus_node_address = 1</code>, writing <code>123</code>
-            to register address <code>0x0050</code>:</p>
-        <pre><code>TX, 01 06 00 50 00 7B 99 8C</code></pre>
-        <pre>01             ← node address (from Protocol.modbus_node_address)
-06             ← function code: 06 = Write Single Register
-00 50          ← target register address 0x0050 (big-endian, per Modbus spec)
-00 7B          ← value to write, big-endian uint16 = 0x007B = 123
-99 8C          ← CRC16/Modbus over preceding bytes, little-endian (per Modbus spec)</pre>
-        <div class="note">
-            Modbus byte order is fixed by the spec: addresses and values are big-endian, the CRC is little-endian. The
-            Protocol sheet's <code>byte_order</code> fields are ignored for Modbus.
         </div>
 
         <h4>Quick reference — where each byte comes from</h4>
@@ -1855,31 +1903,41 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         <p>To save your telemetry session for later review:</p>
         <ol>
             <li>Ensure you are connected and receiving data.</li>
-            <li>Click <strong>Device → Start Logging</strong> (or use the toolbar). Choose <strong>Raw +
-                    Decoded</strong>, <strong>Raw only</strong>, or <strong>Decoded only</strong>, then pick the base
+            <li>Click <strong>Device → Start Logging</strong> (or use the toolbar). Pick the
                 filename. The button turns <span style="color:#e91e8c"><strong>pink</strong></span> while logging is
                 active.</li>
-            <li>The default folder is <code>~/Documents/Bytehound/</code>. Depending on the selected mode, the app
-                writes:
-                <ul>
-                    <li><code>*_raw.csv</code> — timestamped RX/TX hex frames with <code>timestamp</code>,
-                        <code>direction</code>, <code>hex</code>, and <code>delta_t_ms</code> columns. The byte-level
-                        capture of the session.</li>
-                    <li><code>*_decoded.xlsx</code> — Excel workbook with two sheets: <code>Metadata</code> (app,
-                        version, port, baud, config path, session start, logging mode, etc.) and <code>Data</code> (one
-                        wide row per complete poll cycle, with a per-frame block of <code>elapsed_ms</code> +
-                        <code>frame_id</code> + signals). Group calculations configured in the <code>CalcGroups</code> sheet are written without a frame ID prefix (e.g., <code>Cell Voltages min (V)</code> instead of <code>0x0100.Cells avg (V)</code>) so that they are clean and easy to identify.</li>
-                </ul>
-            </li>
-            <li>When finished, click <strong>Device → Stop Logging</strong>. This finalises the decoded workbook.</li>
+            <li>The default folder is <code>~/Documents/Bytehound/</code>. Each recording is a <strong>session
+                    folder</strong> that can run for days or months: a new <strong>segment</strong> starts every hour
+                (configurable), so every file stays small enough for Excel. What the folder holds is described in
+                <a href="#session-folder">What a Session Folder Contains</a>. In the decoded logs, group calculations
+                from the <code>CalcGroups</code> sheet are written without a frame ID prefix (e.g.
+                <code>Cell Voltages min (V)</code>) so they are easy to identify.</li>
+            <li>When finished, click <strong>Device → Stop Logging</strong>. The last segment's <code>.xlsx</code> is
+                compiled in a separate background process, so the window stays responsive. If it takes a while you
+                can choose <strong>Continue in background</strong>; the Activity Log reports when the session is
+                complete.</li>
         </ol>
         <img src="images/logging_dialog.png" alt="Start Logging Session Configuration Dialog" class="mockup-img img-medium" />
         <div class="note">
-            The raw CSV is flushed periodically (default 0.5 s, configurable under <strong>Tools → Logging
-                Settings</strong>) and once more on close. The decoded <code>.xlsx</code> is buffered in memory and
-            saved on <strong>Stop Logging</strong> — if the app crashes before Stop, the decoded workbook is lost. A
-            session config snapshot is saved beside the log so the same decoder can be re-applied later.
+            Rows are streamed to CSV as they arrive and each segment is compiled into its <code>.xlsx</code> when it
+            closes; capture never waits for that. If the app or the PC stops while recording, restart Bytehound: it
+            finds the unfinished session, compiles what was recorded, marks the open segment and the session as
+            <code>recovered</code>, and reports it in the Activity Log. A copy of the configuration is saved in the
+            session so the same decoder can be re-applied later.
         </div>
+
+        <h4>Unplug, power cycle and changing the configuration while logging</h4>
+        <ul>
+            <li><strong>Device unplugged or link lost</strong> with <a href="#auto-reconnect">Auto-Reconnect</a> on:
+                logging keeps running. The current segment is closed, a <strong>gap</strong> is recorded with its
+                start and end time, and a new segment starts when the device is back. <strong>Stop Logging</strong>
+                stays available during the gap.</li>
+            <li><strong>Activating another configuration while logging</strong> (Import Config or Restore Previous
+                Configuration): Bytehound reconnects with it, records a short gap and continues the
+                <em>same</em> session in a new segment that uses the new configuration. No segment ever mixes two
+                configurations; each records which one it used, and the new configuration is copied into the
+                session as <code>config_2/</code>, <code>config_3/</code>, ….</li>
+        </ul>
 
         <h4>Decoded Log Cycle Buffer &amp; Synchronization</h4>
         <p>The decoded Excel workbook (<code>*_decoded.xlsx</code>) stores telemetry in a wide format, where each row represents a complete cycle of all active frames. Individual frames arrive asynchronously and are stashed in an in-memory cycle buffer. When the <strong>trigger frame</strong> (the last RX-capable frame declared in the configuration) is received:</p>
@@ -1904,6 +1962,70 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             <li>When the next trigger frame arrives, these stashed TX values are committed to the <code>*_decoded.xlsx</code> file along with the RX telemetry, creating a unified, chronological log of all input/output signals.</li>
         </ul>
 
+        <h3 id="session-folder">What a Session Folder Contains</h3>
+        <pre>&lt;session&gt;/
+  session.json              manifest: settings, segments, gaps, events, integrity counters
+  config/                   copy of the configuration the session started with
+  config_2/                 (only after a configuration change while logging)
+  seg_0001_event.csv/.xlsx  event log: one wide row per received cycle
+  seg_0001_fixed.csv/.xlsx  fixed-step log: one row per step (if enabled)
+  seg_0001_rejected.csv     frames that failed CRC / framing
+  seg_0001_sequence.csv     lost / repeated frames found by sequence counters (if configured)
+  seg_0001.bhraw            lossless raw capture of every received byte
+  seg_0002_…</pre>
+        <table>
+            <tr>
+                <th>File</th>
+                <th>Use it for</th>
+            </tr>
+            <tr>
+                <td><code>session.json</code></td>
+                <td>The record of the whole session: when each segment started and ended, its status
+                    (<code>closed</code>, <code>closed_with_errors</code>, <code>recovered</code>), row counts, file
+                    sizes and SHA-256 hashes, which configuration it used, every gap and every event (warnings,
+                    disk space, configuration changes). It is rewritten safely after every change.</td>
+            </tr>
+            <tr>
+                <td>Event log</td>
+                <td>Everything the device sent, one row per cycle, with UTC and local timestamps.</td>
+            </tr>
+            <tr>
+                <td>Fixed-step log</td>
+                <td>Rows on an exact time grid (e.g. every 1 s), each holding the newest value of every signal and
+                    its age. Best for comparing runs and for tools that expect regular samples.</td>
+            </tr>
+            <tr>
+                <td><code>.bhraw</code></td>
+                <td>Every received byte with its timestamp. If a decoded log is ever incomplete, <strong>Tools →
+                        Rebuild Decoded Log…</strong> regenerates it from this file
+                    (<code>seg_NNNN_event_rebuilt.xlsx</code>; originals are never modified).</td>
+            </tr>
+        </table>
+        <h4>One file for analysis: Tools → Merge Session…</h4>
+        <p>Hourly segments keep every file a manageable size while recording. For analysis, <strong>Tools → Merge
+                Session…</strong> joins them in order into one workbook, or one workbook per calendar day, with the
+            same columns and number format, and a Metadata sheet listing the time span, the segments included and any
+            recorded gaps. A session larger than one Excel sheet (1,048,576 rows) continues on <code>Data_2</code>,
+            <code>Data_3</code> …; one workbook per day keeps each file on one sheet and opens much faster. If the
+            configuration changed during the session, a new file starts at that point so different columns are never
+            mixed. The merged files are written to the session's <code>merged</code> folder (or one you choose); the
+            session itself is not changed, and a cancelled merge leaves nothing behind.</p>
+
+        <p>Timestamps are anchored to a steady clock at the start of each segment, so they never jump when Windows
+            adjusts the clock or daylight-saving time changes.</p>
+
+        <h3 id="data-integrity">Data Integrity &amp; Lost Frames</h3>
+        <p>Bytehound accounts for every received byte. Bytes that cannot form a valid frame appear as
+            <strong>Discarded</strong> in the <a href="#status-bar">status bar</a>; frames with a bad CRC or footer are
+            counted as <strong>Errors</strong> and written to <code>seg_NNNN_rejected.csv</code>; serial driver
+            errors appear as <strong>Driver errors</strong>. All of these are stored per segment in
+            <code>session.json</code>.</p>
+        <p>Frames lost <em>before</em> they reach the PC — in the device, a USB-serial adapter or the network —
+            leave no trace in the received bytes. If your device sends a rolling counter, declare it in the
+            <a href="#sheet-sequencecounters">SequenceCounters</a> sheet: Bytehound then reports each jump as lost
+            frames in the Activity Log (<code>Frames lost before reaching the PC: …</code>), counts them per segment,
+            and lists every event in <code>seg_NNNN_sequence.csv</code>.</p>
+
         <h3 id="logging-settings">Logging Settings</h3>
         <p>Under <strong>Tools → Logging Settings</strong>, you can configure application-level diagnostic logging and
             data flushing:</p>
@@ -1914,9 +2036,47 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             <li><strong>Flush interval</strong>: Controls how frequently the raw <code>*_raw.csv</code> telemetry log
                 writes to disk. The default is <code>0.5 s</code>. Set to <code>0.0</code> to flush on every write,
                 which ensures no raw data is lost if the app crashes, though it may cause a slight performance penalty
-                on slower disks. (Decoded <code>.xlsx</code> logs are always kept in memory and only written on Stop.)
+                on slower disks.
             </li>
         </ul>
+        <p>The <strong>Logging sessions</strong> part of the same dialog applies to the next session you start:</p>
+        <table>
+            <tr>
+                <th>Setting</th>
+                <th>Default</th>
+                <th>What it does</th>
+            </tr>
+            <tr>
+                <td>New segment every</td>
+                <td>60 min</td>
+                <td>Starts a new segment (CSV, <code>.xlsx</code>, raw capture) after this long. Segments also rotate
+                    before any file reaches 1,000,000 rows, so every <code>.xlsx</code> fits in one sheet.</td>
+            </tr>
+            <tr>
+                <td>Event log</td>
+                <td>on</td>
+                <td>One row per received cycle.</td>
+            </tr>
+            <tr>
+                <td>Fixed-step log, Step</td>
+                <td>off, 1 s</td>
+                <td>One row exactly every <em>Step</em> seconds on the receive clock, with the newest value of each
+                    signal and its age in ms. A busy PC only delays when rows are written, never what they
+                    contain.</td>
+            </tr>
+            <tr>
+                <td>Stale after, Stale values</td>
+                <td>3 steps, hold</td>
+                <td>A value older than this many steps is stale: either the last value is held or the cell is left
+                    blank.</td>
+            </tr>
+            <tr>
+                <td>Warn below / Stop below free space</td>
+                <td>10 GB / 2 GB</td>
+                <td>Below the first limit you get one warning; below the second, logging stops cleanly with every
+                    segment closed. Data is never deleted automatically.</td>
+            </tr>
+        </table>
 
         <h3 id="analysis-suite">The Analysis Suite</h3>
         <p>For deep-diving into saved test data and comparing multiple runs. The window is non-modal, so you can keep it
@@ -1931,6 +2091,18 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             <li>Supported formats: Bytehound decoded <code>.xlsx</code>, legacy decoded <code>.csv</code>, and external
                 Dyno-style <code>.xlsx</code> exports.</li>
         </ol>
+        <div class="note">
+            <strong>Loading large files.</strong> A progress window shows each file being loaded, how far it is, and a
+            <strong>Cancel</strong> button. Reading an Excel workbook is slow for big logs (a full day of data can
+            take minutes), so:
+            <ul>
+                <li><strong>Whole recordings:</strong> use <strong>File → Open Logging Session…</strong> and pick the
+                    session folder — a 65-hour session opens in seconds and zooms to any hour instantly.</li>
+                <li><strong>Workbooks with a CSV next to them</strong> (every hourly segment, and Merge Session output
+                    when "keep the merged CSV" is ticked — the default) are loaded from the CSV automatically,
+                    about 100× faster, with the same data.</li>
+            </ul>
+        </div>
         <ul>
             <li><strong>Visibility:</strong> use the checkbox beside each log to show or hide it.</li>
             <li><strong>Color:</strong> click the colored dot to change the log color.</li>
@@ -2192,9 +2364,24 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
         <p>Bytehound can be run headlessly from the command line to validate configuration syntax without launching the
             GUI. Simply execute:</p>
         <pre><code>Bytehound.exe --validate config.xlsx</code></pre>
-        <p>If the configuration schema is perfect (valid byte orders, correct types, no missing required fields), the
-            CLI will print a success summary and exit with code <code>0</code>. If there are schema errors, it prints
-            the errors and exits with code <code>1</code>, failing the build pipeline instantly.</p>
+        <p>It accepts a workbook, a Bytehound <code>.json</code> configuration or a folder of CSV sheets. If the
+            configuration is valid it prints a summary, the configuration's <strong>fingerprint</strong> and any
+            <strong>warnings</strong>, and exits with code <code>0</code>. If there are errors, it prints each one
+            with where it is and exits with code <code>1</code>, failing a build pipeline instantly.</p>
+        <pre>OK: Config Blue01_M_CAN_4836.xlsx is valid.
+Loaded 39 signals across 13 frames.
+Fingerprint (SHA-256): 2c9ce7c72d9988c3df50d307f3d51772e6595f23e748ee703f9d321ae3216e2b
+WARNING: frame 0x1F0 / Balancing_Status: bytes 2..3 lie beyond the frame's payload_length 3: ...</pre>
+        <ul>
+            <li><strong>Errors</strong> stop the configuration from loading: wrong types, duplicates, overlapping
+                bytes, references to frames or signals that do not exist.</li>
+            <li><strong>Warnings</strong> never block loading but usually point at a mistake: a signal reaching
+                past the frame's <code>payload_length</code> (it can only decode if the device sends a longer
+                payload), a scale of 0, <code>min_value</code> greater than <code>max_value</code>, a bitfield bit
+                beyond the signal's width, a frame with no signals.</li>
+            <li>The <strong>fingerprint</strong> identifies the configuration's content: the same configuration
+                saved as Excel, CSV or JSON has the same fingerprint, and any real change gives a different one.</li>
+        </ul>
 
         <p>The workbook contains the following sheets <em>in this order</em>. Each section below matches one sheet tab.
         </p>
@@ -2235,14 +2422,13 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
                 <td><code>header_hex</code></td>
                 <td>hex bytes</td>
                 <td><code>AA 55</code></td>
-                <td>Fixed start-of-frame marker the parser searches for. Space-separated hex bytes. <em>Ignored when
-                        parser_type = modbus_rtu.</em></td>
+                <td>Fixed start-of-frame marker the parser searches for. Space-separated hex bytes.</td>
             </tr>
             <tr>
                 <td><code>frame_id_size</code></td>
                 <td>integer</td>
                 <td><code>2</code></td>
-                <td>How many bytes carry the frame ID after the header. <em>Ignored for modbus_rtu.</em></td>
+                <td>How many bytes carry the frame ID after the header.</td>
             </tr>
             <tr>
                 <td><code>frame_id_byte_order</code></td>
@@ -2254,8 +2440,7 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
                 <td><code>length_size</code></td>
                 <td>integer</td>
                 <td><code>1</code></td>
-                <td>How many bytes carry the payload-length field. <em>Ignored for modbus_rtu (length is implicit in
-                        each FC).</em></td>
+                <td>How many bytes carry the payload-length field.</td>
             </tr>
             <tr>
                 <td><code>length_meaning</code></td>
@@ -2265,34 +2450,34 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
                     payload bytes), <code>frame_total</code> (header + frame_id + length + payload + CRC + footer — the
                     full frame size), <code>header_to_crc</code> (everything except the footer),
                     <code>payload_plus_crc</code> (payload + CRC bytes). The parser and TX builder honour the chosen
-                    value end-to-end. <em>Ignored for modbus_rtu.</em></td>
+                    value end-to-end.</td>
             </tr>
             <tr>
                 <td><code>crc_type</code></td>
                 <td>enum</td>
                 <td><code>crc16_modbus</code></td>
                 <td>Checksum algorithm: <code>crc16_modbus</code>, <code>crc16_ccitt</code>, <code>crc32</code>, or
-                    <code>none</code>. For modbus_rtu the CRC is always CRC16/Modbus regardless of this field.</td>
+                    <code>none</code>. <code>crc16_modbus</code> is only the name of the CRC-16 algorithm (also called
+                    CRC-16/MODBUS: polynomial 0xA001 reflected, start 0xFFFF) — Bytehound does not speak the Modbus
+                    protocol.</td>
             </tr>
             <tr>
                 <td><code>crc_size</code></td>
                 <td>integer</td>
                 <td><code>2</code></td>
-                <td>How many bytes the CRC occupies at the end of the frame. <em>Ignored for modbus_rtu.</em></td>
+                <td>How many bytes the CRC occupies at the end of the frame.</td>
             </tr>
             <tr>
                 <td><code>crc_byte_order</code></td>
                 <td>enum</td>
                 <td><code>little</code></td>
-                <td><code>big</code> or <code>little</code> byte order for the CRC field. <em>Ignored for
-                        modbus_rtu.</em></td>
+                <td><code>big</code> or <code>little</code> byte order for the CRC field.</td>
             </tr>
             <tr>
                 <td><code>footer_hex</code></td>
                 <td>hex bytes</td>
                 <td><em>(leave blank)</em></td>
-                <td>Optional end-of-frame marker. Leave blank if your protocol has no footer. <em>Ignored for
-                        modbus_rtu.</em></td>
+                <td>Optional end-of-frame marker. Leave blank if your protocol has no footer.</td>
             </tr>
             <tr>
                 <td><code>raw_log_format</code></td>
@@ -2452,16 +2637,12 @@ EE             ← footer (1 byte, from Protocol.footer)</pre>
             shrink the command. Also, <code>tx_pad_length</code> must be at least <code>crc_size + len(footer)</code>,
             otherwise there's no room for the CRC and the app rejects the config.
         </div>
-        <div class="note">
-            <strong>Not for Modbus RTU.</strong> Modbus has its own fixed-per-FC framing — <code>tx_pad_length</code> is
-            ignored when <code>parser_type = modbus_rtu</code>.
-        </div>
 
         <p><strong>Bundled template content</strong> (the single enabled row that <em>File → Export Template</em> writes
             — blanks or 0 for <code>length_byte_order</code>, <code>crc_coverage</code>, <code>escape_mode</code>, and
             <code>tx_pad_length</code> mean "use the sensible default" / variable length):</p>
         <pre>profile_name           = Default
-parser_type            = framed              ← `framed`, `modbus_rtu`, or `waveshare_can`
+parser_type            = framed              ← `framed` or `waveshare_can`
 header_hex             = AA 55
 frame_id_size          = 2
 frame_id_byte_order    = little
@@ -2477,7 +2658,6 @@ escape_mode            =                     ← defaults to none
 raw_log_format         = hex                 ← `hex` = spaced, `compact` = contiguous
 inter_frame_delay_ms   = 10
 tx_pad_length          =                     ← variable-length TX (blank or 0 disables fixed padding)
-modbus_node_address    = 1                   ← Modbus slave address (ignored when parser_type = framed)
 enabled                = TRUE</pre>
 
         <hr>
@@ -2531,6 +2711,16 @@ enabled                = TRUE</pre>
                     Auto-created frames default to <code>rxtx</code>.</td>
             </tr>
             <tr>
+                <td><code>expected_period_ms</code></td>
+                <td>number</td>
+                <td><em>(blank = not watched)</em></td>
+                <td>How often the device sends this frame, e.g. <code>200</code> for 5 Hz. The Activity Log says
+                    once when the frame stops (nothing for 3 periods) or slows down (average over 10 s more than
+                    1.5 periods), and once when it is back to normal. The live plot marks its signals stale (dashed)
+                    after 3 periods instead of waiting for its usual rate to be learned. A frame is watched from its
+                    first arrival, so a frame that never comes is not reported.</td>
+            </tr>
+            <tr>
                 <td><code>enabled</code></td>
                 <td>TRUE/FALSE</td>
                 <td><code>TRUE</code> <em>(default)</em></td>
@@ -2567,9 +2757,8 @@ enabled                = TRUE</pre>
                 <td><code>id_or_address</code></td>
                 <td>hex <em>(required)</em></td>
                 <td><code>0x0010</code></td>
-                <td>Frame ID (framed) or Modbus register address this signal lives in. If the ID is not declared in the
-                    Frames sheet, the loader auto-creates a frame named <code>Node 0x&lt;id&gt;</code> — convenient for
-                    Modbus configs that skip the Frames sheet entirely.</td>
+                <td>Frame ID this signal lives in. If the ID is not declared in the Frames sheet, the loader
+                    auto-creates a frame named <code>Node 0x&lt;id&gt;</code>.</td>
             </tr>
             <tr>
                 <td><code>signal_name</code></td>
@@ -2658,6 +2847,13 @@ enabled                = TRUE</pre>
                 <td>Maximum valid write value. Leave blank for no limit.</td>
             </tr>
             <tr>
+                <td><code>clamp_negative</code></td>
+                <td>bool</td>
+                <td><code>TRUE</code> <em>(blank = TRUE)</em></td>
+                <td>When <code>min_value</code> is 0 or more, a decoded value between −0.5 and 0 (noise around zero) is
+                    shown and logged as 0. Set <code>FALSE</code> to keep the real negative value.</td>
+            </tr>
+            <tr>
                 <td><code>description</code></td>
                 <td>text</td>
                 <td><code>Total pack voltage</code> <em>(blank ok)</em></td>
@@ -2678,9 +2874,8 @@ enabled                = TRUE</pre>
         </div>
         <div class="note">
             <strong>Frame auto-creation.</strong> If <code>id_or_address</code> refers to a frame ID that does not exist
-            in the Frames sheet, the loader silently creates one named <code>Node 0x&lt;id&gt;</code>. This is the
-            recommended workflow for Modbus configs — declare your registers in Variables only and omit the Frames sheet
-            altogether.
+            in the Frames sheet, the loader silently creates one named <code>Node 0x&lt;id&gt;</code>. Declaring frames in the Frames
+            sheet is still recommended: it gives them names, a payload length check and a direction.
         </div>
         <p><strong>Bundled template content</strong> (showing the key columns; <code>read_write</code>,
             <code>min_value</code>, <code>max_value</code>, <code>description</code>, <code>enabled</code> omitted for
@@ -3015,7 +3210,7 @@ Cell Voltages | min|max|diff|avg   | V    | 0x2000   | TRUE</pre>
                 <td><code>id_or_address</code></td>
                 <td>hex <em>(required)</em></td>
                 <td><code>0x0090</code></td>
-                <td>Frame ID (or Modbus register address) of the outgoing packet. Must be non-empty; use a
+                <td>Frame ID of the outgoing packet. Must be non-empty; use a
                     <code>0x</code> prefix for clarity.</td>
             </tr>
             <tr>
@@ -3048,19 +3243,10 @@ Cell Voltages | min|max|diff|avg   | V    | 0x2000   | TRUE</pre>
         </div>
         <div class="note">
             <strong>Reusing Addresses for Telemetry and Commands:</strong>
-            Yes, you can (and often should) use the same <code>id_or_address</code> (frame ID or Modbus register
-            address) in both the <strong>Variables</strong> sheet (Sheet 3) and the <strong>TxCommands</strong> sheet
+            Yes, you can (and often should) use the same <code>id_or_address</code> (frame ID) in both the <strong>Variables</strong> sheet (Sheet 3) and the <strong>TxCommands</strong> sheet
             (Sheet 7).
-            <ul>
-                <li>In a custom <strong>framed</strong> protocol, telemetry variables you read from the device can share
-                    a frame ID with commands you write to the device. The device's firmware parses the frame ID to
-                    decide how to process it.</li>
-                <li>In a <strong>Modbus RTU</strong> protocol, a register address (like <code>0x1000</code>) represents
-                    a specific physical memory location on the slave device. You read its value by defining it in the
-                    <strong>Variables</strong> sheet and setting a poll interval in the <strong>PollingSchedule</strong>
-                    sheet. You write a value to it by defining a command with the same address in the
-                    <strong>TxCommands</strong> sheet.</li>
-            </ul>
+            Telemetry variables you read from the device can share a frame ID with commands you write to the
+            device; the device's firmware parses the frame ID to decide how to process it.
             Make sure that if you define a frame in the <strong>Frames</strong> sheet (Sheet 2) that is used for both RX
             and TX, its <code>direction</code> column is set to <code>rxtx</code> (which is the default). If it is set
             to <code>rx</code> (receive-only), the app will hide any TX commands using that frame ID to prevent
@@ -3188,7 +3374,7 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
                 <td><code>id_or_address</code></td>
                 <td>hex <em>(required)</em></td>
                 <td><code>0x0010</code></td>
-                <td>Frame ID (or Modbus register address) to request. Must be non-empty; bare values such as
+                <td>Frame ID to request. Must be non-empty; bare values such as
                     <code>0010</code> are treated as hex, so use a <code>0x</code> prefix for clarity.</td>
             </tr>
             <tr>
@@ -3293,6 +3479,260 @@ Set Voltage Limit | Voltage Limit (V)  | uint16    | little     | 0.01  | 0     
 115200    | 8         | 1         | N      | 100</pre>
 
         <hr>
+
+        <h3 id="sheet-sequencecounters">Sheet 11 — SequenceCounters (optional)</h3>
+        <p>Declares a rolling ("alive") counter that your device increments in a frame, so Bytehound can detect frames
+            lost <em>before</em> they reach the PC (see <a href="#data-integrity">Data Integrity</a>). Leave the sheet
+            out if your device has no such counter.</p>
+        <table>
+            <tr>
+                <th>Column</th>
+                <th>Type</th>
+                <th>Example</th>
+                <th>What it does</th>
+            </tr>
+            <tr>
+                <td><code>id_or_address</code></td>
+                <td>hex</td>
+                <td><code>0x4000</code></td>
+                <td>The frame that carries the counter.</td>
+            </tr>
+            <tr>
+                <td><code>signal_name</code></td>
+                <td>text</td>
+                <td><code>Seq</code></td>
+                <td>The counter signal — a row of that frame in the Variables sheet.</td>
+            </tr>
+            <tr>
+                <td><code>bits</code></td>
+                <td>int</td>
+                <td><code>8</code></td>
+                <td>Width at which the counter wraps (1–64). Default: the signal's size.</td>
+            </tr>
+            <tr>
+                <td><code>step</code></td>
+                <td>int</td>
+                <td><code>1</code></td>
+                <td>How much the counter increases per frame. Default 1.</td>
+            </tr>
+            <tr>
+                <td><code>enabled</code></td>
+                <td>bool</td>
+                <td><code>TRUE</code></td>
+                <td>Default TRUE.</td>
+            </tr>
+        </table>
+        <p>Each received value is compared with the previous one. A forward jump of less than half the counter range is
+            a <strong>gap</strong> (that many frames missing); the same value again is a <strong>repeat</strong>; a
+            backward jump is a <strong>reset</strong> (the device restarted — not counted as loss). Example: an 8-bit
+            counter going <code>41 → 45</code> means 3 frames were lost; <code>255 → 0</code> is a normal wrap.</p>
+
+        <h3 id="sheet-valuerules">Sheet 12 — ValueRules (optional)</h3>
+        <p>Sets a signal to one of two fixed values depending on one raw byte of the payload — for state flags that
+            a device encodes as a code rather than as bits. Example: <em>Drive mode is ON when byte 0 is 7</em>.</p>
+        <table>
+            <tr>
+                <th>Column</th>
+                <th>Type</th>
+                <th>Example</th>
+                <th>What it does</th>
+            </tr>
+            <tr>
+                <td><code>id_or_address</code></td>
+                <td>hex</td>
+                <td><code>0x101</code></td>
+                <td>Frame of the signal.</td>
+            </tr>
+            <tr>
+                <td><code>signal_name</code></td>
+                <td>text</td>
+                <td><code>Key_Switch</code></td>
+                <td>The signal whose value is set (a Variables row of that frame).</td>
+            </tr>
+            <tr>
+                <td><code>source_byte</code></td>
+                <td>int</td>
+                <td><code>0</code></td>
+                <td>Payload byte to test, counted from 0.</td>
+            </tr>
+            <tr>
+                <td><code>match_values</code></td>
+                <td>text</td>
+                <td><code>6,7</code></td>
+                <td>Byte values that count as a match (decimal or <code>0x</code> hex, separated by commas or
+                    spaces).</td>
+            </tr>
+            <tr>
+                <td><code>value_if_match</code></td>
+                <td>number</td>
+                <td><code>1</code></td>
+                <td>Value when the byte matches. Default 1.</td>
+            </tr>
+            <tr>
+                <td><code>value_otherwise</code></td>
+                <td>number</td>
+                <td><code>0</code></td>
+                <td>Value when it does not. Default 0.</td>
+            </tr>
+            <tr>
+                <td><code>enabled</code></td>
+                <td>bool</td>
+                <td><code>TRUE</code></td>
+                <td>Default TRUE.</td>
+            </tr>
+        </table>
+        <div class="note">
+            <strong>Older Ather workbooks.</strong> Earlier versions applied this rule automatically to the
+            <code>Drive_Mode</code> and <code>Key_Switch</code> signals of frame <code>0x101</code> in every
+            configuration. A workbook without a ValueRules sheet still decodes exactly the same: Bytehound adds the
+            equivalent rules (<code>Drive_Mode</code>: byte 0 = 7; <code>Key_Switch</code>: byte 0 = 6 or 7), and the
+            import preview and saved JSON show them. Add a ValueRules sheet to change or disable them.
+        </div>
+
+        <h3 id="sheet-derived">Sheet 13 — Derived (optional): Power, Ah, Wh</h3>
+        <p>Values computed live from other signals — a formula, or the running integral of one. They appear like
+            any other value: in the table, the live plot, the event and fixed-step logs and the Analysis Suite.</p>
+        <table>
+            <tr>
+                <th>Column</th>
+                <th>Example</th>
+                <th>What it does</th>
+            </tr>
+            <tr>
+                <td><code>name</code></td>
+                <td><code>Power</code></td>
+                <td>Name of the new value (must be unique).</td>
+            </tr>
+            <tr>
+                <td><code>expression</code></td>
+                <td><code>[CellVoltage] * [CellCurrent]</code></td>
+                <td>The formula. Signals in square brackets; write <code>[0x1000.CellVoltage]</code> if the name
+                    exists in more than one frame; an earlier Derived row can be used by its name. Allowed:
+                    numbers, <code>+ - * / ** %</code>, brackets and <code>abs min max sqrt exp log log10 sin cos
+                    tan</code>.</td>
+            </tr>
+            <tr>
+                <td><code>unit</code></td>
+                <td><code>W</code></td>
+                <td>Unit shown in the table, plot and log column.</td>
+            </tr>
+            <tr>
+                <td><code>kind</code></td>
+                <td><code>integral_hours</code></td>
+                <td><code>value</code> (default) — the formula itself; <code>integral</code> — its running
+                    integral over seconds; <code>integral_hours</code> — over hours, so current gives
+                    <strong>Ah</strong> and power gives <strong>Wh</strong>.</td>
+            </tr>
+            <tr>
+                <td><code>frame_id</code></td>
+                <td><em>(blank)</em></td>
+                <td>Frame whose arrival updates the value; default: the frame of the first signal used.</td>
+            </tr>
+            <tr>
+                <td><code>enabled</code>, <code>description</code></td>
+                <td></td>
+                <td>As in the other sheets.</td>
+            </tr>
+        </table>
+        <p>Example for a single-cell rig:</p>
+        <pre>name      expression                      unit  kind
+Power     [CellVoltage] * [CellCurrent]   W     value
+Charge    [CellCurrent]                   Ah    integral_hours
+Energy    [Power]                         Wh    integral_hours</pre>
+        <div class="note">
+            Integrals start from 0 when logging starts. An interval much longer than usual (an unplug, a silent
+            device) is not integrated — the outage is never filled in with a guessed line. Formulas cannot do
+            anything except arithmetic on signal values.
+        </div>
+
+        <h3 id="sheet-logging">Sheet 14 — Logging (optional): how this experiment is recorded</h3>
+        <p>One row. When the configuration is activated, its values become the <strong>Logging
+            Settings</strong> (the same way Serial Defaults set the baud rate); a blank cell keeps your own
+            setting. The Activity Log lists what was set. A session already running keeps its settings — the new
+            ones apply from the next session.</p>
+        <table>
+            <tr>
+                <th>Column</th>
+                <th>Example</th>
+                <th>What it does</th>
+            </tr>
+            <tr>
+                <td><code>segment_minutes</code></td>
+                <td><code>60</code></td>
+                <td>Length of each segment file (15–1440).</td>
+            </tr>
+            <tr>
+                <td><code>event_log</code></td>
+                <td><code>true</code></td>
+                <td>Write the event log (a row per frame).</td>
+            </tr>
+            <tr>
+                <td><code>fixed_step_s</code></td>
+                <td><code>1</code></td>
+                <td>Fixed-step log interval in seconds (0.01–60); <code>off</code> turns it off.</td>
+            </tr>
+            <tr>
+                <td><code>stale_steps</code></td>
+                <td><code>3</code></td>
+                <td>A value older than this many steps is stale.</td>
+            </tr>
+            <tr>
+                <td><code>stale_values</code></td>
+                <td><code>hold</code></td>
+                <td><code>hold</code> the last value or leave it <code>blank</code> when stale.</td>
+            </tr>
+            <tr>
+                <td><code>merge_on_stop</code></td>
+                <td><code>one</code></td>
+                <td>When logging stops, merge the session's segment files in the background (as
+                    <strong>Tools → Merge Session</strong>): <code>none</code>, <code>one</code> workbook, or one
+                    per <code>day</code>. Output goes to <code>&lt;session&gt;/merged</code>.</td>
+            </tr>
+            <tr>
+                <td><code>merge_keep_csv</code></td>
+                <td><code>true</code></td>
+                <td>Also keep the merged CSV (opens about 100× faster in the Analysis Suite).</td>
+            </tr>
+            <tr>
+                <td><code>merge_kind</code></td>
+                <td><code>both</code></td>
+                <td>Which logs to merge: <code>event</code>, <code>fixed</code> (fixed-step) or <code>both</code>
+                    (default). A log the session does not have is skipped.</td>
+            </tr>
+        </table>
+        <p>The merge option is also in <strong>Settings → Logging Settings</strong> (“Merge when logging
+            stops”). The merge never blocks the window; the Activity Log and a short notice say when it is done.
+            If it fails, Tools → Merge Session can run it again.</p>
+
+        <h3 id="config-import">Importing, Previewing &amp; Restoring a Configuration</h3>
+        <p>Loading a configuration never changes anything until you confirm it:</p>
+        <ol>
+            <li><strong>File → Import Config</strong> (or a recent configuration) reads and checks the file. The
+                configuration that is active stays active while you look.</li>
+            <li>The <strong>preview</strong> shows:
+                <ul>
+                    <li><strong>Errors</strong> — the configuration cannot be activated; the dialog only offers
+                        <strong>Close</strong>.</li>
+                    <li><strong>Warnings</strong> — it can be activated, but check them (see
+                        <a href="#validator-cli">Config Validator</a>).</li>
+                    <li><strong>Changes</strong> against the active configuration: signals added
+                        (<code>+</code>), removed (<code>-</code>) and modified (<code>~</code>, with the old and new
+                        value of each changed column), plus changed protocol settings and tables.</li>
+                </ul>
+            </li>
+            <li>Click <strong>Activate</strong> to use it, or <strong>Cancel</strong> to keep the current one.</li>
+        </ol>
+        <p><strong>While connected</strong>, activating a configuration reconnects automatically so the device is
+            decoded with the new one straight away. <strong>While logging</strong>, the session continues in a new
+            segment (see <a href="#recording-logs">Recording Logs</a>). The preview tells you when either will
+            happen.</p>
+        <p><strong>Restore:</strong> every configuration you activate is kept (the last 20) in Bytehound's
+            application-data folder. <strong>File → Restore Previous Configuration…</strong> brings one back through
+            the same preview.</p>
+        <p><strong>JSON configurations:</strong> the Configuration Editor saves JSON in Bytehound's own format, which
+            keeps every sheet, column and value of the original exactly. A saved file is replaced only once the new
+            one is completely written, so a crash during save never leaves a damaged file. Older Bytehound versions
+            cannot open these JSON files; share an Excel or CSV export with them instead.</p>
 
         <h3 id="comprehensive-config-examples">⭐ Real-World Configuration Recipes &amp; Worked Examples</h3>
         <p>Below are concrete, battle-tested configuration patterns you can copy directly into your Excel sheets for common embedded hardware scenarios.</p>
@@ -3492,6 +3932,14 @@ CAN Monitor    | waveshare_can  | AA         | 55         | TRUE</pre>
             Light directly.
         </div>
 
+        <h3 id="install-warning">“Windows protected your PC” when installing</h3>
+        <p>The installer is not code-signed yet, so Windows SmartScreen does not know the publisher and shows a
+            blue <em>Windows protected your PC</em> box. Click <strong>More info → Run anyway</strong> (or, before
+            running it: right-click the installer → <strong>Properties</strong> → tick <strong>Unblock</strong> →
+            OK). To check the file is genuine, compare its SHA-256 (PowerShell:
+            <code>Get-FileHash Bytehound_Setup_x.y.z.exe</code>) with <code>sha256</code> in the published
+            <code>version.json</code>. The in-app updater does this check for you.</p>
+
         <h3 id="check-for-updates">Check for Updates</h3>
         <p>Open <strong>Help → Check for Updates</strong>. The app will:</p>
         <ol>
@@ -3551,14 +3999,19 @@ CAN Monitor    | waveshare_can  | AA         | 55         | TRUE</pre>
 
         <h3>Data Logging &amp; Buffer Safety</h3>
         <ul>
-            <li><strong>Decoded Log Crash Safety:</strong> The Decoded Excel log (<code>*_decoded.xlsx</code>) is
-                written incrementally to temporary files (<code>.tmp_data</code> and <code>.tmp_meta</code>) during the
-                session and compiled at the end. If the application crashes, the unsaved data is not lost; Bytehound
-                automatically scans and prompts to recover these logs on the next launch.</li>
-            <li><strong>Plot History Limits:</strong> Plot history is stored in a fixed-capacity ring buffer (default
-                6,000 samples per signal). In long monitoring sessions, older points will wrap around and be discarded
-                from memory to prevent memory leaks. Consequently, scrolling back to the beginning of a multi-hour test
-                in the Live Plot is not supported; use the Analysis Suite on the saved log files instead.</li>
+            <li><strong>Crash Safety:</strong> Logs are written to CSV as data arrives and each segment is compiled to
+                <code>.xlsx</code> when it closes. If the application or PC stops while recording, the data already
+                written is not lost: on the next launch Bytehound finds the unfinished session, compiles it and marks
+                it <code>recovered</code>. At most the last second or so before the crash can be missing; the
+                <code>.bhraw</code> raw capture keeps every byte that reached the disk.</li>
+            <li><strong>Segment finishing:</strong> Compiling a segment's <code>.xlsx</code> runs in a separate helper
+                process with a time limit. If it fails or hangs, the segment is marked
+                <code>closed_with_errors</code> with the reason in <code>session.json</code>, and its CSV is always
+                kept.</li>
+            <li><strong>Plot History Limits:</strong> Plot history is kept in memory within a budget shared by all
+                plotted signals (default 512 MB, <strong>Tools → Plot Settings</strong>). When it is full the oldest
+                plot samples are dropped, so scrolling back to the beginning of a multi-hour test in the Live Plot may
+                show nothing there; use the Analysis Suite on the saved session instead.</li>
             <li><strong>Raw Console and Log line limits:</strong> The Raw Console is capped at 3,000 blocks/lines of
                 history, and the Activity Log is capped at 5,000 blocks. Old messages are automatically truncated from
                 the display buffer.</li>
@@ -3579,10 +4032,6 @@ CAN Monitor    | waveshare_can  | AA         | 55         | TRUE</pre>
                 <code>tx_commands</code>, duplicate <code>enums</code> values, duplicate <code>bit_index</code>/labels
                 on the same bitfield signal, duplicate calculations, or duplicate polling schedules—the loader will
                 raise a validation <code>ConfigError</code> rather than silently overwriting.</li>
-            <li><strong>Modbus RTU Specifications:</strong> The Modbus RTU protocol specifies big-endian encoding for
-                register addresses and data values, and little-endian encoding for the CRC checksum. Custom
-                <code>byte_order</code> configurations in the Protocol sheet are ignored when
-                <code>parser_type = modbus_rtu</code> is selected.</li>
             <li><strong>Polling vs. Streaming:</strong> Do not enable <strong>Auto-Fetch (F10)</strong> on a device that
                 is already streaming data automatically (unsolicited). Sending poll requests to a streaming device will
                 cause transmission collisions and corrupt the incoming data packets.</li>

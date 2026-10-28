@@ -29,7 +29,7 @@ import socket
 import sys
 import threading
 import time
-from dataclasses import dataclass, replace as dataclass_replace
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Dict, Iterable, List, Optional
 
@@ -40,6 +40,7 @@ from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
 from ..protocol.packet_parser import ParsedPacket, create_parser
 from ..decoder.frame_decoder import decode_frame
 from ..decoder.types import FrameConfig, PollingScheduleSpec, ProtocolConfig
+from ..serial_logging.raw_capture import RX, TX, RawCapture
 
 _LOG = logging.getLogger("bytehound.serial_io.worker")
 
@@ -68,6 +69,58 @@ def auto_detect_primary_port() -> Optional[str]:
         return None
 
 
+# Socket receive buffer requested from the OS. The default (64 KiB on
+# Windows) overflows during bursts and the OS then drops UDP datagrams
+# silently (Plane.md F5). 4 MiB holds ~20 s at 2 Mbaud-equivalent rates.
+SOCKET_RCVBUF_BYTES = 4 * 1024 * 1024
+# Largest possible UDP payload; a smaller recv() size truncates (or on
+# Windows errors on) bigger datagrams (Plane.md F4).
+_UDP_MAX_DATAGRAM = 65535
+_TCP_RECV_CHUNK = 65536
+_SEND_TIMEOUT_S = 2.0
+
+
+def _enlarge_rcvbuf(sock: socket.socket) -> int:
+    """Ask for a large receive buffer; return the size the OS granted."""
+    try:
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, SOCKET_RCVBUF_BYTES)
+    except OSError:
+        _LOG.warning("Could not enlarge socket receive buffer", exc_info=True)
+    try:
+        granted = int(sock.getsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF))
+    except (OSError, TypeError, ValueError):
+        _LOG.warning("Could not read socket receive buffer size", exc_info=True)
+        return 0
+    if granted < SOCKET_RCVBUF_BYTES // 2:
+        _LOG.warning(
+            "Socket receive buffer is %d bytes (requested %d); bursts may be dropped by the OS",
+            granted, SOCKET_RCVBUF_BYTES,
+        )
+    return granted
+
+
+def _send_all(sock: socket.socket, data: bytes, kind: str) -> int:
+    """Write every byte on a non-blocking socket, or raise.
+
+    ``socket.send`` may write only part of ``data``; the remainder of a
+    command would be lost without an error.
+    """
+    view = memoryview(data)
+    deadline = time.monotonic() + _SEND_TIMEOUT_S
+    while view:
+        try:
+            sent = sock.send(view)
+            view = view[sent:]
+        except BlockingIOError:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise serial.SerialException(
+                    f"{kind} socket write timed out with {len(view)} of {len(data)} bytes unsent"
+                ) from None
+            select.select([], [sock], [], remaining)
+    return len(data)
+
+
 class TcpSocketWrapper:
     def __init__(self, host: str, port: int, timeout: float = 0.05):
         self.host = host
@@ -76,15 +129,19 @@ class TcpSocketWrapper:
         self._socket = None
         self._is_open = False
         self._buffer = bytearray()
+        self.rcvbuf_bytes = 0  # receive buffer granted by the OS, set on open()
+        self._peer_closed = False  # remote end closed; buffered bytes still delivered
 
     def open(self):
         try:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.rcvbuf_bytes = _enlarge_rcvbuf(self._socket)
             self._socket.settimeout(2.0)  # connection timeout
             self._socket.connect((self.host, self.port))
             self._socket.setblocking(False)
             self._is_open = True
             self._buffer = bytearray()
+            self._peer_closed = False
         except Exception as e:
             self._is_open = False
             if self._socket:
@@ -99,7 +156,9 @@ class TcpSocketWrapper:
         if not self._is_open or not self._socket:
             raise serial.SerialException("Socket not open")
         try:
-            return self._socket.send(data)
+            return _send_all(self._socket, data, "TCP")
+        except serial.SerialException:
+            raise
         except Exception as e:
             raise serial.SerialException(f"TCP socket write error: {e}") from e
 
@@ -112,6 +171,7 @@ class TcpSocketWrapper:
             raise
         except Exception as e:
             raise serial.SerialException(str(e)) from e
+        self._raise_if_drained_and_closed()
         res = bytes(self._buffer[:size])
         del self._buffer[:size]
         return res
@@ -126,7 +186,14 @@ class TcpSocketWrapper:
             raise
         except Exception as e:
             raise serial.SerialException(str(e)) from e
+        self._raise_if_drained_and_closed()
         return len(self._buffer)
+
+    def _raise_if_drained_and_closed(self) -> None:
+        """Report the peer's close only once every byte received before it
+        has been handed over (Plane.md F15)."""
+        if self._peer_closed and not self._buffer:
+            raise serial.SerialException("TCP connection closed by remote peer")
 
     def reset_input_buffer(self):
         self._buffer.clear()
@@ -150,14 +217,20 @@ class TcpSocketWrapper:
             self._socket = None
 
     def _fill_buffer(self):
+        if self._peer_closed:
+            return
         while True:
             try:
                 r, _, _ = select.select([self._socket], [], [], 0)
                 if not r:
                     break
-                data = self._socket.recv(4096)
+                data = self._socket.recv(_TCP_RECV_CHUNK)
                 if not data:
-                    raise serial.SerialException("TCP connection closed by remote peer")
+                    # Peer closed. Keep what is buffered: it is delivered
+                    # first, then the close is reported (used to raise here
+                    # and lose the device's last bytes).
+                    self._peer_closed = True
+                    break
                 self._buffer.extend(data)
             except BlockingIOError:
                 break
@@ -178,10 +251,12 @@ class UdpSocketWrapper:
         self._socket = None
         self._is_open = False
         self._buffer = bytearray()
+        self.rcvbuf_bytes = 0  # receive buffer granted by the OS, set on open()
 
     def open(self):
         try:
             self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            self.rcvbuf_bytes = _enlarge_rcvbuf(self._socket)
             if self.local_port > 0:
                 self._socket.bind(("", self.local_port))
             self._socket.connect((self.host, self.port))
@@ -202,7 +277,9 @@ class UdpSocketWrapper:
         if not self._is_open or not self._socket:
             raise serial.SerialException("Socket not open")
         try:
-            return self._socket.send(data)
+            return _send_all(self._socket, data, "UDP")
+        except serial.SerialException:
+            raise
         except Exception as e:
             raise serial.SerialException(f"UDP socket write error: {e}") from e
 
@@ -258,8 +335,15 @@ class UdpSocketWrapper:
                 r, _, _ = select.select([self._socket], [], [], 0)
                 if not r:
                     break
-                data = self._socket.recv(4096)
+                data = self._socket.recv(_UDP_MAX_DATAGRAM)
                 self._buffer.extend(data)
+            except ConnectionResetError:
+                # Windows reports an ICMP "port unreachable" (device port
+                # briefly closed, e.g. rebooting) as WSAECONNRESET on the
+                # next recv. For UDP that is only a notice — treating it as an
+                # unplug would end the session. Skip it and keep reading.
+                _LOG.debug("UDP: ignored ICMP port-unreachable notice")
+                continue
             except BlockingIOError:
                 break
             except socket.timeout:
@@ -268,10 +352,79 @@ class UdpSocketWrapper:
                 raise serial.SerialException(f"UDP socket read error: {e}") from e
 
 
+# Windows comm error flags reported by ClearCommError (Plane.md F7).
+COMM_ERROR_FLAGS = {
+    0x0001: "rx_buffer_overflow",  # CE_RXOVER: driver input buffer full, bytes lost
+    0x0002: "hardware_overrun",    # CE_OVERRUN: UART FIFO overrun, bytes lost
+    0x0004: "parity_error",        # CE_RXPARITY
+    0x0008: "framing_error",       # CE_FRAME: usually wrong baud rate or noise
+    0x0010: "break",               # CE_BREAK
+}
+
+
+def _empty_comm_errors() -> Dict[str, int]:
+    return {name: 0 for name in COMM_ERROR_FLAGS.values()}
+
+
+if sys.platform == "win32":
+    import ctypes
+
+    from serial import win32 as _win32
+    from serial.serialutil import PortNotOpenError
+
+    class ErrorTrackingSerial(serial.Serial):
+        """pyserial port that keeps the driver's error flags.
+
+        pyserial's ``in_waiting`` and ``read()`` call ``ClearCommError`` and
+        discard the flags, so receive-buffer overflows and UART overruns —
+        bytes lost before they ever reach us — were invisible. This calls
+        ``ClearCommError`` first and counts each flag in ``comm_errors``.
+        Residual gap: an error raised in the microseconds between our call
+        and pyserial's own call inside ``read()`` is still cleared unseen.
+        """
+
+        def __init__(self, *args, **kwargs) -> None:
+            self.comm_errors: Dict[str, int] = _empty_comm_errors()
+            super().__init__(*args, **kwargs)
+
+        def _poll_comm_errors(self) -> int:
+            flags = _win32.DWORD()
+            comstat = _win32.COMSTAT()
+            if not _win32.ClearCommError(self._port_handle, ctypes.byref(flags), ctypes.byref(comstat)):
+                raise serial.SerialException(f"ClearCommError failed ({ctypes.WinError()!r})")
+            value = flags.value
+            if value:
+                for bit, name in COMM_ERROR_FLAGS.items():
+                    if value & bit:
+                        self.comm_errors[name] += 1
+            return comstat.cbInQue
+
+        @property
+        def in_waiting(self) -> int:
+            if not self.is_open:
+                raise PortNotOpenError()
+            return self._poll_comm_errors()
+
+        def read(self, size: int = 1) -> bytes:
+            if self.is_open:
+                self._poll_comm_errors()
+            return super().read(size)
+else:
+    # pyserial exposes no line-status errors on POSIX; counts stay at zero
+    # and integrity_snapshot() reports them as unavailable.
+    ErrorTrackingSerial = serial.Serial
+
+
 # Tuning constants
 _BATCH_SIZE = 50          # emit after accumulating this many packets …
 _BATCH_INTERVAL = 0.016  # … or after this many seconds (≈ 60 Hz), whichever is first
 WATCHDOG_TIMEOUT = 3.0   # seconds of silence before emitting device_timeout
+# Driver-side receive buffer requested at open (Plane.md F16). When the
+# reader stalls longer than the buffer lasts, the USB-serial bridge drops the
+# overflow upstream with no driver error flag. 4 MiB would hold ~21 s at
+# 2 Mbaud. It is a request: pyserial passes it to SetupComm without checking
+# the result and a driver may grant less. Measured on the ST-LINK VCP only.
+RX_DRIVER_BUFFER = 4 * 1024 * 1024
 POLLING_BOOT_GRACE = 2.5
 CONSECUTIVE_TIMEOUT_DISABLE_THRESHOLD = 5
 POLL_RESPONSE_GRACE_MS = 50
@@ -296,9 +449,16 @@ class SerialSettings:
 
 
 class PollingWorker(QThread):
+    # This worker writes decoded frames to the attached logging session on
+    # its own thread (set_session_sink); the GUI must not log them again.
+    logs_sessions = True
+
     # Batch of parsed packets (may include bad CRC frames)
     packets_received = Signal(list)
     metrics_updated = Signal(int, int, int)   # timeouts, crc_errors, rx_bytes
+    # Where every received byte went, cumulative for this connection and
+    # never reset by reset_metrics() (Plane.md F3). See integrity_snapshot().
+    integrity_updated = Signal(object)
     error_occurred = Signal(str)
     warning_occurred = Signal(str)
     tx_recorded = Signal(bytes)
@@ -425,6 +585,41 @@ class PollingWorker(QThread):
         # Backpressure state (PuTTY-inspired downstream consumer flow control)
         self._backpressure_throttled: bool = False
         self._backpressure_events: int = 0
+        self._open_purged_bytes: int = 0
+        # Longest time bytes sat waiting in the driver before this thread
+        # read them (Plane.md F16). Compared with the driver buffer it says
+        # how close a link came to silent upstream loss.
+        self._last_rx_service: float = 0.0
+        self._rx_service_gap_max: float = 0.0
+        # Set while a sequential poll waits, so a response read during a TX
+        # gap wait still ends that wait.
+        self._await_target: Optional[int] = None
+        self._await_hit: bool = False
+        # Exceptions raised by the parser while feeding received bytes.
+        self._parse_errors: int = 0
+        # Polls a late schedule skipped instead of bursting to catch up.
+        self._polls_missed: int = 0
+        # Logging session written from this thread (task.md Phase 1: per-
+        # frame logging cost the GUI thread most of its time at high rates).
+        # Read once per _accumulate call; assignment is atomic.
+        self._session_sink = None
+        self._session_log_errors: int = 0
+        self._last_sink_warning: float = 0.0
+        # Sequence-counter gap detection (Plane.md F12): frames lost before
+        # they reached the PC (USB bridge, network, device) leave no other
+        # trace. Only when the config declares counters.
+        from ..decoder.sequence import SequenceTracker
+        counters = getattr(decode_config, "sequence_counters", None) or {}
+        self._seq_tracker = SequenceTracker(dict(counters)) if counters else None
+        self._last_seq_warning: float = 0.0
+
+        # Lossless wire capture while logging is on. Written from this thread
+        # right after each read/write; the GUI only starts and stops it.
+        self._raw_capture: Optional[RawCapture] = None
+        # Held while a read/write is recorded and while the capture is
+        # swapped, so a segment rotation cannot close the file a record is
+        # about to go into (the record would be dropped).
+        self._raw_lock = threading.Lock()
 
     # ------------------------------------------------------------------
     # Public API
@@ -437,8 +632,9 @@ class PollingWorker(QThread):
     def set_backpressure(self, throttled: bool) -> None:
         """Signal downstream consumer backpressure status (e.g. from UI).
 
-        When throttled=True, scheduled polling is suspended and the batching
-        window is slightly lengthened to let downstream consumers drain.
+        When throttled=True the batching window is lengthened so the GUI
+        receives fewer, larger batches. Polling and reading are never paused:
+        that would leave gaps in the log (Plane.md F2).
         """
         changed = False
         with QMutexLocker(self._mutex):
@@ -488,7 +684,7 @@ class PollingWorker(QThread):
             )
             self._serial.open()
         else:
-            self._serial = serial.Serial(
+            self._serial = ErrorTrackingSerial(
                 port=self.settings.port,
                 baudrate=self.settings.baud_rate,
                 bytesize=self.settings.data_bits,
@@ -501,11 +697,20 @@ class PollingWorker(QThread):
                 write_timeout=0.05,
             )
             try:
-                self._serial.set_buffer_size(rx_size=65536, tx_size=65536)
+                self._serial.set_buffer_size(rx_size=RX_DRIVER_BUFFER, tx_size=65536)
             except Exception:
                 pass
             try:
+                # Bytes left over from before this connection (cold-boot
+                # fragments). No session exists yet, so dropping them loses
+                # no logged data — but the amount is recorded (Plane.md F6).
+                self._open_purged_bytes = self._serial.in_waiting
                 self._serial.reset_input_buffer()
+                if self._open_purged_bytes:
+                    _LOG.info(
+                        "Discarded %d stale bytes waiting on %s at connect",
+                        self._open_purged_bytes, self.settings.port,
+                    )
             except Exception:
                 pass
         self._stop_event.clear()
@@ -513,7 +718,10 @@ class PollingWorker(QThread):
         self._last_emit_time = time.monotonic()
         # Used by the polling gate in _run_loop — see POLLING_BOOT_GRACE.
         self._open_time = time.monotonic()
-        self.start()
+        # Highest normal priority so other work on the PC cannot starve the
+        # reads (Plane.md F8). Not TimeCritical: the loop busy-polls while
+        # data flows and must not starve the rest of the system.
+        self.start(QThread.Priority.HighestPriority)
 
 
     def stop(self) -> None:
@@ -534,12 +742,60 @@ class PollingWorker(QThread):
             self.terminate()
             self.wait(500)
         self._serial = None
+        self.stop_raw_capture()
         if sys.platform == "win32":
             try:
                 import ctypes
                 ctypes.windll.winmm.timeEndPeriod(1)
             except Exception:
                 pass
+
+    def set_session_sink(self, session) -> None:
+        """Log every frame decoded from now on to ``session`` (a SessionLog),
+        or stop logging with ``None``. Thread-safe. A new session starts its
+        running integrals (Ah, Wh …) from 0."""
+        if session is not None and session is not self._session_sink:
+            from ..decoder.frame_decoder import reset_integrals
+            reset_integrals(self._signal_state)
+        self._session_sink = session
+
+    def start_raw_capture(self, path, metadata: Optional[dict] = None) -> None:
+        """Start recording every RX/TX byte to a ``.bhraw`` file."""
+        self.stop_raw_capture()
+        cap = RawCapture(path, metadata)
+        with self._raw_lock:
+            self._raw_capture = cap
+
+    def rotate_raw_capture(self, path, metadata: Optional[dict] = None) -> Optional[str]:
+        """Switch recording to a new file with no gap: every chunk lands
+        in exactly one of the two files. Returns the old writer's error."""
+        cap = RawCapture(path, metadata)
+        with self._raw_lock:
+            old, self._raw_capture = self._raw_capture, cap
+        if old is None:
+            return None
+        old.close()
+        return old.error
+
+    def stop_raw_capture(self) -> Optional[str]:
+        """Stop recording and drain the file to disk. Returns a writer error, if any."""
+        with self._raw_lock:
+            cap, self._raw_capture = self._raw_capture, None
+        if cap is None:
+            return None
+        cap.close()
+        return cap.error
+
+    def _read_rx(self, size: int) -> tuple[bytes, float]:
+        """Read from the port and stamp the read once, for both the raw
+        capture and the decoded batch."""
+        data = self._serial.read(size)
+        t = time.perf_counter()
+        if data and self._raw_capture is not None:
+            with self._raw_lock:
+                if self._raw_capture is not None:
+                    self._raw_capture.write(RX, t, data)
+        return data, t
 
     def enqueue_priority_tx(self, data: bytes) -> None:
         try:
@@ -557,17 +813,40 @@ class PollingWorker(QThread):
         with QMutexLocker(self._mutex):
             if enabled and not self._polling_global_enabled:
                 self._flush_rx_before_polling = True
+                # Polls not sent while polling was off were not "missed":
+                # bring stale due times up to now (they fire immediately,
+                # as before) so the off period is not counted as skipped.
+                now = time.monotonic()
+                for sched in self._schedules:
+                    sched["next_run"] = max(sched["next_run"], now)
             self._polling_global_enabled = enabled
         if enabled:
             effective_gap = (
                 self._pipeline_tx_gap_ms
                 if self._pipeline_tx_gap_ms is not None
-                else POLL_PIPELINE_TX_GAP_FLOOR_MS
+                else POLL_PIPELINE_TX_GAP_FLOOR_MS if self._pipelining_enabled else POLL_TX_GAP_FLOOR_MS
             )
             _LOG.info(
                 "Polling started: pipelining=%s depth=%d tx_gap=%dms timeout_disable_threshold=%d",
                 self._pipelining_enabled, self._pipeline_depth,
                 effective_gap, CONSECUTIVE_TIMEOUT_DISABLE_THRESHOLD,
+            )
+            self._warn_if_schedule_exceeds_gap(self._effective_tx_gap_ms(effective_gap))
+
+    def _warn_if_schedule_exceeds_gap(self, gap_ms: int) -> None:
+        """Polls are spaced at least ``gap_ms`` apart, so a schedule asking
+        for more polls per second than that allows is silently stretched.
+        Say so once when polling starts."""
+        if gap_ms <= 0:
+            return
+        demand = sum(1000.0 / s["spec"].interval_ms for s in self._schedules
+                     if s["enabled"] and s["spec"].interval_ms > 0)
+        capacity = 1000.0 / gap_ms
+        if demand > capacity * 1.001:
+            self.warning_occurred.emit(
+                f"Poll schedule asks for {demand:.1f} polls/s but the {gap_ms} ms TX gap allows at "
+                f"most {capacity:.1f}/s - every interval will run about {demand / capacity:.1f}x "
+                "longer than configured. Lower the TX gap (Configure Poll Schedule) or lengthen intervals."
             )
 
     def set_pipelining(
@@ -656,6 +935,25 @@ class PollingWorker(QThread):
     # Internal helpers
     # ------------------------------------------------------------------
 
+    def _advance_next_run(self, sched: dict, now: float) -> None:
+        """Fixed-rate schedule (Plane.md F20): the next poll is due one
+        interval after this one was *due*, not after it finished. Measuring
+        from completion stretched every period by the wait for its turn, the
+        TX gap and the round trip (0x1000 at 100 ms ran 10-25 % slow on the
+        NUCLEO rig). A schedule that is already late for its next poll is
+        realigned to ``now`` rather than firing a burst of catch-up polls; the
+        polls skipped that way are counted (integrity ``polls_missed``)."""
+        interval = sched["spec"].interval_ms / 1000.0
+        nxt = sched["next_run"] + interval
+        if nxt > now:
+            sched["next_run"] = nxt
+            return
+        if interval > 0:
+            missed = int((now - nxt) / interval)
+            sched["missed"] = sched.get("missed", 0) + missed
+            self._polls_missed += missed
+        sched["next_run"] = now
+
     def _is_disconnect_error(self, exc: Exception) -> bool:
         """Return True if the exception looks like a physical USB unplug or network drop."""
         msg = str(exc).lower()
@@ -695,7 +993,7 @@ class PollingWorker(QThread):
             or (time.monotonic() - self._last_emit_time) >= target_interval
         )
 
-    def _accumulate(self, packets: Iterable[ParsedPacket]) -> None:
+    def _accumulate(self, packets: Iterable[ParsedPacket], rx_perf: Optional[float] = None) -> None:
         """Add packets to the batch and flush when threshold is reached.
 
         When ``_decode_config`` is set, decode each good-CRC packet here on
@@ -710,14 +1008,24 @@ class PollingWorker(QThread):
         this reset, ~half the responses would arrive after their
         in-flight deadline expired and the schedule would auto-disable
         even though the device is actually answering.
+
+        Each item carries ``rx_perf`` (``time.perf_counter()`` when the bytes
+        were read; callers parse straight after reading). The GUI uses it for
+        plot X values, log ``elapsed_ms`` and console timestamps, so they show
+        when data arrived rather than when the 60 Hz UI flush got to it.
+        RX bytes reach the console through these batches too; there is no
+        per-packet ``wire_recorded`` emit for RX, which flooded the GUI event
+        queue at high frame rates.
         """
         cfg = self._decode_config
+        if rx_perf is None:
+            rx_perf = time.perf_counter()
+        first = len(self._batch)
         for p in packets:
-            self.wire_recorded.emit("RX", p.raw, datetime.now())
             if not p.ok:
                 self._crc_errors += 1
                 self._consecutive_frame_errors += 1
-                self._batch.append((p, None))
+                self._batch.append((p, None, rx_perf))
                 if p.error:
                     self._emit_frame_error_throttled(p.error)
                 continue
@@ -729,16 +1037,69 @@ class PollingWorker(QThread):
                 decoded = None
             else:
                 try:
-                    decoded = decode_frame(cfg, p.frame_id, p.payload, self._signal_state)
+                    decoded = decode_frame(cfg, p.frame_id, p.payload, self._signal_state, t=rx_perf)
                 except Exception:  # pragma: no cover - defensive: decode bugs
                     # Don't kill the worker on a decode error. Fall back to
                     # letting the GUI re-decode (which will surface the error
                     # via the existing path).
                     _LOG.exception("decode_frame raised on frame_id=0x%04X", p.frame_id)
                     decoded = None
-            self._batch.append((p, decoded))
+            self._batch.append((p, decoded, rx_perf))
+            if self._seq_tracker is not None and decoded is not None:
+                self._check_sequence(p.frame_id, decoded, rx_perf)
+        sink = self._session_sink
+        if sink is not None:
+            self._log_to_session(sink, self._batch[first:])
         if self._should_flush():
             self._flush_batch()
+
+    def _check_sequence(self, frame_id: int, decoded, rx_perf: float) -> None:
+        spec = self._seq_tracker.specs.get(frame_id)
+        if spec is None:
+            return
+        value = next((sig.raw_value for sig in decoded.signals if sig.signal_name == spec.signal_name), None)
+        if value is None:
+            return
+        event = self._seq_tracker.observe(frame_id, int(value))
+        if event is None:
+            return
+        sink = self._session_sink
+        if sink is not None:
+            try:
+                sink.log_sequence_event(event.frame_id, event.kind, event.expected, event.received,
+                                        event.missing, rx_perf)
+            except Exception:
+                self._session_log_errors += 1
+                _LOG.exception("Recording a sequence event failed")
+        if event.kind == "gap":
+            now = time.monotonic()
+            if now - self._last_seq_warning >= 10.0:
+                self._last_seq_warning = now
+                total = self._seq_tracker.totals()["seq_missing"]
+                self.warning_occurred.emit(
+                    f"Frames lost before reaching the PC: frame 0x{frame_id:X} counter jumped "
+                    f"{event.expected} -> {event.received} ({event.missing} missing, {total} so far)"
+                )
+
+    def _log_to_session(self, sink, items: List[tuple]) -> None:
+        """Write this read's frames to the session, in arrival order. A
+        failure is counted (integrity) and reported, never fatal to capture."""
+        for p, decoded, t in items:
+            try:
+                if p.ok:
+                    if p.frame_id is not None and decoded is not None:
+                        sink.log_frame(decoded, t)
+                    elif p.frame_id is not None:
+                        self._session_log_errors += 1
+                else:
+                    sink.log_rejected(p.raw, p.frame_id, p.error or "", t)
+            except Exception as exc:
+                self._session_log_errors += 1
+                now = time.monotonic()
+                if now - self._last_sink_warning >= 5.0:
+                    self._last_sink_warning = now
+                    _LOG.exception("Logging a frame to the session failed")
+                    self.warning_occurred.emit(f"Session logging error ({self._session_log_errors} so far): {exc!r}")
 
     def _check_watchdog(self) -> None:
         """Emit device_timeout if no data received within WATCHDOG_TIMEOUT."""
@@ -749,6 +1110,36 @@ class PollingWorker(QThread):
                 self._watchdog_fired = True
         else:
             self._watchdog_fired = False  # reset once data flows again
+
+    def integrity_snapshot(self) -> dict:
+        """Cumulative byte/frame accounting for this connection.
+
+        ``parser_bytes_in`` equals ``frame_bytes_ok + frame_bytes_rejected +
+        discarded_bytes + overflow_bytes + buffered_bytes`` for unescaped
+        protocols; escape-layer losses are in ``unframer_dropped_*``.
+        """
+        st = self._parser.stats
+        return {
+            "parser_bytes_in": st.bytes_in,
+            "frames_ok": st.frames_ok,
+            "frame_bytes_ok": st.frame_bytes_ok,
+            "frames_rejected": st.frames_rejected,
+            "frame_bytes_rejected": st.frame_bytes_rejected,
+            "discarded_bytes": st.discarded_bytes,
+            "overflow_bytes": st.overflow_bytes,
+            "unframer_dropped_frames": st.unframer_dropped_frames,
+            "unframer_dropped_bytes": st.unframer_dropped_bytes,
+            "buffered_bytes": self._parser.buffered_bytes,
+            "poll_timeouts": self._timeouts,
+            "purged_at_connect": self._open_purged_bytes,
+            "rx_service_gap_max_ms": round(self._rx_service_gap_max * 1000.0, 1),
+            "parse_errors": self._parse_errors,
+            "polls_missed": self._polls_missed,
+            **(self._seq_tracker.totals() if self._seq_tracker is not None else {}),
+            "session_log_errors": self._session_log_errors,
+            # None = this transport cannot report driver errors (TCP/UDP, POSIX).
+            "driver_errors": dict(errs) if (errs := getattr(self._serial, "comm_errors", None)) else None,
+        }
 
     def _emit_metrics_throttled(self, *, force: bool = False) -> None:
         """Emit metrics_updated at most once per ``_METRICS_INTERVAL``.
@@ -763,6 +1154,7 @@ class PollingWorker(QThread):
         now = time.monotonic()
         if force or (now - self._last_metrics_emit) >= self._METRICS_INTERVAL:
             self.metrics_updated.emit(self._timeouts, self._crc_errors, self._rx_bytes)
+            self.integrity_updated.emit(self.integrity_snapshot())
             self._last_metrics_emit = now
 
     def _emit_frame_error_throttled(self, msg: str) -> None:
@@ -801,9 +1193,12 @@ class PollingWorker(QThread):
         delay_ms = self._effective_tx_gap_ms(min_gap_ms)
         if delay_ms <= 0 or self._last_tx_time <= 0.0:
             return
-        remaining = (delay_ms / 1000.0) - (time.monotonic() - self._last_tx_time)
-        if remaining > 0:
-            time.sleep(remaining)
+        # Keep reading while waiting: a 100 ms sleep here was 20 kB of
+        # unread data at 2 Mbaud for every command sent (Plane.md F17).
+        until = self._last_tx_time + delay_ms / 1000.0
+        while (remaining := until - time.monotonic()) > 0:
+            self._drain_pending_rx()
+            time.sleep(min(remaining, 0.002))
 
     def _write_serial(self, data: bytes, *, min_gap_ms: int = 0) -> int:
         """Write to the serial port, applying the configured TX gap."""
@@ -812,6 +1207,10 @@ class PollingWorker(QThread):
         self._respect_inter_frame_delay(min_gap_ms)
         written = self._serial.write(data)
         self._last_tx_time = time.monotonic()
+        if self._raw_capture is not None:
+            with self._raw_lock:
+                if self._raw_capture is not None:
+                    self._raw_capture.write(TX, time.perf_counter(), data)
         self.wire_recorded.emit("TX", data, datetime.now())
         return written
 
@@ -823,33 +1222,57 @@ class PollingWorker(QThread):
         tied to the request that is about to be sent, while still delivering
         the stale-but-valid data to the UI.
         """
+        return self._service_rx()
+
+    def _service_rx(self) -> List[ParsedPacket]:
+        """Read whatever is waiting, parse it, match it to polls in flight
+        and queue it for emission. Every read in the worker goes through
+        here."""
         if self._serial is None:
             return []
         w = self._serial.in_waiting
+        now = time.monotonic()
         if w <= 0:
+            self._last_rx_service = now
             return []
-        data = self._serial.read(w)
+        if self._last_rx_service:
+            self._rx_service_gap_max = max(self._rx_service_gap_max, now - self._last_rx_service)
+        self._last_rx_service = now
+        data, rx_perf = self._read_rx(w)
         self._rx_bytes += len(data)
-        self._last_rx_time = time.monotonic()
+        self._last_rx_time = now
         self._watchdog_fired = False
-        self._parser.feed(data)
-        extracted = self._parser.extract_all()
+        try:
+            self._parser.feed(data)
+            extracted = self._parser.extract_all()
+        except Exception:
+            # The run loop recovers, but bytes in flight may be lost: count
+            # it so the session's integrity record shows it (it was silent).
+            self._parse_errors += 1
+            raise
         if extracted:
-            self._accumulate(extracted)
+            if self._pipelining_enabled and self._in_flight:
+                self._match_in_flight_responses(extracted)
+            if self._await_target is not None and not self._await_hit:
+                self._await_hit = any(self._is_response_match(p, self._await_target) for p in extracted)
+            self._accumulate(extracted, rx_perf)
             self._emit_metrics_throttled()
         return extracted
 
     def _reset_rx_state_for_polling_start(self) -> None:
-        """Drop stale bytes/parser fragments when Auto-Fetch is started."""
-        self._parser = create_parser(self.protocol)
-        self._batch.clear()
+        """Prepare for Auto-Fetch without discarding any received data.
+
+        Bytes already waiting are real device data: they are decoded and
+        delivered *before* the first poll is sent, so they can never be
+        mistaken for that poll's response. The parser keeps a partial frame
+        (it completes with the next bytes) and undelivered batch items stay
+        queued. Only in-flight poll bookkeeping is reset. (This used to call
+        ``reset_input_buffer()`` and clear the parser and batch, which threw
+        away frames — Plane.md Part F, F1.)
+        """
         self._in_flight.clear()
         if self._serial is not None:
-            try:
-                self._serial.reset_input_buffer()
-            except (AttributeError, serial.SerialException, OSError):
-                # Some test doubles or drivers may not expose/reset this.
-                self._drain_pending_rx()
+            self._drain_pending_rx()
         self._last_rx_time = time.monotonic()
         self._watchdog_fired = False
 
@@ -888,7 +1311,6 @@ class PollingWorker(QThread):
                         gap_ms = (self._pipeline_tx_gap_ms if self._pipeline_tx_gap_ms is not None else POLL_TX_GAP_FLOOR_MS)
                         self._write_serial(tx_data, min_gap_ms=gap_ms)
                         self.tx_recorded.emit(tx_data)
-                        time.sleep(0.01)
                     # Removed `continue` so RX can drain immediately after priority TX!
 
                 # 2. Read settings under the lock
@@ -897,7 +1319,6 @@ class PollingWorker(QThread):
                     pipelining = self._pipelining_enabled
                     pipe_depth = self._pipeline_depth
                     flush_rx_before_polling = self._flush_rx_before_polling
-                    backpressured = self._backpressure_throttled
                     if flush_rx_before_polling:
                         self._flush_rx_before_polling = False
 
@@ -908,20 +1329,10 @@ class PollingWorker(QThread):
                 # In pipelined mode we ALWAYS drain RX here so that responses to in-flight requests
                 # are matched promptly before we check for expirations or send new requests.
                 # In serial mode, we also drain any unsolicited/late traffic.
+                rx_before = self._rx_bytes
                 if self._serial:
                     try:
-                        w = self._serial.in_waiting
-                        if w > 0:
-                            data = self._serial.read(w)
-                            self._rx_bytes += len(data)
-                            self._last_rx_time = time.monotonic()
-                            self._watchdog_fired = False
-                            self._parser.feed(data)
-                            extracted = self._parser.extract_all()
-                            if pipelining and self._in_flight and extracted:
-                                self._match_in_flight_responses(extracted)
-                            self._accumulate(extracted)
-                            self._emit_metrics_throttled()
+                        self._service_rx()
                     except (TypeError, AttributeError):
                         if self._stop_event.is_set():
                             break
@@ -935,9 +1346,11 @@ class PollingWorker(QThread):
                 # only still get polled). Hammering polls during an Arduino
                 # bootloader window leaves the link stuck — the device cannot
                 # answer, timeouts accumulate, and we never get out.
-                # Also pause when backpressure is active from downstream UI/consumers.
+                # Polling never pauses for GUI backpressure: a paused poll is
+                # a gap in the log (Plane.md F2). The GUI copes by coalescing
+                # what it displays; logging does not depend on GUI speed.
                 grace_expired = (time.monotonic() - self._open_time) > POLLING_BOOT_GRACE
-                if polling_enabled and not backpressured and (self._rx_bytes > 0 or grace_expired):
+                if polling_enabled and (self._rx_bytes > 0 or grace_expired):
                     if pipelining:
                         # Pipelined: fire as many due polls as the depth budget
                         # allows; responses are matched by frame_id in the RX
@@ -948,10 +1361,7 @@ class PollingWorker(QThread):
                             if sched is None:
                                 break
                             if self._send_polling_tx_nowait(sched):
-                                sched["next_run"] = (
-                                    time.monotonic()
-                                    + (sched["spec"].interval_ms / 1000.0)
-                                )
+                                self._advance_next_run(sched, time.monotonic())
                                 polled = True
                             else:
                                 break
@@ -971,7 +1381,7 @@ class PollingWorker(QThread):
                                     break
                         if chosen_sched is not None:
                             self._do_poll(chosen_sched)
-                            chosen_sched["next_run"] = time.monotonic() + (chosen_sched["spec"].interval_ms / 1000.0)
+                            self._advance_next_run(chosen_sched, time.monotonic())
                             polled = True
 
                 # Always check the watchdog at the end of the iteration. If we
@@ -991,7 +1401,7 @@ class PollingWorker(QThread):
                 # When data was just read, yield/sleep minimally (0.1ms) to drain
                 # OS buffers immediately and prevent overflows at 2,000,000 baud.
                 # When idle, sleep 2ms (with 1ms Windows timer resolution enabled).
-                had_rx = (self._serial is not None and w > 0)
+                had_rx = self._rx_bytes > rx_before
                 if had_rx:
                     sleep_s = 0.0001
                 else:
@@ -1319,43 +1729,11 @@ class PollingWorker(QThread):
         tx_time = time.monotonic()
         effective_timeout_ms = max(0, int(timeout_ms)) + POLL_RESPONSE_GRACE_MS
         end_time = tx_time + (effective_timeout_ms / 1000.0)
-        packet_found = False
-
-        while time.monotonic() < end_time and not self._stop_event.is_set():
-            # Pump priority TX during the wait window. We only send ONE
-            # priority frame per iteration so we don't starve the response
-            # we're nominally waiting for. The UI rate is human-driven, so
-            # a single per-5ms-tick is plenty.
-            if not self._priority_tx_queue.empty() and self._serial:
-                try:
-                    tx_data = self._priority_tx_queue.get_nowait()
-                    self._write_serial(tx_data)
-                    self.tx_recorded.emit(tx_data)
-                except queue.Empty:
-                    pass
-
-            w = self._serial.in_waiting if self._serial else 0
-            if w > 0:
-                data = self._serial.read(w)
-                self._rx_bytes += len(data)
-                self._last_rx_time = time.monotonic()
-                self._watchdog_fired = False
-                self._parser.feed(data)
-                extracted = self._parser.extract_all()
-                if extracted:
-                    # Emit every frame (matching or not) through batching —
-                    # unrelated continuous-stream packets are still real
-                    # data the UI needs to see.
-                    self._accumulate(extracted)
-                    # Only a *matching* packet ends the wait. This is the
-                    # key correctness fix: previously any frame at all
-                    # short-circuited the wait, so a streaming frame would
-                    # mask a missing poll response.
-                    if any(self._is_response_match(p, target_id) for p in extracted):
-                        packet_found = True
-            if packet_found:
-                break
-            time.sleep(0.005)
+        self._await_target, self._await_hit = target_id, False
+        try:
+            packet_found = self._await_loop(end_time)
+        finally:
+            self._await_target = None
 
         if not packet_found:
             self._timeouts += 1
@@ -1383,6 +1761,31 @@ class PollingWorker(QThread):
         # transiently. At ~poll-interval cadence the throttle is naturally
         # satisfied on the happy path.
         self._emit_metrics_throttled()
+
+    def _await_loop(self, end_time: float) -> bool:
+        while time.monotonic() < end_time and not self._stop_event.is_set():
+            # Pump priority TX during the wait window. We only send ONE
+            # priority frame per iteration so we don't starve the response
+            # we're nominally waiting for. The UI rate is human-driven, so
+            # a single per-5ms-tick is plenty.
+            if not self._priority_tx_queue.empty() and self._serial:
+                try:
+                    tx_data = self._priority_tx_queue.get_nowait()
+                    self._write_serial(tx_data)
+                    self.tx_recorded.emit(tx_data)
+                except queue.Empty:
+                    pass
+
+            # Every frame (matching or not) is emitted through batching —
+            # unrelated continuous-stream packets are still real data. Only
+            # a *matching* packet ends the wait (_service_rx sets
+            # _await_hit), so a streaming frame cannot mask a missing poll
+            # response.
+            self._service_rx()
+            if self._await_hit:
+                return True
+            time.sleep(0.005)
+        return self._await_hit
 
 
 def available_ports() -> Iterable[tuple[str, str]]:

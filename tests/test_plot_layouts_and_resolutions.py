@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
 import pytest
 
@@ -21,11 +20,10 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtWidgets import QApplication
 
 from app.ui.main_window import MainWindow
-from app.ui.plot_panel import GRID_LAYOUTS, PlotPanel, TimeSeriesBuffer
+from app.ui.plot_panel import GRID_LAYOUTS
 from app.ui.analysis_suite import AnalysisSuiteWindow
 from app.decoder.types import FrameConfig, ProtocolConfig, FrameDefinition, SignalSpec
 
@@ -107,7 +105,7 @@ def test_live_plot_layout_switching(qapp, monkeypatch, layout_name, expected_row
     try:
         # Trigger layout change
         w._layout_combo.setCurrentText(layout_name)
-        
+
         expected_panels = expected_rows * expected_cols
         assert len(w._plot_panels) == expected_panels
         assert w._plot_grid_rows == expected_rows
@@ -123,7 +121,6 @@ def test_live_plot_layout_switching(qapp, monkeypatch, layout_name, expected_row
             assert strip_layout.columnStretch(c) == 1
 
         # Verify X-axis linkage: all panels except the first must link to the first panel's viewBox
-        first_vb = w._plot_panels[0].plot_item.getViewBox()
         for idx in range(1, expected_panels):
             panel_vb = w._plot_panels[idx].plot_item.getViewBox()
             # Verify panel has valid ViewBox and PlotItem

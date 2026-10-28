@@ -276,6 +276,10 @@ class FrameDefinition:
     #: both directions). Auto-created frames inherit the default ``rxtx`` so
     #: they remain available to every UI panel.
     direction: str = "rxtx"
+    #: How often the device sends this frame (Frames ``expected_period_ms``);
+    #: ``None`` = not watched. Late / slow frames are reported and the live
+    #: plot marks the frame's signals stale after 3 periods.
+    expected_period_ms: Optional[float] = None
 
     @property
     def is_tx_capable(self) -> bool:
@@ -314,6 +318,9 @@ class SignalSpec:
     max_value: Optional[float] = None
     bit_offset: Optional[int] = None
     bit_length: Optional[int] = None
+    # Decision 5 (Part C): a value in -0.5..0 shows as 0 when min_value >= 0
+    # (noise around zero). Per signal; on by default as before.
+    clamp_negative: bool = True
 
     @property
     def is_boolean(self) -> bool:
@@ -407,6 +414,89 @@ class PollingScheduleSpec:
     enabled: bool = True
 
 
+@dataclass(frozen=True)
+class LoggingDefaults:
+    """Optional ``logging`` sheet: how this experiment is recorded. Applied
+    to Logging Settings when the configuration is activated; ``None`` =
+    leave the user's setting as it is."""
+
+    segment_minutes: Optional[int] = None
+    event_log: Optional[bool] = None
+    fixed_step_s: Optional[float] = None        # 0.0 = fixed-step log off
+    stale_steps: Optional[int] = None
+    stale_values: Optional[str] = None          # hold | blank
+    merge_on_stop: Optional[str] = None         # none | one | day
+    merge_keep_csv: Optional[bool] = None
+    merge_kind: Optional[str] = None            # event | fixed | both
+
+    def summary(self) -> str:
+        parts = []
+        if self.segment_minutes is not None:
+            parts.append(f"segments {self.segment_minutes} min")
+        if self.event_log is not None:
+            parts.append("event log " + ("on" if self.event_log else "off"))
+        if self.fixed_step_s is not None:
+            parts.append(f"fixed step {self.fixed_step_s:g} s" if self.fixed_step_s else "fixed step off")
+        if self.stale_steps is not None:
+            parts.append(f"stale after {self.stale_steps} steps")
+        if self.stale_values is not None:
+            parts.append(f"stale values {self.stale_values}")
+        if self.merge_on_stop is not None:
+            parts.append({"none": "no merge at stop", "one": "merge into one workbook at stop",
+                          "day": "merge per day at stop"}[self.merge_on_stop])
+        if self.merge_keep_csv is not None:
+            parts.append("keep merged CSV" if self.merge_keep_csv else "no merged CSV")
+        if self.merge_kind is not None:
+            parts.append({"both": "merge event + fixed-step logs", "event": "merge the event log",
+                          "fixed": "merge the fixed-step log"}[self.merge_kind])
+        return ", ".join(parts)
+
+
+@dataclass(frozen=True)
+class DerivedSpec:
+    """A value computed from other signals (optional ``derived`` sheet),
+    e.g. Power = [CellVoltage] * [CellCurrent], or the running integral of
+    an expression (Ah, Wh). Evaluated when ``frame_id`` arrives, from the
+    newest value of every input; appears like a calculated signal (table,
+    plot, event and fixed-step logs, Analysis Suite)."""
+
+    name: str
+    expression: str
+    unit: str = ""
+    kind: str = "value"              # value | integral (per second) | integral_hours
+    frame_id: int = 0
+    inputs: tuple = ()               # resolved references: (frame_id, signal) or ("derived", name)
+    description: str = ""
+
+
+@dataclass(frozen=True)
+class ValueRuleSpec:
+    """Replace a signal's value by one of two constants depending on a raw
+    payload byte (Part C decision 4): ``value_if_match`` when
+    ``payload[source_byte]`` is one of ``match_values``, else
+    ``value_otherwise``. Replaces a decoder branch that was hard-coded for
+    one customer's frame 0x101."""
+
+    frame_id: int
+    signal_name: str
+    source_byte: int
+    match_values: frozenset
+    value_if_match: float = 1.0
+    value_otherwise: float = 0.0
+
+
+@dataclass(frozen=True)
+class SequenceCounterSpec:
+    """A signal that counts up by ``step`` per frame and wraps at
+    ``2**bits`` (an alive / rolling counter). Lets the application detect
+    frames lost before they reached the PC (Plane.md F12)."""
+
+    frame_id: int
+    signal_name: str
+    bits: int
+    step: int = 1
+
+
 @dataclass
 class FrameConfig:
     """Aggregate of every parsed config sheet.
@@ -440,6 +530,14 @@ class FrameConfig:
     tx_commands: Dict[str, TxCommandSpec] = field(default_factory=dict)
     serial_defaults: SerialDefaults = field(default_factory=SerialDefaults)
     polling_schedules: List[PollingScheduleSpec] = field(default_factory=list)
+    # Optional ``sequence_counters`` table: frame_id -> counter (F12).
+    sequence_counters: Dict[int, SequenceCounterSpec] = field(default_factory=dict)
+    # Optional ``value_rules`` table: (frame_id, signal_name) -> rule.
+    value_rules: Dict[tuple[int, str], ValueRuleSpec] = field(default_factory=dict)
+    # Optional ``derived`` table, in evaluation order.
+    derived: List[DerivedSpec] = field(default_factory=list)
+    # Optional ``logging`` table (one row): recording defaults for this experiment.
+    logging: Optional[LoggingDefaults] = None
 
     @property
     def all_signals(self) -> List[SignalSpec]:

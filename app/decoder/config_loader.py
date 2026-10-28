@@ -13,7 +13,7 @@ from __future__ import annotations
 import csv
 import difflib
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from .types import (
     FMT_SIZES,
@@ -28,7 +28,11 @@ from .types import (
     PollingScheduleSpec,
     ProtocolConfig,
     ReadWrite,
+    DerivedSpec,
+    LoggingDefaults,
+    SequenceCounterSpec,
     SignalSpec,
+    ValueRuleSpec,
     SerialDefaults,
     TxCommandFieldSpec,
     TxCommandSpec,
@@ -75,31 +79,24 @@ def load_config(path: str | Path | dict) -> FrameConfig:
     """Load a config directory, an Excel workbook, or a preset dictionary."""
 
     if isinstance(path, dict):
-        tables = _coerce_mapping_tables(path)
+        from .canonical import CanonicalError, canonical_to_tables, is_canonical
+        if is_canonical(path):
+            try:
+                tables = canonical_to_tables(path)
+            except CanonicalError as exc:
+                raise ConfigError(str(exc)) from exc
+        else:
+            tables = _coerce_mapping_tables(path)
         base_label = "Preset"
     else:
         source = Path(path)
-        if source.is_file() and source.suffix.lower() in {".xlsx", ".xlsm"}:
-            tables = _read_excel_tables(source)
-            base_label = source.name
-        elif source.is_file() and source.suffix.lower() == ".json":
-            import json
-            with source.open("r", encoding="utf-8") as fp:
-                tables = _coerce_mapping_tables(json.load(fp))
-            base_label = source.name
-        elif source.is_file() and source.suffix.lower() in {".yaml", ".yml"}:
-            try:
-                import yaml
-            except ImportError as exc:
-                raise ConfigError("YAML config requires pyyaml") from exc
-            with source.open("r", encoding="utf-8") as fp:
-                tables = _coerce_mapping_tables(yaml.safe_load(fp))
-            base_label = source.name
-        elif source.is_dir():
-            tables = _read_csv_tables(source)
-            base_label = str(source)
-        else:
-            raise ConfigError(f"Config path does not exist or format unsupported: {source}")
+        tables, _fmt = read_source_tables(source)
+        base_label = str(source) if source.is_dir() else source.name
+    return config_from_tables(tables, base_label)
+
+
+def config_from_tables(tables: Dict[str, List[Dict[str, str]]], base_label: str = "Config") -> FrameConfig:
+    """Build the configuration from string tables (any source format)."""
     protocol_rows = tables.get("protocol", [])
     required_cols = set(_PROTOCOL_REQUIRED)
     if protocol_rows:
@@ -173,7 +170,232 @@ def load_config(path: str | Path | dict) -> FrameConfig:
     )
     cfg.serial_defaults = _parse_serial_defaults(tables.get("serial_defaults", []))
     cfg.polling_schedules = _parse_polling_schedules(tables.get("polling_schedule", []))
+    cfg.sequence_counters = _parse_sequence_counters(tables.get("sequence_counters", []), cfg)
+    rule_rows = [r for r in tables.get("value_rules", []) if not _is_blank_row(r)]
+    if not rule_rows:
+        # Migration (decision 4): a configuration written for the old
+        # built-in frame 0x101 rule keeps decoding exactly as before.
+        rule_rows = legacy_value_rule_rows(cfg)
+    cfg.value_rules = _parse_value_rules(rule_rows, cfg)
+    cfg.derived = _parse_derived(tables.get("derived", []), cfg)
+    cfg.logging = _parse_logging(tables.get("logging", []))
     return cfg
+
+
+def _parse_logging(rows: List[Dict[str, str]]) -> Optional[LoggingDefaults]:
+    """Optional ``logging`` table: the first non-blank row. Every column is
+    optional; a blank cell leaves the user's setting unchanged."""
+    row = next((r for r in rows if not _is_blank_row(r)), None)
+    if row is None:
+        return None
+
+    def text(key: str) -> str:
+        return str(row.get(key, "") or "").strip()
+
+    def number(key: str, lo: float, hi: float, kind=float):
+        t = text(key)
+        if not t:
+            return None
+        try:
+            v = kind(float(t))
+        except ValueError:
+            raise ConfigError(f"logging.{key}: {t!r} is not a number") from None
+        if not lo <= v <= hi:
+            raise ConfigError(f"logging.{key}: {v} is outside {lo:g}..{hi:g}")
+        return v
+
+    def flag(key: str):
+        t = text(key)
+        return None if not t else _to_bool(t, default=True, field_name=f"logging.{key}")
+
+    def choice(key: str, allowed):
+        t = text(key).lower()
+        if not t:
+            return None
+        if t not in allowed:
+            raise ConfigError(f"logging.{key}: must be one of {', '.join(allowed)}, not {t!r}")
+        return t
+
+    step_text = text("fixed_step_s").lower()
+    if step_text in ("off", "0", "0.0", "none", "false"):
+        fixed = 0.0
+    else:
+        fixed = number("fixed_step_s", 0.01, 60.0)
+    return LoggingDefaults(
+        segment_minutes=number("segment_minutes", 15, 1440, int),
+        event_log=flag("event_log"),
+        fixed_step_s=fixed,
+        stale_steps=number("stale_steps", 1, 1000, int),
+        stale_values=choice("stale_values", ("hold", "blank")),
+        merge_on_stop=choice("merge_on_stop", ("none", "one", "day")),
+        merge_keep_csv=flag("merge_keep_csv"),
+        merge_kind=choice("merge_kind", ("event", "fixed", "both")),
+    )
+
+
+_DERIVED_REQUIRED = {"name", "expression"}
+DERIVED_KINDS = ("value", "integral", "integral_hours")
+
+
+def _parse_derived(rows: List[Dict[str, str]], cfg: FrameConfig) -> List[DerivedSpec]:
+    """Optional ``derived`` table: name, expression, unit, kind, frame_id,
+    enabled, description. References are ``[Signal]`` (unique name),
+    ``[0x1000.Signal]`` or an earlier derived row — so there are no cycles."""
+    from .expressions import ExpressionError, compile_expression
+
+    _optional_columns_ok(rows, _DERIVED_REQUIRED, "derived")
+    by_name: Dict[str, List] = {}
+    for s in cfg.all_signals:
+        by_name.setdefault(s.signal_name, []).append(s)
+    calc_names = {f"{c.group} {c.stat}" for c in cfg.calc_groups}
+    out: List[DerivedSpec] = []
+    known: Dict[str, DerivedSpec] = {}
+    for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row):
+            continue
+        if not _to_bool(row.get("enabled", "true"), default=True, field_name="derived.enabled"):
+            continue
+        name = str(row["name"]).strip()
+        where = f"derived row {row_no} ({name or 'no name'})"
+        if not name:
+            raise ConfigError(f"{where}: name is required")
+        if name in known or name in calc_names:
+            raise ConfigError(f"{where}: the name is already used")
+        try:
+            expr = compile_expression(row["expression"])
+        except ExpressionError as exc:
+            raise ConfigError(f"{where}: {exc}") from None
+        inputs = []
+        for ref in expr.refs:
+            if ref in known:
+                inputs.append(("derived", ref))
+                continue
+            fid_text, _, sig_name = ref.partition(".")
+            if sig_name and fid_text.lower().startswith("0x"):
+                fid = _parse_frame_id(fid_text, field_name="derived.expression")
+                if not any(s.signal_name == sig_name for s in cfg.signals_by_frame.get(fid, [])):
+                    raise ConfigError(f"{where}: frame 0x{fid:X} has no signal {sig_name!r}")
+                inputs.append((fid, sig_name))
+                continue
+            matches = by_name.get(ref, [])
+            if not matches:
+                raise ConfigError(f"{where}: unknown signal [{ref}] (derived rows can use earlier rows only)")
+            if len({s.frame_id for s in matches}) > 1:
+                frames = ", ".join(f"[0x{s.frame_id:X}.{ref}]" for s in matches)
+                raise ConfigError(f"{where}: [{ref}] is in more than one frame; write one of {frames}")
+            inputs.append((matches[0].frame_id, ref))
+        if not inputs:
+            raise ConfigError(f"{where}: the expression uses no signal")
+        kind = str(row.get("kind", "") or "value").strip().lower()
+        if kind not in DERIVED_KINDS:
+            raise ConfigError(f"{where}: kind must be one of {', '.join(DERIVED_KINDS)}, not {kind!r}")
+        fid_text = str(row.get("frame_id", "") or "").strip()
+        if fid_text:
+            frame_id = _parse_frame_id(fid_text, field_name="derived.frame_id")
+            if frame_id not in cfg.frames and frame_id not in cfg.signals_by_frame:
+                raise ConfigError(f"{where}: unknown frame 0x{frame_id:X}")
+        else:
+            first = inputs[0]
+            frame_id = known[first[1]].frame_id if first[0] == "derived" else first[0]
+        spec = DerivedSpec(name=name, expression=expr.text, unit=str(row.get("unit", "") or "").strip(),
+                           kind=kind, frame_id=frame_id, inputs=tuple(inputs),
+                           description=str(row.get("description", "") or ""))
+        known[name] = spec
+        out.append(spec)
+    return out
+
+
+# The decoder used to override two signals of frame 0x101 by name (Ather
+# vehicle state). Kept only as a migration to explicit value_rules rows.
+_LEGACY_RULE_FRAME = 0x101
+_LEGACY_RULES = (("Drive_Mode", "7"), ("Key_Switch", "6,7"))
+
+
+def legacy_value_rule_rows(cfg: FrameConfig) -> List[Dict[str, str]]:
+    """``value_rules`` rows equivalent to the old built-in rule, for a
+    configuration that has frame 0x101 signals named like it."""
+    names = {s.signal_name for s in cfg.signals_by_frame.get(_LEGACY_RULE_FRAME, [])}
+    return [
+        {"id_or_address": "0x101", "signal_name": name, "source_byte": "0", "match_values": values,
+         "value_if_match": "1.0", "value_otherwise": "0.0", "enabled": "TRUE"}
+        for name, values in _LEGACY_RULES if name in names
+    ]
+
+
+_VALUE_RULES_REQUIRED = {"id_or_address", "signal_name", "source_byte", "match_values"}
+
+
+def _parse_value_rules(rows: List[Dict[str, str]], cfg: FrameConfig) -> Dict[Tuple[int, str], ValueRuleSpec]:
+    """Optional ``value_rules`` table (Part C decision 4)."""
+    _optional_columns_ok(rows, _VALUE_RULES_REQUIRED, "value_rules")
+    out: Dict[Tuple[int, str], ValueRuleSpec] = {}
+    for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row):
+            continue
+        if not _to_bool(row.get("enabled", "true"), default=True, field_name="value_rules.enabled"):
+            continue
+        frame_id = _parse_frame_id(row["id_or_address"], field_name="value_rules.id_or_address")
+        name = str(row["signal_name"]).strip()
+        if not any(s.signal_name == name for s in cfg.signals_by_frame.get(frame_id, [])):
+            raise ConfigError(f"value_rules row {row_no}: frame 0x{frame_id:X} has no signal {name!r}")
+        if (frame_id, name) in out:
+            raise ConfigError(f"value_rules row {row_no}: frame 0x{frame_id:X} {name!r} already has a rule")
+        source_byte = _to_int(row["source_byte"], field_name="value_rules.source_byte")
+        if source_byte < 0:
+            raise ConfigError(f"value_rules row {row_no}: source_byte must be >= 0, got {source_byte}")
+        values = set()
+        for part in str(row["match_values"]).replace(";", ",").replace(" ", ",").split(","):
+            if not part.strip():
+                continue
+            try:
+                v = int(part.strip(), 0)
+            except ValueError:
+                raise ConfigError(f"value_rules row {row_no}: match_values {row['match_values']!r} "
+                                  "must be byte values, e.g. 6,7 or 0x06") from None
+            if not 0 <= v <= 255:
+                raise ConfigError(f"value_rules row {row_no}: match value {v} is not a byte (0..255)")
+            values.add(v)
+        if not values:
+            raise ConfigError(f"value_rules row {row_no}: match_values is empty")
+        out[(frame_id, name)] = ValueRuleSpec(
+            frame_id, name, source_byte, frozenset(values),
+            _to_float(row.get("value_if_match", ""), 1.0, "value_rules.value_if_match"),
+            _to_float(row.get("value_otherwise", ""), 0.0, "value_rules.value_otherwise"),
+        )
+    return out
+
+
+def read_source_tables(source: Path) -> Tuple[Dict[str, List[Dict[str, str]]], str]:
+    """Read any supported configuration source into tables of string rows.
+
+    Returns ``(tables, format)`` with format one of ``xlsx``, ``csv``,
+    ``table_json``, ``canonical_json``, ``yaml``. Shared by ``load_config``
+    and the canonical importer, so both see exactly the same rows.
+    """
+    source = Path(source)
+    if source.is_file() and source.suffix.lower() in {".xlsx", ".xlsm"}:
+        return _read_excel_tables(source), "xlsx"
+    if source.is_file() and source.suffix.lower() == ".json":
+        import json
+        with source.open("r", encoding="utf-8") as fp:
+            data = json.load(fp)
+        from .canonical import CanonicalError, canonical_to_tables, is_canonical
+        if is_canonical(data):
+            try:
+                return canonical_to_tables(data), "canonical_json"
+            except CanonicalError as exc:
+                raise ConfigError(f"{source.name}: {exc}") from exc
+        return _coerce_mapping_tables(data), "table_json"
+    if source.is_file() and source.suffix.lower() in {".yaml", ".yml"}:
+        try:
+            import yaml
+        except ImportError as exc:
+            raise ConfigError("YAML config requires pyyaml") from exc
+        with source.open("r", encoding="utf-8") as fp:
+            return _coerce_mapping_tables(yaml.safe_load(fp)), "yaml"
+    if source.is_dir():
+        return _read_csv_tables(source), "csv"
+    raise ConfigError(f"Config path does not exist or format unsupported: {source}")
 
 
 def _coerce_mapping_tables(raw_tables: dict) -> Dict[str, List[Dict[str, str]]]:
@@ -291,13 +513,25 @@ def _normalize_table_name(name: str) -> str:
         "pollingschedules": "polling_schedule",
         "polling_schedule": "polling_schedule",
         "polling_schedules": "polling_schedule",
+        "sequencecounter": "sequence_counters",
+        "sequencecounters": "sequence_counters",
+        "sequence_counter": "sequence_counters",
+        "sequence_counters": "sequence_counters",
+        "valuerule": "value_rules",
+        "valuerules": "value_rules",
+        "value_rule": "value_rules",
+        "value_rules": "value_rules",
+        "derived": "derived",
+        "logging": "logging",
+        "logging_defaults": "logging",
+        "derivedsignals": "derived",
+        "derived_signals": "derived",
     }
     return aliases.get(normalized, normalized)
 
 
 def _format_missing_columns(missing: set[str], available: set[str]) -> str:
     """Render a missing-columns list with did-you-mean hints."""
-    import difflib
     parts: List[str] = []
     for col in sorted(missing):
         match = difflib.get_close_matches(col, list(available), n=1, cutoff=0.6)
@@ -322,157 +556,6 @@ def _required_table(
         raise ConfigError(
             f"{name}: missing required columns: {_format_missing_columns(missing, fields)}"
         )
-    return rows
-
-
-def _optional_columns_ok(rows: List[Dict[str, str]], required: set[str], name: str) -> None:
-    if not rows:
-        return
-    fields = set(rows[0])
-    missing = required - fields
-    if missing:
-        raise ConfigError(
-            f"{name}: missing required columns: {_format_missing_columns(missing, fields)}"
-        )
-
-
-def _is_blank_row(row: Dict[str, str]) -> bool:
-    return all((v or "").strip() == "" for v in row.values())
-
-
-def _check_signal_uniqueness(
-    seen: Dict[int, set[str]], frame_id: int, signal_name: str, *, source: str
-) -> None:
-    """Reject duplicate signal names within the same frame.
-
-    Both the modern Variables loader and the legacy FrameConfig loader
-    enforce this rule. Sharing the helper means a future tweak (e.g.
-    case-insensitive uniqueness, or unicode-normalised) lands in one place.
-    """
-    frame_seen = seen.setdefault(frame_id, set())
-    if signal_name in frame_seen:
-        raise ConfigError(
-            f"{source}: duplicate signal {signal_name!r} in frame 0x{frame_id:X}"
-        )
-    frame_seen.add(signal_name)
-
-
-def _normalize_byte_order(
-    value: str,
-    *,
-    source: str,
-    column: str = "byte_order",
-    default: str = "little",
-) -> str:
-    """Return ``"big"`` or ``"little"`` for a byte-order cell, defaulting to
-    *default* when blank. Raises a clear ConfigError on any other value.
-
-    Both signal loaders (modern + legacy) and the TX-fields loader need this
-    check; centralising it avoids three slightly-different error messages.
-    ``column`` is the user-facing column name so legacy callers (which use
-    ``endianness``) get an error that names the column they actually edited.
-    """
-    normalised = (value or "").strip().lower()
-    if normalised == "":
-        return default
-    if normalised in {"big", "little"}:
-        return normalised
-    raise ConfigError(f"{source}: {column} must be 'big' or 'little' (got {value!r})")
-
-
-def _to_int(value: Any, *, field_name: str) -> int:
-    if isinstance(value, int) and not isinstance(value, bool):
-        return value
-    val_str = str(value).strip()
-    try:
-        return int(val_str, 0)
-    except ValueError:
-        try:
-            return int(val_str, 16)
-        except ValueError as exc:
-            raise ConfigError(f"Invalid integer for {field_name!r}: {value!r}") from exc
-
-
-def _to_optional_int(value: Any, *, field_name: str) -> Optional[int]:
-    if value is None or str(value).strip() == "":
-        return None
-    return _to_int(value, field_name=field_name)
-
-
-def _to_float(value: Any, default: float, field_name: str) -> float:
-    if value is None or str(value).strip() == "":
-        return default
-    try:
-        return float(value)
-    except ValueError as exc:
-        raise ConfigError(f"Invalid number for {field_name!r}: {value!r}") from exc
-
-
-def _to_optional_float(value: Any, field_name: str) -> Optional[float]:
-    if value is None or str(value).strip() == "":
-        return None
-    return _to_float(value, 0.0, field_name)
-
-
-def _to_bool(value: Any, *, default: bool = False, field_name: str = "") -> bool:
-    if isinstance(value, bool):
-        return value
-    # Excel sometimes delivers numeric cell values directly (int/float).
-    # Treat non-zero as True, zero as False — consistent with Python truthiness.
-    if isinstance(value, (int, float)):
-        return value != 0
-    s = str(value).strip().lower()
-    if s == "":
-        return default
-    if s in {"true", "1", "yes", "y", "t"}:
-        return True
-    if s in {"false", "0", "no", "n", "f"}:
-        return False
-    # Last-chance: if the string represents an integer, use its truthiness.
-    try:
-        return int(s) != 0
-    except ValueError:
-        pass
-    raise ConfigError(f"Invalid boolean for {field_name!r}: {value!r}")
-
-
-def _hex_to_bytes(value: str, field_name: str) -> bytes:
-    cleaned = value.replace(" ", "").replace("0x", "").replace("0X", "")
-    if cleaned == "":
-        return b""
-    if len(cleaned) % 2 != 0:
-        raise ConfigError(f"{field_name}: hex string must have even length: {value!r}")
-    try:
-        return bytes.fromhex(cleaned)
-    except ValueError as exc:
-        raise ConfigError(f"{field_name}: invalid hex {value!r}") from exc
-
-
-def _parse_frame_id(value: str, *, field_name: str = "frame_id") -> int:
-    cleaned = value.strip()
-    if cleaned == "":
-        raise ConfigError(f"{field_name} is required")
-    if cleaned.lower().startswith("0x"):
-        return _to_int(cleaned, field_name=field_name)
-    # Spreadsheet users often write IDs as 0010; treat that as hex.
-    try:
-        return int(cleaned, 16)
-    except ValueError as exc:
-        raise ConfigError(f"Invalid frame ID for {field_name}: {value!r}") from exc
-
-
-def _parse_protocol(rows: List[Dict[str, str]]) -> ProtocolConfig:
-    non_blank_rows = [r for r in rows if not _is_blank_row(r)]
-    enabled_rows = [
-        r for r in non_blank_rows if _to_bool(r.get("enabled", "true"), default=True, field_name="protocol.enabled")
-    ]
-    if not enabled_rows:
-        raise ConfigError("protocol: no enabled protocol profile found")
-    if len(enabled_rows) > 1:
-        raise ConfigError("protocol: more than one enabled profile")
-
-    row = enabled_rows[0]
-    parser_type_val = ParserType.parse(row.get("parser_type", "")).value
     return rows
 
 
@@ -793,6 +876,15 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
             )
 
         payload_length = _to_optional_int(row.get("payload_length", ""), field_name="payload_length")
+        period_text = str(row.get("expected_period_ms", "") or "").strip()
+        expected_period = None
+        if period_text:
+            try:
+                expected_period = float(period_text)
+            except ValueError:
+                raise ConfigError(f"frames row {row_no}: expected_period_ms {period_text!r} is not a number") from None
+            if not 1 <= expected_period <= 3_600_000:
+                raise ConfigError(f"frames row {row_no}: expected_period_ms must be 1..3600000 ms")
         if frame_id in frames:
             existing = frames[frame_id]
             merged_dir = "rxtx" if existing.direction != direction else direction
@@ -804,6 +896,7 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
                 enabled=enabled or existing.enabled,
                 description=existing.description or row.get("description", ""),
                 direction=merged_dir,
+                expected_period_ms=existing.expected_period_ms or expected_period,
             )
             continue
 
@@ -814,6 +907,7 @@ def _parse_frames(rows: List[Dict[str, str]]) -> Dict[int, FrameDefinition]:
             enabled=enabled,
             description=row.get("description", ""),
             direction=direction,
+            expected_period_ms=expected_period,
         )
     return frames
 
@@ -943,6 +1037,8 @@ def _parse_variables(
                     max_value=_to_optional_float(row.get("max_value", ""), "variables.max_value"),
                     bit_offset=sig_bit_off,
                     bit_length=sig_bit_len if not is_bool else None,
+                    clamp_negative=_to_bool(row.get("clamp_negative", "true"), default=True,
+                                            field_name="variables.clamp_negative"),
                 )
             )
         if not is_bool:
@@ -1153,6 +1249,40 @@ def _parse_enums(
         if val in signal_enums:
             raise ConfigError(f"enums row {row_no}: duplicate enum value {val} for signal {variable_name!r}")
         signal_enums[val] = row["label"]
+    return out
+
+
+_SEQUENCE_COUNTERS_REQUIRED = {"id_or_address", "signal_name"}
+
+
+def _parse_sequence_counters(rows: List[Dict[str, str]], cfg: FrameConfig) -> Dict[int, SequenceCounterSpec]:
+    """Optional ``sequence_counters`` table (Plane.md F12): which signal of a
+    frame is a rolling counter, its width in bits (default: the signal's
+    size) and step (default 1). One counter per frame."""
+    _optional_columns_ok(rows, _SEQUENCE_COUNTERS_REQUIRED, "sequence_counters")
+    out: Dict[int, SequenceCounterSpec] = {}
+    for row_no, row in enumerate(rows, start=2):
+        if _is_blank_row(row):
+            continue
+        if not _to_bool(row.get("enabled", "true"), default=True, field_name="sequence_counters.enabled"):
+            continue
+        frame_id = _parse_frame_id(row["id_or_address"], field_name="sequence_counters.id_or_address")
+        name = row["signal_name"]
+        sig = next((s for s in cfg.signals_by_frame.get(frame_id, [])
+                    if s.signal_name == name or s.source_name == name), None)
+        if sig is None:
+            raise ConfigError(f"sequence_counters row {row_no}: frame 0x{frame_id:X} has no signal {name!r}")
+        if frame_id in out:
+            raise ConfigError(f"sequence_counters row {row_no}: frame 0x{frame_id:X} already has a counter")
+        bits_text = row.get("bits", "").strip()
+        bits = _to_int(bits_text, field_name="sequence_counters.bits") if bits_text else 8 * sig.byte_length
+        if not 1 <= bits <= 64:
+            raise ConfigError(f"sequence_counters row {row_no}: bits must be 1..64, got {bits}")
+        step_text = row.get("step", "").strip()
+        step = _to_int(step_text, field_name="sequence_counters.step") if step_text else 1
+        if not 1 <= step < (1 << bits) // 2:
+            raise ConfigError(f"sequence_counters row {row_no}: step must be 1..{(1 << bits) // 2 - 1}, got {step}")
+        out[frame_id] = SequenceCounterSpec(frame_id, sig.signal_name, bits, step)
     return out
 
 

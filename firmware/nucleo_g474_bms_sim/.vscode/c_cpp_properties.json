@@ -1,0 +1,13 @@
+{
+    "version": 4,
+    "configurations": [
+        {
+            "name": "STM32G474 (arm-none-eabi)",
+            "compilerPath": "${config:C_Cpp.default.compilerPath}",
+            "compilerArgs": ["-mcpu=cortex-m4", "-mthumb", "-mfloat-abi=soft"],
+            "includePath": ["${workspaceFolder}/src"],
+            "cStandard": "c11",
+            "intelliSenseMode": "gcc-arm"
+        }
+    ]
+}

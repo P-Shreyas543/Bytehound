@@ -1,0 +1,725 @@
+{
+ "config": "frame_config.xlsx",
+ "frames": {
+  "0x6000": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "Cell Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Select",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "Cell Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Select",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "Cell Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Select",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "Cell Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Select",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "Cell Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Select",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x6001": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "Max Charge Voltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "Max Charge Voltage",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "Max Charge Voltage",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "Max Charge Voltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "Max Charge Voltage",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x6002": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "Charge Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Charge Comparator Reset",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "Charge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Charge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "Charge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Charge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "Charge Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Charge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "Charge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Charge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x6003": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "Discharge Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Comparator Reset",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "Discharge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "Discharge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "Discharge Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "Discharge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x6004": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "Discharge Load 1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "Discharge Load 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 4",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "Discharge Load 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 3",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 4",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "Discharge Load 1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 3",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "Discharge Load 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 3",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ]
+ }
+}

@@ -27,6 +27,10 @@ excluded_modules = {
     'torch', 'scipy', 'matplotlib', 'sympy', 'IPython', 'tornado', 'twisted',
     'PIL', 'lxml', 'pygments', 'tensorflow', 'coremltools', 'pytorch_lightning',
     'jinja2', 'jedi', 'psutil',
+    # Pulled in only by pandas' optional test helpers (pandas._testing) and
+    # read_html, which the app never uses: test framework code and a
+    # soupsieve with open advisories were shipping in the release.
+    'pytest', '_pytest', 'pluggy', 'bs4', 'soupsieve',
     
     # Unused PySide6 submodules
     'QtWebEngineCore', 'QtWebEngineQuick', 'QtWebEngine', 'QtWebView', 'QtWebViewQuick',
@@ -76,7 +80,8 @@ excludes_list = [
     'PyQt5', 'PyQt6', 'PySide2',
     'torch', 'scipy', 'matplotlib', 'sympy', 'IPython', 'tornado', 'twisted',
     'PIL', 'lxml', 'pygments', 'tensorflow', 'coremltools', 'pytorch_lightning',
-    'jinja2', 'jedi', 'psutil'
+    'jinja2', 'jedi', 'psutil',
+    'pytest', '_pytest', 'pluggy', 'bs4', 'soupsieve',
 ] + [f'PySide6.{m}' for m in excluded_modules]
 
 a = Analysis(

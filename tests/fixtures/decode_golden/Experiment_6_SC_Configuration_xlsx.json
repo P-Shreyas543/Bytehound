@@ -1,0 +1,1381 @@
+{
+ "config": "Experiment_6_SC_Configuration.xlsx",
+ "frames": {
+  "0x1000": [
+   {
+    "payload": "0000000000000000",
+    "signals": [
+     [
+      "CellVoltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellCurrent",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellTerminalTemperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellBodyTemperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4e90e",
+    "signals": [
+     [
+      "CellVoltage",
+      12299,
+      12.299,
+      "12.299",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellCurrent",
+      31317,
+      31.317,
+      "31.317",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellTerminalTemperature",
+      50335,
+      5033.5,
+      "5033.5",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellBodyTemperature",
+      3817,
+      381.70000000000005,
+      "381.7",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffffffff",
+    "signals": [
+     [
+      "CellVoltage",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellCurrent",
+      -1,
+      -0.001,
+      "-0.001",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellTerminalTemperature",
+      65535,
+      6553.5,
+      "6553.5",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellBodyTemperature",
+      65535,
+      6553.5,
+      "6553.5",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000000000",
+    "signals": [
+     [
+      "CellVoltage",
+      6,
+      0.006,
+      "0.006",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellCurrent",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellTerminalTemperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellBodyTemperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000000000",
+    "signals": [
+     [
+      "CellVoltage",
+      7,
+      0.007,
+      "0.007",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellCurrent",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellTerminalTemperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "CellBodyTemperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x2000": [
+   {
+    "payload": "000000000000",
+    "signals": [
+     [
+      "AmbientTemperature",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "ChargeVoltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "LoadVoltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9fc4",
+    "signals": [
+     [
+      "AmbientTemperature",
+      12299,
+      1229.9,
+      "1229.9",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "ChargeVoltage",
+      31317,
+      31.317,
+      "31.317",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "LoadVoltage",
+      50335,
+      50.335,
+      "50.335",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffffff",
+    "signals": [
+     [
+      "AmbientTemperature",
+      65535,
+      6553.5,
+      "6553.5",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "ChargeVoltage",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "LoadVoltage",
+      65535,
+      65.535,
+      "65.535",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "060000000000",
+    "signals": [
+     [
+      "AmbientTemperature",
+      6,
+      0.6000000000000001,
+      "0.6",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "ChargeVoltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "LoadVoltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "070000000000",
+    "signals": [
+     [
+      "AmbientTemperature",
+      7,
+      0.7000000000000001,
+      "0.7",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "ChargeVoltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "LoadVoltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x3000": [
+   {
+    "payload": "0000000000",
+    "signals": [
+     [
+      "Fault",
+      0,
+      0.0,
+      "None",
+      null,
+      [
+       [
+        "Cell Over Temperature (COT)",
+        false
+       ],
+       [
+        "Cell Over Voltage (COV)",
+        false
+       ],
+       [
+        "Cell Under Temperature (CUT)",
+        false
+       ],
+       [
+        "Cell Under Voltage (CUV)",
+        false
+       ],
+       [
+        "Over Current Charge (OCC)",
+        false
+       ],
+       [
+        "Over Current Discharge (OCD)",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "SoC (OCV)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SoC (CC)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b30557a9f",
+    "signals": [
+     [
+      "Fault",
+      11,
+      11.0,
+      "Cell Over Voltage (COV), Cell Under Voltage (CUV), Over Current Discharge (OCD)",
+      null,
+      [
+       [
+        "Cell Over Temperature (COT)",
+        false
+       ],
+       [
+        "Cell Over Voltage (COV)",
+        true
+       ],
+       [
+        "Cell Under Temperature (CUT)",
+        false
+       ],
+       [
+        "Cell Under Voltage (CUV)",
+        true
+       ],
+       [
+        "Over Current Charge (OCC)",
+        false
+       ],
+       [
+        "Over Current Discharge (OCD)",
+        true
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "SoC (OCV)",
+      21808,
+      218.08,
+      "218.08",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SoC (CC)",
+      40826,
+      408.26,
+      "408.26",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ffffffffff",
+    "signals": [
+     [
+      "Fault",
+      255,
+      255.0,
+      "Cell Over Voltage (COV), Cell Under Voltage (CUV), Over Current Charge (OCC), Over Current Discharge (OCD), Cell Over Temperature (COT), Cell Under Temperature (CUT)",
+      null,
+      [
+       [
+        "Cell Over Temperature (COT)",
+        true
+       ],
+       [
+        "Cell Over Voltage (COV)",
+        true
+       ],
+       [
+        "Cell Under Temperature (CUT)",
+        true
+       ],
+       [
+        "Cell Under Voltage (CUV)",
+        true
+       ],
+       [
+        "Over Current Charge (OCC)",
+        true
+       ],
+       [
+        "Over Current Discharge (OCD)",
+        true
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "SoC (OCV)",
+      65535,
+      655.35,
+      "655.35",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SoC (CC)",
+      65535,
+      655.35,
+      "655.35",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0600000000",
+    "signals": [
+     [
+      "Fault",
+      6,
+      6.0,
+      "Cell Under Voltage (CUV), Over Current Charge (OCC)",
+      null,
+      [
+       [
+        "Cell Over Temperature (COT)",
+        false
+       ],
+       [
+        "Cell Over Voltage (COV)",
+        false
+       ],
+       [
+        "Cell Under Temperature (CUT)",
+        false
+       ],
+       [
+        "Cell Under Voltage (CUV)",
+        true
+       ],
+       [
+        "Over Current Charge (OCC)",
+        true
+       ],
+       [
+        "Over Current Discharge (OCD)",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "SoC (OCV)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SoC (CC)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0700000000",
+    "signals": [
+     [
+      "Fault",
+      7,
+      7.0,
+      "Cell Over Voltage (COV), Cell Under Voltage (CUV), Over Current Charge (OCC)",
+      null,
+      [
+       [
+        "Cell Over Temperature (COT)",
+        false
+       ],
+       [
+        "Cell Over Voltage (COV)",
+        true
+       ],
+       [
+        "Cell Under Temperature (CUT)",
+        false
+       ],
+       [
+        "Cell Under Voltage (CUV)",
+        true
+       ],
+       [
+        "Over Current Charge (OCC)",
+        true
+       ],
+       [
+        "Over Current Discharge (OCD)",
+        false
+       ]
+      ],
+      "ok"
+     ],
+     [
+      "SoC (OCV)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "SoC (CC)",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x6000": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "Cell Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Select",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "Cell Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Select",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "Cell Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Select",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "Cell Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Select",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "Cell Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Cell Select",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x6001": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "Max Charge Voltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "Max Charge Voltage",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "Max Charge Voltage",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "Max Charge Voltage",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "Max Charge Voltage",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Max Charge Current 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x6002": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "Charge Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Charge Comparator Reset",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "Charge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Charge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "Charge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Charge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "Charge Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Charge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "Charge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Charge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x6003": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "Discharge Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Comparator Reset",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "Discharge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "Discharge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "Discharge Enable",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "Discharge Enable",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Comparator Reset",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ],
+  "0x6004": [
+   {
+    "payload": "00",
+    "signals": [
+     [
+      "Discharge Load 1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 2",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "0b",
+    "signals": [
+     [
+      "Discharge Load 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 3",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 4",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "ff",
+    "signals": [
+     [
+      "Discharge Load 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 3",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 4",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "06",
+    "signals": [
+     [
+      "Discharge Load 1",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 3",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   },
+   {
+    "payload": "07",
+    "signals": [
+     [
+      "Discharge Load 1",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 2",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 3",
+      1,
+      1.0,
+      "1",
+      null,
+      [],
+      "ok"
+     ],
+     [
+      "Discharge Load 4",
+      0,
+      0.0,
+      "0",
+      null,
+      [],
+      "ok"
+     ]
+    ]
+   }
+  ]
+ }
+}

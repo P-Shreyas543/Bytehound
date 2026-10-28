@@ -86,66 +86,100 @@ def _configure_live_curve(curve) -> None:
         pass
 
 
+# Gap detection (live plot P1): a sample arriving more than GAP_FACTOR times
+# the signal's usual interval after the previous one, and at least GAP_MIN_S
+# later, starts a new line piece. A NaN break point is stored between the
+# two; curves are drawn with connect="finite", so nothing joins across it.
+GAP_FACTOR = 5.0
+GAP_MIN_S = 0.5
+
 # Reused for empty-buffer reads so we don't allocate a fresh np.array on
 # every redraw when a curve has no samples yet.
 _EMPTY_F64 = np.array([], dtype=float)
 
 
 class TimeSeriesBuffer:
-    """Append-only chunked store for (x, y) float samples.
+    """Append-only store for (x, y) float64 samples, oldest → newest.
 
-    Replaces the fixed-capacity ring buffer that dropped early samples on
-    long sessions. Storage grows in fixed-size chunks (``CHUNK_SIZE``);
-    arrays_since() lets the redraw path read just the visible time
-    window so paint cost stays bounded as history grows.
+    Storage is one contiguous array pair that grows on demand (x1.5), so a
+    signal costs nothing until it has data and reads are zero-copy views.
+    The live window (:meth:`arrays_since`) and the "All session" view
+    (:meth:`arrays`) both slice the same arrays; nothing is cached or
+    duplicated.
 
-    A soft cap ``max_samples`` is honoured by dropping whole oldest chunks
-    when exceeded — set to ``None`` (default) to keep every sample for
-    the entire session. The cap is a safety valve for marathon runs
-    on memory-constrained hosts; it intentionally drops in chunk-sized
-    steps so the bookkeeping cost stays O(1) per append.
+    Views handed out stay valid: samples a view covers are never
+    overwritten. Appends only write past the current end, and dropping old
+    samples or growing always moves the data into a *new* array.
 
-    Interface mirrors the old ``_RingBuffer`` so existing call sites
-    (``__len__``, ``__bool__``, ``arrays``, ``first_x``, ``last_x``,
-    ``clear``, ``append``) keep working. ``arrays_since(t_min)`` is the
-    one new method.
+    ``max_samples`` is a soft cap (``None`` keeps every sample). Once
+    reached, the oldest samples are dropped in batches of
+    ``_slack(max_samples)`` so the copy is amortised; the buffer holds between
+    ``max_samples`` and ``max_samples + _slack(max_samples)`` samples.
+    Tightening the cap with :meth:`set_max_samples` trims to it immediately.
     """
 
-    CHUNK_SIZE = 16_384
+    INITIAL_CAPACITY = 256
+    BYTES_PER_SAMPLE = 16  # float64 x + float64 y
 
-    __slots__ = (
-        "_chunks_x", "_chunks_y", "_chunks_last_x",
-        "_cur_x", "_cur_y", "_cur_fill",
-        "_max_samples", "_first_x",
-        "_frozen_xs", "_frozen_ys", "_frozen_dirty",
-    )
+    __slots__ = ("_x", "_y", "_start", "_end", "_max_samples", "_dt", "_break_next")
 
     def __init__(self, max_samples: Optional[int] = None) -> None:
-        self._chunks_x: list = []        # list[np.ndarray] of full chunks (oldest → newest)
-        self._chunks_y: list = []
-        self._chunks_last_x: list = []   # parallel: last x in each frozen chunk (for bisect)
-        self._cur_x = np.empty(self.CHUNK_SIZE, dtype=float)
-        self._cur_y = np.empty(self.CHUNK_SIZE, dtype=float)
-        self._cur_fill = 0
+        self._x = _EMPTY_F64
+        self._y = _EMPTY_F64
+        self._start = 0
+        self._end = 0
         self._max_samples = max_samples
-        self._first_x: Optional[float] = None
-        # Cache for arrays() of frozen chunks — invalidated when a chunk
-        # is sealed or oldest chunk is dropped. The current partial chunk
-        # is concatenated on top per-call (small, cheap).
-        self._frozen_xs: Optional[np.ndarray] = None
-        self._frozen_ys: Optional[np.ndarray] = None
-        self._frozen_dirty = True
+        self._dt: Optional[float] = None      # usual interval between samples (EMA)
+        self._break_next = False
+
+    @staticmethod
+    def _slack(cap: int) -> int:
+        return max(256, cap // 8)
+
+    @classmethod
+    def bytes_for(cls, max_samples: int) -> int:
+        """Worst-case bytes one capped buffer holds (cap + slack samples)."""
+        return (max_samples + cls._slack(max_samples)) * cls.BYTES_PER_SAMPLE
 
     def __len__(self) -> int:
-        return len(self._chunks_x) * self.CHUNK_SIZE + self._cur_fill
+        return self._end - self._start
 
     def __bool__(self) -> bool:
-        return self._cur_fill > 0 or bool(self._chunks_x)
+        return self._end > self._start
+
+    @property
+    def nbytes(self) -> int:
+        """Bytes currently allocated for this buffer's arrays."""
+        return self._x.nbytes + self._y.nbytes
 
     def set_max_samples(self, max_samples: Optional[int]) -> None:
         """Update the soft cap. ``None`` removes any cap."""
         self._max_samples = max_samples
-        self._maybe_drop()
+        if max_samples is not None and len(self) > max_samples:
+            self._relocate(self._end - max_samples, max_samples + self._slack(max_samples))
+
+    def _relocate(self, keep_from: int, capacity: int) -> None:
+        """Copy samples [keep_from, end) into fresh arrays of ``capacity``."""
+        n = self._end - keep_from
+        x = np.empty(capacity, dtype=float)
+        y = np.empty(capacity, dtype=float)
+        x[:n] = self._x[keep_from:self._end]
+        y[:n] = self._y[keep_from:self._end]
+        self._x, self._y = x, y
+        self._start, self._end = 0, n
+
+    def _make_room(self) -> None:
+        n = len(self)
+        cap = self._max_samples
+        if cap is not None and n >= cap:
+            # At the cap: keep the newest `cap` samples and leave `slack` free
+            # slots, so the next copy is `slack` appends away.
+            self._relocate(self._end - cap, cap + self._slack(cap))
+            return
+        capacity = max(self.INITIAL_CAPACITY, int(n * 1.5) + 1)
+        if cap is not None:
+            capacity = min(capacity, cap + self._slack(cap))
+        self._relocate(self._start, capacity)
 
     def append(self, x: float, y: float) -> None:
         last = self.last_x()
@@ -157,97 +191,56 @@ class TimeSeriesBuffer:
             else:
                 # Minor jitter or out-of-order packet: clamp x to last_x to enforce monotonicity.
                 x = last
+        if self._end > self._start:
+            prev = float(self._x[self._end - 1])
+            dt = x - prev
+            typical = self._dt
+            gap = typical is not None and dt > max(GAP_MIN_S, GAP_FACTOR * typical)
+            if self._break_next or gap:
+                # Break point immediately after the last sample: a step curve
+                # holds each value until the next point, so a later break
+                # would draw the old state into the gap. x stays sorted, so
+                # the window lookups (searchsorted) are unaffected.
+                self._put(float(np.nextafter(prev, x)), math.nan)
+            if dt > 0 and not gap:
+                self._dt = dt if typical is None else typical + 0.1 * (dt - typical)
+        self._break_next = False
+        self._put(x, y)
 
-        if self._cur_fill >= self.CHUNK_SIZE:
-            # Seal the current chunk and start a fresh one.
-            self._chunks_x.append(self._cur_x)
-            self._chunks_y.append(self._cur_y)
-            self._chunks_last_x.append(float(self._cur_x[-1]))
-            self._cur_x = np.empty(self.CHUNK_SIZE, dtype=float)
-            self._cur_y = np.empty(self.CHUNK_SIZE, dtype=float)
-            self._cur_fill = 0
-            self._frozen_dirty = True
-            self._maybe_drop()
-        self._cur_x[self._cur_fill] = x
-        self._cur_y[self._cur_fill] = y
-        self._cur_fill += 1
-        if self._first_x is None and not self._chunks_x:
-            self._first_x = float(x)
+    def mark_break(self) -> None:
+        """Start a new line piece at the next sample: samples in between were
+        not plotted (display skipped them under load, P4)."""
+        if self._end > self._start:
+            self._break_next = True
 
-    def _maybe_drop(self) -> None:
-        cap = self._max_samples
-        if cap is None:
-            return
-        # Drop whole oldest chunks while the frozen sample count would
-        # exceed the cap. The current (partial) chunk is never dropped.
-        while len(self._chunks_x) * self.CHUNK_SIZE > cap and self._chunks_x:
-            self._chunks_x.pop(0)
-            self._chunks_y.pop(0)
-            self._chunks_last_x.pop(0)
-            self._frozen_dirty = True
-            # _first_x will be recomputed lazily on next first_x() call
-            self._first_x = None
+    def _put(self, x: float, y: float) -> None:
+        if self._end >= self._x.shape[0]:
+            self._make_room()
+        self._x[self._end] = x
+        self._y[self._end] = y
+        self._end += 1
 
     def clear(self) -> None:
-        self._chunks_x.clear()
-        self._chunks_y.clear()
-        self._chunks_last_x.clear()
-        self._cur_fill = 0
-        self._first_x = None
-        self._frozen_xs = None
-        self._frozen_ys = None
-        self._frozen_dirty = True
+        # Drop the arrays rather than rewinding: views handed out earlier
+        # must not see their samples overwritten by new appends.
+        self._x = _EMPTY_F64
+        self._y = _EMPTY_F64
+        self._start = 0
+        self._end = 0
+        self._dt = None
+        self._break_next = False
 
     def first_x(self) -> Optional[float]:
-        if self._first_x is not None:
-            return self._first_x
-        if self._chunks_x:
-            self._first_x = float(self._chunks_x[0][0])
-            return self._first_x
-        if self._cur_fill:
-            self._first_x = float(self._cur_x[0])
-            return self._first_x
-        return None
+        return float(self._x[self._start]) if self._end > self._start else None
 
     def last_x(self) -> Optional[float]:
-        if self._cur_fill:
-            return float(self._cur_x[self._cur_fill - 1])
-        if self._chunks_x:
-            return self._chunks_last_x[-1]
-        return None
-
-    def _frozen_arrays(self) -> Tuple[np.ndarray, np.ndarray]:
-        if self._frozen_dirty or self._frozen_xs is None:
-            if self._chunks_x:
-                self._frozen_xs = np.concatenate(self._chunks_x)
-                self._frozen_ys = np.concatenate(self._chunks_y)
-            else:
-                self._frozen_xs = _EMPTY_F64
-                self._frozen_ys = _EMPTY_F64
-            self._frozen_dirty = False
-        return self._frozen_xs, self._frozen_ys
+        return float(self._x[self._end - 1]) if self._end > self._start else None
 
     def arrays(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Return all (xs, ys) ordered oldest → newest.
-
-        For very long sessions, prefer :meth:`arrays_since` to avoid
-        materialising the whole series on every redraw.
-        """
-        if not self._chunks_x and self._cur_fill == 0:
+        """Return all (xs, ys) ordered oldest → newest, as zero-copy views."""
+        if self._end == self._start:
             return _EMPTY_F64, _EMPTY_F64
-        if not self._chunks_x:
-            # Pure partial-chunk case: return zero-copy views.
-            return (
-                self._cur_x[: self._cur_fill],
-                self._cur_y[: self._cur_fill],
-            )
-        frozen_xs, frozen_ys = self._frozen_arrays()
-        if self._cur_fill == 0:
-            return frozen_xs, frozen_ys
-        return (
-            np.concatenate((frozen_xs, self._cur_x[: self._cur_fill])),
-            np.concatenate((frozen_ys, self._cur_y[: self._cur_fill])),
-        )
+        return self._x[self._start:self._end], self._y[self._start:self._end]
 
     def arrays_since(self, t_min: Optional[float]) -> Tuple[np.ndarray, np.ndarray]:
         """Return (xs, ys) for samples with x >= t_min, oldest → newest.
@@ -256,65 +249,63 @@ class TimeSeriesBuffer:
         sample immediately preceding ``t_min`` (if one exists) is also included.
         ``t_min=None`` (or non-finite) returns the full series.
         """
-        if t_min is None or not math.isfinite(t_min):
-            return self.arrays()
-        # Fast path: window starts after every frozen chunk → only current.
-        if self._chunks_last_x and self._chunks_last_x[-1] < t_min and self._cur_fill:
-            xs = self._cur_x[: self._cur_fill]
-            ys = self._cur_y[: self._cur_fill]
-            start = int(np.searchsorted(xs, t_min, side="left"))
-            if start > 0:
-                return xs[start - 1 :], ys[start - 1 :]
-            last_frozen_x = self._chunks_x[-1][-1:]
-            last_frozen_y = self._chunks_y[-1][-1:]
-            return np.concatenate((last_frozen_x, xs)), np.concatenate((last_frozen_y, ys))
-        if not self._chunks_x:
-            if self._cur_fill == 0:
-                return _EMPTY_F64, _EMPTY_F64
-            xs = self._cur_x[: self._cur_fill]
-            ys = self._cur_y[: self._cur_fill]
-            start = int(np.searchsorted(xs, t_min, side="left"))
-            start = max(0, start - 1)
-            return xs[start:], ys[start:]
-        # Find first chunk whose last_x >= t_min via bisection.
-        last_x_arr = np.asarray(self._chunks_last_x)
-        chunk_idx = int(np.searchsorted(last_x_arr, t_min, side="left"))
-        if chunk_idx >= len(self._chunks_x):
-            # All frozen chunks are before t_min; only partial chunk matters.
-            if self._cur_fill == 0:
-                return _EMPTY_F64, _EMPTY_F64
-            xs = self._cur_x[: self._cur_fill]
-            ys = self._cur_y[: self._cur_fill]
-            start = int(np.searchsorted(xs, t_min, side="left"))
-            if start > 0:
-                return xs[start - 1 :], ys[start - 1 :]
-            last_frozen_x = self._chunks_x[-1][-1:]
-            last_frozen_y = self._chunks_y[-1][-1:]
-            return np.concatenate((last_frozen_x, xs)), np.concatenate((last_frozen_y, ys))
-        head_x = self._chunks_x[chunk_idx]
-        head_y = self._chunks_y[chunk_idx]
-        start_in_head = int(np.searchsorted(head_x, t_min, side="left"))
-        if start_in_head > 0:
-            parts_x = [head_x[start_in_head - 1 :]]
-            parts_y = [head_y[start_in_head - 1 :]]
-        else:
-            if chunk_idx > 0:
-                prev_x = self._chunks_x[chunk_idx - 1][-1:]
-                prev_y = self._chunks_y[chunk_idx - 1][-1:]
-                parts_x = [prev_x, head_x]
-                parts_y = [prev_y, head_y]
+        xs, ys = self.arrays()
+        if t_min is None or not math.isfinite(t_min) or xs.size == 0:
+            return xs, ys
+        i = max(0, int(np.searchsorted(xs, t_min, side="left")) - 1)
+        return xs[i:], ys[i:]
+
+
+def peak_decimate(x: np.ndarray, y: np.ndarray, max_points: int) -> Tuple[np.ndarray, np.ndarray]:
+    """Reduce (x, y) to about ``max_points`` points for drawing (live plot L2).
+
+    Each bucket of consecutive samples becomes two points — its minimum and
+    maximum, at the bucket's first and last x — so spikes stay visible at any
+    zoom. NaN break points (gaps, P1) are kept: every piece between them is
+    reduced on its own and the breaks are carried through, so a gap is never
+    bridged. Series already short enough are returned unchanged (no copy).
+    pyqtgraph then handles a few thousand points per curve instead of every
+    sample in the window (L0: that cost ~11 ms per redraw at 3,000 frames/s).
+    """
+    n = len(x)
+    if n <= max_points or max_points < 4:
+        return x, y
+    nan_idx = np.flatnonzero(np.isnan(y))
+    starts = np.concatenate(([0], nan_idx + 1))
+    ends = np.concatenate((nan_idx, [n]))
+    buckets_total = max_points // 2
+    out_x: List[np.ndarray] = []
+    out_y: List[np.ndarray] = []
+    for k_piece, (a, b) in enumerate(zip(starts, ends, strict=True)):
+        m = int(b - a)
+        if m > 0:
+            xs, ys = x[a:b], y[a:b]
+            k = max(1, int(buckets_total * m / n))
+            if m <= 2 * k:
+                out_x.append(xs)
+                out_y.append(ys)
             else:
-                parts_x = [head_x]
-                parts_y = [head_y]
-        for i in range(chunk_idx + 1, len(self._chunks_x)):
-            parts_x.append(self._chunks_x[i])
-            parts_y.append(self._chunks_y[i])
-        if self._cur_fill:
-            parts_x.append(self._cur_x[: self._cur_fill])
-            parts_y.append(self._cur_y[: self._cur_fill])
-        if len(parts_x) == 1:
-            return parts_x[0], parts_y[0]
-        return np.concatenate(parts_x), np.concatenate(parts_y)
+                per = m // k
+                t = per * k
+                yy = ys[:t].reshape(k, per)
+                xx = xs[:t].reshape(k, per)
+                px = np.empty(2 * k)
+                py = np.empty(2 * k)
+                px[0::2] = xx[:, 0]
+                px[1::2] = xx[:, -1]
+                py[0::2] = yy.min(axis=1)
+                py[1::2] = yy.max(axis=1)
+                out_x.append(px)
+                out_y.append(py)
+                if t < m:                                # leftover samples: one more min/max pair
+                    tail = ys[t:]
+                    out_x.append(np.array([xs[t], xs[-1]]))
+                    out_y.append(np.array([tail.min(), tail.max()]))
+        if k_piece < len(nan_idx):                       # carry the break through
+            i = int(nan_idx[k_piece])
+            out_x.append(x[i:i + 1])
+            out_y.append(y[i:i + 1])
+    return np.concatenate(out_x), np.concatenate(out_y)
 
 
 # Backwards-compatible alias for any code still importing the old name.

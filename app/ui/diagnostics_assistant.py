@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 from typing import Optional, List
-from PySide6.QtCore import Qt, QTimer, Signal
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
-    QDialog, QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+    QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QTextEdit, QFrame, QListWidget, QListWidgetItem, QGraphicsDropShadowEffect
 )
 

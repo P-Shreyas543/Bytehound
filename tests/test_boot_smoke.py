@@ -45,9 +45,8 @@ def qapp() -> QApplication:
     font = QFont("PT Sans", 10)
     font.setStyleHint(QFont.StyleHint.SansSerif)
     app.setFont(font)
-    tbf = TitleBarThemeFilter(settings)
+    tbf = TitleBarThemeFilter(settings, app)   # parented, as in app/main.py
     app.installEventFilter(tbf)
-    app._titlebar_filter = tbf
     return app
 
 

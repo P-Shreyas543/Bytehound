@@ -935,16 +935,21 @@ class ThemingMixin:
 
         repolish_tree(self)
         # Cover dialogs/popups Qt has spawned that aren't descendants of self.
+        # Parented popups (every QMenu, dock title frames: ~50 of them) are
+        # already in self's tree and inherit its stylesheet, so they are
+        # skipped. Setting the full card QSS on each of them took ~2 s per
+        # theme switch, and also at startup.
         app = QApplication.instance()
         if app is not None:
             raw_theme = str(self._settings.value("ui/theme", "dark"))
             effective = resolve_theme(raw_theme)
             card_qss = build_card_qss(effective)
             for tlw in app.topLevelWidgets():
-                if isinstance(tlw, QWidget):
-                    if tlw is not self:
-                        tlw.setStyleSheet(card_qss)
-                    repolish_tree(tlw)
+                if not isinstance(tlw, QWidget) or tlw is self or tlw.parent() is not None:
+                    continue
+                if tlw.styleSheet() != card_qss:
+                    tlw.setStyleSheet(card_qss)
+                repolish_tree(tlw)
 
     def _apply_card_qss(self, theme: str) -> None:
         """Install card + dock QSS.  Called on startup and on every theme switch.
@@ -1148,6 +1153,8 @@ class ThemingMixin:
             (getattr(self, "_info_action", None),             "mdi6.information-outline"),
             (getattr(self, "_analysis_action", None),         "mdi6.chart-multiple"),
             (getattr(self, "_logging_settings_action", None), "mdi6.tune-vertical"),
+            (getattr(self, "_rebuild_log_action", None),      "mdi6.file-restore"),
+            (getattr(self, "_merge_session_action", None),    "mdi6.table-merge-cells"),
             (getattr(self, "_plot_settings_action", None),    "mdi6.chart-line"),
             (getattr(self, "_diagnostics_action", None),      "mdi6.clipboard-text-outline"),
             (getattr(self, "_report_issue_action", None),     "mdi6.bug"),

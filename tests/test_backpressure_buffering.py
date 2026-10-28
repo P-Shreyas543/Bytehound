@@ -3,7 +3,6 @@
 from collections import deque
 from unittest.mock import MagicMock
 
-import pytest
 
 from app.protocol.packet_builder import build_packet
 from app.protocol.packet_parser import FramedParser, WaveshareCanParser
@@ -180,7 +179,7 @@ class TestBackpressureControl:
                 self._plot_redraw_interval_s = 0.05
                 self._console = MagicMock()
 
-            def _handle_packet(self, packet, pre_decoded=None):
+            def _handle_packet(self, packet, pre_decoded=None, rx_perf=None):
                 pass
 
             def _refresh_counts_label(self):

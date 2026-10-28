@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-import pytest
-from app.decoder.protocol_presets import BUILTIN_PRESETS, PRESET_SINGLE_CELL_BMS, PRESET_SIMPLE_HEX_TELEMETRY
+from app.decoder.protocol_presets import BUILTIN_PRESETS
 from app.decoder.config_loader import load_config
 
 

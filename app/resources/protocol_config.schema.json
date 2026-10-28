@@ -1,0 +1,51 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://bytehound/protocol_config.schema.json",
+  "title": "ByteHound canonical protocol configuration, schema_version 1",
+  "description": "Typed, pre-expansion form of the configuration tables (Documentation/config_json_format.md). The application checks the same structure in code (app/decoder/validation.py::check_structure) and then applies the loader's semantic rules; this file is for tools and documentation.",
+  "type": "object",
+  "required": ["format", "schema_version", "tables"],
+  "properties": {
+    "format": {"const": "bytehound.protocol"},
+    "schema_version": {"const": 1},
+    "tables": {
+      "type": "object",
+      "description": "One entry per configuration table (protocol, frames, variables, frame_config, bitfields, enums, calc_groups, tx_commands, tx_command_fields, serial_defaults, polling_schedule, sequence_counters, value_rules, derived, logging). Column names are kept as written in the source.",
+      "required": ["protocol"],
+      "anyOf": [{"required": ["variables"]}, {"required": ["frame_config"]}],
+      "additionalProperties": {"type": "array", "items": {"$ref": "#/$defs/row"}}
+    },
+    "extra_tables": {
+      "type": "object",
+      "description": "Sheets / files the loader does not use (e.g. readme), kept so nothing is lost on a round trip.",
+      "additionalProperties": {"type": "array", "items": {"type": "object", "additionalProperties": {"type": "string"}}}
+    },
+    "import": {
+      "type": "object",
+      "description": "Where the configuration came from. Excluded from the fingerprint.",
+      "properties": {
+        "source_format": {"enum": ["xlsx", "csv", "table_json", "yaml", "canonical_json"]},
+        "source_name": {"type": "string"},
+        "source_sha256": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+        "imported_utc": {"type": "string"},
+        "app_version": {"type": "string"}
+      }
+    }
+  },
+  "$defs": {
+    "row": {
+      "type": "object",
+      "properties": {
+        "extensions": {
+          "type": "object",
+          "description": "Columns the loader does not know, kept as text.",
+          "additionalProperties": {"type": "string"}
+        }
+      },
+      "additionalProperties": {
+        "description": "A column value: a number or true/false when that converts back to the source text exactly, otherwise the source text.",
+        "type": ["string", "number", "boolean", "null"]
+      }
+    }
+  }
+}

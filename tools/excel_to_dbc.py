@@ -14,7 +14,6 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-import pandas as pd
 from app.decoder.config_loader import load_config
 
 
@@ -113,8 +112,8 @@ def convert_excel_to_dbc(excel_path: Path, dbc_path: Path) -> None:
 
 def main():
     parser = argparse.ArgumentParser(description="Convert Excel DBC specification to Vector CAN DBC file")
-    parser.add_argument("excel", type=Path, nargs="?", default=PROJECT_ROOT / "DB_48100.xlsx", help="Input Excel file")
-    parser.add_argument("dbc", type=Path, nargs="?", default=PROJECT_ROOT / "DB_48100.dbc", help="Output DBC file")
+    parser.add_argument("excel", type=Path, nargs="?", default=PROJECT_ROOT / "configs" / "DB_48100.xlsx", help="Input Excel file")
+    parser.add_argument("dbc", type=Path, nargs="?", default=PROJECT_ROOT / "configs" / "DB_48100.dbc", help="Output DBC file")
     args = parser.parse_args()
 
     convert_excel_to_dbc(args.excel, args.dbc)

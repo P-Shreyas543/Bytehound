@@ -2,7 +2,7 @@
 
 This module is *not* meant to be instantiated alone — :class:`TxPanelMixin`
 relies on a host that provides the MainWindow attributes and helpers it
-touches (``self._config``, ``self._serial``, ``self._raw_logger``,
+touches (``self._config``, ``self._serial``,
 ``self._console``, ``self._tx_bytes``, ``self._popup_warning(...)``,
 ``self._update_counts()``, ``self._log_activity(...)``). Mixing it into
 ``MainWindow`` keeps the call sites identical to the pre-extraction file

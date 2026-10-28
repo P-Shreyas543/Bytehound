@@ -38,11 +38,14 @@ except ImportError:  # pragma: no cover
     pg = None
 
 from .plot_panel import (
+    GAP_FACTOR,
+    GAP_MIN_S,
     PlotPanel,
     _PLOT_INITIAL_WINDOW_S,
     _TimeAxisItem,
     _configure_live_curve,
     _format_elapsed_time,
+    peak_decimate,
 )
 from .analysis_widgets import OverlayViewBox
 
@@ -60,7 +63,7 @@ class PlotOrchestrationMixin:
         window = getattr(self, "_plot_window_seconds", None)
         if not window:
             return None
-        current_t = (datetime.now() - self._session_started).total_seconds()
+        current_t = self._session_elapsed_s()
         return max(0.0, current_t - float(window))
 
     def _plot_time_axis_label(self) -> str:
@@ -336,6 +339,7 @@ class PlotOrchestrationMixin:
         QSettings (used on startup).  Otherwise assigned keys from the old
         panels are redistributed across new panels in order.
         """
+        self._plot_applied_x = None
         if pg is None or self._gl_widget is None:
             return
 
@@ -649,11 +653,7 @@ class PlotOrchestrationMixin:
         )
         palette = self._current_plot_palette()
         for local_idx, key in enumerate(panel.assigned_keys):
-            custom_color = self._settings.value(f"plot/colors/{key[1]}")
-            if custom_color:
-                color = str(custom_color)
-            else:
-                color = palette[(color_offset + local_idx) % len(palette)]
+            color = self._custom_plot_color(key[1]) or palette[(color_offset + local_idx) % len(palette)]
             row = self._build_panel_signal_menu_row(panel_idx, key, color, menu)
             action = QWidgetAction(menu)
             action.setDefaultWidget(row)
@@ -674,6 +674,7 @@ class PlotOrchestrationMixin:
             if chosen_color.isValid():
                 chosen_hex = chosen_color.name()
                 self._settings.setValue(f"plot/colors/{key[1]}", chosen_hex)
+                self.__dict__.get("_plot_color_cache", {}).pop(key[1], None)
                 menu.close()
                 self._rebuild_panel_strips()
                 self._redraw_plot()
@@ -834,6 +835,21 @@ class PlotOrchestrationMixin:
             return
         panel = self._plot_panels[panel_idx]
         if key not in panel.assigned_keys:
+            units = []
+            for k in panel.assigned_keys:
+                u = self._signal_unit_map.get(k, "").strip()
+                if u not in units:
+                    units.append(u)
+            new_unit = self._signal_unit_map.get(key, "").strip()
+            if new_unit not in units and len(units) >= 2:
+                shown = " and ".join(repr(u) if u else "(no unit)" for u in units)
+                self._popup_warning(
+                    "Add Signal",
+                    f"Panel {panel_idx + 1} already shows {shown} on its two axes. "
+                    f"{key[1]} ({new_unit or 'no unit'}) would be a third unit, which has no axis "
+                    "of its own there. Add it to another panel.",
+                )
+                return
             panel.assigned_keys.append(key)
             self._sync_plot_keys()
             self._persist_panel_assignments()
@@ -907,6 +923,7 @@ class PlotOrchestrationMixin:
         """
         if self._plot_range_changing or not getattr(self, "_initial_show_done", True):
             return
+        self._plot_applied_x = None          # the view now differs from what Live last applied
         self._plot_range_changing = True
         try:
             if self._plot_panels:
@@ -919,6 +936,19 @@ class PlotOrchestrationMixin:
             # User pan/zoom is functionally the same as Pausing.
             self._set_plot_live(False, source="pan")
             self._log_activity("[ACTION] Plot switched to Explore mode (user pan/zoom)")
+        # Re-reduce the curves for the new range shortly after the user stops
+        # panning/zooming (curves are drawn at screen resolution, L2); also
+        # when no data is arriving.
+        timer = getattr(self, "_explore_redraw_timer", None)
+        if timer is None:
+            from PySide6.QtCore import QTimer
+
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(80)
+            timer.timeout.connect(self._redraw_plot)
+            self._explore_redraw_timer = timer
+        timer.start()
 
     def _set_plot_live(self, live: bool, *, source: str = "") -> None:
         """Single source of truth for ``_plot_live`` + the tri-state button.
@@ -933,6 +963,7 @@ class PlotOrchestrationMixin:
         pan/zoom during the previous freeze. X-axis range is left to
         _redraw_plot so the data-aware window logic stays centralised.
         """
+        self._plot_applied_x = None          # Live must re-apply its X range in full
         was_live = self._plot_live
         self._plot_live = live
         if live and not was_live and pg is not None and self._plot_panels:
@@ -1003,8 +1034,16 @@ class PlotOrchestrationMixin:
             panel.hline.setPos(y)
             panel.hline.setVisible(True)
 
-        # Build the readout: time + one entry per signal on THIS panel,
-        # interpolated to the cursor's x by nearest-sample lookup.
+        text = self._plot_readout_text(panel, t)
+        if hasattr(self, "_hover_label"):
+            # Cap the line length so the control bar doesn't reflow.
+            if len(text) > 120:
+                text = text[:117] + "…"
+            self._hover_label.setText(text)
+
+    def _plot_readout_text(self, panel, t: float) -> str:
+        """Time + one entry per signal on ``panel``, nearest sample to ``t``;
+        ``–`` inside a gap (a break point is the nearest sample)."""
         time_txt = self._format_plot_time(t)
         if self._plot_time_mode == "clock":
             parts: list[str] = [f"time={time_txt}"]
@@ -1046,17 +1085,133 @@ class PlotOrchestrationMixin:
                     idx = len(xs_arr) - 1
                 elif idx > 0 and (t - xs_arr[idx - 1]) < (xs_arr[idx] - t):
                     idx -= 1
+                value = float(ys_arr[idx])
+                # Inside a gap: the nearest sample is the break point, or the
+                # cursor lies between a break point and the next sample.
+                in_gap = idx > 0 and not math.isfinite(float(ys_arr[idx - 1])) and t < float(xs_arr[idx])
+                if not math.isfinite(value) or in_gap:
+                    parts.append(f"{key[1]}=–")
+                    continue
                 unit = self._signal_unit_map.get(key, "")
                 suffix = f" {unit}" if unit else ""
-                parts.append(f"{key[1]}={float(ys_arr[idx]):.2f}{suffix}")
+                parts.append(f"{key[1]}={value:.2f}{suffix}")
             except Exception:
                 continue
-        if hasattr(self, "_hover_label"):
-            # Cap the line length so the control bar doesn't reflow.
-            text = "  ·  ".join(parts)
-            if len(text) > 120:
-                text = text[:117] + "…"
-            self._hover_label.setText(text)
+        return "  ·  ".join(parts)
+
+    def _is_step_signal(self, key: Tuple[int, str]) -> bool:
+        """Booleans, enums and bitfields hold a state until the next sample:
+        drawn as steps, not ramps (live plot P2)."""
+        cfg = getattr(self, "_config", None)
+        if cfg is None or not isinstance(key[0], int):
+            return False
+        fid, name = key
+        signals = getattr(cfg, "signals_by_frame", None) or {}
+        enums = getattr(cfg, "enums", None) or {}
+        bitfields = getattr(cfg, "bitfields", None) or {}
+        spec = next((s for s in signals.get(fid, []) if s.signal_name == name), None)
+        names = {name} | ({spec.source_name} if spec is not None and spec.source_name else set())
+        if any((fid, n) in enums or (fid, n) in bitfields for n in names):
+            return True
+        return bool(spec is not None and spec.is_boolean)
+
+    @staticmethod
+    def _signal_staleness(buf, now: float, late_after: Optional[float] = None) -> Tuple[bool, float]:
+        """(stale, seconds since the last sample). Stale = older than the gap
+        rule (P1): GAP_FACTOR × the signal's usual interval, at least
+        GAP_MIN_S; 5 s while its interval is not known yet. A frame with an
+        expected period (Frames ``expected_period_ms``) uses ``late_after``
+        instead: 3 expected periods, known from the first sample on."""
+        if not buf:
+            return False, 0.0
+        last = buf.last_x()
+        if last is None:
+            return False, 0.0
+        age = max(0.0, now - last)
+        dt = getattr(buf, "_dt", None)
+        if late_after is not None:
+            limit = late_after
+        else:
+            limit = max(GAP_MIN_S, GAP_FACTOR * dt) if dt else 5.0
+        return age > limit, age
+
+    @staticmethod
+    def _format_age(seconds: float) -> str:
+        s = int(seconds)
+        if s < 120:
+            return f"{s} s"
+        if s < 7200:
+            return f"{s // 60} min"
+        return f"{s // 3600} h {(s % 3600) // 60} min"
+
+    @staticmethod
+    def _set_legend_text(panel, curve, text: str) -> None:
+        legend = panel.legend if panel.legend is not None else getattr(panel.plot_item, "legend", None)
+        if legend is None:
+            return
+        for sample, lbl in getattr(legend, "items", []):
+            if getattr(sample, "item", None) is curve:
+                try:
+                    lbl.setText(text)
+                except Exception:
+                    pass
+                return
+
+    # -- U2: recorded gaps (connection lost → auto-reconnect) ---------------
+
+    def _plot_gap_begin(self) -> None:
+        gaps = self.__dict__.setdefault("_plot_gaps", [])
+        if gaps and gaps[-1][1] is None:
+            return
+        gaps.append([self._session_elapsed_s(), None])
+
+    def _plot_gap_end(self) -> None:
+        gaps = getattr(self, "_plot_gaps", None)
+        if gaps and gaps[-1][1] is None:
+            gaps[-1][1] = self._session_elapsed_s()
+
+    def _clear_plot_gaps(self) -> None:
+        self._plot_gaps = []
+        for panel in getattr(self, "_plot_panels", []):
+            self._update_gap_regions(panel, 0.0)
+
+    def _update_gap_regions(self, panel, now: float) -> None:
+        """Shade every recorded gap in ``panel``; an open gap grows with the clock."""
+        if pg is None:
+            return
+        gaps = getattr(self, "_plot_gaps", [])
+        regions = panel.__dict__.setdefault("_bh_gap_regions", [])
+        pi = panel.plot_item
+        while len(regions) > len(gaps):
+            item = regions.pop()
+            try:
+                pi.removeItem(item)
+            except Exception:
+                pass
+        for i, (start, end) in enumerate(gaps):
+            span = (float(start), float(end if end is not None else max(now, start)))
+            if i < len(regions):
+                if tuple(regions[i].getRegion()) != span:
+                    regions[i].setRegion(span)
+                continue
+            item = pg.LinearRegionItem(values=span, movable=False,
+                                       brush=pg.mkBrush(148, 163, 184, 45), pen=pg.mkPen(None))
+            item.setZValue(-10)
+            item.setToolTip("No data: connection lost, waiting for auto-reconnect")
+            pi.addItem(item, ignoreBounds=True)
+            regions.append(item)
+
+    def _drop_curve(self, panel, key: Tuple[int, str]) -> None:
+        curve = panel.curves.pop(key, None)
+        if curve is None:
+            return
+        for owner in (panel.plot_item, panel.right_vb, panel.legend):
+            if owner is None:
+                continue
+            try:
+                owner.removeItem(curve)
+            except Exception:
+                pass
 
     def _toggle_plot_key(self, key: Tuple[int, str]) -> None:
         """Toggle a signal in Panel 0 (right-click shortcut from data table)."""
@@ -1087,6 +1242,16 @@ class PlotOrchestrationMixin:
         self._curve_icon_cache[cache_key] = icon
         return icon
 
+    def _custom_plot_color(self, signal_name: str) -> Optional[str]:
+        """User-chosen curve colour, cached: the redraw asks for every curve 30
+        times a second, and a QSettings read each time showed up in profiles.
+        select_color() drops the entry it changes."""
+        cache = self.__dict__.setdefault("_plot_color_cache", {})
+        if signal_name not in cache:
+            value = self._settings.value(f"plot/colors/{signal_name}")
+            cache[signal_name] = str(value) if value else None
+        return cache[signal_name]
+
     def _refresh_plot_indicators(self) -> None:
         # Intentional no-op: plot-color feedback is provided by the plot
         # legend, and the table-cell dot indicator was never wired up
@@ -1103,13 +1268,24 @@ class PlotOrchestrationMixin:
         if hasattr(self, "_plot_dock") and self._plot_dock is not None and not self._plot_dock.isVisible():
             return
 
-        current_t = (datetime.now() - self._session_started).total_seconds()
+        current_t = self._session_elapsed_s()
         palette = self._current_plot_palette()
         # Sliding-window lower bound (None = show entire session).
         # Only honoured in Live mode — Explore means the user has panned
         # to inspect historical data and needs the full series to be
         # visible regardless of the current Window dropdown setting.
         window_t_min = self._visible_window_t_min() if self._plot_live else None
+
+        # Draw at most ~2 points per pixel column per curve (L2). In Explore
+        # the visible X range is reduced on its own, so zooming in shows full
+        # detail; the range is part of the skip signature.
+        first_vb = self._plot_panels[0].plot_item.getViewBox()
+        width_px = float(first_vb.width()) if first_vb is not None else 0.0
+        max_points = max(500, int(2 * width_px)) if width_px > 0 else 4000
+        view_x: Optional[Tuple[float, float]] = None
+        if not self._plot_live and first_vb is not None:
+            x0, x1 = first_vb.viewRange()[0]
+            view_x = (float(x0), float(x1))
 
         color_offset = 0
         # Track the oldest sample we want to *show*. For finite windows this
@@ -1138,7 +1314,11 @@ class PlotOrchestrationMixin:
             panel.left_unit = left_unit
             panel.right_unit = right_unit
 
-            pi.setLabel('left', text=left_unit if left_unit else "")
+            # setLabel re-lays-out the axis; only call it when the unit changes
+            left_label = left_unit if left_unit else ""
+            if getattr(panel, "_bh_left_label", None) != left_label:
+                pi.setLabel('left', text=left_label)
+                panel._bh_left_label = left_label  # type: ignore[attr-defined]
 
             if right_unit is not None:
                 if panel.right_vb is None:
@@ -1168,7 +1348,9 @@ class PlotOrchestrationMixin:
                     pi.getViewBox().sigResized.connect(updateViews)
                     updateViews()
 
-                panel.right_axis.setLabel(text=right_unit)
+                if getattr(panel, "_bh_right_label", None) != right_unit:
+                    panel.right_axis.setLabel(text=right_unit)
+                    panel._bh_right_label = right_unit  # type: ignore[attr-defined]
                 panel.right_axis.show()
 
                 # Sync geometry of the overlayed right ViewBox with the main ViewBox on every redraw
@@ -1215,16 +1397,24 @@ class PlotOrchestrationMixin:
                     if first_x is not None and (oldest_x is None or first_x < oldest_x):
                         oldest_x = first_x
 
-                custom_color = self._settings.value(f"plot/colors/{key[1]}")
-                if custom_color:
-                    color = str(custom_color)
-                else:
-                    color = palette[(color_offset + local_idx) % len(palette)]
+                color = self._custom_plot_color(key[1]) or palette[(color_offset + local_idx) % len(palette)]
                 fid_str = f"0x{key[0]:04X}" if isinstance(key[0], int) else str(key[0])
                 label = f"{fid_str} {key[1]}"
 
                 unit = self._signal_unit_map.get(key, "").strip() if hasattr(self, "_signal_unit_map") else ""
-                is_right = (right_unit is not None and unit != left_unit)
+                if unit != left_unit and unit != right_unit:
+                    # A third unit (layouts saved before the add-time check):
+                    # drawing it would read it off the second unit's axis.
+                    self._drop_curve(panel, key)
+                    logged = self.__dict__.setdefault("_third_unit_logged", set())
+                    if (panel.index, key) not in logged:
+                        logged.add((panel.index, key))
+                        self._log_activity(
+                            f"[WARN] Panel {panel.index + 1}: {key[1]} ({unit or 'no unit'}) is not drawn — "
+                            f"the panel's axes show {left_unit or '(no unit)'} and {right_unit}. Move it to another panel."
+                        )
+                    continue
+                is_right = right_unit is not None and unit == right_unit
                 target_vb = panel.right_vb if is_right else pi.getViewBox()
 
                 curve = panel.curves.get(key)
@@ -1262,10 +1452,13 @@ class PlotOrchestrationMixin:
                         curve = None
 
                 if curve is None:
-                    curve = pg.PlotDataItem(name=label, pen=pg.mkPen(color, width=1.8))
+                    curve = pg.PlotDataItem(name=label, pen=pg.mkPen(color, width=1.8),
+                                            stepMode="right" if self._is_step_signal(key) else None)
                     _configure_live_curve(curve)
                     panel.curves[key] = curve
                     curve._bh_color = color  # type: ignore[attr-defined]
+                    curve._bh_style = (color, False)  # type: ignore[attr-defined]
+                    curve._bh_label = label  # type: ignore[attr-defined]
                     try:
                         target_vb.addItem(curve)
                     except Exception:
@@ -1275,20 +1468,42 @@ class PlotOrchestrationMixin:
                             pi.legend.addItem(curve, name=label)
                         except Exception:
                             pass
-                else:
-                    if getattr(curve, "_bh_color", None) != color:
-                        try:
+
+                # U1: a signal that stopped arriving is drawn dashed and faded
+                # and its legend says for how long. Checked before the
+                # unchanged-data skip: it becomes stale exactly when nothing new
+                # arrives.
+                monitor = getattr(self, "_rate_monitor", None)
+                late_after = monitor.late_after_s(key[0]) if monitor else None
+                stale, age = self._signal_staleness(buf, current_t, late_after)
+                style = (color, stale)
+                if getattr(curve, "_bh_style", None) != style:
+                    try:
+                        if stale:
+                            faded = QColor(color)
+                            faded.setAlpha(110)
+                            curve.setPen(pg.mkPen(faded, width=1.8, style=Qt.PenStyle.DashLine))
+                        else:
                             curve.setPen(pg.mkPen(color, width=1.8))
-                        except Exception:
-                            pass
-                        curve._bh_color = color  # type: ignore[attr-defined]
+                    except Exception:
+                        pass
+                    curve._bh_style = style  # type: ignore[attr-defined]
+                    curve._bh_color = color  # type: ignore[attr-defined]
+                text = f"{label}  (no data for {self._format_age(age)})" if stale else label
+                if getattr(curve, "_bh_label", None) != text:
+                    self._set_legend_text(panel, curve, text)
+                    curve._bh_label = text  # type: ignore[attr-defined]
 
                 # Skip setData when this curve hasn't changed since the last
                 # redraw. Signature mixes length, right-most timestamp, and
-                # the window lower bound — so widening the window after a
-                # long quiet period still re-renders the older samples.
+                # the window *setting* (not window_t_min: that moves with the
+                # clock, so every curve was re-sent 30 times a second and the
+                # skip never fired). Samples that scroll off the left are
+                # hidden by the X range and clipToView; they are trimmed from
+                # the curve data on its next real update.
                 last_x = buf.last_x() if (buf is not None and xs_len) else None
-                signature = (xs_len, last_x, window_t_min)
+                signature = (xs_len, last_x, window_t_min is None, self._plot_window_seconds,
+                             max_points, view_x)
                 if getattr(curve, "_bh_last_sig", None) == signature:
                     continue
 
@@ -1305,12 +1520,19 @@ class PlotOrchestrationMixin:
                     x_values, y_values = buf.arrays_since(window_t_min)
                 else:
                     x_values, y_values = buf.arrays()
+                    if view_x is not None and len(x_values) > max_points:
+                        # Explore: only the visible range (+1 sample each side).
+                        i0 = max(0, int(np.searchsorted(x_values, view_x[0])) - 1)
+                        i1 = int(np.searchsorted(x_values, view_x[1], side="right")) + 1
+                        x_values, y_values = x_values[i0:i1], y_values[i0:i1]
+                x_values, y_values = peak_decimate(x_values, y_values, max_points)
 
                 try:
                     curve.setData(
                         x_values, y_values,
-                        autoDownsample=True,
+                        autoDownsample=False,  # reduced above (L2)
                         clipToView=True,
+                        connect="finite",     # break at gaps (NaN points, P1 / P4)
                     )
                     curve._bh_last_sig = signature  # type: ignore[attr-defined]
                 except Exception:
@@ -1320,6 +1542,7 @@ class PlotOrchestrationMixin:
                     pass
 
             color_offset += len(panel.assigned_keys)
+            self._update_gap_regions(panel, current_t)
 
         # Live mode X range. Three cases:
         #   - No data yet: anchor [0, INITIAL_WINDOW] so the axis reads 0 at
@@ -1350,7 +1573,16 @@ class PlotOrchestrationMixin:
                     x_min = oldest_x or 0.0
                     span = max(current_t - x_min, _PLOT_INITIAL_WINDOW_S)
                     x_max = x_min + span * 1.05
-                first_pi.setXRange(x_min, x_max, padding=0)
+                # Move the axis only when it shifts by at least one pixel
+                # (L2): setXRange cascades through every X-linked panel's
+                # layout and axes, and a 5 min window on ~900 px moves one
+                # pixel every ~0.3 s — most 30 Hz updates changed nothing.
+                last = getattr(self, "_plot_applied_x", None)
+                px = (x_max - x_min) / max(1.0, width_px)
+                self._plot_pixel_time_s = px          # paces the redraws (_plot_redraw_due)
+                if last is None or abs(last[0] - x_min) >= px or abs(last[1] - x_max) >= px:
+                    first_pi.setXRange(x_min, x_max, padding=0)
+                    self._plot_applied_x = (x_min, x_max)
             finally:
                 self._plot_range_changing = False
 
@@ -1361,12 +1593,11 @@ class PlotOrchestrationMixin:
         dlg = PlotSettingsDialog(self._settings, parent=self)
         if dlg.exec() != QDialog.DialogCode.Accepted:
             return
-        cap_val, window_s = dlg.get_values()
+        budget_mb, window_s = dlg.get_values()
 
-        # Apply cap to existing plot buffers
-        self._plot_history_max_samples = cap_val if cap_val > 0 else None
-        for buf in self._plot_history.values():
-            buf.set_max_samples(self._plot_history_max_samples)
+        # Re-split the memory budget across the existing plot buffers.
+        self._plot_history_budget_mb = budget_mb
+        per_signal = self._rebalance_history_caps()
 
         # Apply display window
         self._plot_window_seconds = window_s if window_s > 0 else None
@@ -1375,9 +1606,10 @@ class PlotOrchestrationMixin:
         self._redraw_plot()
 
         self._set_status(
-            f"Plot settings updated: memory cap {cap_val or 'Unlimited'}, display window {window_s or 'All'}"
+            f"Plot settings updated: history memory {budget_mb} MB, display window {window_s or 'All'}"
         )
         self._log_activity(
-            f"[INFO] Plot settings updated: max_samples={cap_val}, window_s={window_s}"
+            f"[INFO] Plot settings updated: budget={budget_mb} MB "
+            f"({per_signal} samples/signal), window_s={window_s}"
         )
 

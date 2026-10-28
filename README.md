@@ -8,7 +8,7 @@ Python desktop tool for framed serial data logging, decoding, TX command buildin
 
 - **Python:** 3.10 – 3.12 (matches PySide6 6.11 wheels).
 - **Platforms:** developed and tested on Windows 10/11. The core (decoder, protocol, serial worker, logging) is platform-portable; the title-bar theming and installer are Windows-specific.
-- **Hardware:** any serial device matching a user-defined frame protocol. The MCU sketch in [`MCU_BMS_Simulator/`](MCU_BMS_Simulator/) is the reference fixture.
+- **Hardware:** any serial device matching a user-defined frame protocol. The MCU sketch in [`MCU_BMS_Simulator/`](firmware/MCU_BMS_Simulator/) is the reference fixture.
 
 ## Run
 
@@ -41,8 +41,32 @@ A config is split across several sheets / CSV files:
 | `tx_command_fields`   | One row per field in a TX command (name, type, scale, range). |
 | `serial_defaults`     | Initial baud / parity / timeout. |
 | `polling_schedule`    | Frame IDs to poll on a fixed interval (request-response devices). |
+| `sequence_counters`   | Optional. Marks a rolling counter signal so frames lost before reaching the PC are detected and logged. |
 
-Full schema reference: [instruction.md](instruction.md) (`§3 Config Schema`) or the in-app help (`Help → View Documentation`).
+Full schema reference: [instruction.md](Documentation/instruction.md) (`§3 Config Schema`) or the in-app help (`Help → View Documentation`).
+
+### Device configurations (`configs/`)
+
+Workbooks, CSV sets and DBC files that describe real devices are kept in
+`configs/` at the repository root. The folder is **git-ignored**: device and
+customer configurations are never committed. Keep your own copy there (the
+release build copies the Ather preset from it when present). The product's
+built-in template (`app/resources/config_template`) and the test fixtures
+(`tests/fixtures`) are tracked.
+
+## Repository layout
+
+| Path | Contents |
+|---|---|
+| `app/` | Application source (`decoder/`, `protocol/`, `serial_io/`, `serial_logging/`, `ui/`, `resources/`) |
+| `tests/` | Automated test suite (`pytest`) and fixtures |
+| `tools/` | Developer tools: HIL rigs (`hil/`), hardware smoke scripts (`smoke/`), probes, generators |
+| `firmware/` | Device simulators: NUCLEO-G474RE, Arduino (`MCU_BMS_Simulator`, `MCU_BMS_SLIP`), S32K312 |
+| `Documentation/` | Specs, design notes, tracker (`Plane.md`), schema reference (`instruction.md`), validation plans |
+| `scripts/` | Lint and performance helper scripts |
+| `branding/` | Logos and icons |
+| `configs/` | Local device configurations (git-ignored) |
+| `build.py`, `Bytehound.spec`, `installer.iss` | Release build: PyInstaller, then Inno Setup |
 
 ## Test
 
@@ -50,7 +74,9 @@ Full schema reference: [instruction.md](instruction.md) (`§3 Config Schema`) or
 pytest -q
 ```
 
-Manual hardware smoke scripts (not auto-collected) live at the repo root: [`smoke_com7.py`](smoke_com7.py), [`smoke_headless.py`](smoke_headless.py), [`smoke_stress.py`](smoke_stress.py). They require a connected device or the reference BMS simulator.
+Manual hardware smoke scripts (not auto-collected) live in [`tools/smoke/`](tools/smoke/), e.g. [`smoke_headless.py`](tools/smoke/smoke_headless.py) and [`smoke_stress.py`](tools/smoke/smoke_stress.py); run them from the repository root (`python tools/smoke/smoke_headless.py --port COM7`). They require a connected device or the reference BMS simulator.
+
+Tests that use real device configurations read them from the local `configs/` folder and are skipped when it is absent.
 
 ## Build
 
@@ -113,13 +139,9 @@ Help → View Documentation opens [`app/resources/index.html`](app/resources/ind
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
 
-## Single-Cell Cycler Release Notes
+## Single-Cell Cycler
 
-The production single-cell BMS application lives under [`single_cell_cycler/`](single_cell_cycler/). Its current Windows release includes:
-
-- Rich webhook alerts with a configurable `BMS Serial / Device ID` on every event. If no BMS ID is entered, the USB adapter serial number or COM port is used as a fallback.
-- Automatic serial reconnect handling, webhook retry with exponential backoff, asynchronous CSV log rotation at 256 MB, and low-disk protection below 1 GB free space.
-- dQ/dV, aging, profile preview, live chart, analysis, and export/report verification coverage.
-- PyInstaller plus Inno Setup packaging through [`single_cell_cycler/build.py`](single_cell_cycler/build.py) and [`installer.iss`](installer.iss).
-
-For the single-cell operator workflow, use [`single_cell_cycler/README.md`](single_cell_cycler/README.md) and [`single_cell_cycler/TRACKER.md`](single_cell_cycler/TRACKER.md).
+The Single-Cell BMS Cycler is no longer part of this repository. It is
+maintained on the `cycler-standalone` branch (its own README, TRACKER,
+build script and installer). `installer.iss` here builds the Bytehound
+installer only.

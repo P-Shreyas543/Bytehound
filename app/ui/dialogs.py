@@ -159,8 +159,16 @@ class ConnectionDialog(QDialog):
         self._auto_reconnect_chk = QCheckBox("Auto-reconnect on disconnect", self)
         self._auto_reconnect_chk.setAccessibleName("Auto-reconnect on disconnect")
 
+        self._capture_process_chk = QCheckBox("Capture in a separate process (experimental)", self)
+        self._capture_process_chk.setAccessibleName("Capture in a separate process")
+        self._capture_process_chk.setToolTip(
+            "Read, parse and decode in a background process instead of a thread.\n"
+            "Experimental: currently slower than the default at high frame rates."
+        )
+
         common_form.addRow("Timeout (ms)", self._timeout_combo)
         common_form.addRow("", self._auto_reconnect_chk)
+        common_form.addRow("", self._capture_process_chk)
         layout.addLayout(common_form)
 
         # 4. Action Buttons
@@ -227,7 +235,7 @@ class ConnectionDialog(QDialog):
                 self._port_combo.setCurrentIndex(i)
                 break
         cd = self._config_defaults
-        default_baud = str(cd.baud_rate) if (cd and cd.baud_rate) else str(s.value("conn/baud", "115200"))
+        default_baud = str(s.value("conn/baud", str(cd.baud_rate or 115200)))
         if self._baud_combo.findText(default_baud) == -1:
             self._baud_combo.addItem(default_baud)
         self._baud_combo.setCurrentText(default_baud)
@@ -248,6 +256,7 @@ class ConnectionDialog(QDialog):
         self._timeout_combo.setCurrentText(str(s.value("conn/timeout_ms", str(cd.timeout_ms))))
         auto_rec_val = s.value("conn/auto_reconnect", "false")
         self._auto_reconnect_chk.setChecked(str(auto_rec_val).lower() == "true")
+        self._capture_process_chk.setChecked(str(s.value("capture/mode", "thread")) == "process")
 
     def _on_accept(self) -> None:
         s = self._settings
@@ -272,6 +281,7 @@ class ConnectionDialog(QDialog):
         # Common settings
         s.setValue("conn/timeout_ms",     self._timeout_combo.currentText())
         s.setValue("conn/auto_reconnect", "true" if self._auto_reconnect_chk.isChecked() else "false")
+        s.setValue("capture/mode", "process" if self._capture_process_chk.isChecked() else "thread")
         self.accept()
 
     def get_settings(self) -> "SerialSettings":
@@ -454,7 +464,7 @@ class LoggingSettingsDialog(QDialog):
         super().__init__(parent)
         apply_dialog_theme(self)
         self.setWindowTitle("Logging Settings")
-        self.setMinimumWidth(320)
+        self.setMinimumWidth(420)
         self._settings = settings
 
         layout = QVBoxLayout(self)
@@ -477,12 +487,73 @@ class LoggingSettingsDialog(QDialog):
         self._flush_spin.setSuffix(" s")
         self._flush_spin.setToolTip("0.0 = flush every write")
 
-        form.addRow("Log level", self._level_combo)
+        form.addRow("Application log level", self._level_combo)
         form.addRow("Flush interval", self._flush_spin)
+
+        # --- Logging sessions (long-duration recording) -------------------
+        self._segment_spin = QSpinBox(self)
+        self._segment_spin.setRange(15, 1440)
+        self._segment_spin.setSingleStep(15)
+        self._segment_spin.setSuffix(" min")
+        self._segment_spin.setToolTip(
+            "A new segment (CSV + .xlsx + raw capture) starts after this long. "
+            "Segments also rotate before any file reaches 1,000,000 rows."
+        )
+        self._event_chk = QCheckBox("Event log (one row per received cycle)", self)
+        self._fixed_chk = QCheckBox("Fixed-step log (one row every step, exactly)", self)
+        self._step_spin = QDoubleSpinBox(self)
+        self._step_spin.setRange(0.01, 60.0)
+        self._step_spin.setDecimals(2)
+        self._step_spin.setSingleStep(0.1)
+        self._step_spin.setSuffix(" s")
+        self._step_spin.setToolTip(
+            "Rows are stamped exactly every step on the receive clock and hold the newest value "
+            "of each signal at that instant, with its age in ms."
+        )
+        self._stale_spin = QSpinBox(self)
+        self._stale_spin.setRange(1, 1000)
+        self._stale_spin.setSuffix(" steps")
+        self._stale_spin.setToolTip("A value older than this many steps counts as stale.")
+        self._stale_combo = QComboBox(self)
+        self._stale_combo.addItems(["Hold last value", "Leave blank"])
+        self._fixed_chk.toggled.connect(self._step_spin.setEnabled)
+        self._fixed_chk.toggled.connect(self._stale_spin.setEnabled)
+        self._fixed_chk.toggled.connect(self._stale_combo.setEnabled)
+        self._disk_warn_spin = QSpinBox(self)
+        self._disk_warn_spin.setRange(1, 10_000)
+        self._disk_warn_spin.setSuffix(" GB")
+        self._disk_stop_spin = QSpinBox(self)
+        self._disk_stop_spin.setRange(1, 10_000)
+        self._disk_stop_spin.setSuffix(" GB")
+        self._disk_stop_spin.setToolTip(
+            "Logging stops cleanly below this much free space. Data is never deleted automatically."
+        )
+
+        form.addRow(QLabel("<b>Logging sessions</b>", self))
+        form.addRow("New segment every", self._segment_spin)
+        form.addRow("", self._event_chk)
+        form.addRow("", self._fixed_chk)
+        form.addRow("Step", self._step_spin)
+        form.addRow("Stale after", self._stale_spin)
+        form.addRow("Stale values", self._stale_combo)
+        form.addRow("Warn below free space", self._disk_warn_spin)
+        form.addRow("Stop below free space", self._disk_stop_spin)
+        self._merge_combo = QComboBox(self)
+        self._merge_combo.addItems(["Off", "One workbook", "One workbook per day"])
+        self._merge_combo.setToolTip(
+            "When logging stops, join the session's hourly files for analysis "
+            "(as Tools > Merge Session), in the background.")
+        self._merge_csv_chk = QCheckBox("Keep the merged CSV (opens ~100x faster in the Analysis Suite)", self)
+        self._merge_kind_combo = QComboBox(self)
+        self._merge_kind_combo.addItems(["Event + fixed-step logs", "Event log", "Fixed-step log"])
+        form.addRow("Merge when logging stops", self._merge_combo)
+        form.addRow("Logs to merge", self._merge_kind_combo)
+        form.addRow("", self._merge_csv_chk)
         layout.addLayout(form)
 
         note = QLabel(
-            "Flush interval applies to the raw CSV logger. 0.0 flushes every write. (Decoded .xlsx logs are written on Stop.)",
+            "Each session is a folder: hourly segments (CSV + .xlsx), a lossless .bhraw raw "
+            "capture, rejected frames, and session.json. Changes apply to the next session.",
             self,
         )
         note.setWordWrap(True)
@@ -514,9 +585,52 @@ class LoggingSettingsDialog(QDialog):
             interval = 0.0
         self._flush_spin.setValue(interval)
 
+        s = self._settings
+
+        def num(key: str, default: float) -> float:
+            try:
+                return float(s.value(key, default))
+            except (TypeError, ValueError):
+                return float(default)
+
+        def flag(key: str, default: bool) -> bool:
+            return str(s.value(key, "true" if default else "false")).lower() == "true"
+
+        self._segment_spin.setValue(int(num("logging/segment_minutes", 60)))
+        self._event_chk.setChecked(flag("logging/event_log", True))
+        fixed_on = flag("logging/fixed_step_enabled", False)
+        self._fixed_chk.setChecked(fixed_on)
+        self._step_spin.setValue(num("logging/fixed_step_s", 1.0))
+        self._stale_spin.setValue(int(num("logging/stale_steps", 3)))
+        self._stale_combo.setCurrentIndex(1 if str(s.value("logging/stale_policy", "hold")) == "blank" else 0)
+        for w in (self._step_spin, self._stale_spin, self._stale_combo):
+            w.setEnabled(fixed_on)
+        self._disk_warn_spin.setValue(int(num("logging/disk_warn_gb", 10)))
+        self._disk_stop_spin.setValue(int(num("logging/disk_stop_gb", 2)))
+        merge = str(s.value("logging/merge_on_stop", "none"))
+        self._merge_combo.setCurrentIndex({"one": 1, "day": 2}.get(merge, 0))
+        self._merge_csv_chk.setChecked(flag("logging/merge_keep_csv", True))
+        kind = str(s.value("logging/merge_kind", "both"))
+        self._merge_kind_combo.setCurrentIndex({"event": 1, "fixed": 2}.get(kind, 0))
+
     def _on_accept(self) -> None:
         self._settings.setValue("logging/level", self._level_combo.currentText())
         self._settings.setValue("logging/flush_interval_s", self._flush_spin.value())
+        if not self._event_chk.isChecked() and not self._fixed_chk.isChecked():
+            # A session with neither log would only keep the raw capture.
+            self._event_chk.setChecked(True)
+        s = self._settings
+        s.setValue("logging/segment_minutes", self._segment_spin.value())
+        s.setValue("logging/event_log", "true" if self._event_chk.isChecked() else "false")
+        s.setValue("logging/fixed_step_enabled", "true" if self._fixed_chk.isChecked() else "false")
+        s.setValue("logging/fixed_step_s", self._step_spin.value())
+        s.setValue("logging/stale_steps", self._stale_spin.value())
+        s.setValue("logging/stale_policy", "blank" if self._stale_combo.currentIndex() == 1 else "hold")
+        s.setValue("logging/disk_warn_gb", max(self._disk_warn_spin.value(), self._disk_stop_spin.value()))
+        s.setValue("logging/disk_stop_gb", self._disk_stop_spin.value())
+        s.setValue("logging/merge_on_stop", ("none", "one", "day")[self._merge_combo.currentIndex()])
+        s.setValue("logging/merge_keep_csv", "true" if self._merge_csv_chk.isChecked() else "false")
+        s.setValue("logging/merge_kind", ("both", "event", "fixed")[self._merge_kind_combo.currentIndex()])
         self.accept()
 
     def get_values(self) -> Tuple[str, float]:
@@ -664,6 +778,19 @@ class PlotTriggerDialog(QDialog):
         }
 
 
+PLOT_HISTORY_BUDGET_DEFAULT_MB = 512
+PLOT_HISTORY_BUDGET_MIN_MB = 64
+
+
+def read_plot_history_budget_mb(settings: QSettings) -> int:
+    """Plot-history memory budget from settings, clamped to a sane minimum."""
+    try:
+        mb = int(settings.value("plot/history_budget_mb", PLOT_HISTORY_BUDGET_DEFAULT_MB))
+    except (TypeError, ValueError):
+        mb = PLOT_HISTORY_BUDGET_DEFAULT_MB
+    return max(PLOT_HISTORY_BUDGET_MIN_MB, mb)
+
+
 class PlotSettingsDialog(QDialog):
     """Modal dialog for configuring live plot memory history and defaults."""
 
@@ -680,14 +807,15 @@ class PlotSettingsDialog(QDialog):
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight)
 
-        self._cap_chk = QCheckBox("Cap live plot memory history", self)
-        self._cap_spin = QSpinBox(self)
-        self._cap_spin.setRange(1000, 10_000_000)
-        self._cap_spin.setSingleStep(10000)
-        self._cap_spin.setSuffix(" samples")
-
-        # Link checkbox to spinbox enabled state
-        self._cap_chk.toggled.connect(self._cap_spin.setEnabled)
+        self._budget_spin = QSpinBox(self)
+        self._budget_spin.setRange(PLOT_HISTORY_BUDGET_MIN_MB, 16_384)
+        self._budget_spin.setSingleStep(64)
+        self._budget_spin.setSuffix(" MB")
+        self._budget_spin.setToolTip(
+            "Memory for live-plot history, shared by all signals.\n"
+            "When it is full the oldest plot samples are dropped.\n"
+            "Logs and raw captures are not affected."
+        )
 
         self._window_combo = QComboBox(self)
         self._window_combo.addItems([
@@ -695,8 +823,7 @@ class PlotSettingsDialog(QDialog):
             "10 minutes", "30 minutes", "All session"
         ])
 
-        form.addRow(self._cap_chk)
-        form.addRow("Memory cap limit", self._cap_spin)
+        form.addRow("Plot history memory", self._budget_spin)
         form.addRow("Default display window", self._window_combo)
         layout.addLayout(form)
 
@@ -713,20 +840,7 @@ class PlotSettingsDialog(QDialog):
 
     def _restore_from_settings(self) -> None:
         s = self._settings
-        raw_cap = s.value("plot/history_max_samples", 0)
-        try:
-            cap_val = int(raw_cap)
-        except (TypeError, ValueError):
-            cap_val = 0
-
-        if cap_val > 0:
-            self._cap_chk.setChecked(True)
-            self._cap_spin.setEnabled(True)
-            self._cap_spin.setValue(cap_val)
-        else:
-            self._cap_chk.setChecked(False)
-            self._cap_spin.setEnabled(False)
-            self._cap_spin.setValue(100_000)
+        self._budget_spin.setValue(read_plot_history_budget_mb(s))
 
         window_s = s.value("plot/window_seconds", 300)
         try:
@@ -739,8 +853,7 @@ class PlotSettingsDialog(QDialog):
 
     def _on_accept(self) -> None:
         s = self._settings
-        cap_val = self._cap_spin.value() if self._cap_chk.isChecked() else 0
-        s.setValue("plot/history_max_samples", cap_val)
+        s.setValue("plot/history_budget_mb", self._budget_spin.value())
 
         window_mapping = {0: 30, 1: 60, 2: 120, 3: 300, 4: 600, 5: 1800, 6: 0}
         w_val = window_mapping.get(self._window_combo.currentIndex(), 300)
@@ -749,10 +862,10 @@ class PlotSettingsDialog(QDialog):
         self.accept()
 
     def get_values(self) -> tuple[int, int]:
-        cap_val = self._cap_spin.value() if self._cap_chk.isChecked() else 0
+        """Return (plot history budget in MB, display window in seconds)."""
         window_mapping = {0: 30, 1: 60, 2: 120, 3: 300, 4: 600, 5: 1800, 6: 0}
         w_val = window_mapping.get(self._window_combo.currentIndex(), 300)
-        return cap_val, w_val
+        return self._budget_spin.value(), w_val
 
 
 class SchemaMapperDialog(QDialog):
@@ -1096,7 +1209,26 @@ class ReportIssueDialog(QDialog):
 
         form.addRow("Attachments", list_container)
 
+        # What else is sent. Reports become public GitHub issues, so nothing
+        # beyond what the user typed is included without their say-so.
+        self._diag_chk = QCheckBox(
+            "Include app version, connection details and the last 200 log lines "
+            "(your user folder name is hidden)", self)
+        self._diag_chk.setChecked(True)
+        self._config_chk = QCheckBox("Include the loaded configuration file", self)
+        self._config_chk.setChecked(False)
+        self._config_chk.setToolTip("Only if the configuration may be made public - it describes your device.")
+        form.addRow("Also send", self._diag_chk)
+        form.addRow("", self._config_chk)
+
         layout.addLayout(form)
+
+        notice = QLabel(
+            "Reports are posted as a <b>public</b> GitHub issue - anyone can read them. "
+            "Do not include passwords, customer names or confidential data.", self)
+        notice.setWordWrap(True)
+        notice.setStyleSheet("color: #D97706;")
+        layout.addWidget(notice)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel,
@@ -1216,6 +1348,12 @@ class ReportIssueDialog(QDialog):
             QMessageBox.warning(self, "Validation Error", "Description is required.")
             return
         self.accept()
+
+    def include_diagnostics(self) -> bool:
+        return self._diag_chk.isChecked()
+
+    def include_config(self) -> bool:
+        return self._config_chk.isChecked()
 
     def get_data(self) -> tuple[str, str, list[dict]]:
         return (

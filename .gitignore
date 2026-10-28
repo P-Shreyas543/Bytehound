@@ -27,6 +27,8 @@ pip-selfcheck.json
 # ------------------------------------------------------------------------------
 # VS Code (except settings/launch configurations if team-shared; normally ignored)
 .vscode/
+# ...except the NUCLEO firmware project's build/flash/debug setup
+!firmware/nucleo_g474_bms_sim/.vscode/
 # PyCharm / IntelliJ
 .idea/
 # Vim swap files
@@ -107,8 +109,14 @@ artifacts/
 # 11. Third-Party Binaries & Local Configurations
 # ------------------------------------------------------------------------------
 USBCANV2.12_English/
-the_energy_company_4850.xlsx
 
+# ------------------------------------------------------------------------------
+# 12. Device / customer configurations (local only, never committed)
+# ------------------------------------------------------------------------------
+# Workbooks, CSV sets and DBC files describing real devices live in configs/.
+# Tests that use them skip when the folder is absent; the product's own
+# template (app/resources/config_template) and test fixtures stay tracked.
+configs/
 
-
-single_cell_cycler/exports/
+# Recorded sessions handed over for analysis (zipped session folders): customer data
+session_*.zip

@@ -131,6 +131,35 @@ def _cobs_decode(data: bytes) -> bytes:
     return bytes(out)
 
 
+@dataclass
+class ParserStats:
+    """Where every received byte went (Plane.md F3).
+
+    For parsers without an escape layer the counters satisfy::
+
+        bytes_in == frame_bytes_ok + frame_bytes_rejected
+                    + discarded_bytes + overflow_bytes + buffered_bytes
+
+    so nothing can disappear unaccounted. With SLIP / HDLC / COBS the escape
+    and delimiter bytes vanish by design; the unframer's own losses (invalid
+    escapes, undecodable COBS blocks, overflow) are counted separately in
+    ``unframer_dropped_frames`` / ``unframer_dropped_bytes``.
+    """
+
+    bytes_in: int = 0
+    frames_ok: int = 0
+    frame_bytes_ok: int = 0
+    frames_rejected: int = 0
+    frame_bytes_rejected: int = 0
+    discarded_bytes: int = 0     # skipped while resynchronising (noise)
+    overflow_bytes: int = 0      # dropped because no frame fit in the buffer cap
+    unframer_dropped_frames: int = 0
+    unframer_dropped_bytes: int = 0
+
+    def snapshot(self) -> "ParserStats":
+        return ParserStats(**vars(self))
+
+
 class _Unframer:
     """Streaming outer-layer unframer.
 
@@ -140,10 +169,11 @@ class _Unframer:
     half-built frame, etc).
     """
 
-    def __init__(self, mode: str) -> None:
+    def __init__(self, mode: str, stats: Optional[ParserStats] = None) -> None:
         if mode not in ESCAPE_MODES:
             raise ValueError(f"Unsupported escape_mode: {mode!r}")
         self._mode = mode
+        self._stats = stats if stats is not None else ParserStats()
         self._cur = bytearray()
         self._ready: list[bytes] = []
         # SLIP / HDLC: tracks whether the previous byte was the ESC marker.
@@ -169,6 +199,15 @@ class _Unframer:
             self._ready.append(bytes(self._cur))
             self._cur.clear()
 
+    def _drop_current(self) -> None:
+        if self._cur:
+            self._stats.unframer_dropped_frames += 1
+            self._stats.unframer_dropped_bytes += len(self._cur)
+            self._cur.clear()
+
+    def _trim(self) -> None:
+        self._stats.unframer_dropped_bytes += _trim_if_overflow(self._cur, "Unframer")
+
     def _feed_slip(self, data: bytes) -> None:
         for b in data:
             if b == _SLIP_END:
@@ -181,19 +220,19 @@ class _Unframer:
                     self._cur.append(_SLIP_ESC)
                 else:
                     # Invalid escape sequence — drop the current frame
-                    self._cur.clear()
+                    self._drop_current()
                 self._esc_pending = False
             elif b == _SLIP_ESC:
                 self._esc_pending = True
             else:
                 self._cur.append(b)
-        _trim_if_overflow(self._cur, "Unframer")
+        self._trim()
 
     def _feed_hdlc(self, data: bytes) -> None:
         for b in data:
             if b == _HDLC_FLAG:
                 if self._esc_pending:
-                    self._cur.clear()
+                    self._drop_current()
                     self._esc_pending = False
                 self._emit_current()
             elif self._esc_pending:
@@ -203,7 +242,7 @@ class _Unframer:
                 self._esc_pending = True
             else:
                 self._cur.append(b)
-        _trim_if_overflow(self._cur, "Unframer")
+        self._trim()
 
     def _feed_cobs(self, data: bytes) -> None:
         for b in data:
@@ -215,10 +254,12 @@ class _Unframer:
                         decoded = b""
                     if decoded:
                         self._ready.append(decoded)
-                    self._cur.clear()
+                        self._cur.clear()
+                    else:
+                        self._drop_current()
             else:
                 self._cur.append(b)
-        _trim_if_overflow(self._cur, "Unframer")
+        self._trim()
 
 
 def encode_length_field(payload_size: int, protocol: "ProtocolConfig") -> int:
@@ -311,26 +352,41 @@ class ParsedPacket:
     error: Optional[str] = None
 
 
-def _trim_if_overflow(buf: bytearray, parser_name: str) -> bool:
+def _trim_if_overflow(buf: bytearray, parser_name: str) -> int:
     """Trim ``buf`` to the most-recent tail if it has grown past the cap.
 
-    Returns True when a trim happened, so callers can rate-limit warnings.
+    Returns the number of bytes dropped (0 when no trim happened) so the
+    caller can account for them.
     """
     if len(buf) <= _MAX_BUFFER_BYTES:
-        return False
+        return 0
     dropped = len(buf) - _BUFFER_TAIL_BYTES
     del buf[:dropped]
     _LOG.warning(
         "%s buffer overflow: dropped %d unmatched bytes (kept last %d)",
         parser_name, dropped, len(buf),
     )
-    return True
+    return dropped
 
 
 class ParserProtocol(abc.ABC):
+    stats: ParserStats
+
     @abc.abstractmethod
     def feed(self, data: bytes) -> None:
         pass
+
+    def _account(self, pkt: Optional[ParsedPacket], consumed: int) -> None:
+        """Book ``consumed`` bytes as a good frame, a rejected frame or noise."""
+        st = self.stats
+        if pkt is None:
+            st.discarded_bytes += consumed
+        elif pkt.ok:
+            st.frames_ok += 1
+            st.frame_bytes_ok += consumed
+        else:
+            st.frames_rejected += 1
+            st.frame_bytes_rejected += consumed
 
     @abc.abstractmethod
     def extract_all(self) -> List[ParsedPacket]:
@@ -345,6 +401,7 @@ class ParserProtocol(abc.ABC):
 class FramedParser(ParserProtocol):
     def __init__(self, protocol: ProtocolConfig) -> None:
         self.protocol = protocol
+        self.stats = ParserStats()
         self._buf = bytearray()
         self._offset = 0
         # When escape_mode != "none" an outer unframer extracts complete
@@ -352,7 +409,7 @@ class FramedParser(ParserProtocol):
         # appended to ``_buf`` and the existing header-search logic processes
         # them as if no escaping had ever happened.
         self._unframer = (
-            _Unframer(protocol.escape_mode)
+            _Unframer(protocol.escape_mode, self.stats)
             if protocol.escape_mode != "none"
             else None
         )
@@ -368,6 +425,7 @@ class FramedParser(ParserProtocol):
 
     def feed(self, data: bytes) -> None:
         self._compact_if_needed()
+        self.stats.bytes_in += len(data)
         if self._unframer is None:
             self._buf.extend(data)
         else:
@@ -378,7 +436,7 @@ class FramedParser(ParserProtocol):
             if self._offset > 0:
                 del self._buf[:self._offset]
                 self._offset = 0
-            _trim_if_overflow(self._buf, "FramedParser")
+            self.stats.overflow_bytes += _trim_if_overflow(self._buf, "FramedParser")
 
     def extract_all(self) -> List[ParsedPacket]:
         out: List[ParsedPacket] = []
@@ -387,6 +445,7 @@ class FramedParser(ParserProtocol):
             if pkt is None and consumed == 0:
                 break
             self._offset += consumed
+            self._account(pkt, consumed)
             if pkt is not None:
                 out.append(pkt)
         self._compact_if_needed()
@@ -420,14 +479,26 @@ class FramedParser(ParserProtocol):
         if avail < fixed_size:
             return None, 0
 
+        # Every view of the live buffer is released before returning: a view
+        # that outlives the call (e.g. kept alive by a retained frame) leaves
+        # the bytearray exported, and every later feed() then fails with
+        # BufferError — the worker drops what it read (task.md Phase 1).
         buf_mv = memoryview(self._buf)[self._offset:]
+        try:
+            return self._parse_frame(buf_mv, header, fixed_size, avail)
+        finally:
+            buf_mv.release()
+
+    def _parse_frame(self, buf_mv: memoryview, header: bytes, fixed_size: int,
+                     avail: int) -> Tuple[Optional[ParsedPacket], int]:
+        pc = self.protocol
 
         length_off = len(header) + pc.frame_id_size
-        length_bytes_mv = buf_mv[length_off : length_off + pc.length_size]
+        length_bytes = bytes(buf_mv[length_off : length_off + pc.length_size])
         # length_byte_order falls back to frame_id_byte_order when not
         # explicitly configured. Backward-compatible with existing configs.
         length_endian = pc.length_byte_order or pc.frame_id_byte_order
-        length_value = int.from_bytes(length_bytes_mv, length_endian)
+        length_value = int.from_bytes(length_bytes, length_endian)
 
         # Translate the on-wire length value into the payload size per the
         # protocol's length_meaning. A negative result means the value is
@@ -464,7 +535,7 @@ class FramedParser(ParserProtocol):
         footer_bytes = bytes(buf_mv[footer_off : footer_off + len(pc.footer)])
 
         coverage = crc_coverage_bytes(
-            header, fid_bytes, bytes(length_bytes_mv), payload, footer_bytes, pc,
+            header, fid_bytes, length_bytes, payload, footer_bytes, pc,
         )
 
         if pc.crc_type != "none":
@@ -501,6 +572,7 @@ class FramedParser(ParserProtocol):
 class WaveshareCanParser(ParserProtocol):
     def __init__(self, protocol: ProtocolConfig) -> None:
         self.protocol = protocol
+        self.stats = ParserStats()
         self._buf = bytearray()
         self._offset = 0
 
@@ -515,12 +587,13 @@ class WaveshareCanParser(ParserProtocol):
 
     def feed(self, data: bytes) -> None:
         self._compact_if_needed()
+        self.stats.bytes_in += len(data)
         self._buf.extend(data)
         if len(self._buf) - self._offset > _MAX_BUFFER_BYTES:
             if self._offset > 0:
                 del self._buf[:self._offset]
                 self._offset = 0
-            _trim_if_overflow(self._buf, "WaveshareCanParser")
+            self.stats.overflow_bytes += _trim_if_overflow(self._buf, "WaveshareCanParser")
 
     def extract_all(self) -> List[ParsedPacket]:
         out: List[ParsedPacket] = []
@@ -529,6 +602,7 @@ class WaveshareCanParser(ParserProtocol):
             if pkt is None and consumed == 0:
                 break
             self._offset += consumed
+            self._account(pkt, consumed)
             if pkt is not None:
                 out.append(pkt)
         self._compact_if_needed()
@@ -571,84 +645,10 @@ class WaveshareCanParser(ParserProtocol):
                 return None, 0
 
             buf_mv = memoryview(self._buf)[self._offset:]
-
-            # 1. Check for 19-byte frame (Waveshare firmware sometimes omits the 0x00 pad byte):
-            chk_19 = (sum(buf_mv[:18]) + 1) & 0xFF
-            is_19 = False
-            if buf_mv[18] == chk_19:
-                # If followed immediately by next AA 55 header or buffer boundary
-                if (
-                    avail == 19
-                    or (avail >= 21 and buf_mv[19] == 0xAA and buf_mv[20] == 0x55)
-                    or (avail == 20 and buf_mv[19] == 0xAA)
-                ):
-                    is_19 = True
-
-            if is_19:
-                raw = bytes(buf_mv[:19])
-                dlc = min(buf_mv[9], 8)
-                frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
-                payload = bytes(buf_mv[10 : 10 + dlc])
-                pkt = ParsedPacket(
-                    raw=raw,
-                    frame_id=frame_id,
-                    payload=payload,
-                    ok=True,
-                    error=None,
-                )
-                return pkt, 19
-
-            # 2. Check if the next header is already at index 19 (meaning 1 byte was dropped on the wire)
-            if avail >= 21 and buf_mv[19] == 0xAA and buf_mv[20] == 0x55:
-                pkt = ParsedPacket(
-                    raw=bytes(buf_mv[:19]),
-                    frame_id=0,
-                    payload=b"",
-                    ok=False,
-                    error="Waveshare CAN framing slip: 19 bytes before next packet header",
-                )
-                return pkt, 19
-
-            # If exactly 20 bytes and byte 19 is 0xAA, wait for byte 20 to check if it's 0x55 (next packet header)
-            if avail == 20 and buf_mv[19] == 0xAA:
-                return None, 0
-
-            if avail < 20:
-                return None, 0
-
-            # 3. Verify standard 20-byte checksum: (sum of first 19 bytes + 1) & 0xFF
-            expected_chk = (sum(buf_mv[:19]) + 1) & 0xFF
-            received_chk = buf_mv[19]
-            if expected_chk != received_chk:
-                # Resynchronize: check if another 0xAA 0x55 header is present starting at index 1
-                next_header = -1
-                for k in range(1, avail - 1):
-                    if buf_mv[k] == 0xAA and buf_mv[k + 1] == 0x55:
-                        next_header = k
-                        break
-                advance_bytes = next_header if next_header != -1 else 1
-                pkt = ParsedPacket(
-                    raw=bytes(buf_mv[:advance_bytes if next_header != -1 else 20]),
-                    frame_id=0,
-                    payload=b"",
-                    ok=False,
-                    error=f"Waveshare CAN checksum mismatch: expected 0x{expected_chk:02X}, got 0x{received_chk:02X}",
-                )
-                return pkt, advance_bytes
-
-            raw = bytes(buf_mv[:20])
-            dlc = min(buf_mv[9], 8)
-            frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
-            payload = bytes(buf_mv[10 : 10 + dlc])
-
-            pkt = ParsedPacket(
-                raw=raw,
-                frame_id=frame_id,
-                payload=payload,
-                ok=True,
-                error=None,
-            )
-            return pkt, 20
+            try:
+                return self._parse_fixed(buf_mv, avail)
+            finally:
+                buf_mv.release()
 
         # Variable-Length Protocol (waveshare_can):
         idx = self._buf.find(0xAA, self._offset)
@@ -661,7 +661,95 @@ class WaveshareCanParser(ParserProtocol):
         if avail < 2:
             return None, 0
 
+        # Views of the live buffer are released before returning (see
+        # FramedParser._try_parse_one).
         buf_mv = memoryview(self._buf)[self._offset:]
+        try:
+            return self._parse_variable(buf_mv, avail)
+        finally:
+            buf_mv.release()
+
+    def _parse_fixed(self, buf_mv: memoryview, avail: int) -> Tuple[Optional[ParsedPacket], int]:
+
+        # 1. Check for 19-byte frame (Waveshare firmware sometimes omits the 0x00 pad byte):
+        chk_19 = (sum(buf_mv[:18]) + 1) & 0xFF
+        is_19 = False
+        if buf_mv[18] == chk_19:
+            # If followed immediately by next AA 55 header or buffer boundary
+            if (
+                avail == 19
+                or (avail >= 21 and buf_mv[19] == 0xAA and buf_mv[20] == 0x55)
+                or (avail == 20 and buf_mv[19] == 0xAA)
+            ):
+                is_19 = True
+
+        if is_19:
+            raw = bytes(buf_mv[:19])
+            dlc = min(buf_mv[9], 8)
+            frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
+            payload = bytes(buf_mv[10 : 10 + dlc])
+            pkt = ParsedPacket(
+                raw=raw,
+                frame_id=frame_id,
+                payload=payload,
+                ok=True,
+                error=None,
+            )
+            return pkt, 19
+
+        # 2. Check if the next header is already at index 19 (meaning 1 byte was dropped on the wire)
+        if avail >= 21 and buf_mv[19] == 0xAA and buf_mv[20] == 0x55:
+            pkt = ParsedPacket(
+                raw=bytes(buf_mv[:19]),
+                frame_id=0,
+                payload=b"",
+                ok=False,
+                error="Waveshare CAN framing slip: 19 bytes before next packet header",
+            )
+            return pkt, 19
+
+        # If exactly 20 bytes and byte 19 is 0xAA, wait for byte 20 to check if it's 0x55 (next packet header)
+        if avail == 20 and buf_mv[19] == 0xAA:
+            return None, 0
+
+        if avail < 20:
+            return None, 0
+
+        # 3. Verify standard 20-byte checksum: (sum of first 19 bytes + 1) & 0xFF
+        expected_chk = (sum(buf_mv[:19]) + 1) & 0xFF
+        received_chk = buf_mv[19]
+        if expected_chk != received_chk:
+            # Resynchronize: check if another 0xAA 0x55 header is present starting at index 1
+            next_header = -1
+            for k in range(1, avail - 1):
+                if buf_mv[k] == 0xAA and buf_mv[k + 1] == 0x55:
+                    next_header = k
+                    break
+            advance_bytes = next_header if next_header != -1 else 1
+            pkt = ParsedPacket(
+                raw=bytes(buf_mv[:advance_bytes if next_header != -1 else 20]),
+                frame_id=0,
+                payload=b"",
+                ok=False,
+                error=f"Waveshare CAN checksum mismatch: expected 0x{expected_chk:02X}, got 0x{received_chk:02X}",
+            )
+            return pkt, advance_bytes
+
+        raw = bytes(buf_mv[:20])
+        dlc = min(buf_mv[9], 8)
+        frame_id = int.from_bytes(buf_mv[5:9], byteorder='little')
+        payload = bytes(buf_mv[10 : 10 + dlc])
+
+        pkt = ParsedPacket(
+            raw=raw,
+            frame_id=frame_id,
+            payload=payload,
+            ok=True,
+            error=None,
+        )
+        return pkt, 20
+
+    def _parse_variable(self, buf_mv: memoryview, avail: int) -> Tuple[Optional[ParsedPacket], int]:
         type_byte = buf_mv[1]
         # Check if type_byte is valid for Variable-Length Protocol (starts with 0xC0 or 0xE0)
         if (type_byte & 0xC0) != 0xC0:

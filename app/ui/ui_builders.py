@@ -59,8 +59,6 @@ from .plot_panel import GRID_LAYOUTS
 from .telemetry_model import TelemetryTableModel, COLUMNS as _MODEL_COLUMNS
 from .welcome_dashboard import WelcomeDashboardWidget
 from .telemetry_cards import TelemetryCardsView
-from .config_wizard import ProtocolWizardDialog
-from .diagnostics_assistant import SystemDiagnosticDialog, ToastNotification
 from .widgets import (
     _BTN_GREEN,
     _BTN_YELLOW,
@@ -107,6 +105,8 @@ class UIBuildersMixin:
         bar.addWidget(self._led_label)
         bar.addWidget(self._status_label, 1)
         bar.addPermanentWidget(self._warning_badge)
+        bar.addPermanentWidget(self._logging_label)
+        bar.addPermanentWidget(self._open_log_btn)
         bar.addPermanentWidget(self._counts_label)
         self.setStatusBar(bar)
 
@@ -152,6 +152,9 @@ class UIBuildersMixin:
         self._load_config_action = QAction(_icon("mdi6.file-import-outline", _ic), "Import Config", self)
         self._load_config_action.setShortcut(QKeySequence("Ctrl+O"))
         self._load_config_action.triggered.connect(self._on_load_config)
+
+        self._restore_config_action = QAction(_icon("mdi6.history", _ic), "Restore Previous Configuration…", self)
+        self._restore_config_action.triggered.connect(self._on_restore_config)
 
         self._edit_config_action = QAction(_icon("mdi6.file-document-edit-outline", _ic), "Edit Configuration", self)
         self._edit_config_action.setShortcut(QKeySequence("Ctrl+Shift+E"))
@@ -207,6 +210,15 @@ class UIBuildersMixin:
         self._logging_settings_action = QAction(_icon("mdi6.tune-vertical", _ic), "Logging Settings...", self)
         self._logging_settings_action.triggered.connect(self._on_logging_settings)
 
+        self._rebuild_log_action = QAction(_icon("mdi6.file-restore", _ic), "Rebuild Decoded Log...", self)
+        self._rebuild_log_action.setToolTip("Regenerate a decoded log from a raw capture (.bhraw)")
+        self._rebuild_log_action.triggered.connect(self._on_rebuild_decoded_log)
+
+        self._merge_session_action = QAction(_icon("mdi6.table-merge-cells", _ic), "Merge Session...", self)
+        self._merge_session_action.setToolTip(
+            "Join a session's hourly segments into one workbook, or one per day, for analysis")
+        self._merge_session_action.triggered.connect(self._on_merge_session)
+
         self._plot_settings_action = QAction(_icon("mdi6.chart-line", _ic), "Plot Settings...", self)
         self._plot_settings_action.triggered.connect(self._on_plot_settings)
 
@@ -228,6 +240,7 @@ class UIBuildersMixin:
         file_menu = menubar.addMenu("&File")
         file_menu.addAction(self._wizard_action)
         file_menu.addAction(self._load_config_action)
+        file_menu.addAction(self._restore_config_action)
         file_menu.addAction(self._edit_config_action)
         file_menu.addAction(self._export_template_action)
         file_menu.addSeparator()
@@ -253,6 +266,8 @@ class UIBuildersMixin:
         tools_menu.addAction(self._system_diagnostic_action)
         tools_menu.addAction(self._analysis_action)
         tools_menu.addAction(self._logging_settings_action)
+        tools_menu.addAction(self._rebuild_log_action)
+        tools_menu.addAction(self._merge_session_action)
         tools_menu.addAction(self._plot_settings_action)
         _add_sep()
 
@@ -378,15 +393,23 @@ class UIBuildersMixin:
         top_row.addWidget(self._group_combo)
         top_row.addWidget(self._show_calcs_check)
 
-        # Config/logging status labels — kept as hidden attributes so
-        # _refresh_config_status / logging helpers can still update their text.
-        # Visible via View → Config Info...
+        # Config status labels — hidden state holders so _refresh_config_status
+        # can still update their text (shown via View → Config Info...).
+        # They must be hidden explicitly: a child of a shown window is shown,
+        # and with no layout they were drawn on top of the menu bar.
         self._config_label = QLabel("No config loaded", self)
         self._protocol_label = QLabel("-", self)
         self._frames_label = QLabel("-", self)
+        for _holder in (self._config_label, self._protocol_label, self._frames_label):
+            _holder.hide()
+        # Logging status + log-folder button live in the status bar (added in
+        # _build_ui once the bar exists) so session state is actually visible.
         self._logging_label = QLabel("Logging: stopped", self)
+        self._logging_label.setToolTip("Logging session status")
         self._open_log_btn = QPushButton("\U0001f4c2", self)
         self._open_log_btn.setToolTip("Open Log Folder")
+        self._open_log_btn.setFlat(True)
+        self._open_log_btn.setFixedWidth(28)
         self._open_log_btn.clicked.connect(self._on_open_log_folder)
 
         self._cards_view = TelemetryCardsView(center_widget)
@@ -642,6 +665,10 @@ class UIBuildersMixin:
         self._polling_list = QListWidget(self)
         self._polling_list.setMaximumHeight(130)
         self._polling_list.setEnabled(False)
+        # Hidden explicitly: unhidden, these were drawn at the window's
+        # top-left corner over the menu bar (no layout holds them).
+        for _holder in (self._recent_config_combo, self._poll_status_label, self._polling_list):
+            _holder.hide()
 
     def _build_plot_tab(self) -> QWidget:
         outer = QWidget(self)

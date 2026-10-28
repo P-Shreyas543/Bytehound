@@ -14,6 +14,15 @@ from PySide6.QtCore import QThread, Signal
 _LOG = logging.getLogger("bytehound.updater")
 
 
+def require_https(url: str) -> str:
+    """Only https:// URLs are opened (Bandit B310): the installer URL comes
+    from the remote manifest, and urlopen would also accept file:// or
+    other schemes."""
+    if not str(url).lower().startswith("https://"):
+        raise ValueError(f"refusing non-HTTPS URL: {url!r}")
+    return url
+
+
 def _project_root() -> Path:
     """Repo root in dev, exe-adjacent dir in a frozen PyInstaller build.
 
@@ -27,7 +36,21 @@ def _project_root() -> Path:
     return Path(__file__).resolve().parents[2]
 
 
-VERSION_FILE = _project_root() / "version.json"
+def find_version_file() -> Path:
+    """``version.json`` beside the exe (installed layout: the installer puts
+    it there) or, when it is missing — a portable zip of the frozen build —
+    the copy PyInstaller bundles in ``_internal``. Without the fallback a
+    portable copy showed "v0.0.0" and the updater offered every release."""
+    primary = _project_root() / "version.json"
+    if primary.exists():
+        return primary
+    bundled = getattr(sys, "_MEIPASS", None)
+    if bundled and (Path(bundled) / "version.json").exists():
+        return Path(bundled) / "version.json"
+    return primary
+
+
+VERSION_FILE = find_version_file()
 
 
 def get_current_version() -> str:
@@ -59,8 +82,8 @@ class UpdateChecker(QThread):
                 self.error.emit("No manifest URL configured in version.json.")
                 return
 
-            req = urllib.request.Request(manifest_url, headers={'User-Agent': 'Bytehound-Updater'})
-            with urllib.request.urlopen(req, timeout=5) as response:
+            req = urllib.request.Request(require_https(manifest_url), headers={'User-Agent': 'Bytehound-Updater'})
+            with urllib.request.urlopen(req, timeout=5) as response:  # noqa: S310 - https enforced
                 remote_data = json.loads(response.read().decode("utf-8"))
 
             remote_version = remote_data.get("version", "0.0.0")
@@ -104,8 +127,8 @@ class UpdateDownloader(QThread):
     def run(self) -> None:
         try:
             hasher = hashlib.sha256()
-            req = urllib.request.Request(self.url, headers={'User-Agent': 'Bytehound-Updater'})
-            with urllib.request.urlopen(req, timeout=10) as response:
+            req = urllib.request.Request(require_https(self.url), headers={'User-Agent': 'Bytehound-Updater'})
+            with urllib.request.urlopen(req, timeout=10) as response:  # noqa: S310 - https enforced
                 total_size = int(response.getheader('Content-Length', 0))
                 downloaded = 0
                 with open(self.dest_path, 'wb') as f:
@@ -155,8 +178,32 @@ class UpdateDownloader(QThread):
             self.error.emit(str(e))
 
 
-def launch_installer(installer_path: str) -> None:
-    """Launches the downloaded installer and exits the app."""
+def file_sha256(path: str) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as fp:
+        for chunk in iter(lambda: fp.read(65536), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def launch_installer(installer_path: str, expected_sha256: str = "") -> bool:
+    """Launch the downloaded installer and exit the app.
+
+    The file is hashed again right before it is started: it was verified
+    when the download finished, but the user may take a while to answer
+    "Install now?", and a file that changed in between must not run
+    (check-then-use). Returns False, without launching, on a mismatch.
+    """
+    if expected_sha256:
+        actual = file_sha256(installer_path)
+        if actual != expected_sha256.strip().lower():
+            _LOG.error("Installer %s changed after verification (sha256 %s); not launched",
+                       installer_path, actual)
+            try:
+                os.remove(installer_path)
+            except OSError:
+                pass
+            return False
     # /SILENT runs the Inno Setup installer without a wizard but shows progress
     # /VERYSILENT shows nothing
     subprocess.Popen([installer_path, "/SILENT"])
@@ -169,3 +216,4 @@ def launch_installer(installer_path: str) -> None:
         app.quit()
     else:
         sys.exit(0)
+    return True

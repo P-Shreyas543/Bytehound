@@ -222,8 +222,8 @@ def copy_branding() -> int:
 def copy_presets() -> int:
     """Copy key workbook configs and DBC files next to the exe for user convenience."""
     files_to_copy = [
-        ROOT / "Ather_v1_0_1.xlsx",
-        ROOT / "Ather_v1_0_1.dbc",
+        ROOT / "configs" / "Ather_v1_0_1.xlsx",   # local only (configs/ is git-ignored)
+        ROOT / "configs" / "Ather_v1_0_1.dbc",
     ]
     copied = 0
     for src in files_to_copy:

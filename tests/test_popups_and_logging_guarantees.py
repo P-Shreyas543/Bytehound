@@ -9,11 +9,8 @@ Verifies:
 6. DiagnosticsDialog: Environment, versions, packet metrics, and log tail snapshotting.
 """
 
-import os
 import sys
-import time
 from pathlib import Path
-from unittest.mock import MagicMock, patch
 
 # Ensure project root is in sys.path when executed directly as python test_xxx.py
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))

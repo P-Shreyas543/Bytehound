@@ -4,6 +4,8 @@ import time
 from typing import Any
 from unittest.mock import MagicMock
 
+from PySide6.QtCore import Qt
+
 
 from tests.conftest import dummy_protocol_config
 from app.serial_io.serial_worker import POLLING_BOOT_GRACE, PollingWorker, SerialSettings
@@ -277,25 +279,69 @@ def test_pipeline_depth_one_forces_sequential_mode():
     assert worker._pipeline_depth == 1
 
 
-def test_polling_start_flushes_stale_rx_and_parser_state():
-    """Starting Auto-Fetch should not let old buffered frames satisfy the first poll."""
+class _BufferedPort:
+    """Minimal serial double with a real receive buffer."""
+
+    def __init__(self, data: bytes = b"") -> None:
+        self.buf = bytearray(data)
+        self.is_open = True
+        self.written: list[bytes] = []
+
+    @property
+    def in_waiting(self) -> int:
+        return len(self.buf)
+
+    def read(self, n: int) -> bytes:
+        out = bytes(self.buf[:n])
+        del self.buf[:n]
+        return out
+
+    def write(self, data: bytes) -> int:
+        self.written.append(bytes(data))
+        return len(data)
+
+    def reset_input_buffer(self) -> None:  # must not be used: it loses data
+        raise AssertionError("reset_input_buffer() discards received frames")
+
+
+def test_polling_start_delivers_waiting_frames_instead_of_discarding():
+    """Starting Auto-Fetch must not lose data (Plane.md F1).
+
+    Frames already waiting are decoded and delivered before the first poll,
+    so they cannot satisfy that poll's response wait; a partial frame in the
+    parser survives and completes; undelivered batch items stay queued.
+    """
+    from app.protocol.packet_builder import build_packet
+
     sched = PollingScheduleSpec(target_id=0x10, interval_ms=10, timeout_ms=5)
     worker = _make_worker([sched])
-    worker.set_polling_global(False)
-    worker._parser.feed(b"\xAA\x55")
-    worker._batch.append((object(), None))
+    pc = worker.protocol
+    waiting = build_packet(pc, 0x10, b"") + build_packet(pc, 0x11, b"")
+    split = build_packet(pc, 0x12, b"")
+    worker._serial = _BufferedPort(waiting + split[:3])
+    queued = (object(), None, 1.0)
+    worker._batch.append(queued)
     worker._in_flight.append({"target_id": 0x10, "tx_time": 1.0, "deadline": 2.0})
-    worker._serial.reset_input_buffer = MagicMock()
+    delivered: list = []
+    worker.packets_received.connect(delivered.extend, Qt.ConnectionType.DirectConnection)
 
+    worker.set_polling_global(False)
     worker.set_polling_global(True)
     assert worker._flush_rx_before_polling is True
-
     worker._reset_rx_state_for_polling_start()
+    worker._flush_batch()
 
-    worker._serial.reset_input_buffer.assert_called_once()
-    assert worker._parser.buffered_bytes == 0
-    assert worker._batch == []
-    assert worker._in_flight == []
+    assert worker._serial.in_waiting == 0          # consumed before any poll TX
+    assert worker._in_flight == []                 # bookkeeping reset
+    ids = [item[0].frame_id for item in delivered if item is not queued]
+    assert ids == [0x10, 0x11]                     # waiting frames delivered
+    assert delivered[0] is queued                  # queued item not dropped
+    assert worker._parser.buffered_bytes == 3      # partial frame kept
+
+    worker._serial.buf += split[3:]
+    worker._drain_pending_rx()
+    worker._flush_batch()
+    assert delivered[-1][0].frame_id == 0x12       # and it completes
 
 
 def test_polling_tx_gap_floor_overrides_fast_protocol_delay():
@@ -304,3 +350,35 @@ def test_polling_tx_gap_floor_overrides_fast_protocol_delay():
     worker = _make_worker([sched])
 
     assert worker._effective_tx_gap_ms(100) == 100
+
+
+def test_polling_continues_while_gui_is_backpressured():
+    """GUI backpressure must never pause polling (Plane.md F2).
+
+    A paused poll means the device is not asked, which is a gap in the log
+    even though the GUI only needed to show less.
+    """
+    sched = PollingScheduleSpec(target_id=0x10, interval_ms=1000, timeout_ms=5)
+    worker = _make_worker([sched])
+    worker._schedules[0]["next_run"] = 0.0
+    worker.set_backpressure(True)
+    polled: list[int] = []
+
+    def fake_do_poll(s: dict) -> None:
+        polled.append(s["spec"].target_id)
+        worker._stop_event.set()
+
+    worker._do_poll = fake_do_poll  # type: ignore[assignment]
+    deadline = time.monotonic() + 2.0
+
+    def stop_if_stuck() -> None:
+        while not worker._stop_event.is_set() and time.monotonic() < deadline:
+            time.sleep(0.01)
+        worker._stop_event.set()
+
+    import threading
+    threading.Thread(target=stop_if_stuck, daemon=True).start()
+    worker.run()
+
+    assert worker.is_backpressured
+    assert polled == [0x10]

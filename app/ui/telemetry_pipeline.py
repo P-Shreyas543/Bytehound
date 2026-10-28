@@ -11,12 +11,105 @@ from ..protocol.packet_parser import ParsedPacket
 from .config_loader import format_display_data_type
 from .logging_session import _format_number
 
+# Most RX lines the console shows per second; the rest are counted, not drawn.
+CONSOLE_LINES_PER_SECOND = 400
+# Most GUI-thread time one UI flush spends on queued packets. The rest stay
+# queued for the next tick: draining a large backlog in one call stalled
+# the event loop for 0.1-1.5 s at 5,000 frames/s (tools/gui_latency_probe.py).
+# Display only: the session log is written on arrival, before this queue.
+FLUSH_BUDGET_S = 0.025
+
 
 class TelemetryPipelineMixin:
     """Mixin for MainWindow."""
 
     BACKPRESSURE_HIGH_WATERMARK = 4000
     BACKPRESSURE_LOW_WATERMARK = 1000
+
+    # ------------------------------------------------------------------
+    # Session / log clocks. Everything runs on time.perf_counter(), the
+    # clock the worker stamps each read with, so plot X values and log
+    # elapsed_ms reflect when bytes arrived, not when the UI got to them.
+    # ------------------------------------------------------------------
+
+    def _reset_session_clock(self) -> None:
+        self._session_started = datetime.now()
+        self._session_started_perf = time.perf_counter()
+        # Gap times are on this clock: a new clock starts without them (U2).
+        if hasattr(self, "_clear_plot_gaps"):
+            self._clear_plot_gaps()
+
+    def _session_elapsed_s(self, t_perf: Optional[float] = None) -> float:
+        start = getattr(self, "_session_started_perf", None)
+        if start is None:
+            self._reset_session_clock()
+            start = self._session_started_perf
+        return (time.perf_counter() if t_perf is None else t_perf) - start
+
+    def _log_elapsed_ms(self, t_perf: Optional[float] = None) -> int:
+        now = time.perf_counter() if t_perf is None else t_perf
+        if getattr(self, "_log_started_perf", None) is not None:
+            return int((now - self._log_started_perf) * 1000)
+        return int(self._session_elapsed_s(now) * 1000)
+
+    @staticmethod
+    def _unpack_item(item) -> Tuple[ParsedPacket, Optional[DecodedFrame], Optional[float]]:
+        """Worker items are (packet, decoded, rx_perf); older callers send
+        (packet, decoded) or a bare packet."""
+        if isinstance(item, tuple):
+            if len(item) >= 3:
+                return item[0], item[1], item[2]
+            return item[0], item[1], None
+        return item, None, None
+
+    def _log_batch(self, batch: list) -> list:
+        """Write a batch to the decoded log as soon as it arrives.
+
+        Logging used to happen in the 60 Hz UI flush, after the bounded
+        pending-packet queue: whenever the UI fell behind, the dropped packets
+        were missing from the log too. Frames decoded here are passed on so
+        the flush doesn't decode them again.
+        """
+        session = getattr(self, "_session_log", None)
+        config = getattr(self, "_config", None)
+        if session is None or config is None:
+            return batch
+        if getattr(getattr(self, "_serial", None), "logs_sessions", False):
+            # The capture worker already wrote these frames on its thread.
+            return batch
+        out = []
+        for item in batch:
+            packet, decoded, rx_perf = self._unpack_item(item)
+            t = rx_perf if rx_perf is not None else time.perf_counter()
+            if getattr(packet, "ok", False) and packet.frame_id is not None:
+                if decoded is None:
+                    if not hasattr(self, "_signal_state"):
+                        self._signal_state = {}
+                    decoded = decode_frame(config, packet.frame_id, packet.payload, self._signal_state, t=t)
+                session.log_frame(decoded, t)
+            elif not getattr(packet, "ok", True):
+                # Rejected frames (CRC / framing) are evidence, not noise: keep
+                # them per segment with the reason (Plane.md F9).
+                session.log_rejected(packet.raw, packet.frame_id, packet.error or "", t)
+            out.append((packet, decoded, rx_perf))
+        return out
+
+    def _plot_redraw_due(self, now: float) -> bool:
+        """When the live plot redraws (L2):
+
+        * at most 30 times a second;
+        * no more often than one pixel column of time: in a 5-minute window
+          a pixel is ~0.3 s of data, so 30 redraws a second recomputed the
+          same pixels ~10 times (capped at 10 redraws a second, so the
+          newest point never lags by more than 0.1 s);
+        * never more often than four times the last redraw's cost, so a
+          heavy plot (many signals, hours of "All session") uses at most
+          ~25 % of the GUI thread.
+        """
+        cost = getattr(self, "_plot_redraw_cost_s", 0.0)
+        pixel = min(getattr(self, "_plot_pixel_time_s", 0.0), 0.1)
+        interval = max(self._plot_redraw_interval_s, pixel, 4.0 * cost)
+        return (now - self._plot_last_redraw) >= interval
 
     def _on_packets_received(self, batch: list) -> None:
         """Slot called by the worker's batch signal. Queues for the 60Hz UI timer.
@@ -25,16 +118,26 @@ class TelemetryPipelineMixin:
         loop cannot cause an OOM crash. When near capacity, backpressure throttling
         is signaled to the worker to pause autonomous polling.
         """
+        batch = self._log_batch(batch)
         current_len = len(self._pending_packets)
         space_left = (self._pending_packets.maxlen - current_len) if self._pending_packets.maxlen else 10_000
         if len(batch) > space_left:
             dropped = len(batch) - space_left
             self._backpressure_dropped_count = getattr(self, "_backpressure_dropped_count", 0) + dropped
-            import logging
-            logging.getLogger("bytehound.ui").warning(
-                "UI event queue saturated: dropped %d packets (total dropped: %d)",
-                dropped, self._backpressure_dropped_count
-            )
+            # The oldest queued points are evicted: break every line there
+            # rather than joining across the skipped points (live plot P4).
+            for buf in getattr(self, "_plot_history", {}).values():
+                buf.mark_break()
+            # Once saturated this fired for every batch, and each log line was
+            # a file write + flush on the GUI thread (seen in stall stacks).
+            now = time.monotonic()
+            if now - getattr(self, "_last_saturation_log", 0.0) >= 5.0:
+                self._last_saturation_log = now
+                import logging
+                logging.getLogger("bytehound.ui").warning(
+                    "UI event queue saturated: display skipped %d packets so far "
+                    "(the session log is unaffected)", self._backpressure_dropped_count
+                )
 
         self._pending_packets.extend(batch)
 
@@ -64,7 +167,7 @@ class TelemetryPipelineMixin:
         """Actual flush implementation, called by _flush_ui with protection."""
         # Update the session elapsed clock unconditionally (cheap string op).
         if self._session_started is not None and hasattr(self, '_session_clock_label'):
-            elapsed = int((datetime.now() - self._session_started).total_seconds())
+            elapsed = int(self._session_elapsed_s())
             h, rem = divmod(elapsed, 3600)
             m, s = divmod(rem, 60)
             self._session_clock_label.setText(f"\u23f1 {h}:{m:02d}:{s:02d}")
@@ -91,22 +194,56 @@ class TelemetryPipelineMixin:
         # appendPlainText per flush instead of one per packet. At 1 kHz RX
         # this drops the Qt block-layout cost by ~50x.
         self._console_buffer: List[str] = []
-        # Worker pushes (ParsedPacket, DecodedFrame|None) tuples; legacy
-        # bare-ParsedPacket items are normalised here so _handle_packet
-        # doesn't have to branch.
-        for item in packets:
-            if isinstance(item, tuple):
-                packet, pre_decoded = item
-            else:
-                packet, pre_decoded = item, None
+        console_dock = getattr(self, "_console_dock", None)
+        console_visible = console_dock is not None and console_dock.isVisible()
+        show_from = len(packets)
+        if console_visible:
+            # perf_counter → wall clock, once per flush
+            wall_offset = time.time() - time.perf_counter()
+            # Nobody reads thousands of lines a second, and formatting and
+            # laying them out was most of the GUI thread's time at high
+            # rates. Show the newest lines within budget and say how many
+            # were skipped; logs and the raw capture keep every frame.
+            now = time.monotonic()
+            dt = now - getattr(self, "_console_last_flush", now - 1.0)
+            self._console_last_flush = now
+            budget = max(1, min(CONSOLE_LINES_PER_SECOND, int(CONSOLE_LINES_PER_SECOND * dt)))
+            show_from = max(0, len(packets) - budget)
+        # Worker pushes (ParsedPacket, DecodedFrame|None, rx_perf) tuples;
+        # shorter legacy items are normalised so _handle_packet doesn't branch.
+        deadline = time.perf_counter() + FLUSH_BUDGET_S
+        processed = len(packets)
+        for index, item in enumerate(packets):
+            if index & 31 == 0 and index and time.perf_counter() > deadline:
+                processed = index
+                break
+            packet, pre_decoded, rx_perf = self._unpack_item(item)
+            if console_visible and index >= show_from and hasattr(packet, "raw"):
+                ts = datetime.fromtimestamp(
+                    (rx_perf if rx_perf is not None else time.perf_counter()) + wall_offset
+                )
+                self._console_buffer.append(
+                    f"{ts.strftime('%Y-%m-%d %H:%M:%S.%f')[:-3]}, RX, {packet.raw.hex(' ').upper()}"
+                )
             try:
-                self._handle_packet(packet, pre_decoded=pre_decoded)
+                self._handle_packet(packet, pre_decoded=pre_decoded, rx_perf=rx_perf)
             except Exception:
                 import logging
                 logging.getLogger("bytehound.ui").exception(
                     "_handle_packet raised on frame_id=0x%04X",
                     getattr(packet, 'frame_id', 0),
                 )
+        if processed < len(packets):
+            # Out of budget: keep the rest, in order, ahead of anything newer.
+            rest = deque(packets[processed:], maxlen=10_000)
+            rest.extend(self._pending_packets)
+            self._pending_packets = rest
+        hidden = min(show_from, processed) if console_visible else 0
+        if hidden:
+            self._console_buffer.insert(0, (
+                f"… {hidden} frames not shown (console limited to {CONSOLE_LINES_PER_SECOND}/s; "
+                "logs and raw capture keep every frame)"
+            ))
         if self._console_buffer:
             sb = self._console.verticalScrollBar()
             at_bottom = sb.value() >= sb.maximum() - 4
@@ -127,12 +264,16 @@ class TelemetryPipelineMixin:
         # and _handle_packet only mutates the UI-side _packet_count. One
         # refresh per flush is plenty and saves ~50 string rebuilds/batch.
         self._refresh_counts_label()
-        # Commit all staged model cell updates in ONE dataChanged per row.
+        # Format the newest value per row once, then commit all staged model
+        # cell updates in ONE dataChanged per row.
+        self._stage_table_cells()
         self._table_model.commit_staged()
         # Redraw the plot once for the entire batch.
         now = time.monotonic()
-        if (now - self._plot_last_redraw) >= self._plot_redraw_interval_s:
+        if self._plot_redraw_due(now):
+            t0 = time.perf_counter()
             self._redraw_plot()
+            self._plot_redraw_cost_s = time.perf_counter() - t0
             self._plot_last_redraw = now
         # Invalidate the hover crosshair cache now that plot_history has changed
         if hasattr(self, "_hover_cache"):
@@ -181,6 +322,7 @@ class TelemetryPipelineMixin:
         self,
         packet: ParsedPacket,
         pre_decoded: Optional[DecodedFrame] = None,
+        rx_perf: Optional[float] = None,
     ) -> None:
         if hasattr(self, "_polling_action") and not self._polling_action.isChecked():
             self._unsolicited_detected = True
@@ -189,12 +331,6 @@ class TelemetryPipelineMixin:
         if self._last_packet_perf is not None:
             self._delta_t_ms = (now - self._last_packet_perf) * 1000.0
         self._last_packet_perf = now
-        # Buffer the console line. _flush_ui appends them all in one shot.
-        # Skip the whole console pipeline when the dock is hidden: the
-        # datetime.strftime + hex.upper formatting is ~10 µs per packet
-        # which dominates the per-packet UI cost at 1 kHz. Same UX
-        # contract as the plot — re-opening shows fresh content from
-        # re-open time forward.
         if not packet.ok:
             # Worker is the single source of truth for the CRC error count
             # and pushes it via metrics_updated → _on_metrics_updated.
@@ -217,19 +353,16 @@ class TelemetryPipelineMixin:
             self._latest_payload_by_frame = {}
         if packet.frame_id is not None:
             self._latest_payload_by_frame[packet.frame_id] = bytes(packet.payload)
+            monitor = getattr(self, "_rate_monitor", None)
+            if monitor:
+                monitor.note(packet.frame_id, rx_perf if rx_perf is not None else now)
         if not hasattr(self, "_signal_state"):
             self._signal_state = {}
         decoded = pre_decoded if pre_decoded is not None else decode_frame(
-            self._config, packet.frame_id, packet.payload, self._signal_state
+            self._config, packet.frame_id, packet.payload, self._signal_state, t=rx_perf
         )
-        self._apply_decoded(decoded)
-        if self._decoded_logger:
-            if self._log_started_perf is not None:
-                elapsed_ms = int((time.perf_counter() - self._log_started_perf) * 1000)
-            else:
-                t0 = self._log_started or self._session_started or datetime.now()
-                elapsed_ms = int((datetime.now() - t0).total_seconds() * 1000)
-            self._decoded_logger.log_frame(decoded, elapsed_ms)
+        # The decoded log was already written on arrival (_log_batch)
+        self._apply_decoded(decoded, rx_perf=rx_perf)
 
     def _add_signal_row(
         self,
@@ -265,7 +398,7 @@ class TelemetryPipelineMixin:
             is_calculated=is_calculated,
         )
 
-    def _apply_decoded(self, decoded: DecodedFrame) -> None:
+    def _apply_decoded(self, decoded: DecodedFrame, rx_perf: Optional[float] = None) -> None:
         if decoded.error is not None:
             self._console.appendPlainText(f"[decode] {decoded.error}")
             return
@@ -278,7 +411,6 @@ class TelemetryPipelineMixin:
             self._log_activity(f"[DECODE WARN] {w.message}{tail}")
             self._console.appendPlainText(f"[decode warning] {w.message}")
 
-        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
         # Evaluate Auto-Pause / Triggered Logging if armed
         trigger_hit = False
         if self._plot_trigger is not None:
@@ -352,11 +484,11 @@ class TelemetryPipelineMixin:
                         self._console.appendPlainText(f"[FAULT ALARM] {sig.signal_name}: {sig.display_value}")
                         self._log_activity(f"[ALARM] Fault detected on {sig.signal_name}: {sig.display_value}")
 
-        plot_visible = getattr(self, "_plot_dock", None) is None or self._plot_dock.isVisible()
-        if plot_visible:
-            if self._session_started is None:
-                self._session_started = datetime.now()
-            elapsed = (datetime.now() - self._session_started).total_seconds()
+        # History is recorded even while the Live Plot dock is hidden, so the
+        # graph has no holes for the time it was tabbed away or collapsed.
+        # Only the redraw is skipped when hidden.
+        elapsed = self._session_elapsed_s(rx_perf)
+        pending_cells = self.__dict__.setdefault("_pending_table_cells", {})
         for signal in [*decoded.signals, *decoded.calculations]:
             key = ("calc", signal.signal_name) if signal.is_calculated else (signal.frame_id, signal.signal_name)
             # If the key isn't in the model yet, add it (calculated / late-arriving signals)
@@ -382,6 +514,24 @@ class TelemetryPipelineMixin:
             if signal.raw_value is None and not signal.is_calculated:
                 continue
 
+            # Only the newest value per row is shown, so formatting waits for
+            # the 60 Hz flush (_stage_table_cells) instead of running for
+            # every packet.
+            pending_cells[key] = signal
+
+            if hasattr(self, "_staged_signals_for_ui"):
+                self._staged_signals_for_ui[key] = signal
+
+            if signal.scaled_value is not None and signal.status == "ok":
+                self._plot_history[key].append(elapsed, signal.scaled_value)
+
+    def _stage_table_cells(self) -> None:
+        """Format and stage the newest decoded value for each table row."""
+        pending = getattr(self, "_pending_table_cells", None)
+        if not pending:
+            return
+        timestamp = datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        for key, signal in pending.items():
             raw_text = "-" if signal.raw_value is None else _format_number(signal.raw_value)
             value_text = "-" if signal.scaled_value is None else _format_number(signal.scaled_value)
             if signal.is_calculated:
@@ -390,7 +540,6 @@ class TelemetryPipelineMixin:
                 table_value = signal.display_value or value_text
                 if signal.unit and table_value.endswith(f" {signal.unit}"):
                     table_value = table_value[: -len(f" {signal.unit}")].strip()
-
             self._table_model.stage_live_cells(
                 key,
                 raw=raw_text,
@@ -398,12 +547,7 @@ class TelemetryPipelineMixin:
                 status=self._status_text(signal),
                 updated=timestamp,
             )
-
-            if hasattr(self, "_staged_signals_for_ui"):
-                self._staged_signals_for_ui[key] = signal
-
-            if plot_visible and signal.scaled_value is not None and signal.status == "ok":
-                self._plot_history[key].append(elapsed, signal.scaled_value)
+        pending.clear()
 
     def _status_text(self, signal: DecodedSignal) -> str:
         if signal.bit_values:

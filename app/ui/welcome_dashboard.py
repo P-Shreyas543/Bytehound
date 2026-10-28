@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Callable, Optional, List
+from typing import List
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont, QIcon, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
-    QGroupBox, QFrame, QListWidget, QListWidgetItem, QSizePolicy, QGridLayout
+    QGroupBox, QFrame, QListWidget, QListWidgetItem, QGridLayout
 )
 
 from ..decoder.protocol_presets import BUILTIN_PRESETS
@@ -59,7 +58,7 @@ class WelcomeDashboardWidget(QWidget):
         title_v = QVBoxLayout()
         app_title = QLabel("🐾 Bytehound Telemetry & Control Suite", header)
         app_title.setObjectName("welcomeTitle")
-        
+
         app_subtitle = QLabel("Framed Serial Telemetry Logger, Command Controller & Multi-Grid Oscilloscope", header)
         app_subtitle.setObjectName("welcomeSubtitle")
 
@@ -87,7 +86,7 @@ class WelcomeDashboardWidget(QWidget):
         self.port_combo = QComboBox(step1_box)
         self.port_combo.setAccessibleName("Serial Port Selection")
         self.port_combo.setAccessibleDescription("Select the COM port of the connected hardware.")
-        
+
         self.baud_combo = QComboBox(step1_box)
         self.baud_combo.setAccessibleName("Baud Rate Selection")
         self.baud_combo.setAccessibleDescription("Select the baud rate for the serial connection.")

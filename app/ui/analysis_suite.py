@@ -33,7 +33,7 @@ import pyqtgraph as pg
 pg.setConfigOptions(antialias=True, useOpenGL=False)
 from PySide6.QtCore import Qt, QSettings, QTimer, QThread, Signal
 from PySide6.QtGui import (
-    QAction, QColor, QFont, QKeySequence,
+    QAction, QColor, QKeySequence,
 )
 from PySide6.QtWidgets import (
     QAbstractItemView, QApplication, QCheckBox, QColorDialog, QComboBox,
@@ -51,6 +51,7 @@ from .analysis_theme import (
 from .analysis_widgets import CursorReadoutPanel, StatisticsPanel, TimeAxisItem, OverlayViewBox
 from .log_io import (
     LogEntry, LogLoaderThread, _CSV_CACHE,
+    SessionLoaderThread, SessionWindowThread, entry_value_at, eval_math_expression,
 )
 from .xy_plot import XYPlotWindow
 
@@ -209,6 +210,35 @@ class CSVExportThread(QThread):
                     self.sigProgress.emit(progress_pct)
 
             self.sigFinished.emit(self.path, total_rows)
+        except Exception as e:
+            self.sigError.emit(str(e))
+
+
+class SessionExportThread(QThread):
+    """Exports session curves at full resolution, one file per session."""
+    sigProgress = Signal(int)
+    sigFinished = Signal(list, int)
+    sigError = Signal(str)
+
+    def __init__(self, jobs: list, xlsx: bool, parent=None):
+        super().__init__(parent)
+        self.jobs = jobs      # [(entry, params, t0, t1, path)]
+        self.xlsx = xlsx
+
+    def run(self):
+        written, total = [], 0
+        try:
+            for i, (entry, params, t0, t1, path) in enumerate(self.jobs):
+                if self.isInterruptionRequested():
+                    return
+                total += entry.source.export_range(
+                    params, t0, t1, path, xlsx=self.xlsx,
+                    cancelled=self.isInterruptionRequested,
+                    progress=lambda pct, i=i: self.sigProgress.emit(
+                        int((i * 100 + pct) / max(1, len(self.jobs)))),
+                )
+                written.append(path)
+            self.sigFinished.emit(written, total)
         except Exception as e:
             self.sigError.emit(str(e))
 
@@ -676,6 +706,14 @@ class AnalysisSuiteWindow(QMainWindow):
         self._stats_timer.setInterval(150)
         self._stats_timer.timeout.connect(self._refresh_stats_panel)
 
+        # Logging sessions reload their view (full resolution / envelope)
+        # after the user stops panning or zooming.
+        self._session_view_timer = QTimer(self)
+        self._session_view_timer.setSingleShot(True)
+        self._session_view_timer.setInterval(200)
+        self._session_view_timer.timeout.connect(self._refresh_session_views)
+        self._session_view_threads: dict = {}
+
         # Status bar
         self._status = QStatusBar()
         self.setStatusBar(self._status)
@@ -688,6 +726,8 @@ class AnalysisSuiteWindow(QMainWindow):
         file_menu = mb.addMenu("File")
         file_menu.addAction("Load Logs...", self._on_load_logs,
                             QKeySequence("Ctrl+L"))
+        file_menu.addAction("Open Logging Session...", self._open_logging_session,
+                            QKeySequence("Ctrl+Shift+O"))
         # Recent-files submenu — refreshed on aboutToShow so it always
         # reflects the latest list (writes happen in _on_log_loaded).
         self._recent_menu = file_menu.addMenu("Recent Logs")
@@ -873,15 +913,19 @@ class AnalysisSuiteWindow(QMainWindow):
     def _on_load_logs(self):
         paths, _ = QFileDialog.getOpenFileNames(
             self, "Load Test Log Files", get_datalogs_dir(),
-            "Log Files (*.xlsx *.csv);;Excel Files (*.xlsx);;CSV Files (*.csv)")
+            "Logs and sessions (*.xlsx *.csv session.json);;Excel Files (*.xlsx);;"
+            "CSV Files (*.csv);;Logging session (session.json)")
         if not paths:
             return
         for path in paths:
+            if os.path.basename(path) == "session.json":
+                self._open_logging_session(os.path.dirname(path))
+                continue
             if any(l.path == path for l in self._logs.values()):
                 continue
             log_id = uuid.uuid4().hex[:8]
             color = self._next_color()
-            thread = LogLoaderThread(path, log_id, color, self)
+            thread = self._make_loader(path, log_id, color)
             thread.sigFinished.connect(self._on_log_loaded)
             thread.sigProgress.connect(self._on_load_progress)
             thread.error.connect(self._on_load_error)
@@ -975,38 +1019,22 @@ class AnalysisSuiteWindow(QMainWindow):
             self._status.showMessage("Import schema mapping configuration saved.", 5000)
 
     def _compute_math_channels(self, log: LogEntry):
-        def diff_func(y):
-            if len(log.elapsed) <= 1:
-                return np.zeros_like(y)
-            return np.gradient(y, log.elapsed)
-
-        def integral_func(y):
-            if len(log.elapsed) <= 1:
-                return np.zeros_like(y)
-            dt = np.diff(log.elapsed)
-            y_avg = 0.5 * (y[:-1] + y[1:])
-            integrand = y_avg * dt
-            return np.insert(np.cumsum(integrand), 0, 0.0)
+        if getattr(log, "is_session", False):
+            # Sessions load one view at a time: math channels are evaluated
+            # on the full-resolution data of the current view (NaN when
+            # zoomed out; integral() starts at the view's left edge).
+            log.set_math_channels(dict(self._math_channels))
+            if self._math_channels:
+                self._status.showMessage(
+                    "Math channels on a logging session are computed for the visible range "
+                    "at full resolution — zoom in to see them.", 8000)
+            return
 
         for name, expr in self._math_channels.items():
-            py_expr = re.sub(r'\[(.*?)\]', r'data["\1"]', expr)
             try:
                 # Evaluate expression vectorised over numpy arrays.
                 # All signals for a log are already uniform length from log_io!
-                res = eval(
-                    py_expr,
-                    {
-                        "__builtins__": None,
-                        "np": np,
-                        "diff": diff_func,
-                        "deriv": diff_func,
-                        "derivative": diff_func,
-                        "integral": integral_func,
-                        "int": integral_func,
-                        "cumsum": integral_func,
-                    },
-                    {"data": log.columns}
-                )
+                res = eval_math_expression(expr, log.columns, log.elapsed)
                 log.columns[name] = res
             except Exception as e:
                 _log.warning(f"Math channel '{name}' failed to compute for log {log.name}: {e}")
@@ -1116,17 +1144,44 @@ class AnalysisSuiteWindow(QMainWindow):
         self._update_cursor_dots()
         self._update_cursor_readout()
 
+    def _curve_y(self, entry, param: str, group: list[str] | None) -> np.ndarray:
+        """Values a curve displays: the log's data with the subplot's
+        smoothing / normalising applied. Used for the initial build and for
+        every update, so a zoom or offset change never drops a transform.
+        On a zoomed-out session (min/max envelope) smoothing is not applied:
+        averaging an envelope means nothing."""
+        y = entry.columns[param]
+        if group is None:
+            return y
+        envelope = getattr(entry, "is_session", False) and entry.view.level != 0
+        if self._is_subplot_smoothed(group) and not envelope:
+            y = self._moving_average(y, self._smoothing_window)
+        if self._is_subplot_normalized(group):
+            y = self._normalize_series(y)
+        return y
+
+    def _group_of(self, param: str) -> list[str] | None:
+        for group in self._plot_groups:
+            if param in group:
+                return group
+        return None
+
     def _update_curves_for_log(self, log_id: str):
         entry = self._logs.get(log_id)
         if not entry:
             return
+        if getattr(entry, "is_session", False) and log_id in self._curves:
+            entry.ensure(list(self._curves[log_id].keys()))
         x = entry.elapsed + entry.time_offset
         if log_id in self._curves:
             for param, curve in self._curves[log_id].items():
                 if param in entry.columns:
-                    y = entry.columns[param]
-                    mask = ~np.isnan(y)
-                    curve.setData(x[mask], y[mask])
+                    y = self._curve_y(entry, param, self._group_of(param))
+                    if getattr(entry, "keeps_gaps", False):
+                        curve.setData(x, y, connect="finite")
+                    else:
+                        mask = ~np.isnan(y)
+                        curve.setData(x[mask], y[mask])
 
     # ──────────────────────────────────────────────────────────────────
     # Plot Layout
@@ -1257,24 +1312,6 @@ class AnalysisSuiteWindow(QMainWindow):
     def _extract_unit(name: str) -> str:
         match = re.search(r'\(([^()]*)\)\s*$', name)
         return match.group(1).strip() if match else ""
-
-    @staticmethod
-    def _moving_average(arr: np.ndarray, window: int) -> np.ndarray:
-        """Compute rolling average over arr with window size `window`, NaN-safe."""
-        if len(arr) == 0 or window <= 1:
-            return arr
-        w = min(window, len(arr))
-        kernel = np.ones(w) / float(w)
-        valid_mask = ~np.isnan(arr)
-        if not np.any(valid_mask):
-            return arr
-        clean_arr = np.where(valid_mask, arr, 0.0)
-        sum_conv = np.convolve(clean_arr, kernel, mode='same')
-        count_conv = np.convolve(valid_mask.astype(float), kernel, mode='same')
-        with np.errstate(divide='ignore', invalid='ignore'):
-            out = np.where(count_conv > 0, sum_conv / count_conv, np.nan)
-        return out
-
 
     def _axis_title_for_group(self, group: list[str]) -> str:
         """Compact label suitable for a rotated Y-axis title — strips units
@@ -1650,17 +1687,71 @@ class AnalysisSuiteWindow(QMainWindow):
                     ymax_right += pad
                 pw.right_vb.setYRange(ymin_right, ymax_right, padding=0)
 
+    def _export_session_rows(self, rows: list[dict]) -> None:
+        """Full-resolution export of session curves over the visible range
+        (never the drawn envelope), streamed segment by segment."""
+        by_entry: dict = {}   # entry id -> (entry, params, x_range)
+        for r in rows:
+            entry = r["session"]
+            _, params, _ = by_entry.setdefault(entry.id, (entry, [], r.get("x_range")))
+            if r["param"] not in params:
+                params.append(r["param"])
+        csv_filter, both_filter = "CSV Files (*.csv)", "CSV + Excel workbook (*.csv)"
+        suggested = os.path.join(get_analysis_dir(), f"{APP_NAME}_session_range.csv")
+        path, chosen = QFileDialog.getSaveFileName(
+            self, "Export Session Data (full resolution)", suggested, f"{csv_filter};;{both_filter}")
+        if not path:
+            return
+        if not path.lower().endswith(".csv"):
+            path += ".csv"
+        jobs = []
+        for n, (entry, params, x_range) in enumerate(by_entry.values()):
+            lo, hi = x_range if x_range is not None else (0.0, entry.source.duration + entry.time_offset)
+            out = path if len(by_entry) == 1 else path[:-4] + f"_{n + 1}_{entry.name}.csv"
+            jobs.append((entry, params, lo - entry.time_offset, hi - entry.time_offset, out))
+
+        from PySide6.QtWidgets import QProgressDialog
+        dlg = QProgressDialog("Exporting full-resolution data…", "Cancel", 0, 100, self)
+        dlg.setWindowTitle("Exporting Session Data")
+        dlg.setWindowModality(Qt.WindowModality.ApplicationModal)
+        dlg.setMinimumDuration(0)
+        thread = SessionExportThread(jobs, xlsx=(chosen == both_filter), parent=self)
+        thread.sigProgress.connect(dlg.setValue)
+
+        def on_finished(paths, total_rows):
+            dlg.close()
+            self._status.showMessage(
+                f"Exported {total_rows} rows to {', '.join(os.path.basename(p) for p in paths)}", 8000)
+
+        def on_error(msg):
+            dlg.close()
+            self._popup_warning("Export Failed", msg)
+
+        thread.sigFinished.connect(on_finished)
+        thread.sigError.connect(on_error)
+        dlg.canceled.connect(thread.requestInterruption)
+        self._session_export_thread = thread
+        thread.finished.connect(lambda: setattr(self, "_session_export_thread", None))
+        thread.start()
+
     def _export_visible_csv(self):
         """Wide-format CSV export of every visible (log, param) curve, sliced
         to the current x view range. All series are interpolated onto a
         common time grid (the union of visible-range timestamps of the first
-        log) so the file opens cleanly in Excel/pandas."""
+        log) so the file opens cleanly in Excel/pandas. Logging-session curves
+        are exported separately at full resolution."""
         rows = self._visible_curve_rows()
         if not rows:
             self._popup_information(
                 "Nothing to Export",
                 "Load logs and check parameters before exporting.")
             return
+        session_rows = [r for r in rows if r.get("session") is not None]
+        if session_rows:
+            self._export_session_rows(session_rows)
+            rows = [r for r in rows if r.get("session") is None]
+            if not rows:
+                return
 
         x_range = rows[0].get("x_range")
         masters: list[np.ndarray] = []
@@ -1782,18 +1873,229 @@ class AnalysisSuiteWindow(QMainWindow):
         self._recent_files = []
         self._save_recent_files()
 
+    # ------------------------------------------------------------------
+    # Logging sessions (folders of rotated segments)
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _split_session_path(path: str) -> tuple[str, str] | None:
+        """``<folder>#event`` / ``<folder>#fixed`` → (folder, kind)."""
+        if "#" in path:
+            folder, kind = path.rsplit("#", 1)
+            if kind in ("event", "fixed"):
+                return folder, kind
+        return None
+
+    def _log_path_exists(self, path: str) -> bool:
+        sp = self._split_session_path(path)
+        if sp is not None:
+            return os.path.isfile(os.path.join(sp[0], "session.json"))
+        return os.path.isfile(path)
+
+    def _make_loader(self, path: str, log_id: str, color: str):
+        sp = self._split_session_path(path)
+        if sp is not None:
+            thread = SessionLoaderThread(sp[0], log_id, color, sp[1], self)
+            label = f"Session {os.path.basename(os.path.normpath(sp[0]))}"
+        else:
+            thread = LogLoaderThread(path, log_id, color, self)
+            label = os.path.basename(path)
+        thread.sigProgress.connect(self._on_load_progress)
+        self._track_load(thread, label)
+        return thread
+
+    # -- load progress dialog (owner request 2026-10-22) -------------------
+    # Loading a large workbook took minutes with only a wait cursor. Every
+    # load now shows what it is doing, how far it is, and can be cancelled.
+
+    def _track_load(self, thread, label: str) -> None:
+        states = self.__dict__.setdefault("_load_states", {})
+        states[thread] = {"label": label, "status": "Waiting…", "pct": -1}
+        thread.sigProgress.connect(lambda pct, t=thread: self._load_state(t, pct=pct))
+        if hasattr(thread, "sigStatus"):
+            thread.sigStatus.connect(lambda text, t=thread: self._load_state(t, status=text))
+        if hasattr(thread, "sigCancelled"):
+            thread.sigCancelled.connect(lambda _p, t=thread: self._status.showMessage(
+                f"Loading cancelled: {states.get(t, {}).get('label', '')}", 5000))
+        thread.finished.connect(lambda t=thread: self._load_done(t))
+        timer = getattr(self, "_load_dialog_timer", None)
+        if timer is None:
+            timer = QTimer(self)
+            timer.setSingleShot(True)
+            timer.setInterval(400)          # quick loads never flash a dialog
+            timer.timeout.connect(self._show_load_dialog)
+            self._load_dialog_timer = timer
+        if not timer.isActive() and getattr(self, "_load_dialog", None) is None:
+            timer.start()
+
+    def _show_load_dialog(self) -> None:
+        if not getattr(self, "_load_states", None) or getattr(self, "_load_dialog", None) is not None:
+            return
+        from PySide6.QtWidgets import QProgressDialog
+        dlg = QProgressDialog("", "Cancel", 0, 100, self)
+        dlg.setWindowTitle("Loading")
+        dlg.setWindowModality(Qt.WindowModality.NonModal)
+        dlg.setMinimumWidth(480)
+        dlg.setAutoClose(False)
+        dlg.setAutoReset(False)
+        dlg.canceled.connect(self._cancel_loads)
+        self._load_dialog = dlg
+        self._refresh_load_dialog()
+        dlg.show()
+
+    def _load_state(self, thread, *, pct=None, status=None) -> None:
+        st = getattr(self, "_load_states", {}).get(thread)
+        if st is None:
+            return
+        if pct is not None:
+            st["pct"] = int(pct)
+        if status is not None:
+            st["status"] = status
+        self._refresh_load_dialog()
+
+    def _refresh_load_dialog(self) -> None:
+        dlg = getattr(self, "_load_dialog", None)
+        states = list(getattr(self, "_load_states", {}).values())
+        if dlg is None or not states:
+            return
+        lines = [f"{st['status']}" + (f"  ({st['pct']}%)" if st["pct"] >= 0 else "") for st in states]
+        more = f"\n… and {len(lines) - 6} more" if len(lines) > 6 else ""
+        dlg.setLabelText("\n".join(lines[:6]) + more)
+        known = [st["pct"] for st in states if st["pct"] >= 0]
+        if len(known) == len(states):
+            dlg.setRange(0, 100)
+            dlg.setValue(int(sum(known) / len(known)))
+        else:
+            dlg.setRange(0, 0)                  # unknown length: busy indicator
+
+    def _cancel_loads(self) -> None:
+        dlg = getattr(self, "_load_dialog", None)
+        if dlg is not None:
+            dlg.setLabelText("Cancelling…")
+        for t in list(getattr(self, "_load_states", {})):
+            t.requestInterruption()
+
+    def _load_done(self, thread) -> None:
+        states = getattr(self, "_load_states", {})
+        states.pop(thread, None)
+        if states:
+            self._refresh_load_dialog()
+            return
+        timer = getattr(self, "_load_dialog_timer", None)
+        if timer is not None:
+            timer.stop()
+        dlg = getattr(self, "_load_dialog", None)
+        if dlg is not None:
+            dlg.reset()
+            dlg.close()
+            dlg.deleteLater()
+            self._load_dialog = None
+
+    def _open_logging_session(self, folder: str | None = None):
+        """Open a logging session folder: the event log, the fixed-step log,
+        or both, at any length (overview first, detail when zoomed in)."""
+        if not folder:
+            folder = QFileDialog.getExistingDirectory(
+                self, "Open Logging Session (folder with session.json)", get_datalogs_dir())
+        if not folder:
+            return
+        if not os.path.isfile(os.path.join(folder, "session.json")):
+            self._popup_warning("Not a Logging Session",
+                                f"{folder}\n\nhas no session.json. Use File → Load Logs for single files.")
+            return
+        from ..serial_logging.session import read_manifest
+        try:
+            manifest = read_manifest(folder)
+        except (OSError, ValueError) as exc:
+            self._popup_warning("Open Logging Session", str(exc))
+            return
+        kinds = [k for k in ("event", "fixed")
+                 if any(f"{k}_csv" in s.get("files", {}) for s in manifest.get("segments", []))]
+        if not kinds:
+            self._popup_warning("Open Logging Session", "This session has no log segments yet.")
+            return
+        if len(kinds) == 2:
+            labels = {"Event log": ["event"], "Fixed-step log": ["fixed"], "Both": ["event", "fixed"]}
+            choice, ok = QInputDialog.getItem(
+                self, "Open Logging Session", "Which log?", list(labels), 0, False)
+            if not ok:
+                return
+            kinds = labels[choice]
+        if manifest.get("status") == "recording":
+            self._status.showMessage(
+                "This session is still recording: showing the segments closed so far.", 8000)
+        for kind in kinds:
+            path = f"{folder}#{kind}"
+            if any(l.path == path for l in self._logs.values()):
+                continue
+            log_id = uuid.uuid4().hex[:8]
+            thread = self._make_loader(path, log_id, self._next_color())
+            thread.sigFinished.connect(self._on_log_loaded)
+            thread.error.connect(self._on_load_error)
+            thread.finished.connect(lambda t=thread: self._cleanup_thread(t))
+            self._loader_threads.append(thread)
+            thread.start()
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        self._status.showMessage("Opening logging session… (building analysis data if needed)")
+
+    def _refresh_session_views(self):
+        """After a pan/zoom, load the right resolution for every session."""
+        if not self._plot_widgets:
+            return
+        try:
+            vb = self._plot_widgets[0].getPlotItem().vb
+            if vb.state.get("autoRange", [False])[0]:
+                # Not zoomed or panned yet: the whole-session overview is what
+                # is shown, and the range may not even be fitted yet (reading
+                # it now would load a tiny window and replace the overview).
+                return
+            x0, x1 = vb.viewRange()[0]
+            px = max(200, int(vb.width()))
+        except Exception:
+            return
+        for entry in list(self._logs.values()):
+            if not getattr(entry, "is_session", False) or entry.id in self._session_view_threads:
+                continue
+            t0, t1 = x0 - entry.time_offset, x1 - entry.time_offset
+            lo, hi, level = entry.plan(t0, t1, px)
+            if entry.covers(t0, t1, level):
+                continue
+            params = list(self._curves.get(entry.id, {}).keys())
+            if not params:
+                continue
+            thread = SessionWindowThread(entry, params, lo, hi, level, self)
+            thread.sigDone.connect(self._on_session_window_loaded)
+            thread.finished.connect(lambda eid=entry.id: self._session_view_threads.pop(eid, None))
+            self._session_view_threads[entry.id] = thread
+            thread.start()
+
+    def _on_session_window_loaded(self, log_id: str, window):
+        entry = self._logs.get(log_id)
+        if entry is None:
+            return
+        if isinstance(window, Exception):
+            self._status.showMessage(f"Could not load session data: {window}", 8000)
+            return
+        entry.apply(window)
+        # Keep the user's zoom: new data must not trigger an auto-range.
+        for pw in self._plot_widgets:
+            pw.getPlotItem().vb.disableAutoRange(pg.ViewBox.XAxis)
+        self._update_curves_for_log(log_id)
+        self._update_cursor_dots()
+        res = "full resolution" if window.level == 0 else f"{window.level} s min/max summary"
+        self._status.showMessage(f"{entry.name}: {res}", 3000)
+
     def _load_single_path(self, path: str):
         """Load a single log path via the same LogLoaderThread used by the
         file picker. Skips files already loaded."""
         if any(l.path == path for l in self._logs.values()):
             self._status.showMessage(f"Already loaded: {os.path.basename(path)}", 4000)
             return
-        if not os.path.isfile(path):
+        if not self._log_path_exists(path):
             self._popup_warning("File Not Found", path)
             return
         log_id = uuid.uuid4().hex[:8]
         color = self._next_color()
-        thread = LogLoaderThread(path, log_id, color, self)
+        thread = self._make_loader(path, log_id, color)
         thread.sigFinished.connect(self._on_log_loaded)
         thread.error.connect(self._on_load_error)
         thread.finished.connect(lambda t=thread: self._cleanup_thread(t))
@@ -1816,7 +2118,14 @@ class AnalysisSuiteWindow(QMainWindow):
         prev_x_range = None
         if self._plot_widgets:
             try:
-                prev_x_range = self._plot_widgets[0].getPlotItem().vb.viewRange()[0]
+                vb = self._plot_widgets[0].getPlotItem().vb
+                # Only carry over a zoom the user chose. While X is still
+                # auto-ranging the range may not be fitted yet (pyqtgraph's
+                # default is 0–1), and restoring it would pin every new plot
+                # to that tiny range — e.g. when several parameters are
+                # checked in quick succession.
+                if not vb.state.get("autoRange", [True])[0]:
+                    prev_x_range = vb.viewRange()[0]
             except Exception:
                 pass
 
@@ -1972,16 +2281,15 @@ class AnalysisSuiteWindow(QMainWindow):
 
             multi = len(group) > 1
             log_list = list(self._logs.values())
+            for entry in log_list:
+                if getattr(entry, "is_session", False):
+                    entry.ensure([p for p in group if p in entry.columns])
             for param in group:
                 for li, entry in enumerate(log_list):
                     if param not in entry.columns:
                         continue
                     x = entry.elapsed + entry.time_offset
-                    y = entry.columns[param]
-                    if smoothed:
-                        y = self._moving_average(y, self._smoothing_window)
-                    if normalized:
-                        y = self._normalize_series(y)
+                    y = self._curve_y(entry, param, group)
                     mask = ~np.isnan(y)
                     # Multi-param: color = parameter, style = log.
                     # Single-param: color = log, style = solid.
@@ -2013,7 +2321,12 @@ class AnalysisSuiteWindow(QMainWindow):
                     is_right = (right_unit is not None and unit != left_unit)
                     target_vb = pw.right_vb if is_right else plot_item.vb
 
-                    curve = pg.PlotDataItem(x[mask], y[mask], pen=pen, name=legend_name)
+                    if getattr(entry, "keeps_gaps", False):
+                        # Sessions: NaN marks gaps (disconnects, empty
+                        # buckets); keep it so the line breaks there.
+                        curve = pg.PlotDataItem(x, y, pen=pen, name=legend_name, connect="finite")
+                    else:
+                        curve = pg.PlotDataItem(x[mask], y[mask], pen=pen, name=legend_name)
                     target_vb.addItem(curve)
                     if legend is not None:
                         legend.addItem(curve, name=legend_name)
@@ -2133,9 +2446,13 @@ class AnalysisSuiteWindow(QMainWindow):
         except Exception:
             x_range = None
         rows = []
+        session_rows = []
         for param in group:
             for entry in self._logs.values():
                 if param not in entry.columns or not entry.visible:
+                    continue
+                if getattr(entry, "is_session", False):
+                    session_rows.append({"session": entry, "param": param, "x_range": x_range})
                     continue
                 rows.append({
                     "curve": f"{entry.name} \u00b7 {param}",
@@ -2145,9 +2462,12 @@ class AnalysisSuiteWindow(QMainWindow):
                     "y": entry.columns[param],
                     "x_range": x_range,
                 })
+        if session_rows:
+            self._export_session_rows(session_rows)
         if not rows:
-            self._popup_information("Nothing to Export",
-                                    "No visible curves on this subplot.")
+            if not session_rows:
+                self._popup_information("Nothing to Export",
+                                        "No visible curves on this subplot.")
             return
         path, _ = QFileDialog.getSaveFileName(
             self, "Export Subplot Data", get_analysis_dir(), "CSV Files (*.csv)")
@@ -2219,6 +2539,8 @@ class AnalysisSuiteWindow(QMainWindow):
     def _on_view_range_changed(self, *args):
         # Debounce — sigRangeChanged fires continuously while panning/zooming.
         self._stats_timer.start()
+        if any(getattr(e, "is_session", False) for e in self._logs.values()):
+            self._session_view_timer.start()
         # If auto-fit Y is on, recompute y-range for every subplot from the
         # currently visible x-range.
         if getattr(self, "_auto_fit_y", False):
@@ -2247,7 +2569,7 @@ class AnalysisSuiteWindow(QMainWindow):
                     if not entry.visible:
                         continue
                     label = f"{entry.name} · {param}" if multi else f"{entry.name} · {param}"
-                    rows.append({
+                    row = {
                         "curve": label,
                         "log_id": entry.id,
                         "log_name": entry.name,
@@ -2256,7 +2578,13 @@ class AnalysisSuiteWindow(QMainWindow):
                         "x": entry.elapsed + entry.time_offset,
                         "y": entry.columns[param],
                         "x_range": x_range,
-                    })
+                    }
+                    if getattr(entry, "is_session", False):
+                        # Never compute statistics from a drawn envelope:
+                        # ask the session for full-resolution statistics.
+                        row["stats_fn"] = (lambda x0, x1, e=entry, p=param: e.range_stats(p, x0, x1))
+                        row["session"] = entry
+                    rows.append(row)
         return rows
 
     def _refresh_stats_panel(self):
@@ -2316,9 +2644,12 @@ class AnalysisSuiteWindow(QMainWindow):
                 x = entry.elapsed + entry.time_offset
                 if len(x) == 0:
                     continue
-                idx = np.searchsorted(x, t)
-                idx = min(idx, len(x) - 1)
-                yv = entry.columns[param][idx]
+                if getattr(entry, "is_session", False):
+                    yv = entry.value_at(param, t)
+                else:
+                    idx = np.searchsorted(x, t)
+                    idx = min(idx, len(x) - 1)
+                    yv = entry.columns[param][idx]
                 if not np.isnan(yv):
                     label = f"{entry.name} · {param}" if multi else entry.name
                     parts.append(f"{label}: {yv:.2f}")
@@ -2667,7 +2998,7 @@ class AnalysisSuiteWindow(QMainWindow):
                     x = entry.elapsed + entry.time_offset
                     if len(x) == 0:
                         continue
-                    yv = float(np.interp(t, x, entry.columns[param]))
+                    yv = entry_value_at(entry, param, t, x)
                     if np.isnan(yv):
                         continue
                     # Match the dot color to the actual curve color so the
@@ -3040,13 +3371,13 @@ class AnalysisSuiteWindow(QMainWindow):
 
         for log_info in pending_logs:
             log_path = log_info['path']
-            if not os.path.isfile(log_path):
+            if not self._log_path_exists(log_path):
                 self._status.showMessage(f"File not found: {log_path}", 5000)
                 self._pending_session['remaining'] -= 1
                 continue
             log_id = uuid.uuid4().hex[:8]
             color = log_info.get('color', self._next_color())
-            thread = LogLoaderThread(log_path, log_id, color, self)
+            thread = self._make_loader(log_path, log_id, color)
             thread.sigFinished.connect(
                 lambda lid, p, e, info=log_info: self._on_session_log_loaded(lid, p, e, info))
             thread.error.connect(self._on_load_error)
@@ -3341,4 +3672,14 @@ class AnalysisSuiteWindow(QMainWindow):
             t.quit()
             t.wait(500)
         self._loader_threads.clear()
+        # Background session work must finish before its QThread objects are
+        # destroyed (a running QThread being destroyed aborts the process).
+        self._session_view_timer.stop()
+        for t in list(self._session_view_threads.values()):
+            t.wait(10_000)
+        self._stats_panel.shutdown(15_000)
+        export = getattr(self, "_session_export_thread", None)
+        if export is not None:
+            export.requestInterruption()
+            export.wait(15_000)
         super().closeEvent(event)

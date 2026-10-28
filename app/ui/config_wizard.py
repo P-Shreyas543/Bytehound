@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-from typing import Dict, List, Any, Optional
+from typing import List
 
 import pandas as pd
 
@@ -552,7 +551,7 @@ class ProtocolWizardDialog(QDialog):
         ptype_display = self.parser_type_combo.currentText()
         baud = self.baud_combo.currentText()
         n_frames = self.frames_table.rowCount()
-        
+
         total_signals = 0
         for r in range(self.vars_table.rowCount()):
             cnt_item = self.vars_table.item(r, 3)
