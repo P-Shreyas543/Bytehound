@@ -174,7 +174,11 @@ def test_webhook_notifier_network_failure_graceful():
         notifier.notify_safety_trip(1, "Voltage OOR", 4.35, 1.0, 25.0)
         notifier.notify_test_completed(1, "RecipeA", 5, 2450.0, 9.1, 3600.0)
 
-    notifier.close()
+        # Stop the worker while urlopen is still patched; otherwise queued
+        # notifications go out to the real network after the patch exits.
+        notifier.close()
+        notifier._thread.join(timeout=5)
+        assert not notifier._thread.is_alive()
 
 
 def test_webhook_dialog_interaction():

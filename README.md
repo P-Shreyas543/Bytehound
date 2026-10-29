@@ -47,8 +47,20 @@ Full schema reference: [instruction.md](instruction.md) (`§3 Config Schema`) or
 ## Test
 
 ```powershell
-pytest -q
+pytest -q                 # everything: main app (tests/) and cycler (single_cell_cycler/tests/)
+pytest -q -m unit         # one level: unit | integration | system | acceptance
 ```
+
+Every test carries exactly one level marker (assigned in [`conftest.py`](conftest.py)):
+
+| Level | What it covers | Where |
+|---|---|---|
+| `unit` | One function or class in isolation | `tests/test_*.py`, `single_cell_cycler/tests/test_*.py` |
+| `integration` | Modules together: a real `MainWindow`, worker threads, loggers on disk, sockets | the files listed in `INTEGRATION_MODULES` |
+| `system` | The complete app against a simulated device over a real wire (TCP socket, or a pseudo-terminal serial port on Linux/macOS) | `tests/system/`, `single_cell_cycler/tests/system/` |
+| `acceptance` | One test per requirement in [`ProjectRequirement.md`](ProjectRequirement.md); known gaps are strict `xfail`s naming the gap | `tests/acceptance/`, `single_cell_cycler/tests/acceptance/` |
+
+Headless runs need `QT_QPA_PLATFORM=offscreen`. Tests get a fresh `QSettings` store and cycler log directory per test, so they never touch your real settings or logs (on Windows, `QSettings` lives in the registry and is still shared).
 
 Manual hardware smoke scripts (not auto-collected) live at the repo root: [`smoke_com7.py`](smoke_com7.py), [`smoke_headless.py`](smoke_headless.py), [`smoke_stress.py`](smoke_stress.py). They require a connected device or the reference BMS simulator.
 
