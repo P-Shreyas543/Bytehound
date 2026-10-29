@@ -173,6 +173,7 @@ class LoggingSessionMixin:
             return False
 
         self._logging = True
+        self._update_wire_recorded_connection()
         self._logging_action.setText("Stop Logging")
         self._style_action_btn(self._logging_action, _BTN_PINK)   # active → pink
 
@@ -231,6 +232,7 @@ class LoggingSessionMixin:
         self._raw_logger = None
         self._decoded_logger = None
         self._logging = False
+        self._update_wire_recorded_connection()
         self._log_started = None
         self._log_started_perf = None
         self._logging_action.setText("Start Logging")

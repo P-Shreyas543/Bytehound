@@ -53,6 +53,14 @@ def test_connection_dialog_qsettings_wins_over_config_defaults(qapp, fresh_setti
     assert settings.parity == "O"        # from QSettings, not config
 
 
+def test_connection_dialog_restores_nonstandard_saved_baud(qapp, fresh_settings):
+    """A saved baud missing from the preset list (e.g. Waveshare 2 Mbaud) is
+    still restored rather than silently replaced by the config default."""
+    fresh_settings.setValue("conn/baud", "2000000")
+    dlg = ConnectionDialog(fresh_settings, config_defaults=SerialDefaults(baud_rate=9600))
+    assert dlg.get_settings().baud_rate == 2000000
+
+
 def test_connection_dialog_without_config_defaults_uses_serialdefaults_class_defaults(qapp, fresh_settings):
     """Omitting config_defaults falls back to the SerialDefaults() class defaults
     (baud=115200, data=8, stop=1, parity=N, timeout=100) — same as before."""

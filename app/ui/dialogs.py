@@ -227,7 +227,10 @@ class ConnectionDialog(QDialog):
                 self._port_combo.setCurrentIndex(i)
                 break
         cd = self._config_defaults
-        default_baud = str(cd.baud_rate) if (cd and cd.baud_rate) else str(s.value("conn/baud", "115200"))
+        # Saved choice wins (loading a config already writes its baud to
+        # conn/baud); config default is the fallback. Non-standard rates
+        # (e.g. Waveshare 2 Mbaud) are added to the combo so they display.
+        default_baud = str(s.value("conn/baud", str(cd.baud_rate or 115200)))
         if self._baud_combo.findText(default_baud) == -1:
             self._baud_combo.addItem(default_baud)
         self._baud_combo.setCurrentText(default_baud)

@@ -167,7 +167,12 @@ class ConfigLoaderMixin:
             if hasattr(self, "_toast"):
                 self._toast("Reconnect required to apply new config on live serial worker.")
 
-    def _load_config_from_path(self, path: Path, suppress_popups: bool = False) -> None:
+    def _load_config_from_path(
+        self, path: Path, suppress_popups: bool = False, apply_serial_defaults: bool = True
+    ) -> None:
+        """Load a config. ``apply_serial_defaults`` makes the config's baud the
+        new connect default; the startup reload passes False so the user's
+        last-used baud survives a restart (PRD §5.2)."""
         # Keep a snapshot so we can revert on failure
         _prev_config = self._config
         _prev_config_path = self._config_path
@@ -236,7 +241,7 @@ class ConfigLoaderMixin:
         self._refresh_config_status()
         if hasattr(self, "_cards_view") and self._cards_view is not None:
             self._cards_view.rebuild_from_config(self._config)
-        if hasattr(self._config, "serial_defaults") and self._config.serial_defaults:
+        if apply_serial_defaults and getattr(self._config, "serial_defaults", None):
             baud = self._config.serial_defaults.baud_rate
             if baud:
                 self._settings.setValue("conn/baud", str(baud))
@@ -329,7 +334,7 @@ class ConfigLoaderMixin:
             first_path = Path(recents[0])
             if first_path.exists():
                 try:
-                    self._load_config_from_path(first_path, suppress_popups=True)
+                    self._load_config_from_path(first_path, suppress_popups=True, apply_serial_defaults=False)
                     return
                 except Exception:
                     pass
@@ -337,6 +342,6 @@ class ConfigLoaderMixin:
         bundled = get_bundled_template_dir()
         if bundled.exists():
             try:
-                self._load_config_from_path(bundled, suppress_popups=True)
+                self._load_config_from_path(bundled, suppress_popups=True, apply_serial_defaults=False)
             except Exception:
                 pass

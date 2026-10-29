@@ -1136,11 +1136,8 @@ class MainWindow(
             self._serial.error_occurred.connect(self._on_serial_error)
             self._serial.warning_occurred.connect(self._on_serial_warning)
             self._serial.tx_recorded.connect(self._on_tx_recorded)
-            if hasattr(self, "_console_dock") and self._console_dock is not None and self._console_dock.isVisible():
-                self._serial.wire_recorded.connect(self._on_wire_recorded)
-                self._wire_recorded_connected = True
-            else:
-                self._wire_recorded_connected = False
+            self._wire_recorded_connected = False
+            self._update_wire_recorded_connection()
             self._serial.connection_lost.connect(self._on_connection_lost)
             self._serial.device_timeout.connect(self._on_device_timeout)
             self._serial.open()
@@ -1344,19 +1341,34 @@ class MainWindow(
 
 
     def _on_console_dock_visibility_changed(self, visible: bool) -> None:
-        if self._serial is not None:
-            if self._wire_recorded_connected:
-                try:
-                    self._serial.wire_recorded.disconnect(self._on_wire_recorded)
-                except (RuntimeError, TypeError):
-                    pass
-                self._wire_recorded_connected = False
-            if visible:
-                try:
-                    self._serial.wire_recorded.connect(self._on_wire_recorded)
-                    self._wire_recorded_connected = True
-                except (RuntimeError, TypeError):
-                    pass
+        self._update_wire_recorded_connection()
+
+    def _update_wire_recorded_connection(self) -> None:
+        """Connect the worker's per-packet wire_recorded signal only while
+        something consumes it: the visible console, or an active logging
+        session (the raw log and the decoded log's TX rows are fed from it).
+        Skipping it otherwise saves a queued signal per packet at high rates.
+        """
+        if self._serial is None:
+            return
+        console_visible = (
+            getattr(self, "_console_dock", None) is not None and self._console_dock.isVisible()
+        )
+        logging_active = (
+            getattr(self, "_raw_logger", None) is not None
+            or getattr(self, "_decoded_logger", None) is not None
+        )
+        wanted = console_visible or logging_active
+        if wanted == self._wire_recorded_connected:
+            return
+        try:
+            if wanted:
+                self._serial.wire_recorded.connect(self._on_wire_recorded)
+            else:
+                self._serial.wire_recorded.disconnect(self._on_wire_recorded)
+            self._wire_recorded_connected = wanted
+        except (RuntimeError, TypeError):
+            pass
 
 
     def _log_flush_interval(self) -> float:
