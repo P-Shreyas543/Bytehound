@@ -108,14 +108,21 @@ def delete_leaked_windows():
     if app is None:
         return
     import pyqtgraph as pg
+    from PySide6.QtWidgets import QMessageBox
 
-    for w in app.topLevelWidgets():
-        # Closing one window can delete others (WA_DeleteOnClose popups).
-        if shiboken6.isValid(w) and address(w) not in before:
-            w.close()
-            # Tear pyqtgraph scenes down from the Python side first; letting
-            # ~QGraphicsScene delete Python-owned items segfaults.
-            for view in w.findChildren(pg.GraphicsView):
-                view.close()
-            w.deleteLater()
+    # close() still runs each window's closeEvent (stops workers/timers), but
+    # an "unsaved changes?" prompt there would block forever: answer No.
+    No = QMessageBox.StandardButton.No
+    with patch.object(QMessageBox, "question", return_value=No), \
+            patch.object(QMessageBox, "warning", return_value=No), \
+            patch.object(QMessageBox, "exec", return_value=No):
+        for w in app.topLevelWidgets():
+            # Closing one window can delete others (WA_DeleteOnClose popups).
+            if shiboken6.isValid(w) and address(w) not in before:
+                w.close()
+                # Tear pyqtgraph scenes down from the Python side first; letting
+                # ~QGraphicsScene delete Python-owned items segfaults.
+                for view in w.findChildren(pg.GraphicsView):
+                    view.close()
+                w.deleteLater()
     QCoreApplication.sendPostedEvents(None, QEvent.Type.DeferredDelete)
